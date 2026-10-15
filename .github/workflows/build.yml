@@ -1,0 +1,39 @@
+name: Build Jenny Player APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Оформление кода
+      uses: actions/checkout@v3
+
+    - name: Установка Java 11
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '11'
+
+    - name: Загрузка FFmpeg (arm64)
+      run: |
+        mkdir -p app/src/main/assets
+        curl -L -o app/src/main/assets/ffmpeg https://github.com/Khang-NT/ffmpeg-binary-android/releases/download/v4.4-1/ffmpeg-arm64-v8a
+        chmod +x app/src/main/assets/ffmpeg
+
+    - name: Подготовка Gradle
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: '7.6'
+
+    - name: Сборка APK
+      run: gradle assembleDebug
+
+    - name: Выдача готового файла
+      uses: actions/upload-artifact@v3
+      with:
+        name: JennyPlayer-APK
+        path: app/build/outputs/apk/debug/app-debug.apk

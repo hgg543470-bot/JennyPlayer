@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+    <title>🎧🅹🅴🅽🅽🆈́🆂 🅿🅻🅰🆈🅴🆁🎧</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+    <input type="file" id="systemFolderPicker" webkitdirectory directory multiple style="display: none;">
+
+    <div id="scrubOverlay"></div>
+    <div id="speedArcContainer"></div>
+
+    <div class="sticky-top">
+        <div class="container">
+            <div class="capsule">
+                <div style="width: 25%; display: flex; align-items: center; justify-content: flex-start; padding-left: 15px; gap: 6px;">
+                    <span onclick="window.fetchData()" style="cursor: pointer; font-size: 16px;" title="Обновить список треков">🔄</span>
+                    <span id="tracksCount" style="color: #58a6ff; font-weight: bold; font-size: 13px;">0</span>
+                </div>
+                <div style="width: 45%; display: flex; justify-content: center; align-items: center;">
+                    <span style="color: #3fb950; font-weight: bold; font-size: 15px; letter-spacing: 1px;">🅹🅴🅽🅽🆈́🆂 🅿🅻🅰🆈🅴🆁</span>
+                </div>
+                <div style="width: 30%; display: flex; justify-content: flex-end; align-items: center; padding-right: 15px; gap: 12px;">
+                    <span id="btn-eqModal" onclick="window.toggleModal('eqModal')" style="cursor: pointer; font-size: 19px; display: inline-flex; align-items: center;">🄠</span>
+                    <span id="btn-favModal" onclick="window.toggleModal('favModal')" style="cursor: pointer; font-size: 19px; display: inline-flex; align-items: center;">🐞</span>
+                    <span id="btn-settingsModal" onclick="window.toggleModal('settingsModal')" style="cursor: pointer; font-size: 19px; display: inline-flex; align-items: center;">⚙️</span>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 4px; height: 54px; margin-bottom: 12px; width: 100%;">
+                <div id="leftTimeBlock" style="width: 15%; min-width: 55px; background: #000; border: 1px solid #30363d; border-radius: 50px 6px 6px 50px; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 6px rgba(0,0,0,0.5); cursor: pointer; touch-action: none;">
+                    <span id="currentTime" class="time-display" style="color: #58a6ff; font-size: 13px;">0:00</span>
+                </div>
+                
+                <div id="seekZone" style="flex-grow: 1; background: #000; border: 1px solid #30363d; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; position: relative; overflow: hidden; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.5);">
+                    <!-- 🚀 ИСПРАВЛЕНО: УБРАН БАГОВАННЫЙ ТРАНСФОРМ -->
+                    <div id="progressFill" style="position: absolute; left: 0; top: 0; height: 100%; width: 0%; background: rgba(115, 65, 190, 0.4); pointer-events: none; transition: width 0.1s linear;"></div>
+                    <div style="position: relative; z-index: 2; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 15px;">
+                        <span id="durationTime" class="time-display" style="color: #8b949e; margin-bottom: 2px;">0:00</span>
+                        <div class="track-title" id="nowPlaying" style="font-weight: normal; color: #e6edf3; width: 100%;">Выбери трек</div>
+                        <div id="speedLockIndicator" style="display: none; color: #e3b341; font-size: 11px; font-weight: bold; margin-top: 2px;">🔒 ⏩ x2.0</div>
+                    </div>
+                </div>
+                
+                <div id="rightTimeBlock" style="width: 15%; min-width: 55px; background: #000; border: 1px solid #30363d; border-radius: 6px 50px 50px 6px; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 6px rgba(0,0,0,0.5); cursor: pointer; touch-action: none;">
+                    <span id="remainingTime" class="time-display" style="color: #e3b341; font-size: 13px;">-0:00</span>
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0 10px;">
+                <div style="display: flex; align-items: center; gap: 12px; width: 70px;">
+                    <span id="folderIconTrigger" style="cursor: pointer; font-size: 16px;">📁</span>
+                </div>
+                <div style="display: flex; justify-content: center; align-items: center; gap: 25px; flex-grow: 1;">
+                    <button id="btnPrev" class="volumetric-triangle prev-triangle" onclick="if(window.playPreviousTrack) window.playPreviousTrack()"></button>
+                    <button id="playPauseBtn" class="play-pause-btn" onclick="if(window.togglePlay) window.togglePlay()" style="width: 44px; height: 44px;">
+                        <svg viewBox="0 0 24 24" width="40" height="36" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                    </button>
+                    <button id="btnNext" class="volumetric-triangle next-triangle" onclick="if(window.playNextTrack) window.playNextTrack()"></button>
+                </div>
+                
+                <div style="display: flex; justify-content: center; align-items: center; padding-right: 5px;">
+                    <button id="btnExport" onclick="if(window.exportCurrentTrack) window.exportCurrentTrack()" style="background: transparent; border: 1px solid #7341be; color: #58a6ff; font-size: 16px; width: 36px; height: 36px; border-radius: 50%; display: flex; justify-content: center; align-items: center; padding: 0;">💾</button>
+                </div>
+
+                <div id="volUIWrapper" style="position: relative; display: flex; justify-content: flex-end; align-items: center; width: 70px;">
+                    <span id="volIconTrigger" style="cursor:pointer; font-size:16px; padding: 5px;" onclick="if(window.toggleVolumePopup) window.toggleVolumePopup(event)">🔊</span>
+                    <div id="volumePopup" class="vol-popup">
+                        <span id="volIconText" style="color:#8b949e; font-size:10px; font-weight:bold;">100%</span>
+                        <input type="range" id="volumeBar" class="vt-slider" min="0" max="10" step="1" value="10" oninput="if(window.changeVolume) window.changeVolume()">
+                    </div>
+                </div>
+            </div>
+
+            <div style="padding-top: 15px;">
+                <input type="text" id="trackSearchInput" onkeyup="if(window.filterTracks) window.filterTracks(this.value)" 
+                       placeholder="🔍 Поиск по названию..." 
+                       style="width: 100%; background: var(--bg-setting-box); color: #c9d1d9; border: 1px solid #30363d; padding: 10px; border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box;">
+            </div>
+
+            <audio id="audioPlayer" crossorigin="anonymous"></audio>
+        </div>
+    </div>
+
+    <div class="middle-list-container">
+        <div class="container">
+            <div id="unifiedList" style="margin-bottom: 30px;">
+                <div style="padding:10px; color:#8b949e; text-align: center;">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="favModal" class="modal-overlay">
+        <div class="container">
+            <div id="favList"></div>
+        </div>
+    </div>
+    
+    <div id="settingsModal" class="modal-overlay">
+        <div class="container">
+            <div style="display:flex; gap:10px; margin-bottom: 15px;">
+                <button onclick="if(window.loadConfigFromDisk) window.loadConfigFromDisk()" style="flex:1; background:#1f6feb; color:#fff; font-weight:bold; border:none; padding:12px; border-radius: 8px;">📥 ЗАГРУЗИТЬ ВСЁ</button>
+                <button onclick="if(window.saveConfigToDisk) window.saveConfigToDisk()" style="flex:1; background:#3fb950; color:#000; font-weight:bold; border:none; padding:12px; border-radius: 8px;">💾 СОХРАНИТЬ ВСЁ</button>
+            </div>
+            
+            <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #3fb950;">
+                <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
+                    <input type="checkbox" id="cfg_studioMode" onchange="if(window.updateSettings) window.updateSettings()"> Студийный движок (RAM)
+                </label>
+            </div>
+
+            <details class="setting-group" open style="border-left: 3px solid #e3b341;">
+                <summary>⚡ Интеллектуальный Скраббинг</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e6edf3;">
+                            <input type="checkbox" id="cfg_leftHandedMode" onchange="if(window.updateSettings) window.updateSettings()"> 
+                            🖐️ Режим "Левша" (Зеркальная дуга)
+                        </label>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e3b341;">
+                            <input type="checkbox" id="cfg_pitchLock" onchange="if(window.updateSettings) window.updateSettings()"> 
+                            🎵 Сохранять темп (Pitch Lock)
+                        </label>
+                    </div>
+
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <label class="toggle-label" style="color:#e3b341;">
+                            <input type="checkbox" id="cfg_xNormalSpeed" onchange="if(window.updateSettings) window.updateSettings()"> 
+                            🚀 Кастомная скорость (Base)
+                        </label>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('main', 'normalPlaybackSpeed', 'cfg_normalPlaybackSpeed')">📥</button>
+                            <input type="number" id="cfg_normalPlaybackSpeed" oninput="if(window.updateSettings) window.updateSettings()" step="0.01" style="width: 50px;" placeholder="0.97">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('main', 'normalPlaybackSpeed', 'cfg_normalPlaybackSpeed')">💾</button>
+                        </div>
+                    </div>
+                    
+                    <div class="setting-row" style="border:none; padding: 0 0 10px 20px;">
+                        <label class="toggle-label" style="color:#8b949e; font-size:12px;">
+                            <input type="checkbox" id="cfg_autoSaveBase" onchange="if(window.toggleAutoSave) window.toggleAutoSave('base', event)"> 
+                            ↳ Писать выбор дуги сюда
+                        </label>
+                    </div>
+
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Дефолтная скорость дуги:</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('main', 'defaultScrubSpeed', 'cfg_defaultScrubSpeed')">📥</button>
+                            <input type="number" id="cfg_defaultScrubSpeed" oninput="if(window.updateSettings) window.updateSettings()" step="0.1" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('main', 'defaultScrubSpeed', 'cfg_defaultScrubSpeed')">💾</button>
+                        </div>
+                    </div>
+
+                    <div class="setting-row" style="border:none; padding: 0 0 10px 20px;">
+                        <label class="toggle-label" style="color:#8b949e; font-size:12px;">
+                            <input type="checkbox" id="cfg_autoSaveScrub" onchange="if(window.toggleAutoSave) window.toggleAutoSave('scrub', event)"> 
+                            ↳ Писать выбор дуги сюда
+                        </label>
+                    </div>
+
+                    <div style="border-top: 1px solid #30363d; margin-top: 10px; padding-top: 10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+                            <span style="color:#8b949e; font-size:12px; font-weight:bold;">Кастомные радиальные зоны:</span>
+                            <button onclick="if(window.resetScrubZones) window.resetScrubZones()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z1_en" onchange="if(window.checkZones) window.checkZones(1)">
+                                <input type="number" id="cfg_z1_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z2_en" onchange="if(window.checkZones) window.checkZones(2)">
+                                <input type="number" id="cfg_z2_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z3_en" onchange="if(window.checkZones) window.checkZones(3)">
+                                <input type="number" id="cfg_z3_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z4_en" onchange="if(window.checkZones) window.checkZones(4)">
+                                <input type="number" id="cfg_z4_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z5_en" onchange="if(window.checkZones) window.checkZones(5)">
+                                <input type="number" id="cfg_z5_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z6_en" onchange="if(window.checkZones) window.checkZones(6)">
+                                <input type="number" id="cfg_z6_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #e3b341;">
+                <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
+                    <input type="checkbox" id="cfg_amoledMode" onchange="if(window.updateSettings) window.updateSettings()"> 🖤 Режим AMOLED
+                </label>
+            </div>
+
+            <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #7341be;">
+                <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
+                    <input type="checkbox" id="cfg_volSlider" onchange="if(window.updateSettings) window.updateSettings(); if(window.toggleVolUI) window.toggleVolUI();"> 🔊 Показывать ползунок громкости
+                </label>
+            </div>
+
+            <details class="setting-group" open>
+                <summary>✨ FIR-Сатуратор (Ламповый окрас)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_firEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Включить FIR</label>
+                        <button onclick="if(window.resetFIR) window.resetFIR()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Усиление (Gain):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('firSettings', 'gain', 'cfg_fir_gain')">📥</button>
+                            <input type="number" id="cfg_fir_gain" oninput="if(window.updateSettings) window.updateSettings()" step="0.1" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('firSettings', 'gain', 'cfg_fir_gain')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Импульс (ms):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('firSettings', 'decay', 'cfg_fir_decay')">📥</button>
+                            <input type="number" id="cfg_fir_decay" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('firSettings', 'decay', 'cfg_fir_decay')">💾</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>🎚️ Многополосный кроссовер (3-Band)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_multiBandEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Разделение частот</label>
+                        <button onclick="if(window.resetMultiBand) window.resetMultiBand()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Отсечка Баса (Hz):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('multiBandSettings', 'low', 'cfg_mb_low')">📥</button>
+                            <input type="number" id="cfg_mb_low" oninput="if(window.updateSettings) window.updateSettings()" step="10" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('multiBandSettings', 'low', 'cfg_mb_low')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Отсечка Верх (Hz):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('multiBandSettings', 'high', 'cfg_mb_high')">📥</button>
+                            <input type="number" id="cfg_mb_high" oninput="if(window.updateSettings) window.updateSettings()" step="100" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('multiBandSettings', 'high', 'cfg_mb_high')">💾</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>🗜️ Лимитер (Soft Clipper)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_limiterEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Включить лимитер</label>
+                        <button onclick="if(window.resetLimiter) window.resetLimiter()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Порог (dB):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'threshold', 'cfg_lim_threshold')">📥</button>
+                            <input type="number" id="cfg_lim_threshold" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'threshold', 'cfg_lim_threshold')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Смягчение (Knee):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'knee', 'cfg_lim_knee')">📥</button>
+                            <input type="number" id="cfg_lim_knee" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'knee', 'cfg_lim_knee')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Сжатие (Ratio):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'ratio', 'cfg_lim_ratio')">📥</button>
+                            <input type="number" id="cfg_lim_ratio" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'ratio', 'cfg_lim_ratio')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Атака (ms):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'attack', 'cfg_lim_attack')">📥</button>
+                            <input type="number" id="cfg_lim_attack" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'attack', 'cfg_lim_attack')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Спад (ms):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'release', 'cfg_lim_release')">📥</button>
+                            <input type="number" id="cfg_lim_release" oninput="if(window.updateSettings) window.updateSettings()" step="10" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'release', 'cfg_lim_release')">💾</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>🎛️ Эквалайзер (EQ IIR)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_eqEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Активировать EQ</label>
+                    </div>
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>🚀 Усилитель (Овердрайв)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_boosterEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Активировать Овердрайв</label>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Мощность (1-20):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('main', 'boosterPower', 'cfg_boosterPower')">📥</button>
+                            <input type="number" id="cfg_boosterPower" oninput="if(window.updateSettings) window.updateSettings()" min="1" max="20" style="width: 50px;">
+                            <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('main', 'boosterPower', 'cfg_boosterPower')">💾</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+        </div>
+    </div>
+    
+    <div id="eqModal" class="modal-overlay">
+        <div class="container">
+            <div class="setting-row" style="flex-direction: column; align-items: stretch; gap: 20px; border: none; padding-top:20px;">
+                <input type="range" class="hz-slider" id="eq_60" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+                <input type="range" class="hz-slider" id="eq_230" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+                <input type="range" class="hz-slider" id="eq_910" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+                <input type="range" class="hz-slider" id="eq_3600" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+                <input type="range" class="hz-slider" id="eq_14000" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+            </div>
+        </div>
+    </div>
+
+    <!-- ПОДКЛЮЧЕНИЕ РОДНЫХ СКРИПТОВ -->
+    <script src="/engine_audio.js"></script>
+    <script src="/engine_heads.js"></script>
+    <script src="/engine_fav.js"></script>
+    <script src="/ui_init.js"></script>
+    <script src="/ui_config.js"></script>
+    <script src="/ui_render.js"></script>
+    <script src="/ui_playback.js"></script>
+    <script src="/ui_scrub_engine.js"></script>
+    <script src="/ui_touch_arc.js"></script>
+    <script src="/ui_controls.js"></script>
+    <script src="/ui_export.js"></script>
+
+</body>
+</html>
