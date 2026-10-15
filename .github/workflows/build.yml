@@ -18,6 +18,11 @@ jobs:
         distribution: 'temurin'
         java-version: '11'
 
+    - name: Установка Python 3.8
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.8'
+
     - name: Загрузка FFmpeg (arm64)
       run: |
         mkdir -p app/src/main/assets
