@@ -11,6 +11,7 @@ import android.os.Environment;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.system.Os;
+import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -25,15 +26,37 @@ import java.io.File;
 
 public class MainActivity extends AppCompatActivity {
     private static final int REQ_PERM_STORAGE = 1;
+    private static final int REQ_PERM_NOTIF = 2;
     private static final int REQ_PICK_FOLDER = 42;
+    private static MainActivity instance;
     private WebView webView;
     private boolean isPageLoaded = false;
+
+    public static void evalJs(final String script) {
+        if (instance != null && instance.webView != null) {
+            instance.webView.post(() -> instance.webView.evaluateJavascript(script, null));
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        instance = this;
 
-        webView = new WebView(this);
+        // Запрос разрешения на показ уведомлений для Android 13 / 14 / 15 / 16
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_PERM_NOTIF);
+            }
+        }
+
+        webView = new WebView(this) {
+            @Override
+            public void onWindowVisibilityChanged(int visibility) {
+                // Не даём Android WebView замораживать звук при выключении экрана
+                super.onWindowVisibilityChanged(View.VISIBLE);
+            }
+        };
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();
@@ -61,6 +84,22 @@ public class MainActivity extends AppCompatActivity {
                     e.printStackTrace();
                 }
             });
+        }
+
+        @JavascriptInterface
+        public void updateMediaState(String title, boolean isPlaying, double posSec, double durSec, double speed) {
+            Intent svc = new Intent(MainActivity.this, PlaybackService.class);
+            svc.setAction(PlaybackService.ACTION_UPDATE);
+            svc.putExtra("title", title);
+            svc.putExtra("playing", isPlaying);
+            svc.putExtra("pos", (long) (posSec * 1000));
+            svc.putExtra("dur", (long) (durSec * 1000));
+            svc.putExtra("speed", (float) speed);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(svc);
+            } else {
+                startService(svc);
+            }
         }
     }
 
@@ -110,7 +149,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void setupFFmpeg() {
         try {
-            // Удаляем старый 9-байтовый фейк из getFilesDir(), если он остался от прошлых сборок
             File oldBrokenFile = new File(getFilesDir(), "ffmpeg");
             if (oldBrokenFile.exists() && oldBrokenFile.length() < 1000000) {
                 oldBrokenFile.delete();

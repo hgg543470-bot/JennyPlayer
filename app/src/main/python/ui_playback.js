@@ -278,3 +278,49 @@ document.addEventListener("DOMContentLoaded", () => {
         };
     }
 });
+
+// =========================================================================
+// 📱 НАТИВНАЯ ШТОРКА ANDROID 16 (БЕЗ ВМЕШАТЕЛЬСТВА В ЛОГИКУ ПЛЕЕРА)
+// =========================================================================
+window.lastNotifSync = 0;
+
+window.syncAndroidNotification = function(force) {
+    if (!window.AndroidBridge || typeof window.AndroidBridge.updateMediaState !== 'function') return;
+    const now = Date.now();
+    if (!force && now - window.lastNotifSync < 1000) return;
+    window.lastNotifSync = now;
+
+    const player = document.getElementById('audioPlayer');
+    if (!player || !window.currentPlayingTrack) return;
+
+    let cleanTitle = window.currentPlayingTrack.replace(/\.(opus|m4a|mp3|wav|flac|ogg)$/i, '');
+    let dur = isFinite(player.duration) && player.duration > 0 ? player.duration : 0;
+    let cur = isFinite(player.currentTime) ? player.currentTime : 0;
+    let isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+    let displayPos = (isRev && dur > 0) ? Math.max(0, dur - cur) : cur;
+    let spd = player.playbackRate || 1.0;
+
+    try {
+        window.AndroidBridge.updateMediaState(cleanTitle, !player.paused, displayPos, dur, spd);
+    } catch (e) {}
+};
+
+window.seekFromNotification = function(targetSec) {
+    const player = document.getElementById('audioPlayer');
+    if (!player || !isFinite(player.duration) || player.duration <= 0) return;
+    let isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+    let realTarget = isRev ? (player.duration - targetSec) : targetSec;
+    player.currentTime = Math.max(0, Math.min(player.duration, realTarget));
+    window.syncAndroidNotification(true);
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+    const player = document.getElementById('audioPlayer');
+    if (player) {
+        player.addEventListener('play', () => window.syncAndroidNotification(true));
+        player.addEventListener('pause', () => window.syncAndroidNotification(true));
+        player.addEventListener('seeked', () => window.syncAndroidNotification(true));
+        player.addEventListener('loadedmetadata', () => window.syncAndroidNotification(true));
+        player.addEventListener('timeupdate', () => window.syncAndroidNotification(false));
+    }
+});
