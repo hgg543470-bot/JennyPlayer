@@ -22,8 +22,6 @@ import androidx.core.content.ContextCompat;
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
 
 public class MainActivity extends AppCompatActivity {
     private static final int REQ_PERM_STORAGE = 1;
@@ -112,28 +110,21 @@ public class MainActivity extends AppCompatActivity {
 
     private void setupFFmpeg() {
         try {
-            String nativeDir = getApplicationInfo().nativeLibraryDir;
-            File ffmpegFile = new File(getFilesDir(), "ffmpeg");
-            if (!ffmpegFile.exists()) {
-                try {
-                    InputStream is = getAssets().open("ffmpeg");
-                    FileOutputStream fos = new FileOutputStream(ffmpegFile);
-                    byte[] buffer = new byte[8192];
-                    int read;
-                    while ((read = is.read(buffer)) != -1) {
-                        fos.write(buffer, 0, read);
-                    }
-                    fos.close();
-                    is.close();
-                    ffmpegFile.setExecutable(true);
-                } catch (Exception ignored) {
-                }
-            } else {
-                ffmpegFile.setExecutable(true);
+            // Удаляем старый 9-байтовый фейк из getFilesDir(), если он остался от прошлых сборок
+            File oldBrokenFile = new File(getFilesDir(), "ffmpeg");
+            if (oldBrokenFile.exists() && oldBrokenFile.length() < 1000000) {
+                oldBrokenFile.delete();
             }
+
+            String nativeDir = getApplicationInfo().nativeLibraryDir;
+            File nativeFFmpeg = new File(nativeDir, "libffmpeg.so");
+            if (nativeFFmpeg.exists()) {
+                nativeFFmpeg.setExecutable(true);
+                Os.setenv("FFMPEG_BINARY", nativeFFmpeg.getAbsolutePath(), true);
+            }
+
             String path = System.getenv("PATH");
-            String extraPath = getFilesDir().getAbsolutePath() + ":" + nativeDir;
-            Os.setenv("PATH", extraPath + ":" + path, true);
+            Os.setenv("PATH", nativeDir + ":" + getFilesDir().getAbsolutePath() + ":" + path, true);
         } catch (Exception e) {
             e.printStackTrace();
         }

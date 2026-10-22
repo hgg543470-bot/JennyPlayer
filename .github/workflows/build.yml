@@ -23,11 +23,16 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Загрузка FFmpeg (arm64)
+    - name: Загрузка настоящего статического FFmpeg 6.0 (arm64-v8a)
       run: |
-        mkdir -p app/src/main/assets
-        curl -L -o app/src/main/assets/ffmpeg https://github.com/Khang-NT/ffmpeg-binary-android/releases/download/v4.4-1/ffmpeg-arm64-v8a
-        chmod +x app/src/main/assets/ffmpeg
+        mkdir -p app/src/main/jniLibs/arm64-v8a
+        curl -fL -o ffmpeg.gz https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-linux-arm64.gz
+        gunzip -c ffmpeg.gz > app/src/main/jniLibs/arm64-v8a/libffmpeg.so
+        rm -f ffmpeg.gz
+        chmod 755 app/src/main/jniLibs/arm64-v8a/libffmpeg.so
+        FILE_SIZE=$(stat -c%s app/src/main/jniLibs/arm64-v8a/libffmpeg.so)
+        echo "Размер скачанного FFmpeg: $FILE_SIZE байт"
+        test "$FILE_SIZE" -gt 10000000
 
     - name: Подготовка Gradle
       uses: gradle/actions/setup-gradle@v3
