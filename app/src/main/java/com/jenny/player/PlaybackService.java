@@ -16,7 +16,7 @@ import android.os.IBinder;
 import android.os.PowerManager;
 
 public class PlaybackService extends Service {
-    private static final String CHANNEL_ID = "jenny_media_channel";
+    public static final String CHANNEL_ID = "jenny_media_channel";
     private static final int NOTIF_ID = 101;
 
     public static final String ACTION_UPDATE = "com.jenny.player.ACTION_UPDATE";
@@ -32,10 +32,21 @@ public class PlaybackService extends Service {
     private long currentDurMs = 0;
     private float currentSpeed = 1.0f;
 
+    public static void ensureChannel(Context ctx) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID, "Jenny Player Playback", NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("Медиа-шторка и фоновое воспроизведение");
+            channel.setShowBadge(false);
+            NotificationManager nm = ctx.getSystemService(NotificationManager.class);
+            if (nm != null) nm.createNotificationChannel(channel);
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
-        createChannel();
+        ensureChannel(this);
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (pm != null) {
@@ -179,17 +190,6 @@ public class PlaybackService extends Service {
                 .setStyle(style);
 
         return builder.build();
-    }
-
-    private void createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID, "Jenny Player Playback", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("Управление воспроизведением Jenny Player");
-            channel.setShowBadge(false);
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            if (nm != null) nm.createNotificationChannel(channel);
-        }
     }
 
     @Override

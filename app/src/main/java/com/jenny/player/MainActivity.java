@@ -43,7 +43,11 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         instance = this;
 
-        // Запрос разрешения на показ уведомлений для Android 13 / 14 / 15 / 16
+        // 1. Сразу регистрируем канал уведомлений при старте!
+        // Это мгновенно разблокирует серый тумблер в настройках Android 13-16
+        PlaybackService.ensureChannel(this);
+
+        // 2. Запрашиваем разрешение на показ уведомлений
         if (Build.VERSION.SDK_INT >= 33) {
             if (ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_PERM_NOTIF);
@@ -53,7 +57,6 @@ public class MainActivity extends AppCompatActivity {
         webView = new WebView(this) {
             @Override
             public void onWindowVisibilityChanged(int visibility) {
-                // Не даём Android WebView замораживать звук при выключении экрана
                 super.onWindowVisibilityChanged(View.VISIBLE);
             }
         };
