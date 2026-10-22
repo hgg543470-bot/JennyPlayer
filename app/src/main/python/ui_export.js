@@ -1,29 +1,34 @@
-// =========================================================================
-// 💾 UI_EXPORT.JS (ОФФЛАЙН-РЕНДЕРИНГ И ЭКСПОРТ ТРЕКОВ)
-// =========================================================================
-
 window.exportCurrentTrack = async function() {
-    if (!window.currentPlayingTrack) return;
+    if (!window.currentPlayingTrack) {
+        if (typeof window.showToast === 'function') window.showToast("⚠️ Сначала выбери трек!");
+        return;
+    }
 
     const btn = document.getElementById('btnExport');
     if (btn) btn.innerText = "⏳";
+    if (typeof window.showToast === 'function') window.showToast("⏳ Рендеринг в OPUS...");
 
     try {
+        if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+
         const player = document.getElementById('audioPlayer');
-        let speed = window.scrubState && window.scrubState.active ? window.scrubState.speed : (player.playbackRate || 1.0);
+        let speed = (window.scrubState && (window.scrubState.active || window.scrubState.locked))
+            ? window.scrubState.speed
+            : (player && player.playbackRate ? player.playbackRate : 1.0);
         let isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-        
+
         let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
         let pitchLock = pitchLockCheckbox ? pitchLockCheckbox.checked : false;
 
         let sourceBuffer = window.studioBuffer;
-        
+
         if (!sourceBuffer) {
             let res = await fetch('/api/media/' + encodeURIComponent(window.currentPlayingTrack));
+            if (!res.ok) throw new Error("Не удалось загрузить исходник трека");
             let arrayBuffer = await res.arrayBuffer();
             sourceBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
         }
-        
+
         if (isRev && !window.reversedStudioBuffer) {
             sourceBuffer = await window.cloneAndReverseBuffer(sourceBuffer);
         } else if (isRev) {
@@ -34,32 +39,34 @@ window.exportCurrentTrack = async function() {
             let stretchFormData = new FormData();
             stretchFormData.append('filename', window.currentPlayingTrack);
             stretchFormData.append('speed', speed);
-            
+
             let stretchRes = await fetch('/api/stretch', { method: 'POST', body: stretchFormData });
-            if (!stretchRes.ok) throw new Error("Питон не смог растянуть трек");
-            
+            if (!stretchRes.ok) {
+                let errJson = await stretchRes.json().catch(() => ({}));
+                throw new Error(errJson.error || "Ошибка FFmpeg stretch");
+            }
+
             let stretchedArrayBuffer = await stretchRes.arrayBuffer();
             sourceBuffer = await window.audioCtx.decodeAudioData(stretchedArrayBuffer);
         }
 
         let renderSpeed = (pitchLock && !isRev) ? 1.0 : speed;
         let duration = sourceBuffer.duration / renderSpeed;
-        
-        let offlineCtx = new OfflineAudioContext(sourceBuffer.numberOfChannels, Math.ceil(duration * sourceBuffer.sampleRate), sourceBuffer.sampleRate);
+        let totalFrames = Math.max(1, Math.ceil(duration * sourceBuffer.sampleRate));
+
+        let offlineCtx = new OfflineAudioContext(sourceBuffer.numberOfChannels, totalFrames, sourceBuffer.sampleRate);
         let sourceNode = offlineCtx.createBufferSource();
         sourceNode.buffer = sourceBuffer;
         sourceNode.playbackRate.value = renderSpeed;
-        
+
         let currentNode = sourceNode;
         let cfg = window.appConfig || {};
 
-        // 1. PreAmp (как в engine_audio.js)
         let preAmp = offlineCtx.createGain();
         preAmp.gain.value = 0.6;
         currentNode.connect(preAmp);
         currentNode = preAmp;
 
-        // 2. FIR-сатуратор (идет ДО эквалайзера, строго как в живом графе)
         if (cfg.firEnabled && cfg.firSettings) {
             let preFirPad = offlineCtx.createGain();
             preFirPad.gain.value = 0.8;
@@ -68,54 +75,50 @@ window.exportCurrentTrack = async function() {
 
             let firNode = offlineCtx.createConvolver();
             firNode.normalize = false;
-            
-            let decay = cfg.firSettings.decay;
-            let length = Math.floor(offlineCtx.sampleRate * (decay / 1000));
-            if(length === 0) length = 1;
+
+            let decay = cfg.firSettings.decay || 15;
+            let length = Math.max(1, Math.floor(offlineCtx.sampleRate * (decay / 1000)));
             let impulse = offlineCtx.createBuffer(2, length, offlineCtx.sampleRate);
             for (let c = 0; c < 2; c++) {
                 let data = impulse.getChannelData(c);
                 for (let i = 0; i < length; i++) {
-                    data[i] = (i === 0) ? 1.0 : Math.exp(-i / (length/3)) * 0.05; 
+                    data[i] = (i === 0) ? 1.0 : Math.exp(-i / (length / 3)) * 0.05;
                 }
             }
             firNode.buffer = impulse;
-            
+
             let firGain = offlineCtx.createGain();
-            firGain.gain.value = cfg.firSettings.gain;
+            firGain.gain.value = cfg.firSettings.gain || 2.5;
 
             currentNode.connect(firNode);
             firNode.connect(firGain);
             currentNode = firGain;
         }
 
-        // 3. Эквалайзер (EQ IIR)
         if (cfg.eqEnabled && window.eqNodes) {
             let freqs = [60, 230, 910, 3600, 14000];
             let types = ['lowshelf', 'peaking', 'peaking', 'peaking', 'highshelf'];
             let bandKeys = ['band60', 'band230', 'band910', 'band3600', 'band14000'];
-            
+
             bandKeys.forEach((key, index) => {
                 let liveNode = window.eqNodes[key];
                 if (liveNode) {
                     let filter = offlineCtx.createBiquadFilter();
                     filter.type = types[index];
                     filter.frequency.value = freqs[index];
-                    filter.gain.value = liveNode.gain.value; 
+                    filter.gain.value = liveNode.gain.value;
                     currentNode.connect(filter);
                     currentNode = filter;
                 }
             });
         }
 
-        // 4. Громкость и Бустер (берем реальный гейн из живого графа или конфига)
         let gainNode = offlineCtx.createGain();
         let activeVol = (window.gainNode && window.gainNode.gain) ? window.gainNode.gain.value : ((parseInt(cfg.defaultVolume, 10) || 10) / 10);
         gainNode.gain.value = activeVol;
         currentNode.connect(gainNode);
         currentNode = gainNode;
 
-        // 5. Лимитер и 3-полосный кроссовер
         if (cfg.limiterEnabled && cfg.limiterSettings) {
             let thresh = cfg.limiterSettings.threshold;
             let knee = cfg.limiterSettings.knee;
@@ -177,10 +180,19 @@ window.exportCurrentTrack = async function() {
         let res = await fetch('/api/export', { method: 'POST', body: formData });
         let json = await res.json();
 
-        if (json.status === 'ok') {
-            if (typeof window.fetchData === 'function') window.fetchData(); 
+        if (res.ok && json.status === 'ok') {
+            if (typeof window.fetchData === 'function') window.fetchData();
+            if (typeof window.showToast === 'function') {
+                window.showToast("✅ Сохранено: " + json.new_file);
+            }
+        } else {
+            throw new Error(json.error || "Ошибка кодирования в OPUS");
         }
-    } catch (e) {}
+    } catch (e) {
+        if (typeof window.showToast === 'function') {
+            window.showToast("❌ " + (e.message || e));
+        }
+    }
 
     if (btn) btn.innerText = "💾";
 };
@@ -211,7 +223,7 @@ function bufferToWav(abuffer, len) {
             sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767)|0;
             view.setInt16(pos, sample, true); pos += 2;
         }
-        offset++
+        offset++;
     }
     return new Blob([buffer], {type: "audio/wav"});
 }
