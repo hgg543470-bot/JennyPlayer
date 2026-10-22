@@ -125,9 +125,15 @@ window.buildAudioGraph = function() {
         let ratio = window.appConfig.limiterSettings.ratio;
 
         if (window.appConfig.multiBandEnabled) {
-            window.splitLow.frequency.value = window.appConfig.multiBandSettings.low;
-            window.splitMid.frequency.value = (window.appConfig.multiBandSettings.low + window.appConfig.multiBandSettings.high) / 2;
-            window.splitHigh.frequency.value = window.appConfig.multiBandSettings.high;
+            let lowFreq = Math.max(20, window.appConfig.multiBandSettings.low || 200);
+            let highFreq = Math.max(lowFreq + 100, window.appConfig.multiBandSettings.high || 2500);
+            let midCenter = Math.sqrt(lowFreq * highFreq);
+            let midQ = midCenter / (highFreq - lowFreq);
+
+            window.splitLow.frequency.value = lowFreq;
+            window.splitMid.frequency.value = midCenter;
+            window.splitMid.Q.value = midQ;
+            window.splitHigh.frequency.value = highFreq;
 
             window.compLow.threshold.value = thresh; window.compLow.knee.value = knee; window.compLow.ratio.value = ratio;
             window.compLow.attack.value = window.appConfig.limiterSettings.attack / 1000; 

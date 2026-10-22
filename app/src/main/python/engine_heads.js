@@ -296,23 +296,64 @@ window.changeEQ = function() {
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
 };
 
+window.onNativeFolderPicked = async function(folderPath) {
+    if (!folderPath) return;
+    try {
+        const res = await fetch('/api/folder', {
+            method: 'POST',
+            body: JSON.stringify({ path: folderPath })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            if (typeof window.fetchData === 'function') window.fetchData();
+            let shortName = folderPath.split('/').filter(Boolean).pop() || folderPath;
+            if (typeof window.showToast === 'function') {
+                window.showToast("📁 Папка: " + shortName);
+            }
+        } else if (typeof window.showToast === 'function') {
+            window.showToast("❌ " + (data.error || "Ошибка смены папки"));
+        }
+    } catch (e) {}
+};
+
 window.setupFolderLongPress = function() {
     const folderIcon = document.getElementById('folderIconTrigger');
     const filePicker = document.getElementById('systemFolderPicker');
-    if (!folderIcon || !filePicker) return;
+    if (!folderIcon) return;
 
     let pressTimer;
     let isFired = false;
 
-    folderIcon.addEventListener('touchstart', (e) => {
+    const triggerPicker = () => {
+        try { navigator.vibrate(50); } catch(err){}
+        if (window.AndroidBridge && typeof window.AndroidBridge.pickFolder === 'function') {
+            window.AndroidBridge.pickFolder();
+        } else if (filePicker) {
+            filePicker.click();
+        }
+    };
+
+    folderIcon.addEventListener('touchstart', () => {
         isFired = false;
         pressTimer = setTimeout(() => {
             isFired = true;
-            try { navigator.vibrate(50); } catch(err){}
-            filePicker.click();
+            triggerPicker();
         }, 180);
     }, {passive: true});
 
     folderIcon.addEventListener('touchend', () => { if(!isFired) clearTimeout(pressTimer); });
     folderIcon.addEventListener('touchmove', () => { clearTimeout(pressTimer); });
+
+    // Резервный обработчик, если папка выбрана через браузерный input
+    if (filePicker) {
+        filePicker.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                let relPath = e.target.files[0].webkitRelativePath || '';
+                let folderName = relPath.split('/')[0];
+                if (folderName) {
+                    window.onNativeFolderPicked(folderName);
+                }
+            }
+        });
+    }
 };

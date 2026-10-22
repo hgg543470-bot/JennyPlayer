@@ -45,7 +45,7 @@ window.exportCurrentTrack = async function() {
         let renderSpeed = (pitchLock && !isRev) ? 1.0 : speed;
         let duration = sourceBuffer.duration / renderSpeed;
         
-        let offlineCtx = new OfflineAudioContext(sourceBuffer.numberOfChannels, duration * sourceBuffer.sampleRate, sourceBuffer.sampleRate);
+        let offlineCtx = new OfflineAudioContext(sourceBuffer.numberOfChannels, Math.ceil(duration * sourceBuffer.sampleRate), sourceBuffer.sampleRate);
         let sourceNode = offlineCtx.createBufferSource();
         sourceNode.buffer = sourceBuffer;
         sourceNode.playbackRate.value = renderSpeed;
@@ -53,29 +53,13 @@ window.exportCurrentTrack = async function() {
         let currentNode = sourceNode;
         let cfg = window.appConfig || {};
 
+        // 1. PreAmp (как в engine_audio.js)
         let preAmp = offlineCtx.createGain();
         preAmp.gain.value = 0.6;
         currentNode.connect(preAmp);
         currentNode = preAmp;
 
-        if (cfg.eqEnabled && window.eqNodes) {
-            let freqs = [60, 230, 910, 3600, 14000];
-            let types = ['lowshelf', 'peaking', 'peaking', 'peaking', 'highshelf'];
-            let bandKeys = ['band60', 'band230', 'band910', 'band3600', 'band14000'];
-            
-            bandKeys.forEach((key, index) => {
-                let liveNode = window.eqNodes[key];
-                if (liveNode) {
-                    let filter = offlineCtx.createBiquadFilter();
-                    filter.type = types[index];
-                    filter.frequency.value = freqs[index];
-                    filter.gain.value = liveNode.gain.value; 
-                    currentNode.connect(filter);
-                    currentNode = filter;
-                }
-            });
-        }
-
+        // 2. FIR-сатуратор (идет ДО эквалайзера, строго как в живом графе)
         if (cfg.firEnabled && cfg.firSettings) {
             let preFirPad = offlineCtx.createGain();
             preFirPad.gain.value = 0.8;
@@ -105,11 +89,33 @@ window.exportCurrentTrack = async function() {
             currentNode = firGain;
         }
 
+        // 3. Эквалайзер (EQ IIR)
+        if (cfg.eqEnabled && window.eqNodes) {
+            let freqs = [60, 230, 910, 3600, 14000];
+            let types = ['lowshelf', 'peaking', 'peaking', 'peaking', 'highshelf'];
+            let bandKeys = ['band60', 'band230', 'band910', 'band3600', 'band14000'];
+            
+            bandKeys.forEach((key, index) => {
+                let liveNode = window.eqNodes[key];
+                if (liveNode) {
+                    let filter = offlineCtx.createBiquadFilter();
+                    filter.type = types[index];
+                    filter.frequency.value = freqs[index];
+                    filter.gain.value = liveNode.gain.value; 
+                    currentNode.connect(filter);
+                    currentNode = filter;
+                }
+            });
+        }
+
+        // 4. Громкость и Бустер (берем реальный гейн из живого графа или конфига)
         let gainNode = offlineCtx.createGain();
-        gainNode.gain.value = 1.0;
+        let activeVol = (window.gainNode && window.gainNode.gain) ? window.gainNode.gain.value : ((parseInt(cfg.defaultVolume, 10) || 10) / 10);
+        gainNode.gain.value = activeVol;
         currentNode.connect(gainNode);
         currentNode = gainNode;
 
+        // 5. Лимитер и 3-полосный кроссовер
         if (cfg.limiterEnabled && cfg.limiterSettings) {
             let thresh = cfg.limiterSettings.threshold;
             let knee = cfg.limiterSettings.knee;
@@ -118,11 +124,13 @@ window.exportCurrentTrack = async function() {
             let rel = cfg.limiterSettings.release / 1000;
 
             if (cfg.multiBandEnabled && cfg.multiBandSettings) {
-                let lowFreq = cfg.multiBandSettings.low;
-                let highFreq = cfg.multiBandSettings.high;
+                let lowFreq = Math.max(20, cfg.multiBandSettings.low || 200);
+                let highFreq = Math.max(lowFreq + 100, cfg.multiBandSettings.high || 2500);
+                let midCenter = Math.sqrt(lowFreq * highFreq);
+                let midQ = midCenter / (highFreq - lowFreq);
 
                 let splitLow = offlineCtx.createBiquadFilter(); splitLow.type = 'lowpass'; splitLow.frequency.value = lowFreq;
-                let splitMid = offlineCtx.createBiquadFilter(); splitMid.type = 'bandpass'; splitMid.frequency.value = (lowFreq + highFreq) / 2;
+                let splitMid = offlineCtx.createBiquadFilter(); splitMid.type = 'bandpass'; splitMid.frequency.value = midCenter; splitMid.Q.value = midQ;
                 let splitHigh = offlineCtx.createBiquadFilter(); splitHigh.type = 'highpass'; splitHigh.frequency.value = highFreq;
 
                 let compLow = offlineCtx.createDynamicsCompressor();
