@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
     - name: Оформление кода
@@ -18,10 +18,10 @@ jobs:
         distribution: 'temurin'
         java-version: '11'
 
-    - name: Установка Python 3.8
+    - name: Установка Python 3.11
       uses: actions/setup-python@v5
       with:
-        python-version: '3.8'
+        python-version: '3.11'
 
     - name: Загрузка FFmpeg (arm64)
       run: |
