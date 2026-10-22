@@ -1,19 +1,26 @@
 import os
 import json
 import subprocess
+import traceback
 from bottle import route, run, post, response, static_file, request
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
 
 MUSIC_DIR = "/storage/emulated/0/Music/"
 PRESET_FILE = os.path.join(MUSIC_DIR, "jenny_dsp_preset.json")
 
 @route('/')
 def index():
-    with open('index.html', 'r', encoding='utf-8') as f:
-        return f.read()
+    try:
+        with open(os.path.join(BASE_DIR, 'index.html'), 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception:
+        return f"<pre>{traceback.format_exc()}</pre>"
 
 @route('/<filename:re:.*\\.(js|css)>')
 def serve_static(filename):
-    return static_file(filename, root='.')
+    return static_file(filename, root=BASE_DIR)
 
 @route('/api/media/<filename:path>')
 def serve_media(filename):
