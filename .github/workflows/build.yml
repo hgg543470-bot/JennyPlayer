@@ -23,6 +23,12 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Подготовка 3D-иконки JPlay (обрезка черных полей и PNG 512x512)
+      run: |
+        mkdir -p app/src/main/res/mipmap-xxxhdpi
+        ffmpeg -y -i icon_raw.jpg -vf "crop=iw*0.80:ih*0.80,scale=512:512" app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+        rm -f icon_raw.jpg
+
     - name: Загрузка нативного Android FFmpeg (arm64-v8a)
       run: |
         mkdir -p app/src/main/jniLibs/arm64-v8a
@@ -31,7 +37,6 @@ jobs:
         rm -f ffmpeg-android.zip
         chmod 755 app/src/main/jniLibs/arm64-v8a/libffmpeg.so
         FILE_SIZE=$(stat -c%s app/src/main/jniLibs/arm64-v8a/libffmpeg.so)
-        echo "Размер Android FFmpeg: $FILE_SIZE байт"
         test "$FILE_SIZE" -gt 10000000
 
     - name: Подготовка Gradle
