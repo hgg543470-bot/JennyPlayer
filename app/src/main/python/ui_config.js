@@ -32,7 +32,7 @@ window.checkZones = function(idx) {
 };
 
 window.resetScrubZones = function() {
-    let defs = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
+    let defs = [1.1, 1, 1.05, 0.95, 1.5, 0.9];
     for(let i=1; i<=6; i++) {
         let enEl = document.getElementById('cfg_z' + i + '_en');
         let valEl = document.getElementById('cfg_z' + i + '_val');

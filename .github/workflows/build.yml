@@ -23,10 +23,19 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Подготовка 3D-иконки JPlay (обрезка черных полей и PNG 512x512)
+    - name: Подготовка 3D-иконки JPlay через Python Pillow
       run: |
+        pip install pillow
         mkdir -p app/src/main/res/mipmap-xxxhdpi
-        ffmpeg -y -i icon_raw.jpg -vf "crop=iw*0.80:ih*0.80,scale=512:512" app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+        python3 - << 'PYEOF'
+        from PIL import Image
+        img = Image.open("icon_raw.jpg").convert("RGBA")
+        w, h = img.size
+        margin_x, margin_y = int(w * 0.10), int(h * 0.10)
+        cropped = img.crop((margin_x, margin_y, w - margin_x, h - margin_y))
+        resized = cropped.resize((512, 512), Image.Resampling.LANCZOS)
+        resized.save("app/src/main/res/mipmap-xxxhdpi/ic_launcher.png", "PNG")
+        PYEOF
         rm -f icon_raw.jpg
 
     - name: Загрузка нативного Android FFmpeg (arm64-v8a)

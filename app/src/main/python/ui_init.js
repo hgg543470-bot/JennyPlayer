@@ -31,14 +31,14 @@ document.addEventListener("DOMContentLoaded", () => {
         if (el && window.appConfig[key] !== undefined) el.checked = window.appConfig[key];
     }
     
-    if (document.getElementById('cfg_boosterPower')) document.getElementById('cfg_boosterPower').value = window.appConfig.boosterPower;
-    if (document.getElementById('cfg_defaultScrubSpeed')) document.getElementById('cfg_defaultScrubSpeed').value = window.appConfig.defaultScrubSpeed || 2.0;
+    if (document.getElementById('cfg_boosterPower')) document.getElementById('cfg_boosterPower').value = window.appConfig.boosterPower ?? 5;
+    if (document.getElementById('cfg_defaultScrubSpeed')) document.getElementById('cfg_defaultScrubSpeed').value = window.appConfig.defaultScrubSpeed || 1.1;
     
     if (document.getElementById('cfg_normalPlaybackSpeed')) {
         document.getElementById('cfg_normalPlaybackSpeed').value = window.appConfig.normalPlaybackSpeed || 0.97;
     }
     
-    let defZones = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
+    let defZones = [1.1, 1, 1.05, 0.95, 1.5, 0.9];
     if (!window.appConfig.scrubZones || window.appConfig.scrubZones.length !== 6) {
         window.appConfig.scrubZones = defZones.map(v => ({val: v, en: true}));
     }

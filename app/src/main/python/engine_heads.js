@@ -4,25 +4,65 @@
 
 window.appConfig = JSON.parse(localStorage.getItem('ytm_config')) || {};
 
+if (!window.appConfig._defaultsV2) {
+    window.appConfig = {
+        ...window.appConfig,
+        _defaultsV2: true,
+        studioMode: true,
+        amoledMode: true,
+        volSlider: true,
+        leftHandedMode: false,
+        pitchLock: true,
+        xNormalSpeed: false,
+        normalPlaybackSpeed: 0.97,
+        autoSaveBase: false,
+        defaultScrubSpeed: 1.1,
+        autoSaveScrub: true,
+        scrubZones: [
+            { val: 1.1, en: true },
+            { val: 1, en: true },
+            { val: 1.05, en: true },
+            { val: 0.95, en: true },
+            { val: 1.5, en: true },
+            { val: 0.9, en: true }
+        ],
+        firEnabled: false,
+        firSettings: { gain: 2, decay: 4 },
+        multiBandEnabled: false,
+        multiBandSettings: { low: 1600, high: 7200 },
+        limiterEnabled: false,
+        limiterSettings: { threshold: -22, knee: 19, ratio: 22, attack: 26, release: 60 },
+        eqEnabled: true,
+        boosterEnabled: true,
+        boosterPower: 5
+    };
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+}
+
 if (window.appConfig.defaultVolume === undefined) window.appConfig.defaultVolume = "10";
 if (window.appConfig.boosterEnabled === undefined) window.appConfig.boosterEnabled = true;
-if (window.appConfig.boosterPower === undefined) window.appConfig.boosterPower = 20;
-if (window.appConfig.studioMode === undefined) window.appConfig.studioMode = false; 
-if (window.appConfig.eqEnabled === undefined) window.appConfig.eqEnabled = true; 
-if (window.appConfig.amoledMode === undefined) window.appConfig.amoledMode = false; 
+if (window.appConfig.boosterPower === undefined) window.appConfig.boosterPower = 5;
+if (window.appConfig.studioMode === undefined) window.appConfig.studioMode = true;
+if (window.appConfig.eqEnabled === undefined) window.appConfig.eqEnabled = true;
+if (window.appConfig.amoledMode === undefined) window.appConfig.amoledMode = true;
+if (window.appConfig.volSlider === undefined) window.appConfig.volSlider = true;
 
-if (window.appConfig.autoSaveScrub === undefined) window.appConfig.autoSaveScrub = false;
+if (window.appConfig.pitchLock === undefined) window.appConfig.pitchLock = true;
+if (window.appConfig.xNormalSpeed === undefined) window.appConfig.xNormalSpeed = false;
+if (window.appConfig.normalPlaybackSpeed === undefined) window.appConfig.normalPlaybackSpeed = 0.97;
+if (window.appConfig.autoSaveBase === undefined) window.appConfig.autoSaveBase = false;
+if (window.appConfig.autoSaveScrub === undefined) window.appConfig.autoSaveScrub = true;
 if (window.appConfig.leftHandedMode === undefined) window.appConfig.leftHandedMode = false;
-if (window.appConfig.defaultScrubSpeed === undefined) window.appConfig.defaultScrubSpeed = 2.0;
+if (window.appConfig.defaultScrubSpeed === undefined) window.appConfig.defaultScrubSpeed = 1.1;
 
 if (window.appConfig.eq === undefined) window.appConfig.eq = { b60: 0, b230: 0, b910: 0, b3600: 0, b14000: 0 };
-if (window.appConfig.firEnabled === undefined) window.appConfig.firEnabled = false; 
-if (window.appConfig.multiBandEnabled === undefined) window.appConfig.multiBandEnabled = false; 
-if (window.appConfig.limiterEnabled === undefined) window.appConfig.limiterEnabled = true; 
+if (window.appConfig.firEnabled === undefined) window.appConfig.firEnabled = false;
+if (window.appConfig.multiBandEnabled === undefined) window.appConfig.multiBandEnabled = false;
+if (window.appConfig.limiterEnabled === undefined) window.appConfig.limiterEnabled = false;
 
-if (window.appConfig.firSettings === undefined) window.appConfig.firSettings = { gain: 2.5, decay: 15 };
-if (window.appConfig.multiBandSettings === undefined) window.appConfig.multiBandSettings = { low: 200, high: 2500 };
-if (window.appConfig.limiterSettings === undefined) window.appConfig.limiterSettings = { threshold: -18, knee: 15, ratio: 20, attack: 15, release: 80 };
+if (window.appConfig.firSettings === undefined) window.appConfig.firSettings = { gain: 2, decay: 4 };
+if (window.appConfig.multiBandSettings === undefined) window.appConfig.multiBandSettings = { low: 1600, high: 7200 };
+if (window.appConfig.limiterSettings === undefined) window.appConfig.limiterSettings = { threshold: -22, knee: 19, ratio: 22, attack: 26, release: 60 };
 
 window.applyTheme = function() {
     if (window.appConfig.amoledMode) {
@@ -83,7 +123,6 @@ window.loadConfigFromDisk = async function() {
         if (document.getElementById('cfg_defaultScrubSpeed')) document.getElementById('cfg_defaultScrubSpeed').value = window.appConfig.defaultScrubSpeed;
         if (document.getElementById('cfg_normalPlaybackSpeed')) document.getElementById('cfg_normalPlaybackSpeed').value = window.appConfig.normalPlaybackSpeed || 0.97;
 
-        // 🚀 ИСПРАВЛЕНО: ВОССТАНАВЛИВАЕМ 6 ЗОН В ИНТЕРФЕЙС ИЗ ПИТОНА
         if (window.appConfig.scrubZones && window.appConfig.scrubZones.length === 6) {
             for(let i=0; i<6; i++) {
                 let z = window.appConfig.scrubZones[i];
@@ -153,12 +192,12 @@ window.loadSingle = async function(cat, key, elId) {
     } catch (e) {}
 };
 
-window.resetFIR = function() { document.getElementById('cfg_fir_gain').value = 2.5; document.getElementById('cfg_fir_decay').value = 15; if(typeof window.updateSettings === 'function') window.updateSettings(); };
-window.resetMultiBand = function() { document.getElementById('cfg_mb_low').value = 200; document.getElementById('cfg_mb_high').value = 2500; if(typeof window.updateSettings === 'function') window.updateSettings(); };
+window.resetFIR = function() { document.getElementById('cfg_fir_gain').value = 2; document.getElementById('cfg_fir_decay').value = 4; if(typeof window.updateSettings === 'function') window.updateSettings(); };
+window.resetMultiBand = function() { document.getElementById('cfg_mb_low').value = 1600; document.getElementById('cfg_mb_high').value = 7200; if(typeof window.updateSettings === 'function') window.updateSettings(); };
 window.resetLimiter = function() {
-    document.getElementById('cfg_lim_threshold').value = -18; document.getElementById('cfg_lim_knee').value = 15;
-    document.getElementById('cfg_lim_ratio').value = 20; document.getElementById('cfg_lim_attack').value = 15;
-    document.getElementById('cfg_lim_release').value = 80; if(typeof window.updateSettings === 'function') window.updateSettings();
+    document.getElementById('cfg_lim_threshold').value = -22; document.getElementById('cfg_lim_knee').value = 19;
+    document.getElementById('cfg_lim_ratio').value = 22; document.getElementById('cfg_lim_attack').value = 26;
+    document.getElementById('cfg_lim_release').value = 60; if(typeof window.updateSettings === 'function') window.updateSettings();
 };
 
 window.toggleVolumePopup = function(e) {
@@ -216,7 +255,7 @@ window.applyVolumeSettings = function() {
 
 window.updateSettings = function() {
     const elBoosterEn = document.getElementById('cfg_boosterEnabled'); if(elBoosterEn) window.appConfig.boosterEnabled = elBoosterEn.checked;
-    const elBoosterPw = document.getElementById('cfg_boosterPower'); if(elBoosterPw) window.appConfig.boosterPower = parseInt(elBoosterPw.value, 10) || 1;
+    const elBoosterPw = document.getElementById('cfg_boosterPower'); if(elBoosterPw) window.appConfig.boosterPower = parseInt(elBoosterPw.value, 10) || 5;
     const elStudio = document.getElementById('cfg_studioMode'); if(elStudio) window.appConfig.studioMode = elStudio.checked;
     const elEqEn = document.getElementById('cfg_eqEnabled'); if(elEqEn) window.appConfig.eqEnabled = elEqEn.checked;
     
@@ -235,9 +274,8 @@ window.updateSettings = function() {
     
     window.applyLeftHandedMode();
     
-    const elDefScrub = document.getElementById('cfg_defaultScrubSpeed'); if(elDefScrub) window.appConfig.defaultScrubSpeed = parseFloat(elDefScrub.value) || 2.0;
+    const elDefScrub = document.getElementById('cfg_defaultScrubSpeed'); if(elDefScrub) window.appConfig.defaultScrubSpeed = parseFloat(elDefScrub.value) || 1.1;
 
-    // 🚀 ИСПРАВЛЕНО: ЖЕСТКО СОХРАНЯЕМ 6 ЗОН В КОНФИГ
     if (!window.appConfig.scrubZones) window.appConfig.scrubZones = [];
     for(let i=1; i<=6; i++) {
         let enEl = document.getElementById('cfg_z' + i + '_en');
@@ -255,19 +293,19 @@ window.updateSettings = function() {
     const elLimEn = document.getElementById('cfg_limiterEnabled'); if(elLimEn) window.appConfig.limiterEnabled = elLimEn.checked;
     
     if (!window.appConfig.firSettings) window.appConfig.firSettings = {};
-    const elFirGain = document.getElementById('cfg_fir_gain'); if(elFirGain) window.appConfig.firSettings.gain = parseFloat(elFirGain.value) || 2.5;
-    const elFirDecay = document.getElementById('cfg_fir_decay'); if(elFirDecay) window.appConfig.firSettings.decay = parseFloat(elFirDecay.value) || 15;
+    const elFirGain = document.getElementById('cfg_fir_gain'); if(elFirGain) window.appConfig.firSettings.gain = parseFloat(elFirGain.value) || 2;
+    const elFirDecay = document.getElementById('cfg_fir_decay'); if(elFirDecay) window.appConfig.firSettings.decay = parseFloat(elFirDecay.value) || 4;
 
     if (!window.appConfig.multiBandSettings) window.appConfig.multiBandSettings = {};
-    const elMbLow = document.getElementById('cfg_mb_low'); if(elMbLow) window.appConfig.multiBandSettings.low = parseFloat(elMbLow.value) || 200;
-    const elMbHigh = document.getElementById('cfg_mb_high'); if(elMbHigh) window.appConfig.multiBandSettings.high = parseFloat(elMbHigh.value) || 2500;
+    const elMbLow = document.getElementById('cfg_mb_low'); if(elMbLow) window.appConfig.multiBandSettings.low = parseFloat(elMbLow.value) || 1600;
+    const elMbHigh = document.getElementById('cfg_mb_high'); if(elMbHigh) window.appConfig.multiBandSettings.high = parseFloat(elMbHigh.value) || 7200;
 
     if (!window.appConfig.limiterSettings) window.appConfig.limiterSettings = {};
-    const elLimThr = document.getElementById('cfg_lim_threshold'); if(elLimThr) window.appConfig.limiterSettings.threshold = parseFloat(elLimThr.value) || -18;
-    const elLimKnee = document.getElementById('cfg_lim_knee'); if(elLimKnee) window.appConfig.limiterSettings.knee = parseFloat(elLimKnee.value) || 15;
-    const elLimRatio = document.getElementById('cfg_lim_ratio'); if(elLimRatio) window.appConfig.limiterSettings.ratio = parseFloat(elLimRatio.value) || 20;
-    const elLimAttack = document.getElementById('cfg_lim_attack'); if(elLimAttack) window.appConfig.limiterSettings.attack = parseFloat(elLimAttack.value) || 15;
-    const elLimRel = document.getElementById('cfg_lim_release'); if(elLimRel) window.appConfig.limiterSettings.release = parseFloat(elLimRel.value) || 80;
+    const elLimThr = document.getElementById('cfg_lim_threshold'); if(elLimThr) window.appConfig.limiterSettings.threshold = parseFloat(elLimThr.value) || -22;
+    const elLimKnee = document.getElementById('cfg_lim_knee'); if(elLimKnee) window.appConfig.limiterSettings.knee = parseFloat(elLimKnee.value) || 19;
+    const elLimRatio = document.getElementById('cfg_lim_ratio'); if(elLimRatio) window.appConfig.limiterSettings.ratio = parseFloat(elLimRatio.value) || 22;
+    const elLimAttack = document.getElementById('cfg_lim_attack'); if(elLimAttack) window.appConfig.limiterSettings.attack = parseFloat(elLimAttack.value) || 26;
+    const elLimRel = document.getElementById('cfg_lim_release'); if(elLimRel) window.appConfig.limiterSettings.release = parseFloat(elLimRel.value) || 60;
 
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     
@@ -344,7 +382,6 @@ window.setupFolderLongPress = function() {
     folderIcon.addEventListener('touchend', () => { if(!isFired) clearTimeout(pressTimer); });
     folderIcon.addEventListener('touchmove', () => { clearTimeout(pressTimer); });
 
-    // Резервный обработчик, если папка выбрана через браузерный input
     if (filePicker) {
         filePicker.addEventListener('change', (e) => {
             if (e.target.files && e.target.files.length > 0) {
