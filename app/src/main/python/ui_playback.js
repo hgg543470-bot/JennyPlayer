@@ -165,6 +165,9 @@ window.playTrack = async function(filename, listContext = 'main') {
 
             if (window.currentPlayingTrack === filename) {
                 window.studioBuffer = decodedBuffer;
+                if (window.appConfig && window.appConfig.opt_autoRms && window.preAmpNode && typeof window.computeBufferAutoGain === 'function') {
+                    window.preAmpNode.gain.value = 0.6 * window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
+                }
                 let currentTargetSpd = window.getTargetPlaybackSpeed();
                 let nowRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
 

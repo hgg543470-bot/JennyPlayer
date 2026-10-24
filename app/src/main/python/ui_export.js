@@ -63,7 +63,7 @@ window.exportCurrentTrack = async function() {
         let cfg = window.appConfig || {};
 
         let preAmp = offlineCtx.createGain();
-        preAmp.gain.value = 0.6;
+        preAmp.gain.value = (cfg.opt_autoRms && typeof window.computeBufferAutoGain === 'function') ? (0.6 * window.computeBufferAutoGain(sourceBuffer, cfg.val_autoRms)) : 0.6;
         currentNode.connect(preAmp);
         currentNode = preAmp;
 
@@ -113,6 +113,9 @@ window.exportCurrentTrack = async function() {
             });
         }
 
+        if (typeof window.insertProStudioChain === 'function') {
+            currentNode = window.insertProStudioChain(offlineCtx, currentNode, cfg);
+        }
         let gainNode = offlineCtx.createGain();
         let activeVol = (window.gainNode && window.gainNode.gain) ? window.gainNode.gain.value : ((parseInt(cfg.defaultVolume, 10) || 10) / 10);
         gainNode.gain.value = activeVol;
