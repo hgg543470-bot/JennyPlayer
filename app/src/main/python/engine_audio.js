@@ -89,52 +89,91 @@ window.createSoftClipWaveShaper = function(ctx, bucket) {
 
 window.calculateAutoMasterPadDb = function(cfg) {
     let hotDb = 0.0;
+    let parts = [];
 
     if (cfg.firEnabled && cfg.firSettings) {
         let fg = parseFloat(cfg.firSettings.gain) || 2.0;
-        if (fg > 1.0) hotDb += 20 * Math.log10(fg) * 0.45;
+        let firHot = 0.0;
+        if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.45;
         if (cfg.opt_cleanFir) {
             let cfDb = parseFloat(cfg.val_cleanFir) || 0;
-            if (cfDb > 0) hotDb += cfDb * 0.4;
+            if (cfDb > 0) firHot += cfDb * 0.4;
+        }
+        if (firHot > 0.05) {
+            hotDb += firHot;
+            parts.push(`✨FIR -${firHot.toFixed(1)}`);
         }
     }
     if (cfg.opt_midPhase) {
         let mpDb = parseFloat(cfg.val_midPhase) || 0;
-        if (mpDb > 0) hotDb += mpDb * 0.45;
+        if (mpDb > 0) {
+            let v = mpDb * 0.45;
+            hotDb += v;
+            parts.push(`🎯СЧ -${v.toFixed(1)}`);
+        }
     }
     if (cfg.opt_deEsser) {
         let deDb = parseFloat(cfg.val_deEsser) || 0;
-        if (deDb > 0) hotDb += deDb * 0.35;
+        if (deDb > 0) {
+            let v = deDb * 0.35;
+            hotDb += v;
+            parts.push(`🐍ВЧ -${v.toFixed(1)}`);
+        }
     }
     if (cfg.opt_punch) {
         let pDb = parseFloat(cfg.val_punch) || 0;
-        if (pDb > 0) hotDb += pDb * 0.68;
+        if (pDb > 0) {
+            let v = pDb * 0.68;
+            hotDb += v;
+            parts.push(`🥁Панч -${v.toFixed(1)}`);
+        }
     }
     if (cfg.opt_msWidth) {
         let wPct = parseFloat(cfg.val_msWidth);
         if (isNaN(wPct)) wPct = 160;
         if (wPct > 100) {
-            hotDb += Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.68);
+            let v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.68);
+            if (v > 0.05) {
+                hotDb += v;
+                parts.push(`🎭Стерео -${v.toFixed(1)}`);
+            }
         }
     }
     if (cfg.opt_crossfeed) {
         let cPct = parseFloat(cfg.val_crossfeed) || 0;
-        if (cPct > 80) hotDb += Math.min(6, (cPct - 80) * 0.03);
+        if (cPct > 80) {
+            let v = Math.min(6, (cPct - 80) * 0.03);
+            if (v > 0.05) {
+                hotDb += v;
+                parts.push(`🎧Бин -${v.toFixed(1)}`);
+            }
+        }
     }
     if (cfg.opt_autoRms) {
         let tRms = parseFloat(cfg.val_autoRms);
         if (isNaN(tRms)) tRms = -10;
-        if (tRms > -12) hotDb += (tRms + 12) * 0.75;
+        if (tRms > -12) {
+            let v = (tRms + 12) * 0.75;
+            if (v > 0.05) {
+                hotDb += v;
+                parts.push(`⚡RMS -${v.toFixed(1)}`);
+            }
+        }
     }
 
     let padDb = -Math.max(0.5, hotDb);
     window.lastComputedCeilingDb = Math.round(padDb * 10) / 10;
+    window.lastCeilingBreakdown = parts.length > 0 ? parts.join(' │ ') : 'Базовый запас -0.5 dB';
+
     const badge = document.getElementById('autoCeilStatusBadge');
     if (badge) {
         badge.innerText = cfg.opt_masterCeil
             ? `Авто: ${window.lastComputedCeilingDb} dB`
-            : `ВЫКЛ (Риск клипа!)`;
-        badge.style.color = cfg.opt_masterCeil ? '#3fb950' : '#f85149';
+            : `ВЫКЛ`;
+        badge.style.color = cfg.opt_masterCeil ? '#3fb950' : '#8b949e';
+    }
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') {
+        window.updateTopSearchOrMonitorBar();
     }
     return padDb;
 };

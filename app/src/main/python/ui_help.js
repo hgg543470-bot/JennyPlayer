@@ -1,3 +1,47 @@
+
+window.updateTopSearchOrMonitorBar = function() {
+    const searchInput = document.getElementById('searchInput');
+    if (!searchInput) return;
+    const barWrap = searchInput.parentElement;
+    if (!barWrap) return;
+
+    const settingsPanel = document.getElementById('settingsPanel');
+    const eqPanel = document.getElementById('eqPanel');
+    const isSettingsOpen = (settingsPanel && settingsPanel.style.display === 'block') || (eqPanel && eqPanel.style.display === 'block');
+    const cfg = window.appConfig || {};
+    const ceilOn = Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled);
+
+    let monEl = document.getElementById('topAutoCeilMonitor');
+    if (!monEl) {
+        monEl = document.createElement('div');
+        monEl.id = 'topAutoCeilMonitor';
+        monEl.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #2ea043;border-radius:8px;padding:7px 10px;font-size:11.5px;color:#e6edf3;white-space:nowrap;overflow-x:auto;font-family:monospace;box-shadow:0 0 8px rgba(46,160,67,0.25);';
+        barWrap.appendChild(monEl);
+    }
+
+    if (!isSettingsOpen) {
+        // В списке песен показываем обычный поиск
+        barWrap.style.display = '';
+        searchInput.style.display = '';
+        monEl.style.display = 'none';
+    } else {
+        // В настройках или эквалайзере поиск не нужен!
+        searchInput.style.display = 'none';
+        if (ceilOn) {
+            // Показываем живой монитор Авто-Мастера на месте строки поиска
+            barWrap.style.display = '';
+            monEl.style.display = 'block';
+            let totalTxt = (typeof window.lastComputedCeilingDb !== 'undefined') ? window.lastComputedCeilingDb : -0.5;
+            let detailsTxt = window.lastCeilingBreakdown || 'Базовый запас -0.5 dB';
+            monEl.innerHTML = `<span style="color:#3fb950;font-weight:bold;">🛡️ Преамп: ${totalTxt} dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">${detailsTxt}</span>`;
+        } else {
+            // Если галочка Авто-Мастер-Потолка выключена — полностью прячем всю загораживающую плашку!
+            monEl.style.display = 'none';
+            barWrap.style.display = 'none';
+        }
+    }
+};
+
 window._dspInputDebounce = null;
 
 window.ensureParentDspBlocks = function(triggerKey, ev) {
