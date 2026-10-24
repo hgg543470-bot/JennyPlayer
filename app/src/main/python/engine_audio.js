@@ -1,5 +1,5 @@
 // =========================================================================
-// 🎵 ENGINE_AUDIO.JS (АВТО-МАСТЕР-ПОТОЛОК + SOFT-CLIP WAVE-SHAPER + 3D STUDIO)
+// 🎵 ENGINE_AUDIO.JS (ANTI-WHINE NOISE GATE + BARRACUDA 3D ALL-PASS STEREO)
 // =========================================================================
 
 window.audioCtx = null;
@@ -37,7 +37,7 @@ window.DSP_MOD_DEFAULTS = {
     opt_masterCeil: true,  val_masterCeil: -1.0,  // Автоматический расчёт!
     opt_autoRms: false,    val_autoRms: -10.0,    // -10 dB (целевая плотность RMS)
     opt_monoBass: false,   val_monoBass: 120,     // 120 Hz (моно-саббас)
-    opt_msWidth: false,    val_msWidth: 150,      // 150% (3D стерео-панорама без потери центра)
+    opt_msWidth: false,    val_msWidth: 160,      // 160% (3D All-Pass панорама для закрытых наушников)
     opt_punch: false,      val_punch: 6.0,        // +6 dB (упругий панч бочки и снейра)
     opt_crossfeed: false,  val_crossfeed: 75      // 75% (бинауральные колонки)
 };
@@ -61,22 +61,27 @@ window.cleanupDynamicNodes = function() {
     }
 };
 
-// Мягкий ламповый анти-клиппер (Tanh Soft Clipper) — на 100% защищает от цифрового пердежа и отключения звука ЦАПом!
+// Гибридный WaveShaper: Убивает писк дросселей в тишине (Ultra-Low Noise Gate) + Мягкий Tanh Soft-Clipper на пиках!
 window.createSoftClipWaveShaper = function(ctx, bucket) {
     let shaper = window.trackNode(ctx.createWaveShaper(), bucket);
-    let samples = 8192;
+    let samples = 65536;
     let curve = new Float32Array(samples);
+    let gateThresh = 0.00035; // Порог отсечки теплового писка компрессоров (-69 dB)
     for (let i = 0; i < samples; i++) {
-        let x = (i * 2) / samples - 1;
-        // Мягкое аналоговое насыщение гиперболическим тангенсом с потолком 0.96 (-0.3 dBFS)
-        curve[i] = Math.tanh(x * 1.35) * 0.96;
+        let x = (i * 2) / (samples - 1) - 1.0;
+        let ax = Math.abs(x);
+        if (ax < gateThresh) {
+            // Плавный квадратичный затвор микро-шума — убирает высокочастотный писк в паузах в 0.0!
+            let ratio = ax / gateThresh;
+            x = x * ratio * ratio;
+        }
+        curve[i] = Math.tanh(x * 1.32) * 0.96;
     }
     shaper.curve = curve;
     shaper.oversample = '2x';
     return shaper;
 };
 
-// Интеллектуальный расчёт компенсации Мастер-Потолка по ВСЕМ включённым эффектам сразу!
 window.calculateAutoMasterPadDb = function(cfg) {
     let hotDb = 0.0;
 
@@ -102,9 +107,9 @@ window.calculateAutoMasterPadDb = function(cfg) {
     }
     if (cfg.opt_msWidth) {
         let wPct = parseFloat(cfg.val_msWidth);
-        if (isNaN(wPct)) wPct = 150;
+        if (isNaN(wPct)) wPct = 160;
         if (wPct > 100) {
-            hotDb += Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 150) * 0.65);
+            hotDb += Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.68);
         }
     }
     if (cfg.opt_crossfeed) {
@@ -164,24 +169,24 @@ window.createFIRImpulse = function(context, decayMs) {
     for (let channel = 0; channel < 2; channel++) {
         let data = impulse.getChannelData(channel);
         for (let i = 0; i < length; i++) {
+            // Окно плавного затухания Хэннинга на конце хвоста, чтобы обрыв буфера никогда не гудел и не пищал!
+            let tailWindow = 0.5 * (1 + Math.cos(Math.PI * i / length));
             if (i === 0) {
                 data[i] = 1.0;
             } else if (cfg.phaseFixEnabled) {
-                data[i] = Math.exp(-i / (length / 2.5)) * 0.055 * lengthNorm * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
+                data[i] = Math.exp(-i / (length / 2.5)) * tailWindow * 0.055 * lengthNorm * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
             } else if (cfg.opt_cleanFir) {
-                // Гладкая апериодическая биполярная кривая (БЕЗ металлического звона синуса на одной ноте!)
                 let a = Math.exp(-i / (length / 6.0));
                 let b = Math.exp(-i / (length / 2.1));
-                data[i] = (a - 0.46 * b) * 0.08 * lengthNorm * cleanLinear;
+                data[i] = (a - 0.46 * b) * tailWindow * 0.08 * lengthNorm * cleanLinear;
             } else {
-                data[i] = Math.exp(-i / (length / 3)) * 0.05 * lengthNorm;
+                data[i] = Math.exp(-i / (length / 3)) * tailWindow * 0.05 * lengthNorm;
             }
         }
     }
     return impulse;
 };
 
-// Стадия 1 (ДО лимитера): Авто-RMS (выравнивает вход в лимитер!) + Моно-Саббас
 window.insertProStudioPreChain = function(ctx, inputNode, cfg, bucket, sourceBuf) {
     let cur = inputNode;
     const reg = (n) => window.trackNode(n, bucket);
@@ -193,7 +198,6 @@ window.insertProStudioPreChain = function(ctx, inputNode, cfg, bucket, sourceBuf
         return g;
     };
 
-    // 1. ⚡ Авто-RMS: работает ДО лимитера (чтобы тихие треки плотно накачивались лимитером) + даёт 40% поправки на выход
     if (cfg.opt_autoRms) {
         let buf = sourceBuf || window.studioBuffer;
         let fullGain = buf ? window.computeBufferAutoGain(buf, cfg.val_autoRms) : window.dbToLinear((parseFloat(cfg.val_autoRms) || -10) + 10);
@@ -203,10 +207,13 @@ window.insertProStudioPreChain = function(ctx, inputNode, cfg, bucket, sourceBuf
         cur = preGain;
     }
 
-    // 2. 🧲 Моно-Саббас (сводящийся в моно ниже N Hz без потери громкости!)
     if (cfg.opt_monoBass) {
         let monoHz = parseFloat(cfg.val_monoBass);
         if (isNaN(monoHz)) monoHz = 120;
+        // Если включена Стерео-Ширина > 120%, не даём Моно-Саббасу зажимать мид-бас выше 85 Гц, чтобы в Barracuda X раскрылся объём!
+        if (cfg.opt_msWidth && (parseFloat(cfg.val_msWidth) || 150) > 120 && monoHz > 95 && monoHz <= 200) {
+            monoHz = 80;
+        }
         monoHz = Math.max(20, Math.min(20000, monoHz));
 
         let sp = reg(ctx.createChannelSplitter(2));
@@ -240,7 +247,7 @@ window.insertProStudioPreChain = function(ctx, inputNode, cfg, bucket, sourceBuf
     return cur;
 };
 
-// Стадия 2 (ПОСЛЕ полосовых компрессоров + ЗАЩИЩЁННАЯ ФИНАЛЬНЫМ АВТО-ПОТОЛКОМ!):
+// Стадия 2 (ПОСЛЕ компрессоров): All-Pass 3D Стерео для закрытых наушников + Anti-Whine Gate
 window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBuf) {
     let cur = inputNode;
     const reg = (n) => window.trackNode(n, bucket);
@@ -252,7 +259,6 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         return g;
     };
 
-    // Остаток Авто-RMS (35%) для точной калибровки выходной громкости
     if (cfg.opt_autoRms) {
         let buf = sourceBuf || window.studioBuffer;
         let fullGain = buf ? window.computeBufferAutoGain(buf, cfg.val_autoRms) : window.dbToLinear((parseFloat(cfg.val_autoRms) || -10) + 10);
@@ -262,7 +268,6 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         cur = postRms;
     }
 
-    // 🥁 Панч-Хлыст Атаки (Музыкальный динамический удар бочки 75 Гц + презенс снейра 2200 Гц без телефонного визга!)
     if (cfg.opt_punch) {
         let punchDb = parseFloat(cfg.val_punch);
         if (isNaN(punchDb)) punchDb = 6.0;
@@ -270,78 +275,102 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
 
         let kickBody = reg(ctx.createBiquadFilter());
         kickBody.type = 'peaking';
-        kickBody.frequency.value = 72;
-        kickBody.Q.value = 1.35;
+        kickBody.frequency.value = 68;
+        kickBody.Q.value = 1.3;
         kickBody.gain.value = clampedPunch;
 
         let snareSnap = reg(ctx.createBiquadFilter());
         snareSnap.type = 'peaking';
         snareSnap.frequency.value = 2100;
-        snareSnap.Q.value = 0.9;
-        snareSnap.gain.value = clampedPunch * 0.45;
+        snareSnap.Q.value = 0.85;
+        snareSnap.gain.value = clampedPunch * 0.4;
 
         cur.connect(kickBody);
         kickBody.connect(snareSnap);
         cur = snareSnap;
     }
 
-    // 🎭 Стерео-Ширина (%) — Музыкальный 3D-Даблер + Mid/Side (НИКОГДА не убивает центральный бас и вокал!)
+    // 🎭 Стерео-Ширина (%) — Специальная 3D All-Pass + Side-Exciter матрица под закрытые 50-мм чашки Razer Barracuda X!
     if (cfg.opt_msWidth) {
         let pct = parseFloat(cfg.val_msWidth);
-        if (isNaN(pct)) pct = 150;
+        if (isNaN(pct)) pct = 160;
         let w = Math.max(0, Math.min(500, pct)) / 100.0;
 
         let sp = reg(ctx.createChannelSplitter(2));
         let mg = reg(ctx.createChannelMerger(2));
 
-        // Центр (Mid) ВСЕГДА остаётся полновесным (1.0), чтобы бочка и вокал никогда не пропадали!
-        let mL = monoGain(0.5);
-        let mR = monoGain(0.5);
+        // Центр (Mid) держит плотный удар бочки и вокала
+        let midScale = (w <= 1.0) ? 1.0 : Math.max(0.72, 1.0 - (w - 1.0) * 0.12);
+        let mL = monoGain(0.5 * midScale);
+        let mR = monoGain(0.5 * midScale);
 
-        // Боковая составляющая (Side) масштабируется плавно и музыкально
-        let sideScale = (w <= 1.0) ? w : (1.0 + (w - 1.0) * 0.65);
+        // Боковой канал (Side = L - R) проходит через 2-полосный эксайтер (Объём 135 Гц + Бриллиантовый воздух 9500 Гц!)
+        let sideScale = (w <= 1.0) ? w : (1.0 + (w - 1.0) * 0.85);
         let sL = monoGain(0.5 * sideScale);
         let sR = monoGain(-0.5 * sideScale);
         let sBus = monoGain(1.0);
-        let sInv = monoGain(-1.0);
 
         cur.connect(sp);
         sp.connect(mL, 0); sp.connect(mR, 1);
         sp.connect(sL, 0); sp.connect(sR, 1);
         sL.connect(sBus); sR.connect(sBus);
-        sBus.connect(sInv);
 
-        mL.connect(mg, 0, 0); mR.connect(mg, 0, 0); sBus.connect(mg, 0, 0);
+        let sideFinal = sBus;
+        if (w > 1.0) {
+            let boostDb = Math.min(10, (w - 1.0) * 4.5);
+            // Накачиваем боковой объём мид-баса (135 Гц) и кристальный воздух (9000 Гц) по краям чашек наушников!
+            let sideWarmth = reg(ctx.createBiquadFilter());
+            sideWarmth.channelCount = 1; sideWarmth.channelCountMode = 'explicit';
+            sideWarmth.type = 'peaking'; sideWarmth.frequency.value = 135; sideWarmth.Q.value = 0.9;
+            sideWarmth.gain.value = boostDb * 0.8;
+
+            let sideAir = reg(ctx.createBiquadFilter());
+            sideAir.channelCount = 1; sideAir.channelCountMode = 'explicit';
+            sideAir.type = 'highshelf'; sideAir.frequency.value = 8500;
+            sideAir.gain.value = boostDb * 1.1;
+
+            sBus.connect(sideWarmth);
+            sideWarmth.connect(sideAir);
+            sideFinal = sideAir;
+        }
+
+        let sInv = monoGain(-1.0);
+        sideFinal.connect(sInv);
+
+        mL.connect(mg, 0, 0); mR.connect(mg, 0, 0); sideFinal.connect(mg, 0, 0);
         mL.connect(mg, 0, 1); mR.connect(mg, 0, 1); sInv.connect(mg, 0, 1);
 
-        // При >100% включается студийный 3D-Даблер (левое ухо 5.5 мс, правое 8.5 мс выше 220 Гц) — даёт широченный купол!
+        // Фазовый 90° All-Pass декореллятор (создаёт широкую голографическую сцену БЕЗ эха даже на моно-дорожках!)
         if (w > 1.0) {
-            let doublerGain = Math.min(0.55, (w - 1.0) * 0.22);
-            let hpD = reg(ctx.createBiquadFilter());
-            hpD.type = 'highpass'; hpD.frequency.value = 220;
+            let apGain = Math.min(0.48, (w - 1.0) * 0.24);
+            let hpAp = reg(ctx.createBiquadFilter());
+            hpAp.channelCount = 1; hpAp.channelCountMode = 'explicit';
+            hpAp.type = 'highpass'; hpAp.frequency.value = 140;
 
-            let lpD = reg(ctx.createBiquadFilter());
-            lpD.type = 'lowpass'; lpD.frequency.value = 9500;
+            let ap1 = reg(ctx.createBiquadFilter());
+            ap1.channelCount = 1; ap1.channelCountMode = 'explicit';
+            ap1.type = 'allpass'; ap1.frequency.value = 380; ap1.Q.value = 0.7;
 
-            let dLeft = reg(ctx.createDelay(0.05)); dLeft.channelCount = 1; dLeft.channelCountMode = 'explicit'; dLeft.delayTime.value = 0.0058;
-            let dRight = reg(ctx.createDelay(0.05)); dRight.channelCount = 1; dRight.channelCountMode = 'explicit'; dRight.delayTime.value = 0.0089;
+            let ap2 = reg(ctx.createBiquadFilter());
+            ap2.channelCount = 1; ap2.channelCountMode = 'explicit';
+            ap2.type = 'allpass'; ap2.frequency.value = 1950; ap2.Q.value = 0.7;
 
-            let gDL = monoGain(doublerGain);
-            let gDR = monoGain(-doublerGain);
+            let gApL = monoGain(apGain);
+            let gApR = monoGain(-apGain);
 
-            cur.connect(hpD); hpD.connect(lpD);
-            lpD.connect(dLeft); dLeft.connect(gDL); gDL.connect(mg, 0, 0);
-            lpD.connect(dRight); dRight.connect(gDR); gDR.connect(mg, 0, 1);
+            mL.connect(hpAp); mR.connect(hpAp);
+            hpAp.connect(ap1); ap1.connect(ap2);
+            ap2.connect(gApL); ap2.connect(gApR);
+            gApL.connect(mg, 0, 0);
+            gApR.connect(mg, 0, 1);
         }
 
         let out = reg(ctx.createGain());
-        // Авто-нормализация громкости матрицы, чтобы при 300-500% не взрывался уровень
-        out.gain.value = 1.0 / (1.0 + Math.max(0, w - 1.0) * 0.28);
+        out.gain.value = 1.0 / (1.0 + Math.max(0, w - 1.0) * 0.25);
         mg.connect(out);
         cur = out;
     }
 
-    // 🎧 Бинаурал «Колонки в комнате» (%)
     if (cfg.opt_crossfeed) {
         let mixPct = parseFloat(cfg.val_crossfeed);
         if (isNaN(mixPct)) mixPct = 75;
@@ -377,8 +406,9 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         cur = cfOut;
     }
 
-    // 🛡️ ФИНАЛЬНЫЙ АВТОМАТИЧЕСКИЙ МАСТЕР-ПОТОЛОК (рассчитывается индивидуально под текущую комбинацию всех включённых эффектов!)
     let padDb = window.calculateAutoMasterPadDb(cfg);
+    let softClipper = window.createSoftClipWaveShaper(ctx, bucket);
+
     if (cfg.opt_masterCeil || cfg.phaseFixEnabled) {
         let autoPad = reg(ctx.createGain());
         autoPad.gain.value = window.dbToLinear(padDb);
@@ -389,11 +419,13 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         window.masterSafeComp.attack.value = 0.001;
         window.masterSafeComp.release.value = 0.05;
 
-        let softClipper = window.createSoftClipWaveShaper(ctx, bucket);
-
         cur.connect(autoPad);
         autoPad.connect(window.masterSafeComp);
         window.masterSafeComp.connect(softClipper);
+        cur = softClipper;
+    } else {
+        // Даже если Авто-Мастер-Потолок выключен, анти-писк Gate остаётся на страже тишины!
+        cur.connect(softClipper);
         cur = softClipper;
     }
 
@@ -440,6 +472,25 @@ window.initAudioBoost = function() {
         window.midPhaseNode = window.audioCtx.createGain();
         window.deEssGain = window.audioCtx.createGain();
         window.masterSafeComp = window.audioCtx.createDynamicsCompressor();
+
+        // Авто-блокировка писка дросселей, когда плеер стоит на паузе!
+        if (player) {
+            player.addEventListener('pause', () => {
+                if (window.inputMixer && window.audioCtx) {
+                    window.inputMixer.gain.setTargetAtTime(0.0, window.audioCtx.currentTime, 0.015);
+                }
+            });
+            player.addEventListener('play', () => {
+                if (window.inputMixer && window.audioCtx) {
+                    window.inputMixer.gain.setTargetAtTime(1.0, window.audioCtx.currentTime, 0.015);
+                }
+            });
+            player.addEventListener('ended', () => {
+                if (window.inputMixer && window.audioCtx) {
+                    window.inputMixer.gain.setTargetAtTime(0.0, window.audioCtx.currentTime, 0.015);
+                }
+            });
+        }
     }
     if (window.audioCtx.state === 'suspended') { window.audioCtx.resume(); }
     window.buildAudioGraph(); 
@@ -462,6 +513,8 @@ window.buildAudioGraph = function() {
     Object.values(window.eqNodes).forEach(node => { try { node.disconnect(); } catch(e){} });
 
     const cfg = window.appConfig || {};
+    const player = document.getElementById('audioPlayer');
+    window.inputMixer.gain.value = (player && player.paused) ? 0.0 : 1.0;
     window.preAmpNode.gain.value = 0.6;
 
     let currentNode = window.inputMixer;
@@ -504,10 +557,11 @@ window.buildAudioGraph = function() {
             let midCenter = Math.sqrt(lowFreq * highFreq);
             let midQ = midCenter / (highFreq - lowFreq);
 
-            window.splitLow.frequency.value = lowFreq;
-            window.splitMid.frequency.value = midCenter;
-            window.splitMid.Q.value = midQ;
-            window.splitHigh.frequency.value = highFreq;
+            // Плавная перестройка катушек кроссовера без эффекта искрящего дросселя!
+            let now = window.audioCtx.currentTime;
+            window.splitLow.frequency.setTargetAtTime(lowFreq, now, 0.012);
+            window.splitMid.frequency.setTargetAtTime(midCenter, now, 0.012);
+            window.splitHigh.frequency.setTargetAtTime(highFreq, now, 0.012);
 
             window.compLow.threshold.value = thresh; window.compLow.knee.value = knee; window.compLow.ratio.value = ratio;
             window.compLow.attack.value = cfg.limiterSettings.attack / 1000; 
@@ -525,18 +579,16 @@ window.buildAudioGraph = function() {
             let postBus = window.trackNode(window.audioCtx.createGain(), window.activeDynamicNodes);
 
             if (cfg.phaseFixEnabled) {
-                window.splitMid.Q.value = Math.max(0.25, midQ * 0.65);
+                window.splitMid.Q.setTargetAtTime(Math.max(0.25, midQ * 0.65), now, 0.012);
                 window.midPhaseNode.gain.value = -1.22;
                 window.compLow.connect(postBus);
                 window.compMid.connect(window.midPhaseNode);
                 window.midPhaseNode.connect(postBus);
                 window.compHigh.connect(postBus);
             } else {
-                // Защита от "1%" телефонной щели: минимум 25% ширины купола, чтобы никогда не пропадал вокал!
                 let widthPct = parseFloat(cfg.val_midQ); if (isNaN(widthPct) || widthPct < 25) widthPct = 150;
-                if (cfg.opt_midQ) {
-                    window.splitMid.Q.value = Math.max(0.15, Math.min(2.5, midQ / (widthPct / 100.0)));
-                }
+                let targetQ = cfg.opt_midQ ? Math.max(0.15, Math.min(2.5, midQ / (widthPct / 100.0))) : midQ;
+                window.splitMid.Q.setTargetAtTime(targetQ, now, 0.012);
 
                 let midDb = parseFloat(cfg.val_midPhase); if (isNaN(midDb)) midDb = 3.0;
                 window.midPhaseNode.gain.value = cfg.opt_midPhase ? -window.dbToLinear(Math.min(15, midDb)) : 1.0;
