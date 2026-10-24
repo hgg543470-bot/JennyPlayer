@@ -83,6 +83,9 @@ window.initAudioBoost = function() {
         window.deEssGain = window.audioCtx.createGain();
         window.masterSafeComp = window.audioCtx.createDynamicsCompressor();
         window.midPhaseNode = window.audioCtx.createGain();
+        window.deEssGain = window.audioCtx.createGain();
+        window.masterSafeComp = window.audioCtx.createDynamicsCompressor();
+        window.midPhaseNode = window.audioCtx.createGain();
         window.masterSafeComp = window.audioCtx.createDynamicsCompressor();
     }
     if (window.audioCtx.state === 'suspended') { window.audioCtx.resume(); }
@@ -231,4 +234,174 @@ document.addEventListener("DOMContentLoaded", () => {
             opts.map(([k, lbl]) => `<label style="display:flex;align-items:center;gap:10px;color:#e6edf3;font-size:12.5px;cursor:pointer;"><input type="checkbox" ${cfg[k] ? 'checked' : ''} onchange="window.toggleDspOpt('${k}', this)" style="width:17px;height:17px;accent-color:#7341be;flex-shrink:0;"><span>${lbl}</span></label>`).join('');
         eqM.insertBefore(box, eqM.firstChild);
     }
+});
+
+
+window.DSP_MOD_DEFAULTS = {
+    opt_midPhase: false, val_midPhase: 1.15,
+    opt_midQ: false,     val_midQ: 0.65,
+    opt_deEsser: false,  val_deEsser: 0.66,
+    opt_cleanFir: false, val_cleanFir: 0.03,
+    opt_masterCeil: false, val_masterCeil: -1.0
+};
+
+window.syncDspModUI = function() {
+    const cfg = window.appConfig || {};
+    const pfEl = document.getElementById('cfg_phaseFix');
+    if (pfEl) pfEl.checked = Boolean(cfg.phaseFixEnabled);
+
+    ['midPhase', 'midQ', 'deEsser', 'cleanFir', 'masterCeil'].forEach(k => {
+        const chk = document.getElementById('cfg_opt_' + k);
+        const inp = document.getElementById('cfg_val_' + k);
+        if (chk) chk.checked = Boolean(cfg['opt_' + k]);
+        if (inp) {
+            let v = cfg['val_' + k];
+            inp.value = (v !== undefined && v !== null && v !== '') ? v : window.DSP_MOD_DEFAULTS['val_' + k];
+        }
+    });
+
+    const wrap = document.getElementById('dspModBodyWrap');
+    const shield = document.getElementById('dspModLockShield');
+    if (wrap && shield) {
+        if (cfg.phaseFixEnabled) {
+            wrap.style.opacity = '0.32';
+            wrap.style.filter = 'grayscale(100%)';
+            shield.style.display = 'block';
+        } else {
+            wrap.style.opacity = '1';
+            wrap.style.filter = 'none';
+            shield.style.display = 'none';
+        }
+    }
+};
+
+window.onPhaseFocusChange = function(el, ev) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.phaseFixEnabled = Boolean(el.checked);
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.syncDspModUI();
+    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+    try { navigator.vibrate(40); } catch(e){}
+    if (el.checked && typeof window.showToast === 'function') {
+        window.showToast("🔒 Блок управления отключён! Для ручной настройки выключите «Фазовый фокус»", ev);
+    } else if (!el.checked && typeof window.showToast === 'function') {
+        window.showToast("🔓 Ручной блок тонкой настройки активен!", ev);
+    }
+};
+
+window.onDspModChange = function(key) {
+    window.appConfig = window.appConfig || {};
+    const chk = document.getElementById('cfg_opt_' + key);
+    const inp = document.getElementById('cfg_val_' + key);
+    if (chk) window.appConfig['opt_' + key] = Boolean(chk.checked);
+    if (inp) {
+        let parsed = parseFloat(String(inp.value).replace(',', '.'));
+        if (!isNaN(parsed)) window.appConfig['val_' + key] = parsed;
+    }
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+};
+
+window.saveDspModRow = function(key, ev) {
+    window.onDspModChange(key);
+    let saved = JSON.parse(localStorage.getItem('ytm_dsp_mod_saved') || '{}');
+    saved['opt_' + key] = window.appConfig['opt_' + key];
+    saved['val_' + key] = window.appConfig['val_' + key];
+    localStorage.setItem('ytm_dsp_mod_saved', JSON.stringify(saved));
+    try { navigator.vibrate(30); } catch(e){}
+    if (typeof window.showToast === 'function') window.showToast("💾 Настройка сохранена!", ev);
+};
+
+window.loadDspModRow = function(key, ev) {
+    let saved = JSON.parse(localStorage.getItem('ytm_dsp_mod_saved') || '{}');
+    window.appConfig = window.appConfig || {};
+    window.appConfig['opt_' + key] = (saved['opt_' + key] !== undefined) ? saved['opt_' + key] : window.DSP_MOD_DEFAULTS['opt_' + key];
+    window.appConfig['val_' + key] = (saved['val_' + key] !== undefined) ? saved['val_' + key] : window.DSP_MOD_DEFAULTS['val_' + key];
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.syncDspModUI();
+    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+    try { navigator.vibrate(30); } catch(e){}
+    if (typeof window.showToast === 'function') window.showToast("📥 Загружено из памяти!", ev);
+};
+
+window.resetDspModAll = function(ev) {
+    window.appConfig = window.appConfig || {};
+    Object.keys(window.DSP_MOD_DEFAULTS).forEach(k => {
+        window.appConfig[k] = window.DSP_MOD_DEFAULTS[k];
+    });
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.syncDspModUI();
+    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+    try { navigator.vibrate(35); } catch(e){}
+    if (typeof window.showToast === 'function') window.showToast("🔄 Тонкие настройки сброшены!", ev);
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+    const sm = document.getElementById('settingsModal');
+    if (!sm || document.getElementById('phaseFocusMasterCard')) return;
+
+    // Ищем плашку "Студийный движок (RAM)"
+    let ramCard = null;
+    sm.querySelectorAll('div, label').forEach(el => {
+        if (!ramCard && el.innerText && el.innerText.trim() === 'Студийный движок (RAM)') {
+            ramCard = el.closest('div') || el.parentElement;
+        }
+    });
+
+    // 1. Создаём одиночную плашку "Фазовый фокус" прямо под Студийным движком (RAM)
+    const pfCard = document.createElement('div');
+    pfCard.id = 'phaseFocusMasterCard';
+    pfCard.style.cssText = "background:#0b0e14;border:1px solid #21262d;border-left:3px solid #8957e5;border-radius:10px;padding:12px 14px;margin:8px 0 12px 0;display:flex;align-items:center;";
+    pfCard.innerHTML = `<label style="display:flex;align-items:center;gap:10px;color:#e6edf3;font-size:14px;font-weight:bold;cursor:pointer;width:100%;margin:0;"><input type="checkbox" id="cfg_phaseFix" onchange="window.onPhaseFocusChange(this, event)" style="width:18px;height:18px;accent-color:#2f81f7;flex-shrink:0;"><span>🎯 Фазовый фокус (Выравнивание вокала и баса)</span></label>`;
+
+    // 2. Создаём секцию из 5 модульных настроек с полями ввода и кнопками 📥 / 💾
+    const rows = [
+        ['midPhase',   '🎯 Инверсия фазы СЧ (Гейн):', '0.05'],
+        ['midQ',       '📐 Широкий купол СЧ (Q):',    '0.05'],
+        ['deEsser',    '🐍 Де-эссер ВЧ (Уровень):',   '0.05'],
+        ['cleanFir',   '✨ Чистый FIR (Импульс):',    '0.005'],
+        ['masterCeil', '🛡️ Мастер-потолок (dB):',     '0.1']
+    ];
+
+    const btnStyle = "background:#161b22;border:1px solid #30363d;border-radius:6px;padding:6px 8px;cursor:pointer;font-size:13px;color:#e6edf3;display:flex;align-items:center;justify-content:center;";
+    const inpStyle = "width:64px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;text-align:center;font-size:14px;padding:5px 4px;";
+
+    const modSection = document.createElement('details');
+    modSection.id = 'dspModularSection';
+    modSection.open = true;
+    modSection.style.cssText = "background:#0b0e14;border:1px solid #21262d;border-radius:10px;padding:10px 12px;margin:10px 0;";
+    modSection.innerHTML = `
+        <summary style="color:#58a6ff;font-size:15px;font-weight:bold;cursor:pointer;padding-bottom:8px;border-bottom:1px solid #21262d;margin-bottom:10px;">🧪 Тонкая настройка тракта (5 опций)</summary>
+        <div style="position:relative;">
+            <div id="dspModLockShield" onclick="try{navigator.vibrate(40);}catch(e){}; if(window.showToast) window.showToast('🔒 Блок управления отключён! Для включения снимите галочку «Фазовый фокус» выше', event);" style="display:none;position:absolute;inset:0;z-index:20;cursor:not-allowed;"></div>
+            <div id="dspModBodyWrap" style="transition:opacity 0.2s ease, filter 0.2s ease;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <span style="color:#8b949e;font-size:12px;">Отдельные модули и коэффициенты:</span>
+                    <button type="button" onclick="window.resetDspModAll(event)" style="background:#1f1633;border:1px solid #6e40c9;color:#d2a8ff;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;">🔄 Сброс</button>
+                </div>
+                ${rows.map(([k, lbl, stp]) => `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin:8px 0;">
+                    <label style="display:flex;align-items:center;gap:8px;color:#c9d1d9;font-size:13px;cursor:pointer;flex:1;margin:0;">
+                        <input type="checkbox" id="cfg_opt_${k}" onchange="window.onDspModChange('${k}')" style="width:17px;height:17px;accent-color:#2f81f7;flex-shrink:0;">
+                        <span>${lbl}</span>
+                    </label>
+                    <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
+                        <button type="button" style="${btnStyle}" onclick="window.loadDspModRow('${k}', event)">📥</button>
+                        <input type="number" step="${stp}" id="cfg_val_${k}" onchange="window.onDspModChange('${k}')" style="${inpStyle}">
+                        <button type="button" style="${btnStyle}" onclick="window.saveDspModRow('${k}', event)">💾</button>
+                    </div>
+                </div>`).join('')}
+            </div>
+        </div>
+    `;
+
+    if (ramCard && ramCard.parentNode) {
+        ramCard.insertAdjacentElement('afterend', pfCard);
+        pfCard.insertAdjacentElement('afterend', modSection);
+    } else {
+        sm.insertBefore(modSection, sm.firstChild);
+        sm.insertBefore(pfCard, sm.firstChild);
+    }
+
+    window.syncDspModUI();
 });
