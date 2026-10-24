@@ -41,8 +41,8 @@ window.ALL_MOD_KEYS = [
 window.syncDspModUI = function() {
     const cfg = window.appConfig || {};
     // Авто-перевод старых абстрактных цифр в новые dB и %
-    if (!cfg._migratedToRealUnitsV8) {
-        cfg._migratedToRealUnitsV8 = true;
+    if (!cfg._migratedToRealUnitsV9) {
+        cfg._migratedToRealUnitsV9 = true;
         Object.keys(window.DSP_MOD_DEFAULTS).forEach(k => {
             if (k.startsWith('val_')) cfg[k] = window.DSP_MOD_DEFAULTS[k];
         });
@@ -146,9 +146,12 @@ window.resetDspGroup = function(keysList, msg, ev) {
     keysList.forEach(k => {
         window.appConfig['opt_' + k] = window.DSP_MOD_DEFAULTS['opt_' + k];
         window.appConfig['val_' + k] = window.DSP_MOD_DEFAULTS['val_' + k];
+        const chk = document.getElementById('cfg_opt_' + k);
+        const inp = document.getElementById('cfg_val_' + k);
+        if (chk) chk.checked = Boolean(window.DSP_MOD_DEFAULTS['opt_' + k]);
+        if (inp) inp.value = window.DSP_MOD_DEFAULTS['val_' + k];
     });
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    window.syncDspModUI();
     if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
     try { navigator.vibrate(35); } catch(e){}
     if (typeof window.showToast === 'function') window.showToast(msg, ev);
@@ -511,7 +514,20 @@ window.mountJennyStudioUI = function() {
     `;
     pfCard.appendChild(window.makeHelpBadge('phase_focus'));
 
-    const buildRowsHTML = (rowsArr) => rowsArr.map(([k, lbl, stp, hKey]) => `
+    const buildRowsHTML = (rowsArr) => rowsArr.map(([k, lbl, stp, hKey]) => {
+        if (k === 'masterCeil') {
+            return `
+            <div class="setting-row" style="border:none;padding:6px 0;gap:6px;">
+                <div style="display:flex;align-items:center;flex:1;min-width:0;">
+                    <label class="toggle-label" style="color:#e6edf3;font-size:12.5px;margin:0;">
+                        <input type="checkbox" id="cfg_opt_masterCeil" onchange="window.onDspModChange('masterCeil')"> 🛡️ Авто-Мастер-Потолок:
+                    </label>
+                    <span class="jenny-help-badge" onclick="window.showHelpTopic('${hKey}', event)" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;margin-left:5px;cursor:pointer;flex-shrink:0;">❓</span>
+                </div>
+                <span id="autoCeilStatusBadge" style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:4px 10px;font-size:11.5px;font-weight:bold;color:#3fb950;flex-shrink:0;">Авто: -0.5 dB</span>
+            </div>`;
+        }
+        return `
         <div class="setting-row" style="border:none;padding:4px 0;gap:6px;">
             <div style="display:flex;align-items:center;flex:1;min-width:0;">
                 <label class="toggle-label" style="color:#e6edf3;font-size:12.5px;margin:0;">
@@ -524,7 +540,8 @@ window.mountJennyStudioUI = function() {
                 <input type="number" step="${stp}" id="cfg_val_${k}" oninput="window.onDspModChange('${k}')" style="width:52px;">
                 <button type="button" class="io-btn" onclick="window.saveDspModRow('${k}', this, event)">💾</button>
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
 
     // 2. Блок "🧪 Тонкая настройка тракта (5 опций)" — блокируется при включённом Фазовом фокусе
     const rowsMod = [
