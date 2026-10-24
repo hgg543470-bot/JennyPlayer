@@ -82,7 +82,7 @@ window.exportCurrentTrack = async function() {
             for (let c = 0; c < 2; c++) {
                 let data = impulse.getChannelData(c);
                 for (let i = 0; i < length; i++) {
-                    data[i] = (i === 0) ? 1.0 : (cfg.phaseFixEnabled ? (Math.exp(-i / (length / 2.5)) * 0.035 * Math.cos(i * 0.65) * (c === 0 ? 1 : -1)) : (Math.exp(-i / (length / 3)) * 0.05));
+                    data[i] = (i === 0) ? 1.0 : (cfg.phaseFixEnabled ? (Math.exp(-i / (length / 2.5)) * 0.035 * Math.cos(i * 0.65) * (c === 0 ? 1 : -1)) : (cfg.opt_cleanFir ? ((Math.exp(-i / (length / 6)) - 0.45 * Math.exp(-i / (length / 2.2))) * (isNaN(parseFloat(cfg.val_cleanFir)) ? 0.03 : parseFloat(cfg.val_cleanFir))) : (Math.exp(-i / (length / 3)) * 0.05)));
                 }
             }
             firNode.buffer = impulse;
@@ -163,9 +163,39 @@ window.exportCurrentTrack = async function() {
                     compHigh.connect(masterSafe);
                     masterSafe.connect(offlineCtx.destination);
                 } else {
-                    compLow.connect(offlineCtx.destination);
-                    compMid.connect(offlineCtx.destination);
-                    compHigh.connect(offlineCtx.destination);
+                    let qMult = isNaN(parseFloat(cfg.val_midQ)) ? 0.65 : parseFloat(cfg.val_midQ);
+                    let phGain = isNaN(parseFloat(cfg.val_midPhase)) ? 1.15 : parseFloat(cfg.val_midPhase);
+                    let deEssVal = isNaN(parseFloat(cfg.val_deEsser)) ? 0.66 : parseFloat(cfg.val_deEsser);
+                    let ceilDb = isNaN(parseFloat(cfg.val_masterCeil)) ? -1.0 : parseFloat(cfg.val_masterCeil);
+
+                    if (cfg.opt_midQ) splitMid.Q.value = Math.max(0.2, midQ * qMult);
+                    let midPhase = offlineCtx.createGain();
+                    midPhase.gain.value = cfg.opt_midPhase ? -Math.abs(phGain) : 1.0;
+
+                    let deEss = offlineCtx.createGain();
+                    if (cfg.opt_deEsser) {
+                        compHigh.threshold.value = Math.min(-6, thresh + 10);
+                        compHigh.ratio.value = Math.min(4.0, ratio);
+                        compHigh.attack.value = 0.0005;
+                        compHigh.release.value = 0.09;
+                        deEss.gain.value = Math.max(0.1, Math.min(1.5, deEssVal));
+                    } else {
+                        deEss.gain.value = 1.0;
+                    }
+
+                    let outTarget = offlineCtx.destination;
+                    if (cfg.opt_masterCeil) {
+                        let masterSafe = offlineCtx.createDynamicsCompressor();
+                        masterSafe.threshold.value = Math.max(-24.0, Math.min(0.0, ceilDb));
+                        masterSafe.knee.value = 4.0; masterSafe.ratio.value = 18.0;
+                        masterSafe.attack.value = 0.001; masterSafe.release.value = 0.04;
+                        masterSafe.connect(offlineCtx.destination);
+                        outTarget = masterSafe;
+                    }
+
+                    compLow.connect(outTarget);
+                    compMid.connect(midPhase); midPhase.connect(outTarget);
+                    compHigh.connect(deEss); deEss.connect(outTarget);
                 }
             } else {
                 let comp = offlineCtx.createDynamicsCompressor();

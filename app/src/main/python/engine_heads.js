@@ -158,6 +158,7 @@ window.loadConfigFromDisk = async function() {
         window.applyVolumeSettings();
         if(typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
         if(typeof window.toggleVolUI === 'function') window.toggleVolUI();
+        if(typeof window.syncDspModUI === 'function') window.syncDspModUI();
         
     } catch(e) {}
 };
@@ -311,7 +312,8 @@ window.updateSettings = function() {
     
     if(typeof window.buildAudioGraph === 'function') window.buildAudioGraph(); 
     window.applyVolumeSettings(); 
-    if(typeof window.toggleVolUI === 'function') window.toggleVolUI(); 
+    if(typeof window.toggleVolUI === 'function') window.toggleVolUI();
+        if(typeof window.syncDspModUI === 'function') window.syncDspModUI(); 
 };
 
 window.applyEQSettings = function() {
