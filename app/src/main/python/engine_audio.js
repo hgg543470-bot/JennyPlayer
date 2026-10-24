@@ -64,21 +64,24 @@ window.cleanupDynamicNodes = function() {
 // Гибридный WaveShaper: Убивает писк дросселей в тишине (Ultra-Low Noise Gate) + Мягкий Tanh Soft-Clipper на пиках!
 window.createSoftClipWaveShaper = function(ctx, bucket) {
     let shaper = window.trackNode(ctx.createWaveShaper(), bucket);
-    let samples = 65536;
+    let half = 32768;
+    let samples = half * 2 + 1; // 65537 — строго НЕЧЁТНОЕ число, чтобы 0.0 попадал точно в центр!
     let curve = new Float32Array(samples);
-    let gateThresh = 0.00035; // Порог отсечки теплового писка компрессоров (-69 dB)
+    let gateThresh = 0.002; // Мёртвая зона тишины (-54 dB)
     for (let i = 0; i < samples; i++) {
-        let x = (i * 2) / (samples - 1) - 1.0;
+        let x = (i - half) / half;
         let ax = Math.abs(x);
-        if (ax < gateThresh) {
-            // Плавный квадратичный затвор микро-шума — убирает высокочастотный писк в паузах в 0.0!
-            let ratio = ax / gateThresh;
-            x = x * ratio * ratio;
+        if (ax <= gateThresh) {
+            curve[i] = 0.0; // Железный математический ноль в тишине — никакого писка!
+        } else {
+            let sign = x < 0 ? -1.0 : 1.0;
+            let normX = (ax - gateThresh) / (1.0 - gateThresh);
+            curve[i] = sign * Math.tanh(normX * 1.32) * 0.96;
         }
-        curve[i] = Math.tanh(x * 1.32) * 0.96;
     }
+    curve[half] = 0.0;
     shaper.curve = curve;
-    shaper.oversample = '2x';
+    shaper.oversample = 'none'; // Отключаем IIR-передискретизацию, которая звенела как дроссель!
     return shaper;
 };
 
@@ -407,25 +410,21 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
     }
 
     let padDb = window.calculateAutoMasterPadDb(cfg);
-    let softClipper = window.createSoftClipWaveShaper(ctx, bucket);
+
+    // Фильтр отсечки постоянного тока (DC Blocker 18 Гц), чтобы ни один узел никогда не смещал мембрану и не пищал!
+    let dcBlocker = reg(ctx.createBiquadFilter());
+    dcBlocker.type = 'highpass';
+    dcBlocker.frequency.value = 18;
+    dcBlocker.Q.value = 0.707;
+    cur.connect(dcBlocker);
+    cur = dcBlocker;
 
     if (cfg.opt_masterCeil || cfg.phaseFixEnabled) {
         let autoPad = reg(ctx.createGain());
         autoPad.gain.value = window.dbToLinear(padDb);
-
-        window.masterSafeComp.threshold.value = -1.5;
-        window.masterSafeComp.knee.value = 6.0;
-        window.masterSafeComp.ratio.value = 20.0;
-        window.masterSafeComp.attack.value = 0.001;
-        window.masterSafeComp.release.value = 0.05;
-
+        let softClipper = window.createSoftClipWaveShaper(ctx, bucket);
         cur.connect(autoPad);
-        autoPad.connect(window.masterSafeComp);
-        window.masterSafeComp.connect(softClipper);
-        cur = softClipper;
-    } else {
-        // Даже если Авто-Мастер-Потолок выключен, анти-писк Gate остаётся на страже тишины!
-        cur.connect(softClipper);
+        autoPad.connect(softClipper);
         cur = softClipper;
     }
 
@@ -514,7 +513,7 @@ window.buildAudioGraph = function() {
 
     const cfg = window.appConfig || {};
     const player = document.getElementById('audioPlayer');
-    window.inputMixer.gain.value = (player && player.paused) ? 0.0 : 1.0;
+    window.inputMixer.gain.value = 1.0;
     window.preAmpNode.gain.value = 0.6;
 
     let currentNode = window.inputMixer;
