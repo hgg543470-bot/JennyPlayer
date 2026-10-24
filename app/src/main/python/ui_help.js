@@ -1,3 +1,4 @@
+window._dspInputDebounce = null;
 
 window.ensureParentDspBlocks = function(triggerKey, ev) {
     window.appConfig = window.appConfig || {};
@@ -83,7 +84,10 @@ window.onPhaseFocusChange = function(el, ev) {
     if (el.checked) window.ensureParentDspBlocks('phaseFix', ev);
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     window.syncDspModUI();
-    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+    if (typeof window.buildAudioGraph === 'function') {
+        if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
+        window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
+    }
     try { navigator.vibrate(40); } catch(e){}
     if (el.checked && typeof window.showToast === 'function') {
         window.showToast("🔒 Блок управления отключён! Для включения выключите «Фазовый фокус»", ev);
@@ -105,7 +109,10 @@ window.onDspModChange = function(key) {
         if (!isNaN(parsed)) window.appConfig['val_' + key] = parsed;
     }
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+    if (typeof window.buildAudioGraph === 'function') {
+        if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
+        window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
+    }
 };
 
 window.saveDspModRow = async function(key, btnEl, ev) {
@@ -132,7 +139,10 @@ window.loadDspModRow = async function(key, btnEl, ev) {
         window.appConfig['val_' + key] = (data['val_' + key] !== undefined) ? parseFloat(data['val_' + key]) : window.DSP_MOD_DEFAULTS['val_' + key];
         localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
         window.syncDspModUI();
-        if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+        if (typeof window.buildAudioGraph === 'function') {
+        if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
+        window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
+    }
         if (btnEl) {
             let old = btnEl.innerHTML; btnEl.innerHTML = '✅';
             setTimeout(() => btnEl.innerHTML = old, 1000);
@@ -152,7 +162,10 @@ window.resetDspGroup = function(keysList, msg, ev) {
         if (inp) inp.value = window.DSP_MOD_DEFAULTS['val_' + k];
     });
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+    if (typeof window.buildAudioGraph === 'function') {
+        if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
+        window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
+    }
     try { navigator.vibrate(35); } catch(e){}
     if (typeof window.showToast === 'function') window.showToast(msg, ev);
 };

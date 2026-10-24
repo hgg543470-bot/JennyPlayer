@@ -1,3 +1,13 @@
+
+window.smoothStudioFadeIn = function() {
+    if (window.audioCtx && window.inputMixer) {
+        let now = window.audioCtx.currentTime;
+        window.inputMixer.gain.cancelScheduledValues(now);
+        window.inputMixer.gain.setValueAtTime(0.0001, now);
+        window.inputMixer.gain.linearRampToValueAtTime(1.0, now + 0.014);
+    }
+};
+
 window.formatTimeMMSS = function(sec) {
     if (!isFinite(sec) || sec < 0) sec = 0;
     let totalSec = Math.floor(sec);

@@ -19,6 +19,8 @@ window.compLow = null; window.compMid = null; window.compHigh = null;
 window.midPhaseNode = null;
 window.deEssGain = null;
 window.masterSafeComp = null;
+window.masterAntiClickGain = null;
+window._graphRebuildTimer = null;
 
 window.activeDynamicNodes = [];
 
@@ -471,6 +473,9 @@ window.initAudioBoost = function() {
         window.midPhaseNode = window.audioCtx.createGain();
         window.deEssGain = window.audioCtx.createGain();
         window.masterSafeComp = window.audioCtx.createDynamicsCompressor();
+        window.masterAntiClickGain = window.audioCtx.createGain();
+        window.masterAntiClickGain.gain.value = 1.0;
+        window.masterAntiClickGain.connect(window.audioCtx.destination);
 
         // Авто-блокировка писка дросселей, когда плеер стоит на паузе!
         if (player) {
@@ -495,7 +500,29 @@ window.initAudioBoost = function() {
     window.buildAudioGraph(); 
 };
 
-window.buildAudioGraph = function() {
+window.buildAudioGraph = function(immediate) {
+    if (!window.audioCtx) return;
+    if (!immediate && window.masterAntiClickGain) {
+        if (window._graphRebuildTimer) clearTimeout(window._graphRebuildTimer);
+        let now = window.audioCtx.currentTime;
+        window.masterAntiClickGain.gain.cancelScheduledValues(now);
+        window.masterAntiClickGain.gain.setValueAtTime(window.masterAntiClickGain.gain.value, now);
+        window.masterAntiClickGain.gain.linearRampToValueAtTime(0.0001, now + 0.007);
+        window._graphRebuildTimer = setTimeout(() => {
+            window._buildAudioGraphCore();
+            if (window.audioCtx && window.masterAntiClickGain) {
+                let t2 = window.audioCtx.currentTime;
+                window.masterAntiClickGain.gain.cancelScheduledValues(t2);
+                window.masterAntiClickGain.gain.setValueAtTime(0.0001, t2);
+                window.masterAntiClickGain.gain.linearRampToValueAtTime(1.0, t2 + 0.012);
+            }
+        }, 8);
+        return;
+    }
+    window._buildAudioGraphCore();
+};
+
+window._buildAudioGraphCore = function() {
     if (!window.audioCtx) return;
 
     window.cleanupDynamicNodes();
@@ -611,7 +638,7 @@ window.buildAudioGraph = function() {
             }
 
             let finalPost = window.insertProStudioPostChain(window.audioCtx, postBus, cfg, window.activeDynamicNodes);
-            finalPost.connect(window.audioCtx.destination);
+            finalPost.connect(window.masterAntiClickGain || window.audioCtx.destination);
         } else {
             window.compressorNode.threshold.value = thresh;
             window.compressorNode.knee.value = knee;
@@ -621,10 +648,10 @@ window.buildAudioGraph = function() {
             
             currentNode.connect(window.compressorNode);
             let postOut = window.insertProStudioPostChain(window.audioCtx, window.compressorNode, cfg, window.activeDynamicNodes);
-            postOut.connect(window.audioCtx.destination);
+            postOut.connect(window.masterAntiClickGain || window.audioCtx.destination);
         }
     } else {
         let postOut = window.insertProStudioPostChain(window.audioCtx, currentNode, cfg, window.activeDynamicNodes);
-        postOut.connect(window.audioCtx.destination);
+        postOut.connect(window.masterAntiClickGain || window.audioCtx.destination);
     }
 };
