@@ -34,7 +34,7 @@ window.createFIRImpulse = function(context, decayMs) {
             if (i === 0) data[i] = 1.0; 
             else if (window.appConfig && window.appConfig.phaseFixEnabled) {
                 data[i] = Math.exp(-i / (length / 2.5)) * 0.035 * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
-            } else data[i] = Math.exp(-i / (length/3)) * 0.05; 
+            } else data[i] = (window.appConfig && window.appConfig.opt_cleanFir) ? ((Math.exp(-i / (length / 6)) - 0.45 * Math.exp(-i / (length / 2.2))) * 0.03) : (Math.exp(-i / (length/3)) * 0.05); 
         }
     }
     return impulse;
@@ -79,6 +79,9 @@ window.initAudioBoost = function() {
         window.compressorNode = window.audioCtx.createDynamicsCompressor(); 
 
         window.gainNode = window.audioCtx.createGain();
+        window.midPhaseNode = window.audioCtx.createGain();
+        window.deEssGain = window.audioCtx.createGain();
+        window.masterSafeComp = window.audioCtx.createDynamicsCompressor();
         window.midPhaseNode = window.audioCtx.createGain();
         window.masterSafeComp = window.audioCtx.createDynamicsCompressor();
     }
@@ -199,6 +202,33 @@ document.addEventListener("DOMContentLoaded", () => {
         box.style.cssText = "background:#0d1117;border:1px solid #7341be;border-radius:10px;padding:10px 12px;margin:8px 0 12px 0;display:flex;align-items:center;justify-content:space-between;box-shadow:0 0 10px rgba(115,65,190,0.25);";
         const isOn = Boolean(window.appConfig && window.appConfig.phaseFixEnabled);
         box.innerHTML = `<label style="display:flex;align-items:center;gap:10px;color:#e6edf3;font-size:13px;font-weight:bold;cursor:pointer;width:100%;"><input type="checkbox" id="cfg_phaseFix" ${isOn ? 'checked' : ''} onchange="window.togglePhaseFix(this)" style="width:18px;height:18px;accent-color:#7341be;"><span>🎯 Фазовый фокус (Выравнивание вокала и баса)</span></label>`;
+        eqM.insertBefore(box, eqM.firstChild);
+    }
+});
+
+
+window.toggleDspOpt = function(key, el) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig[key] = Boolean(el.checked);
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+};
+document.addEventListener("DOMContentLoaded", () => {
+    const eqM = document.getElementById('eqModal');
+    if (eqM && !document.getElementById('dspModularBox')) {
+        const cfg = window.appConfig || {};
+        const opts = [
+            ['opt_midPhase', '🎯 Инверсия фазы СЧ (Вытащить вокал из баса)'],
+            ['opt_midQ', '📐 Широкий купол СЧ (Мягкий стык частот)'],
+            ['opt_deEsser', '🐍 Де-эссер ВЧ (Убрать свист шипящих С/Ш)'],
+            ['opt_cleanFir', '✨ Чистый FIR-импульс (Убрать гул из хвоста)'],
+            ['opt_masterCeil', '🛡️ Мастер-потолок -1 dB (Защита склейки 3 полос)']
+        ];
+        const box = document.createElement('div');
+        box.id = 'dspModularBox';
+        box.style.cssText = "background:#0d1117;border:1px solid #7341be;border-radius:10px;padding:10px 12px;margin:8px 0 12px 0;display:flex;flex-direction:column;gap:8px;box-shadow:0 0 10px rgba(115,65,190,0.22);";
+        box.innerHTML = `<div style="color:#b392f0;font-size:11px;font-weight:bold;letter-spacing:0.8px;">🧪 ТОНКАЯ НАСТРОЙКА ТРАКТА (ОПЦИИ)</div>` +
+            opts.map(([k, lbl]) => `<label style="display:flex;align-items:center;gap:10px;color:#e6edf3;font-size:12.5px;cursor:pointer;"><input type="checkbox" ${cfg[k] ? 'checked' : ''} onchange="window.toggleDspOpt('${k}', this)" style="width:17px;height:17px;accent-color:#7341be;flex-shrink:0;"><span>${lbl}</span></label>`).join('');
         eqM.insertBefore(box, eqM.firstChild);
     }
 });
