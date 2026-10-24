@@ -82,7 +82,7 @@ window.exportCurrentTrack = async function() {
             for (let c = 0; c < 2; c++) {
                 let data = impulse.getChannelData(c);
                 for (let i = 0; i < length; i++) {
-                    data[i] = (i === 0) ? 1.0 : Math.exp(-i / (length / 3)) * 0.05;
+                    data[i] = (i === 0) ? 1.0 : (cfg.phaseFixEnabled ? (Math.exp(-i / (length / 2.5)) * 0.035 * Math.cos(i * 0.65) * (c === 0 ? 1 : -1)) : (Math.exp(-i / (length / 3)) * 0.05));
                 }
             }
             firNode.buffer = impulse;
@@ -151,9 +151,22 @@ window.exportCurrentTrack = async function() {
                 currentNode.connect(splitLow); currentNode.connect(splitMid); currentNode.connect(splitHigh);
                 splitLow.connect(compLow); splitMid.connect(compMid); splitHigh.connect(compHigh);
 
-                compLow.connect(offlineCtx.destination);
-                compMid.connect(offlineCtx.destination);
-                compHigh.connect(offlineCtx.destination);
+                if (cfg.phaseFixEnabled) {
+                    splitMid.Q.value = Math.max(0.35, midQ * 0.65);
+                    let midPhase = offlineCtx.createGain();
+                    midPhase.gain.value = -1.22;
+                    let masterSafe = offlineCtx.createDynamicsCompressor();
+                    masterSafe.threshold.value = -1.0; masterSafe.knee.value = 4.0; masterSafe.ratio.value = 18.0;
+                    masterSafe.attack.value = 0.001; masterSafe.release.value = 0.04;
+                    compLow.connect(masterSafe);
+                    compMid.connect(midPhase); midPhase.connect(masterSafe);
+                    compHigh.connect(masterSafe);
+                    masterSafe.connect(offlineCtx.destination);
+                } else {
+                    compLow.connect(offlineCtx.destination);
+                    compMid.connect(offlineCtx.destination);
+                    compHigh.connect(offlineCtx.destination);
+                }
             } else {
                 let comp = offlineCtx.createDynamicsCompressor();
                 comp.threshold.value = thresh; comp.knee.value = knee; comp.ratio.value = ratio;

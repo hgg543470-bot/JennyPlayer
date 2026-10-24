@@ -32,7 +32,9 @@ window.createFIRImpulse = function(context, decayMs) {
         let data = impulse.getChannelData(channel);
         for (let i = 0; i < length; i++) {
             if (i === 0) data[i] = 1.0; 
-            else data[i] = Math.exp(-i / (length/3)) * 0.05; 
+            else if (window.appConfig && window.appConfig.phaseFixEnabled) {
+                data[i] = Math.exp(-i / (length / 2.5)) * 0.035 * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
+            } else data[i] = Math.exp(-i / (length/3)) * 0.05; 
         }
     }
     return impulse;
@@ -77,6 +79,8 @@ window.initAudioBoost = function() {
         window.compressorNode = window.audioCtx.createDynamicsCompressor(); 
 
         window.gainNode = window.audioCtx.createGain();
+        window.midPhaseNode = window.audioCtx.createGain();
+        window.masterSafeComp = window.audioCtx.createDynamicsCompressor();
     }
     if (window.audioCtx.state === 'suspended') { window.audioCtx.resume(); }
     window.buildAudioGraph(); 
@@ -91,7 +95,7 @@ window.buildAudioGraph = function() {
     try { window.gainNode.disconnect(); } catch(e){}
     try { window.compressorNode.disconnect(); } catch(e){}
     try { window.splitLow.disconnect(); window.splitMid.disconnect(); window.splitHigh.disconnect(); } catch(e){}
-    try { window.compLow.disconnect(); window.compMid.disconnect(); window.compHigh.disconnect(); } catch(e){}
+    try { window.compLow.disconnect(); window.compMid.disconnect(); window.compHigh.disconnect(); window.midPhaseNode.disconnect(); window.masterSafeComp.disconnect(); } catch(e){}
     Object.values(window.eqNodes).forEach(node => { try { node.disconnect(); } catch(e){} });
 
     let currentNode = window.inputMixer;
@@ -148,9 +152,24 @@ window.buildAudioGraph = function() {
             currentNode.connect(window.splitLow); currentNode.connect(window.splitMid); currentNode.connect(window.splitHigh);
             window.splitLow.connect(window.compLow); window.splitMid.connect(window.compMid); window.splitHigh.connect(window.compHigh);
             
-            window.compLow.connect(window.audioCtx.destination);
-            window.compMid.connect(window.audioCtx.destination);
-            window.compHigh.connect(window.audioCtx.destination);
+            if (window.appConfig.phaseFixEnabled) {
+                window.splitMid.Q.value = Math.max(0.35, midQ * 0.65);
+                window.midPhaseNode.gain.value = -1.22;
+                window.masterSafeComp.threshold.value = -1.0;
+                window.masterSafeComp.knee.value = 4.0;
+                window.masterSafeComp.ratio.value = 18.0;
+                window.masterSafeComp.attack.value = 0.001;
+                window.masterSafeComp.release.value = 0.04;
+                window.compLow.connect(window.masterSafeComp);
+                window.compMid.connect(window.midPhaseNode);
+                window.midPhaseNode.connect(window.masterSafeComp);
+                window.compHigh.connect(window.masterSafeComp);
+                window.masterSafeComp.connect(window.audioCtx.destination);
+            } else {
+                window.compLow.connect(window.audioCtx.destination);
+                window.compMid.connect(window.audioCtx.destination);
+                window.compHigh.connect(window.audioCtx.destination);
+            }
         } else {
             window.compressorNode.threshold.value = thresh;
             window.compressorNode.knee.value = knee;
@@ -165,3 +184,21 @@ window.buildAudioGraph = function() {
         currentNode.connect(window.audioCtx.destination);
     }
 };
+
+
+window.togglePhaseFix = function(el) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.phaseFixEnabled = Boolean(el.checked);
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+};
+document.addEventListener("DOMContentLoaded", () => {
+    const eqM = document.getElementById('eqModal');
+    if (eqM && !document.getElementById('cfg_phaseFix')) {
+        const box = document.createElement('div');
+        box.style.cssText = "background:#0d1117;border:1px solid #7341be;border-radius:10px;padding:10px 12px;margin:8px 0 12px 0;display:flex;align-items:center;justify-content:space-between;box-shadow:0 0 10px rgba(115,65,190,0.25);";
+        const isOn = Boolean(window.appConfig && window.appConfig.phaseFixEnabled);
+        box.innerHTML = `<label style="display:flex;align-items:center;gap:10px;color:#e6edf3;font-size:13px;font-weight:bold;cursor:pointer;width:100%;"><input type="checkbox" id="cfg_phaseFix" ${isOn ? 'checked' : ''} onchange="window.togglePhaseFix(this)" style="width:18px;height:18px;accent-color:#7341be;"><span>🎯 Фазовый фокус (Выравнивание вокала и баса)</span></label>`;
+        eqM.insertBefore(box, eqM.firstChild);
+    }
+});
