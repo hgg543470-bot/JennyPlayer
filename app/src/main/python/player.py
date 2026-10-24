@@ -300,6 +300,99 @@ def export_track():
                 pass
 
 
+
+
+@post('/api/track_info')
+def get_track_info():
+    import re
+    import datetime
+    try:
+        req = json.loads(request.body.read().decode('utf-8'))
+        filename = req.get('filename', '')
+        full_path = os.path.join(MUSIC_DIR, filename)
+        if not filename or not os.path.isfile(full_path):
+            response.status = 404
+            return {"status": "error", "error": "Файл не найден"}
+
+        st = os.stat(full_path)
+        size_bytes = st.st_size
+        size_mb = f"{size_bytes / (1024 * 1024):.2f} MB ({size_bytes:,} B)".replace(",", " ")
+        mtime_str = datetime.datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        ext = os.path.splitext(filename)[1].lower().lstrip('.') or 'raw'
+
+        container_map = {
+            'opus': 'OGG / Opus Audio Container',
+            'm4a': 'MP4 / ISO Media (Apple Audio)',
+            'mp3': 'MPEG-1/2 Audio Layer III',
+            'wav': 'RIFF WAVE (Uncompressed PCM)',
+            'flac': 'Free Lossless Audio Codec'
+        }
+        container_desc = container_map.get(ext, f"{ext.upper()} Audio Stream")
+
+        ffmpeg_bin = find_ffmpeg_binary()
+        probe = subprocess.run([ffmpeg_bin, '-hide_banner', '-i', full_path],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        raw_info = (probe.stderr or "") + (probe.stdout or "")
+
+        dur_match = re.search(r"Duration:\s*(\d+:\d+:\d+\.\d+)", raw_info)
+        duration_str = dur_match.group(1) if dur_match else "—"
+        dur_seconds = 0.0
+        if dur_match:
+            parts = duration_str.split(':')
+            dur_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+
+        br_match = re.search(r"bitrate:\s*(\d+\s*kb/s)", raw_info)
+        bitrate_str = br_match.group(1) if br_match else (
+            f"{int((size_bytes * 8) / dur_seconds / 1000)} kb/s (CBR/VBR calc)" if dur_seconds > 0 else "—"
+        )
+
+        codec_str, sr_str, ch_str, fmt_str = ext.upper(), "48000 Hz", "stereo (2 ch)", "fltp (32-bit float)"
+        stream_match = re.search(r"Stream #\d+:\d+.*?: Audio:\s*([^\n]+)", raw_info)
+        if stream_match:
+            s_line = stream_match.group(1)
+            s_parts = [p.strip() for p in s_line.split(',')]
+            if len(s_parts) >= 1:
+                codec_str = s_parts[0]
+            for p in s_parts[1:]:
+                if 'Hz' in p:
+                    sr_str = p
+                elif any(k in p for k in ('stereo', 'mono', '5.1', 'channels', 'ch')):
+                    ch_str = p
+                elif p in ('fltp', 's16', 's16p', 's32', 's32p', 'dblp'):
+                    fmt_str = p
+
+        tags = {}
+        for tag_key in ('title', 'artist', 'album', 'encoder', 'date', 'genre'):
+            m = re.search(rf"^\s*{tag_key}\s*:\s*(.+)$", raw_info, re.IGNORECASE | re.MULTILINE)
+            if m:
+                tags[tag_key.upper()] = m.group(1).strip()
+
+        sr_num = int(re.sub(r"\D", "", sr_str) or "48000")
+        total_samples = f"{int(dur_seconds * sr_num):,}".replace(",", " ") if dur_seconds > 0 else "—"
+
+        response.content_type = 'application/json'
+        return json.dumps({
+            "status": "ok",
+            "filename": filename,
+            "full_path": full_path,
+            "folder": MUSIC_DIR,
+            "container": container_desc,
+            "size_str": size_mb,
+            "mtime": mtime_str,
+            "duration": duration_str,
+            "bitrate": bitrate_str,
+            "codec": codec_str,
+            "sample_rate": sr_str,
+            "channels": ch_str,
+            "sample_fmt": fmt_str,
+            "total_samples": total_samples,
+            "tags": tags
+        })
+    except Exception as e:
+        response.status = 500
+        return {"status": "error", "error": str(e)}
+
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)

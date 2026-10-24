@@ -1,11 +1,41 @@
-// =========================================================================
-// ▶️ UI_PLAYBACK.JS (ЛОГИКА ПЛЕЕРА И ВОСПРОИЗВЕДЕНИЯ)
-// =========================================================================
+window.formatTimeMMSS = function(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    let totalSec = Math.floor(sec);
+    let m = Math.floor(totalSec / 60);
+    let s = totalSec % 60;
+    return m + ":" + (s < 10 ? "0" + s : s);
+};
+
+window.updateCenterCurrentTime = function(curSec, durSec, isVisualReverse) {
+    const centerTimeEl = document.getElementById('durationTime');
+    if (!centerTimeEl) return;
+    if (!isFinite(durSec) || durSec <= 0) {
+        centerTimeEl.innerText = "0:00";
+        return;
+    }
+    let realElapsed = isVisualReverse ? Math.max(0, durSec - curSec) : Math.max(0, curSec);
+    centerTimeEl.innerText = window.formatTimeMMSS(realElapsed);
+    centerTimeEl.style.color = "#c9d1d9";
+};
+
+window.getTargetPlaybackSpeed = function() {
+    const player = document.getElementById('audioPlayer');
+    if (window.scrubState && (window.scrubState.locked || window.scrubState.active) && window.scrubState.speed) {
+        return parseFloat(window.scrubState.speed) || 1.0;
+    }
+    if (window.persistedPlaybackSpeed && window.persistedPlaybackSpeed !== 10.0) {
+        return parseFloat(window.persistedPlaybackSpeed) || 1.0;
+    }
+    if (player && player.playbackRate && player.playbackRate !== 1.0 && player.playbackRate !== 10.0) {
+        return player.playbackRate;
+    }
+    return typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+};
 
 window.playNextTrack = function() {
     if (!window.currentTrackList || window.currentTrackList.length === 0) return;
     if (!window.currentPlayingTrack) return;
-    
+
     let currentIndex = window.currentTrackList.indexOf(window.currentPlayingTrack);
     if (currentIndex !== -1 && currentIndex + 1 < window.currentTrackList.length) {
         let nextTrack = window.currentTrackList[currentIndex + 1];
@@ -17,7 +47,7 @@ window.playNextTrack = function() {
 window.playPreviousTrack = function() {
     if (!window.currentTrackList || window.currentTrackList.length === 0) return;
     if (!window.currentPlayingTrack) return;
-    
+
     let currentIndex = window.currentTrackList.indexOf(window.currentPlayingTrack);
     if (currentIndex > 0) {
         let prevTrack = window.currentTrackList[currentIndex - 1];
@@ -29,31 +59,33 @@ window.playPreviousTrack = function() {
 window.cloneAndReverseBuffer = async function(originalBuffer) {
     if (!originalBuffer) return null;
     let newBuffer = window.audioCtx.createBuffer(
-        originalBuffer.numberOfChannels, 
-        originalBuffer.length, 
+        originalBuffer.numberOfChannels,
+        originalBuffer.length,
         originalBuffer.sampleRate
     );
     for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
         let oldData = originalBuffer.getChannelData(channel);
         let newData = newBuffer.getChannelData(channel);
         for (let i = 0; i < originalBuffer.length; i++) {
-            newData[i] = oldData[originalBuffer.length - 1 - i]; 
+            newData[i] = oldData[originalBuffer.length - 1 - i];
         }
     }
     return newBuffer;
 };
 
-// Функция attachRAMEnded вырезана, так как HTML5-плеер справляется сам как бесшумный секундомер
-
 window.playTrack = async function(filename, listContext = 'main') {
-    if(typeof window.initAudioBoost === 'function') window.initAudioBoost(); 
-    if(typeof window.applyEQSettings === 'function') window.applyEQSettings(); 
-    if(typeof window.changeVolume === 'function') window.changeVolume();   
-    
-    window.currentPlayingTrack = filename; 
-    window.currentListContext = listContext; 
-    if(typeof window.fetchData === 'function') window.fetchData(); 
-    
+    if(typeof window.initAudioBoost === 'function') window.initAudioBoost();
+    if(typeof window.applyEQSettings === 'function') window.applyEQSettings();
+    if(typeof window.changeVolume === 'function') window.changeVolume();
+
+    let targetSpeed = window.getTargetPlaybackSpeed();
+    let keepLocked = Boolean((window.scrubState && window.scrubState.locked) || (window.persistedPlaybackSpeed && window.persistedPlaybackSpeed !== 1.0));
+    let activeSide = (window.scrubState && window.scrubState.side) || window.persistedPlaybackSide || 'right';
+
+    window.currentPlayingTrack = filename;
+    window.currentListContext = listContext;
+    if(typeof window.fetchData === 'function') window.fetchData();
+
     if (listContext === 'fav') {
         window.currentTrackList = window.favorites;
     } else if (listContext === 'main' && window.lastData) {
@@ -62,121 +94,137 @@ window.playTrack = async function(filename, listContext = 'main') {
 
     const player = document.getElementById('audioPlayer');
     const titleEl = document.getElementById('nowPlaying');
-    
+
     if(player) { player.pause(); if (player.src && player.src.startsWith('blob:')) URL.revokeObjectURL(player.src); }
     if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} }
     window.isStudioPlaying = false;
-    window.studioBuffer = null; 
-    window.reversedStudioBuffer = null; 
-    
-    if (window.scrubState && (window.scrubState.active || window.scrubState.locked)) {
-        if(typeof window.stopScrub === 'function') window.stopScrub();
+    window.studioBuffer = null;
+    window.reversedStudioBuffer = null;
+
+    if (keepLocked) {
+        window.scrubState.locked = true;
+        window.scrubState.active = false;
+        window.scrubState.speed = targetSpeed;
+        window.scrubState.side = activeSide;
+        window.scrubState.isPhysicallyReversed = (activeSide === 'left');
+        let lockEl = document.getElementById('speedLockIndicator');
+        if (lockEl) {
+            lockEl.style.display = 'block';
+            lockEl.innerText = `🔒 ${activeSide === 'left' ? '⏪' : '⏩'} x${targetSpeed}`;
+        }
+    } else if (window.scrubState && window.scrubState.active) {
+        if(typeof window.stopScrub === 'function') window.stopScrub(false);
     }
-    
-    if(typeof window.updateProgressUI === 'function') window.updateProgressUI(0, 100, window.isReversed); 
+
+    let isRevMode = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+    if(typeof window.updateProgressUI === 'function') window.updateProgressUI(0, 100, isRevMode);
+    window.updateCenterCurrentTime(0, 0, isRevMode);
 
     if ('mediaSession' in navigator) {
-        let cleanFileName = filename.replace(/\.(opus|m4a|mp3)$/i, ''); 
+        let cleanFileName = filename.replace(/\.(opus|m4a|mp3)$/i, '');
         navigator.mediaSession.metadata = new MediaMetadata({ title: cleanFileName, artist: "🔥 HACKED BY JENNY 🔥" });
-        
+
         navigator.mediaSession.setActionHandler('play', () => window.togglePlay());
         navigator.mediaSession.setActionHandler('pause', () => window.togglePlay());
         navigator.mediaSession.setActionHandler('previoustrack', () => window.playPreviousTrack());
         navigator.mediaSession.setActionHandler('nexttrack', () => window.playNextTrack());
-        
-        navigator.mediaSession.setActionHandler('seekbackward', () => {
-            let p = document.getElementById('audioPlayer');
-            if(p) p.currentTime = Math.max(0, p.currentTime - 10);
-        });
-        navigator.mediaSession.setActionHandler('seekforward', () => {
-            let p = document.getElementById('audioPlayer');
-            if(p) p.currentTime = Math.min(p.duration, p.currentTime + 10);
-        });
     }
 
     try {
         if(titleEl) titleEl.innerText = "⏳ Загрузка: " + filename;
-        
+
         const response = await fetch('/api/media/' + encodeURIComponent(filename));
         const blob = await response.blob();
-        
+
+        let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
+        let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig.pitchLock === true);
+
         if (window.htmlGain) {
-            if (window.appConfig.studioMode && window.isReversed) {
-                window.htmlGain.gain.value = 0; 
+            if (window.appConfig.studioMode && isRevMode) {
+                window.htmlGain.gain.value = 0;
             } else {
-                window.htmlGain.gain.value = 1; 
+                window.htmlGain.gain.value = 1;
             }
         }
-        
+
         if (player) {
             player.src = URL.createObjectURL(blob);
-            player.playbackRate = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0; 
-            player.preservesPitch = window.appConfig.pitchLock === true; 
-            
-            if (!window.isReversed || !window.appConfig.studioMode) {
+            player.playbackRate = targetSpeed;
+            player.preservesPitch = isPitchLocked;
+
+            if (!isRevMode || !window.appConfig.studioMode) {
                  player.play().catch(e => {});
             }
         }
-        
+
         if (window.appConfig.studioMode) {
             if(titleEl) titleEl.innerText = "⏳ RAM (пока играет сжатый): " + filename;
-            
+
             let arrayBuffer = await blob.arrayBuffer();
             let decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
-            
+
             if (window.currentPlayingTrack === filename) {
                 window.studioBuffer = decodedBuffer;
-                
-                if (window.isReversed) {
+                let currentTargetSpd = window.getTargetPlaybackSpeed();
+                let nowRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+
+                if (nowRev) {
                     window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
                     if (player && player.paused) {
                          player.play().catch(e => {});
                     }
                     if (window.htmlGain) window.htmlGain.gain.value = 0;
-                    
-                     if (player && !player.paused) {
+
+                    if (player && !player.paused) {
                         if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
                         window.studioSourceNode = window.audioCtx.createBufferSource();
                         window.studioSourceNode.buffer = window.reversedStudioBuffer;
-                        window.studioSourceNode.playbackRate.value = player.playbackRate;
+                        window.studioSourceNode.playbackRate.value = currentTargetSpd;
                         window.studioSourceNode.connect(window.inputMixer);
-                        
-                        // 🚀 ИСПРАВЛЕН БАГ МАТЕМАТИКИ: В реверсе буфер сам по себе перевернут. 
-                        // Начинаем просто с player.currentTime (которое равно 0 при загрузке трека).
-                        let startPos = player.currentTime; 
+
+                        let startPos = player.currentTime;
                         if (!isFinite(startPos) || startPos < 0) startPos = 0;
                         window.studioSourceNode.start(0, startPos);
                         window.isStudioPlaying = true;
                     }
-                    
                 } else {
                     setTimeout(async () => {
                         window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
                     }, 50);
-                    
-                    if (window.htmlGain) window.htmlGain.gain.value = 0; 
-                
-                    if (player && !player.paused) {
-                        if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
-                        window.studioSourceNode = window.audioCtx.createBufferSource();
-                        
-                        window.studioSourceNode.buffer = window.studioBuffer;
-                        window.studioSourceNode.playbackRate.value = player.playbackRate;
-                        window.studioSourceNode.connect(window.inputMixer);
-                        
-                        let startPos = player.currentTime;
-                        if (!isFinite(startPos) || startPos < 0) startPos = 0;
-                        window.studioSourceNode.start(0, startPos);
-                        
-                        window.isStudioPlaying = true;
+
+                    if (isPitchLocked && currentTargetSpd !== 1.0) {
+                        if (window.htmlGain) window.htmlGain.gain.value = 1;
+                        window.isStudioPlaying = false;
+                        if (player) {
+                            player.playbackRate = currentTargetSpd;
+                            player.preservesPitch = true;
+                        }
+                    } else {
+                        if (window.htmlGain) window.htmlGain.gain.value = 0;
+
+                        if (player && !player.paused) {
+                            if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
+                            window.studioSourceNode = window.audioCtx.createBufferSource();
+
+                            window.studioSourceNode.buffer = window.studioBuffer;
+                            window.studioSourceNode.playbackRate.value = currentTargetSpd;
+                            window.studioSourceNode.connect(window.inputMixer);
+
+                            let startPos = player.currentTime;
+                            if (!isFinite(startPos) || startPos < 0) startPos = 0;
+                            window.studioSourceNode.start(0, startPos);
+
+                            window.isStudioPlaying = true;
+                        }
                     }
                 }
-                
+
                 if(titleEl) titleEl.innerText = "RAM 🚀: " + filename;
             }
         } else {
             if(titleEl) titleEl.innerText = filename;
         }
+        if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
     } catch(error) {
         if(titleEl) titleEl.innerText = "❌ Ошибка загрузки";
     }
@@ -185,23 +233,37 @@ window.playTrack = async function(filename, listContext = 'main') {
 window.togglePlay = function() {
     const player = document.getElementById('audioPlayer');
     if (!player || !player.src) { if (window.topTrack) window.playTrack(window.topTrack, 'main'); return; }
-    if(typeof window.initAudioBoost === 'function') window.initAudioBoost(); 
-    
+    if(typeof window.initAudioBoost === 'function') window.initAudioBoost();
+
     if (player.paused) player.play();
     else player.pause();
 };
 
 document.addEventListener("DOMContentLoaded", () => {
     const player = document.getElementById('audioPlayer');
-    
+
+    if (typeof window.updateProgressUI === 'function' && !window._progressUIWrapped) {
+        const origUpdateProgress = window.updateProgressUI;
+        window.updateProgressUI = function(cur, dur, isRev) {
+            origUpdateProgress(cur, dur, isRev);
+            window.updateCenterCurrentTime(cur, dur, isRev);
+        };
+        window._progressUIWrapped = true;
+    }
+
     if(player) {
-        player.onplay = () => { 
+        player.onplay = () => {
             let btn = document.getElementById('playPauseBtn');
-            if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'; 
+            if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
-            
+
+            let targetSpd = window.getTargetPlaybackSpeed();
+            if (Math.abs(player.playbackRate - targetSpd) > 0.001 && player.playbackRate !== 10.0) {
+                player.playbackRate = targetSpd;
+            }
+
             if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
-            
+
             if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0) {
                 let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
                 window.studioSourceNode = window.audioCtx.createBufferSource();
@@ -211,26 +273,28 @@ document.addEventListener("DOMContentLoaded", () => {
                 window.studioSourceNode.start(0, player.currentTime);
                 window.isStudioPlaying = true;
             }
+            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
         };
-        
-        player.onpause = () => { 
+
+        player.onpause = () => {
             let btn = document.getElementById('playPauseBtn');
-            if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'; 
+            if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
-            
+
             if (window.studioSourceNode) {
                 window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){}
                 window.isStudioPlaying = false;
             }
+            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
         };
-        
+
         player.onseeking = () => {
             if (window.studioSourceNode) {
                 window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){}
                 window.isStudioPlaying = false;
             }
         };
-        
+
         player.onseeked = () => {
             if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0) {
                 if (!player.paused) {
@@ -252,36 +316,30 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         };
 
-        player.onended = () => { 
-            // 🚀 ИСПРАВЛЕН БАГ ПОТЕРИ КОНТЕКСТА РЕВЕРСА:
-            // Сначала запоминаем, играл ли трек задом наперед до того, как удалим все статусы скраббинга
+        player.onended = () => {
             let wasReversed = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-            
-            if (window.scrubState && (window.scrubState.active || window.scrubState.locked)) {
-                if(typeof window.stopScrub === 'function') window.stopScrub();
+
+            if (window.scrubState && window.scrubState.active && !window.scrubState.locked) {
+                if(typeof window.stopScrub === 'function') window.stopScrub(true);
             }
-            
+
             if (wasReversed) {
-                // Если мы дошли до конца через дугу скраббинга, форсируем глобальный реверс для следующего трека
-                if (!window.isReversed) window.isReversed = true; 
                 window.playPreviousTrack();
             } else {
-                window.playNextTrack(); 
+                window.playNextTrack();
             }
         };
-        
-        player.ontimeupdate = () => { 
-            if (isFinite(player.duration)) { 
+
+        player.ontimeupdate = () => {
+            if (isFinite(player.duration)) {
                 let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
                 if(typeof window.updateProgressUI === 'function') window.updateProgressUI(player.currentTime, player.duration, isVisualReverse);
-            } 
+                window.updateCenterCurrentTime(player.currentTime, player.duration, isVisualReverse);
+            }
         };
     }
 });
 
-// =========================================================================
-// 📱 НАТИВНАЯ ШТОРКА ANDROID 16 (БЕЗ ВМЕШАТЕЛЬСТВА В ЛОГИКУ ПЛЕЕРА)
-// =========================================================================
 window.lastNotifSync = 0;
 
 window.syncAndroidNotification = function(force) {
