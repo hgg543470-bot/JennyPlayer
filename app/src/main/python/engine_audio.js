@@ -1,5 +1,5 @@
 // =========================================================================
-// 🎵 ENGINE_AUDIO.JS (ЗВУКОВОЙ ГРАФ + 5 МОДУЛЕЙ ТРАКТА + 5 МОДУЛЕЙ PRO STUDIO)
+// 🎵 ENGINE_AUDIO.JS (СТУДИЙНЫЙ ГРАФ БЕЗ УТЕЧЕК УЗЛОВ И СБОЕВ НА ЛЕТУ)
 // =========================================================================
 
 window.audioCtx = null;
@@ -19,6 +19,9 @@ window.compLow = null; window.compMid = null; window.compHigh = null;
 window.midPhaseNode = null;
 window.deEssGain = null;
 window.masterSafeComp = null;
+
+// Реестр всех динамических узлов для 100% зачистки при переключении на лету
+window.activeDynamicNodes = [];
 
 window.studioBuffer = null;
 window.studioSourceNode = null;
@@ -40,6 +43,19 @@ window.DSP_MOD_DEFAULTS = {
     opt_crossfeed: false,  val_crossfeed: 0.28
 };
 
+window.trackNode = function(node, bucket) {
+    if (bucket && node) bucket.push(node);
+    return node;
+};
+
+window.cleanupDynamicNodes = function() {
+    if (!window.activeDynamicNodes) return;
+    while (window.activeDynamicNodes.length > 0) {
+        let n = window.activeDynamicNodes.pop();
+        try { n.disconnect(); } catch (e) {}
+    }
+};
+
 window.computeBufferAutoGain = function(audioBuffer, targetDb) {
     if (!audioBuffer) return 1.0;
     let ch0 = audioBuffer.getChannelData(0);
@@ -57,14 +73,13 @@ window.computeBufferAutoGain = function(audioBuffer, targetDb) {
     if (rms < 0.0005) return 1.0;
     let currentDb = 20 * Math.log10(rms);
     let tDb = isNaN(parseFloat(targetDb)) ? -11.0 : parseFloat(targetDb);
-    let diffDb = Math.max(-9.0, Math.min(9.0, tDb - currentDb));
+    let diffDb = Math.max(-12.0, Math.min(12.0, tDb - currentDb));
     return Math.pow(10, diffDb / 20);
 };
 
 window.createFIRImpulse = function(context, decayMs) {
     let sampleRate = context.sampleRate;
-    let length = Math.floor(sampleRate * (decayMs / 1000));
-    if (length === 0) length = 1;
+    let length = Math.max(1, Math.floor(sampleRate * ((decayMs || 2) / 1000)));
     let impulse = context.createBuffer(2, length, sampleRate);
     const cfg = window.appConfig || {};
     let firAmp = parseFloat(cfg.val_cleanFir);
@@ -87,34 +102,35 @@ window.createFIRImpulse = function(context, decayMs) {
     return impulse;
 };
 
-// Универсальный строитель PRO-эффектов (работает и в реальном времени, и при экспорте в файл)
-window.insertProStudioChain = function(ctx, inputNode, cfg) {
+// Студийная цепочка PRO Studio (фазокогерентная, с регистрацией всех узлов для чистого disconnect)
+window.insertProStudioChain = function(ctx, inputNode, cfg, bucket) {
     let cur = inputNode;
+    const reg = (n) => window.trackNode(n, bucket);
 
-    // 1. 🥁 Панч-Хлыст Атаки (Transient Punch Boost на ударные)
+    // 1. 🥁 Панч-Хлыст Атаки (Удар бочки 95 Гц + Щелчок атаки 3100 Гц)
     if (cfg.opt_punch) {
         let punchDb = parseFloat(cfg.val_punch);
         if (isNaN(punchDb)) punchDb = 4.5;
-        punchDb = Math.max(0, Math.min(12, punchDb));
+        punchDb = Math.max(0, Math.min(15, punchDb));
 
-        let kickSnap = ctx.createBiquadFilter();
+        let kickSnap = reg(ctx.createBiquadFilter());
         kickSnap.type = 'peaking';
-        kickSnap.frequency.value = 105;
-        kickSnap.Q.value = 2.2;
-        kickSnap.gain.value = punchDb * 0.75;
+        kickSnap.frequency.value = 95;
+        kickSnap.Q.value = 1.8;
+        kickSnap.gain.value = punchDb * 0.9;
 
-        let transientSnap = ctx.createBiquadFilter();
+        let transientSnap = reg(ctx.createBiquadFilter());
         transientSnap.type = 'peaking';
         transientSnap.frequency.value = 3100;
-        transientSnap.Q.value = 1.6;
-        transientSnap.gain.value = punchDb;
+        transientSnap.Q.value = 1.4;
+        transientSnap.gain.value = punchDb * 0.85;
 
-        let punchComp = ctx.createDynamicsCompressor();
-        punchComp.threshold.value = -18;
+        let punchComp = reg(ctx.createDynamicsCompressor());
+        punchComp.threshold.value = -20;
         punchComp.knee.value = 6;
-        punchComp.ratio.value = 3.5;
-        punchComp.attack.value = 0.038; // 38 мс — пропускает весь стартовый хлыст барабанов
-        punchComp.release.value = 0.065;
+        punchComp.ratio.value = 4.0;
+        punchComp.attack.value = 0.035;
+        punchComp.release.value = 0.060;
 
         cur.connect(kickSnap);
         kickSnap.connect(transientSnap);
@@ -122,56 +138,56 @@ window.insertProStudioChain = function(ctx, inputNode, cfg) {
         cur = punchComp;
     }
 
-    // 2. 🧲 Моно-центрирование саб-баса (< N Hz в синфазный центр L=R)
-    if (cfg.opt_monoBass) {
-        let monoHz = parseFloat(cfg.val_monoBass);
-        if (isNaN(monoHz)) monoHz = 120;
-        monoHz = Math.max(40, Math.min(350, monoHz));
-
-        let lpSub = ctx.createBiquadFilter();
-        lpSub.type = 'lowpass';
-        lpSub.frequency.value = monoHz;
-
-        let monoSum = ctx.createGain();
-        monoSum.channelCount = 1;
-        monoSum.channelCountMode = 'explicit';
-
-        let hpStereo = ctx.createBiquadFilter();
-        hpStereo.type = 'highpass';
-        hpStereo.frequency.value = monoHz;
-
-        let mergeBus = ctx.createGain();
-        cur.connect(lpSub);
-        lpSub.connect(monoSum);
-        monoSum.connect(mergeBus);
-
-        cur.connect(hpStereo);
-        hpStereo.connect(mergeBus);
-        cur = mergeBus;
-    }
-
-    // 3. 🎭 Mid/Side-матрица (Независимое расширение/сужение стереосцены)
-    if (cfg.opt_msWidth) {
-        let width = parseFloat(cfg.val_msWidth);
+    // 2. 🧲 Моно-Саббас + 3. 🎭 Стерео-Ширина Side (Единая фазокогерентная Mid/Side матрица без фазовых ям!)
+    if (cfg.opt_monoBass || cfg.opt_msWidth) {
+        let width = cfg.opt_msWidth ? parseFloat(cfg.val_msWidth) : 1.0;
         if (isNaN(width)) width = 1.35;
-        width = Math.max(0.0, Math.min(2.5, width));
+        width = Math.max(0.0, Math.min(3.0, width));
 
-        let splitter = ctx.createChannelSplitter(2);
-        let merger = ctx.createChannelMerger(2);
+        let sp = reg(ctx.createChannelSplitter(2));
+        let mg = reg(ctx.createChannelMerger(2));
 
-        let gLL = ctx.createGain(); gLL.gain.value = 0.5 * (1 + width);
-        let gRL = ctx.createGain(); gRL.gain.value = 0.5 * (1 - width);
-        let gRR = ctx.createGain(); gRR.gain.value = 0.5 * (1 + width);
-        let gLR = ctx.createGain(); gLR.gain.value = 0.5 * (1 - width);
+        // Mid = 0.5 * (L + R) — проходит с идеальной фазой 0°!
+        let midSum = reg(ctx.createGain()); midSum.gain.value = 0.5;
 
-        cur.connect(splitter);
-        splitter.connect(gLL, 0); gLL.connect(merger, 0, 0);
-        splitter.connect(gRL, 1); gRL.connect(merger, 0, 0);
-        splitter.connect(gRR, 1); gRR.connect(merger, 0, 1);
-        splitter.connect(gLR, 0); gLR.connect(merger, 0, 1);
+        // Side = 0.5 * (L - R) * width
+        let sideL = reg(ctx.createGain()); sideL.gain.value = 0.5 * width;
+        let sideR = reg(ctx.createGain()); sideR.gain.value = -0.5 * width;
+        let sideBus = reg(ctx.createGain());
 
-        let msOut = ctx.createGain();
-        merger.connect(msOut);
+        cur.connect(sp);
+        sp.connect(midSum, 0);
+        sp.connect(midSum, 1);
+
+        sp.connect(sideL, 0); sideL.connect(sideBus);
+        sp.connect(sideR, 1); sideR.connect(sideBus);
+
+        let sideProcessed = sideBus;
+        if (cfg.opt_monoBass) {
+            let monoHz = parseFloat(cfg.val_monoBass);
+            if (isNaN(monoHz)) monoHz = 120;
+            monoHz = Math.max(30, Math.min(400, monoHz));
+            // Срезаем саб-бас ТОЛЬКО из боковой разницы Side, оставляя центральный бас нетронутым!
+            let sideHp = reg(ctx.createBiquadFilter());
+            sideHp.type = 'highpass';
+            sideHp.frequency.value = monoHz;
+            sideHp.Q.value = 0.707;
+            sideBus.connect(sideHp);
+            sideProcessed = sideHp;
+        }
+
+        // Сборка обратно: L_out = Mid + Side, R_out = Mid - Side
+        let sideInv = reg(ctx.createGain()); sideInv.gain.value = -1.0;
+        sideProcessed.connect(sideInv);
+
+        midSum.connect(mg, 0, 0);
+        sideProcessed.connect(mg, 0, 0);
+
+        midSum.connect(mg, 0, 1);
+        sideInv.connect(mg, 0, 1);
+
+        let msOut = reg(ctx.createGain());
+        mg.connect(msOut);
         cur = msOut;
     }
 
@@ -179,21 +195,21 @@ window.insertProStudioChain = function(ctx, inputNode, cfg) {
     if (cfg.opt_crossfeed) {
         let delayMs = parseFloat(cfg.val_crossfeed);
         if (isNaN(delayMs)) delayMs = 0.28;
-        delayMs = Math.max(0.05, Math.min(1.5, delayMs));
+        delayMs = Math.max(0.05, Math.min(2.0, delayMs));
 
-        let sp = ctx.createChannelSplitter(2);
-        let mg = ctx.createChannelMerger(2);
+        let sp = reg(ctx.createChannelSplitter(2));
+        let mg = reg(ctx.createChannelMerger(2));
 
-        let dL = ctx.createDelay(0.01); dL.delayTime.value = delayMs / 1000;
-        let dR = ctx.createDelay(0.01); dR.delayTime.value = delayMs / 1000;
+        let dL = reg(ctx.createDelay(0.02)); dL.delayTime.value = delayMs / 1000;
+        let dR = reg(ctx.createDelay(0.02)); dR.delayTime.value = delayMs / 1000;
 
-        let lpL = ctx.createBiquadFilter(); lpL.type = 'lowpass'; lpL.frequency.value = 750;
-        let lpR = ctx.createBiquadFilter(); lpR.type = 'lowpass'; lpR.frequency.value = 750;
+        let lpL = reg(ctx.createBiquadFilter()); lpL.type = 'lowpass'; lpL.frequency.value = 750;
+        let lpR = reg(ctx.createBiquadFilter()); lpR.type = 'lowpass'; lpR.frequency.value = 750;
 
-        let xL = ctx.createGain(); xL.gain.value = 0.24;
-        let xR = ctx.createGain(); xR.gain.value = 0.24;
-        let dirL = ctx.createGain(); dirL.gain.value = 0.88;
-        let dirR = ctx.createGain(); dirR.gain.value = 0.88;
+        let xL = reg(ctx.createGain()); xL.gain.value = 0.26;
+        let xR = reg(ctx.createGain()); xR.gain.value = 0.26;
+        let dirL = reg(ctx.createGain()); dirL.gain.value = 0.86;
+        let dirR = reg(ctx.createGain()); dirR.gain.value = 0.86;
 
         cur.connect(sp);
         sp.connect(dirL, 0); dirL.connect(mg, 0, 0);
@@ -202,7 +218,7 @@ window.insertProStudioChain = function(ctx, inputNode, cfg) {
         sp.connect(dL, 0); dL.connect(lpL); lpL.connect(xL); xL.connect(mg, 0, 1);
         sp.connect(dR, 1); dR.connect(lpR); lpR.connect(xR); xR.connect(mg, 0, 0);
 
-        let cfOut = ctx.createGain();
+        let cfOut = reg(ctx.createGain());
         mg.connect(cfOut);
         cur = cfOut;
     }
@@ -229,8 +245,6 @@ window.initAudioBoost = function() {
         window.preFirPad = window.audioCtx.createGain();
         window.preFirPad.gain.value = 0.8;
 
-        window.firNode = window.audioCtx.createConvolver();
-        window.firNode.normalize = false; 
         window.firGainNode = window.audioCtx.createGain();
 
         window.eqNodes.band60 = window.audioCtx.createBiquadFilter(); window.eqNodes.band60.type = 'lowshelf'; window.eqNodes.band60.frequency.value = 60;
@@ -259,10 +273,14 @@ window.initAudioBoost = function() {
 
 window.buildAudioGraph = function() {
     if (!window.audioCtx) return;
-    
+
+    // 1. Полная зачистка всех динамических узлов с прошлого цикла
+    window.cleanupDynamicNodes();
+
     try { window.inputMixer.disconnect(); } catch(e){}
     try { window.preAmpNode.disconnect(); } catch(e){}
-    try { window.preFirPad.disconnect(); window.firNode.disconnect(); window.firGainNode.disconnect(); } catch(e){}
+    try { if (window.firNode) window.firNode.disconnect(); } catch(e){}
+    try { window.preFirPad.disconnect(); window.firGainNode.disconnect(); } catch(e){}
     try { window.gainNode.disconnect(); } catch(e){}
     try { window.compressorNode.disconnect(); } catch(e){}
     try { window.splitLow.disconnect(); window.splitMid.disconnect(); window.splitHigh.disconnect(); } catch(e){}
@@ -272,7 +290,7 @@ window.buildAudioGraph = function() {
 
     const cfg = window.appConfig || {};
 
-    // Авто-RMS выравнивание входа по RAM-буферу
+    // Авто-RMS выравнивание входа по RAM-буферу (работает на лету при смене цифры!)
     if (cfg.opt_autoRms && window.studioBuffer) {
         window.currentTrackAutoGain = window.computeBufferAutoGain(window.studioBuffer, cfg.val_autoRms);
         window.preAmpNode.gain.value = 0.6 * window.currentTrackAutoGain;
@@ -284,7 +302,10 @@ window.buildAudioGraph = function() {
     currentNode.connect(window.preAmpNode);
     currentNode = window.preAmpNode;
 
+    // Создаём свежий ConvolverNode при каждом изменении FIR, чтобы не залипал старый FFT-буфер
     if (cfg.firEnabled && cfg.firSettings) {
+        window.firNode = window.trackNode(window.audioCtx.createConvolver(), window.activeDynamicNodes);
+        window.firNode.normalize = false;
         window.firNode.buffer = window.createFIRImpulse(window.audioCtx, cfg.firSettings.decay);
         window.firGainNode.gain.value = cfg.firSettings.gain;
         currentNode.connect(window.preFirPad);
@@ -302,8 +323,8 @@ window.buildAudioGraph = function() {
         currentNode = window.eqNodes.band14000;
     }
 
-    // Вставляем цепочку PRO Studio (Панч, Моно-Бас, Mid/Side, Бинаурал)
-    currentNode = window.insertProStudioChain(window.audioCtx, currentNode, cfg);
+    // Вставляем цепочку PRO Studio с регистрацией всех узлов в window.activeDynamicNodes
+    currentNode = window.insertProStudioChain(window.audioCtx, currentNode, cfg, window.activeDynamicNodes);
 
     currentNode.connect(window.gainNode);
     currentNode = window.gainNode;

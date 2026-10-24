@@ -1,3 +1,34 @@
+
+window.ensureParentDspBlocks = function(triggerKey, ev) {
+    window.appConfig = window.appConfig || {};
+    let autoTurned = [];
+    if (triggerKey === 'cleanFir' || triggerKey === 'phaseFix') {
+        if (!window.appConfig.firEnabled) {
+            window.appConfig.firEnabled = true;
+            let el = document.getElementById('cfg_firEnabled');
+            if (el) el.checked = true;
+            autoTurned.push('FIR');
+        }
+    }
+    if (['midPhase', 'midQ', 'deEsser', 'masterCeil', 'phaseFix'].includes(triggerKey)) {
+        if (!window.appConfig.limiterEnabled) {
+            window.appConfig.limiterEnabled = true;
+            let el = document.getElementById('cfg_limiterEnabled');
+            if (el) el.checked = true;
+            autoTurned.push('Лимитер');
+        }
+        if (!window.appConfig.multiBandEnabled) {
+            window.appConfig.multiBandEnabled = true;
+            let el = document.getElementById('cfg_multiBandEnabled');
+            if (el) el.checked = true;
+            autoTurned.push('3-Band Кроссовер');
+        }
+    }
+    if (autoTurned.length > 0 && typeof window.showToast === 'function') {
+        window.showToast("⚡ Авто-включено для работы: " + autoTurned.join(' + '), ev);
+    }
+};
+
 // =========================================================================
 // 📖 UI_HELP.JS (МОДУЛИ ТРАКТА, PRO STUDIO И СПРАВОЧНИК ❓ ПО ВСЕМ ПУНКТАМ)
 // =========================================================================
@@ -40,6 +71,7 @@ window.syncDspModUI = function() {
 window.onPhaseFocusChange = function(el, ev) {
     window.appConfig = window.appConfig || {};
     window.appConfig.phaseFixEnabled = Boolean(el.checked);
+    if (el.checked) window.ensureParentDspBlocks('phaseFix', ev);
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     window.syncDspModUI();
     if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
@@ -55,7 +87,10 @@ window.onDspModChange = function(key) {
     window.appConfig = window.appConfig || {};
     const chk = document.getElementById('cfg_opt_' + key);
     const inp = document.getElementById('cfg_val_' + key);
-    if (chk) window.appConfig['opt_' + key] = Boolean(chk.checked);
+    if (chk) {
+        window.appConfig['opt_' + key] = Boolean(chk.checked);
+        if (chk.checked) window.ensureParentDspBlocks(key);
+    }
     if (inp) {
         let parsed = parseFloat(String(inp.value).replace(',', '.'));
         if (!isNaN(parsed)) window.appConfig['val_' + key] = parsed;
