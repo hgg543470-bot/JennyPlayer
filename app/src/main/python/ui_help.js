@@ -40,6 +40,15 @@ window.ALL_MOD_KEYS = [
 
 window.syncDspModUI = function() {
     const cfg = window.appConfig || {};
+    // Авто-перевод старых абстрактных цифр в новые dB и %
+    if (!cfg._migratedToRealUnitsV8) {
+        cfg._migratedToRealUnitsV8 = true;
+        Object.keys(window.DSP_MOD_DEFAULTS).forEach(k => {
+            if (k.startsWith('val_')) cfg[k] = window.DSP_MOD_DEFAULTS[k];
+        });
+        localStorage.setItem('ytm_config', JSON.stringify(cfg));
+    }
+
     const pfEl = document.getElementById('cfg_phaseFix');
     if (pfEl) pfEl.checked = Boolean(cfg.phaseFixEnabled);
 
@@ -519,11 +528,11 @@ window.mountJennyStudioUI = function() {
 
     // 2. Блок "🧪 Тонкая настройка тракта (5 опций)" — блокируется при включённом Фазовом фокусе
     const rowsMod = [
-        ['midPhase',   '🎯 Инверсия фазы СЧ:', '0.05',  'mod_midPhase'],
-        ['midQ',       '📐 Широкий купол СЧ:', '0.05',  'mod_midQ'],
-        ['deEsser',    '🐍 Де-эссер ВЧ:',      '0.05',  'mod_deEsser'],
-        ['cleanFir',   '✨ Чистый FIR:',       '0.005', 'mod_cleanFir'],
-        ['masterCeil', '🛡️ Мастер-потолок:',   '0.1',   'mod_masterCeil']
+        ['midPhase',   '🎯 Фаза СЧ Вокал (dB):',  '1',  'mod_midPhase'],
+        ['midQ',       '📐 Ширина СЧ купола (%):', '10', 'mod_midQ'],
+        ['deEsser',    '🐍 Де-эссер ВЧ (dB):',     '1',  'mod_deEsser'],
+        ['cleanFir',   '✨ Драйв Чистый FIR (dB):','1',  'mod_cleanFir'],
+        ['masterCeil', '🛡️ Мастер-потолок (dB):',  '1',  'mod_masterCeil']
     ];
 
     const modSection = document.createElement('details');
@@ -550,11 +559,11 @@ window.mountJennyStudioUI = function() {
 
     // 3. Блок "🚀 Мастеринг-Студия PRO (5 спец-модулей)" — работает всегда!
     const rowsPro = [
-        ['autoRms',   '⚡ Авто-RMS Вход (dB):',   '0.5',  'pro_autoRms'],
-        ['monoBass',  '🧲 Моно-Саббас (Hz):',     '10',   'pro_monoBass'],
-        ['msWidth',   '🎭 Стерео-Ширина (x):',    '0.05', 'pro_msWidth'],
-        ['punch',     '🥁 Панч-Хлыст (dB):',      '0.5',  'pro_punch'],
-        ['crossfeed', '🎧 Бинаурал-Колонки (ms):', '0.02', 'pro_crossfeed']
+        ['autoRms',   '⚡ Авто-RMS Цель (dB):',   '1',  'pro_autoRms'],
+        ['monoBass',  '🧲 Моно-Саббас (Hz):',     '20', 'pro_monoBass'],
+        ['msWidth',   '🎭 Стерео-Ширина (%):',    '25', 'pro_msWidth'],
+        ['punch',     '🥁 Панч-Хлыст (dB):',      '1',  'pro_punch'],
+        ['crossfeed', '🎧 Бинаурал-Колонки (%):', '10', 'pro_crossfeed']
     ];
 
     const proSection = document.createElement('details');
