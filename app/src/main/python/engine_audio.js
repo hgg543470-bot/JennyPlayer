@@ -32,16 +32,16 @@ window.lastComputedCeilingDb = 0.0;
 window.appConfig = JSON.parse(localStorage.getItem('ytm_config')) || {};
 
 window.DSP_MOD_DEFAULTS = {
-    opt_midPhase: false,   val_midPhase: 3.0,     // +3 dB (выдвижение СЧ вокала)
-    opt_midQ: false,       val_midQ: 150,         // 150% (ширина купола СЧ)
-    opt_deEsser: false,    val_deEsser: -6.0,     // -6 dB (де-эссер ВЧ)
-    opt_cleanFir: false,   val_cleanFir: 3.0,     // +3 dB (драйв чистого FIR без гула)
-    opt_masterCeil: true,  val_masterCeil: -1.0,  // Автоматический расчёт!
-    opt_autoRms: false,    val_autoRms: -10.0,    // -10 dB (целевая плотность RMS)
-    opt_monoBass: false,   val_monoBass: 120,     // 120 Hz (моно-саббас)
-    opt_msWidth: false,    val_msWidth: 160,      // 160% (3D All-Pass панорама для закрытых наушников)
-    opt_punch: false,      val_punch: 6.0,        // +6 dB (упругий панч бочки и снейра)
-    opt_crossfeed: false,  val_crossfeed: 75      // 75% (бинауральные колонки)
+    opt_midPhase: true,    val_midPhase: 4.0,
+    opt_midQ: true,        val_midQ: 120,
+    opt_deEsser: true,     val_deEsser: -2.0,
+    opt_cleanFir: true,    val_cleanFir: 3.0,
+    opt_masterCeil: true,  val_masterCeil: -1.0,
+    opt_autoRms: true,     val_autoRms: -6.0,
+    opt_monoBass: true,    val_monoBass: 79,
+    opt_msWidth: true,     val_msWidth: 130,
+    opt_punch: true,       val_punch: -1.0,
+    opt_crossfeed: false,  val_crossfeed: 65
 };
 
 window.dbToLinear = function(db) {

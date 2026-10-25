@@ -88,7 +88,7 @@ window.applyStaticDOMTranslations = function() {
             langBtn.onclick = (e) => window.toggleLanguage(e);
             folderTrigger.parentElement.appendChild(langBtn);
         }
-        langBtn.innerText = isEn ? 'EN' : 'RU';
+        langBtn.innerHTML = window.renderDualLangHTML ? window.renderDualLangHTML(false) : 'RU / EN';
     }
     const searchInp = document.getElementById('trackSearchInput');
     if (searchInp) searchInp.placeholder = isEn ? '🔍 Search tracks...' : '🔍 Поиск по названию...';
@@ -692,114 +692,15 @@ if (document.readyState === 'loading') document.addEventListener("DOMContentLoad
 else window.mountJennyStudioUI();
 
 // =========================================================================
-// 🦿 ПАТЧ V32: ЭТАЛОННЫЕ НАСТРОЙКИ ИЗ ВИДЕО + ДВОЙНОЙ RU/EN + ПОБЕГ НА НОГАХ
-// =========================================================================
 
-window.applyVideoMasterPresetV32 = function(force) {
-    window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
-    if (!force && window.appConfig._videoPresetAppliedV32) return;
 
-    const videoDefaults = {
-        _videoPresetAppliedV32: true,
-        _migratedToRealUnitsV20: true,
-        studioMode: true,
-        phaseFixEnabled: false,
-        opt_midPhase: true,   val_midPhase: 4,
-        opt_midQ: true,       val_midQ: 120,
-        opt_deEsser: true,    val_deEsser: -2,
-        opt_cleanFir: true,   val_cleanFir: 3,
-        opt_masterCeil: true, val_masterCeil: -1.0,
-        opt_autoRms: true,    val_autoRms: -6,
-        opt_monoBass: true,   val_monoBass: 79,
-        opt_msWidth: true,    val_msWidth: 130,
-        opt_punch: true,      val_punch: -1,
-        opt_crossfeed: false, val_crossfeed: 65,
-        leftHandedMode: false,
-        pitchLock: true,
-        xNormalSpeed: false,
-        normalPlaybackSpeed: 0.97,
-        autoSaveBase: false,
-        defaultScrubSpeed: 1.1,
-        autoSaveScrub: true,
-        scrubZones: [
-            { val: 1.1, en: true },
-            { val: 1, en: true },
-            { val: 1.05, en: true },
-            { val: 0.95, en: true },
-            { val: 1.5, en: true },
-            { val: 0.9, en: true }
-        ],
-        formatSlots: JSON.parse(JSON.stringify(window.DEFAULT_FORMAT_SLOTS)),
-        amoledMode: true,
-        volSlider: true,
-        firEnabled: true,
-        firSettings: { gain: 1.6, decay: 6 },
-        multiBandEnabled: true,
-        multiBandSettings: { low: 160, high: 2528 },
-        limiterEnabled: true,
-        limiterSettings: { threshold: -18, knee: 128, ratio: 4, attack: 192, release: 352 },
-        eqEnabled: true,
-        boosterEnabled: true,
-        boosterPower: 5
-    };
-
-    Object.assign(window.appConfig, videoDefaults);
-    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-
-    // Синхронизируем все поля ввода и чекбоксы в DOM
-    const chkMap = {
-        'cfg_studioMode': true, 'cfg_phaseFix': false, 'cfg_leftHandedMode': false,
-        'cfg_pitchLock': true, 'cfg_xNormalSpeed': false, 'cfg_autoSaveBase': false,
-        'cfg_autoSaveScrub': true, 'cfg_amoledMode': true, 'cfg_volSlider': true,
-        'cfg_firEnabled': true, 'cfg_multiBandEnabled': true, 'cfg_limiterEnabled': true,
-        'cfg_eqEnabled': true, 'cfg_boosterEnabled': true
-    };
-    for (const [id, val] of Object.entries(chkMap)) {
-        const el = document.getElementById(id);
-        if (el) el.checked = val;
-    }
-    const valMap = {
-        'cfg_normalPlaybackSpeed': 0.97, 'cfg_defaultScrubSpeed': 1.1,
-        'cfg_fir_gain': 1.6, 'cfg_fir_decay': 6,
-        'cfg_mb_low': 160, 'cfg_mb_high': 2528,
-        'cfg_lim_threshold': -18, 'cfg_lim_knee': 128, 'cfg_lim_ratio': 4,
-        'cfg_lim_attack': 192, 'cfg_lim_release': 352, 'cfg_boosterPower': 5
-    };
-    for (const [id, val] of Object.entries(valMap)) {
-        const el = document.getElementById(id);
-        if (el) el.value = val;
-    }
-
-    if (typeof window.syncDspModUI === 'function') window.syncDspModUI();
-    if (typeof window.syncFormatSlotsUI === 'function') window.syncFormatSlotsUI();
-    if (typeof window.applyTheme === 'function') window.applyTheme();
-    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
-    if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
-};
-
-// Перехватываем loadConfigFromDisk, чтобы старый файл конфига на сервере не перетирал наш новый дефолт при первом старте
-(function() {
-    const origLoad = window.loadConfigFromDisk;
-    if (typeof origLoad === 'function' && !window._loadWrappedV32) {
-        window._loadWrappedV32 = true;
-        window.loadConfigFromDisk = async function() {
-            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV32);
-            await origLoad();
-            if (!wasApplied) {
-                window.applyVideoMasterPresetV32(true);
-            }
-        };
-    }
-})();
-
-// Форматирование двойного индикатора языка RU / EN
+// 🦿 ПАТЧ V34: ДЕФОЛТЫ ИЗ ВИДЕО (FIR 1.5 / 1.28) + ДВОЙНОЙ RU / EN + ПОБЕГ НА НОГАХ
 window.renderDualLangHTML = function(withGlobe) {
     const isEn = (window.getLang() === 'en');
-    const prefix = withGlobe ? '🌐 ' : '';
-    if (isEn) {
-        return `${prefix}<span style="color:#8b949e;font-weight:normal;">RU / </span><span style="color:#3fb950;font-weight:900;">EN</span>`;
-    }
-    return `${prefix}<span style="color:#3fb950;font-weight:900;">RU</span><span style="color:#8b949e;font-weight:normal;"> / EN</span>`;
+    const p = withGlobe ? '🌐 ' : '';
+    return isEn
+        ? `${p}<span style="color:#8b949e;font-weight:normal;">RU / </span><span style="color:#3fb950;font-weight:900;">EN</span>`
+        : `${p}<span style="color:#3fb950;font-weight:900;">RU</span><span style="color:#8b949e;font-weight:normal;"> / EN</span>`;
 };
 
 window.updateDualLangButtons = function() {
@@ -815,45 +716,106 @@ window.updateDualLangButtons = function() {
     }
 };
 
-// Переопределяем toggleLanguage, чтобы обновлялись обе кнопки RU / EN и сбрасывался таймер побега
-const _origToggleLangV32 = window.toggleLanguage;
+window.applyVideoMasterPresetV34 = function(force) {
+    window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
+    if (!force && window.appConfig._videoPresetAppliedV34) return;
+    Object.assign(window.appConfig, {
+        _videoPresetAppliedV34: true, _migratedToRealUnitsV20: true,
+        studioMode: true, phaseFixEnabled: false,
+        opt_midPhase: true, val_midPhase: 4,
+        opt_midQ: true, val_midQ: 120,
+        opt_deEsser: true, val_deEsser: -2,
+        opt_cleanFir: true, val_cleanFir: 3,
+        opt_masterCeil: true, val_masterCeil: -1.0,
+        opt_autoRms: true, val_autoRms: -6,
+        opt_monoBass: true, val_monoBass: 79,
+        opt_msWidth: true, val_msWidth: 130,
+        opt_punch: true, val_punch: -1,
+        opt_crossfeed: false, val_crossfeed: 65,
+        leftHandedMode: false, pitchLock: true, xNormalSpeed: false,
+        normalPlaybackSpeed: 0.97, autoSaveBase: false,
+        defaultScrubSpeed: 1.1, autoSaveScrub: true,
+        scrubZones: [
+            { val: 1.1, en: true }, { val: 1, en: true }, { val: 1.05, en: true },
+            { val: 0.95, en: true }, { val: 1.5, en: true }, { val: 0.9, en: true }
+        ],
+        formatSlots: JSON.parse(JSON.stringify(window.DEFAULT_FORMAT_SLOTS)),
+        amoledMode: true, volSlider: true,
+        firEnabled: true, firSettings: { gain: 1.5, decay: 1.28 },
+        multiBandEnabled: true, multiBandSettings: { low: 160, high: 2528 },
+        limiterEnabled: true, limiterSettings: { threshold: -18, knee: 128, ratio: 4, attack: 192, release: 352 },
+        eqEnabled: true, boosterEnabled: true, boosterPower: 5
+    });
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+
+    const chkMap = {
+        'cfg_studioMode': true, 'cfg_phaseFix': false, 'cfg_leftHandedMode': false,
+        'cfg_pitchLock': true, 'cfg_xNormalSpeed': false, 'cfg_autoSaveBase': false,
+        'cfg_autoSaveScrub': true, 'cfg_amoledMode': true, 'cfg_volSlider': true,
+        'cfg_firEnabled': true, 'cfg_multiBandEnabled': true, 'cfg_limiterEnabled': true,
+        'cfg_eqEnabled': true, 'cfg_boosterEnabled': true
+    };
+    for (const [id, v] of Object.entries(chkMap)) { const el = document.getElementById(id); if (el) el.checked = v; }
+
+    const valMap = {
+        'cfg_normalPlaybackSpeed': 0.97, 'cfg_defaultScrubSpeed': 1.1,
+        'cfg_fir_gain': 1.5, 'cfg_fir_decay': 1.28,
+        'cfg_mb_low': 160, 'cfg_mb_high': 2528,
+        'cfg_lim_threshold': -18, 'cfg_lim_knee': 128, 'cfg_lim_ratio': 4,
+        'cfg_lim_attack': 192, 'cfg_lim_release': 352, 'cfg_boosterPower': 5
+    };
+    for (const [id, v] of Object.entries(valMap)) { const el = document.getElementById(id); if (el) el.value = v; }
+
+    if (typeof window.syncDspModUI === 'function') window.syncDspModUI();
+    if (typeof window.syncFormatSlotsUI === 'function') window.syncFormatSlotsUI();
+    if (typeof window.applyTheme === 'function') window.applyTheme();
+    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph();
+    if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
+};
+
+(function() {
+    const origLoad = window.loadConfigFromDisk;
+    if (typeof origLoad === 'function' && !window._loadWrappedV34) {
+        window._loadWrappedV34 = true;
+        window.loadConfigFromDisk = async function() {
+            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV34);
+            await origLoad();
+            if (!wasApplied) window.applyVideoMasterPresetV34(true);
+        };
+    }
+})();
+
+const _origToggleLangV34 = window.toggleLanguage;
 window.toggleLanguage = function(ev) {
-    _origToggleLangV32(ev);
+    _origToggleLangV34(ev);
     window.updateDualLangButtons();
     window.scheduleLangRunawayTimer();
 };
 
-// Анимация дребезжания и побега плашки языка на ногах в настройки ⚙️ через 30 секунд!
 window._langRunawayTimer = null;
 window._langBuzzInterval = null;
 window._hasLangRunAway = false;
 
-window.triggerLangBuzz = function(durationMs = 1400) {
+window.triggerLangBuzz = function(ms = 1400) {
     const btn = document.getElementById('mainLangToggleBtn');
     if (!btn || window._hasLangRunAway) return;
     btn.classList.add('lang-buzz-active');
-    setTimeout(() => {
-        if (btn) btn.classList.remove('lang-buzz-active');
-    }, durationMs);
+    setTimeout(() => { if (btn) btn.classList.remove('lang-buzz-active'); }, ms);
 };
 
 window.runAwayLangBadgeToSettings = function() {
     const btn = document.getElementById('mainLangToggleBtn');
     const gear = document.getElementById('btn-settingsModal');
-    if (!btn || !gear || window._hasLangRunAway) return;
-    if (btn.offsetParent === null) return;
+    if (!btn || !gear || window._hasLangRunAway || btn.offsetParent === null) return;
 
     window._hasLangRunAway = true;
     if (window._langBuzzInterval) clearInterval(window._langBuzzInterval);
 
     const startRect = btn.getBoundingClientRect();
     const gearRect = gear.getBoundingClientRect();
-
-    // Прячем оригинальную кнопку на главной панели
     btn.style.opacity = '0';
     btn.style.pointerEvents = 'none';
 
-    // Создаём бегущего актёра с двумя ногами!
     const actor = document.createElement('div');
     actor.className = 'runaway-actor';
     actor.style.left = startRect.left + 'px';
@@ -869,12 +831,9 @@ window.runAwayLangBadgeToSettings = function() {
         </div>
     `;
     document.body.appendChild(actor);
-
-    // Фаза 1: Дребезжит на месте, выпускает ноги и готовится к старту (0 - 400 мс)
     actor.classList.add('lang-buzz-active');
     try { navigator.vibrate(25); } catch (e) {}
 
-    // Фаза 2: Бежит на ногах вправо по панели до уровня шестерёнки настроек (400 - 1750 мс)
     setTimeout(() => {
         actor.classList.remove('lang-buzz-active');
         const targetRunX = Math.max(startRect.left + 80, gearRect.left - 15);
@@ -883,10 +842,9 @@ window.runAwayLangBadgeToSettings = function() {
         actor.style.top = (startRect.top - 4) + 'px';
     }, 400);
 
-    // Фаза 3: Прыгает вверх с переворотом на 540 градусов прямо в шестерёнку ⚙️ (1750 - 2350 мс)
     setTimeout(() => {
-        const bubble = document.getElementById('runawayBubble');
-        if (bubble) bubble.innerText = '🤸 Вжух!';
+        const b = document.getElementById('runawayBubble');
+        if (b) b.innerText = '🤸 Вжух!';
         actor.style.transition = 'left 0.55s ease-in, top 0.55s cubic-bezier(0.2, -0.6, 0.3, 1), transform 0.55s ease-in, opacity 0.55s ease-in';
         actor.style.left = (gearRect.left - 5) + 'px';
         actor.style.top = (gearRect.top - 5) + 'px';
@@ -894,7 +852,6 @@ window.runAwayLangBadgeToSettings = function() {
         actor.style.opacity = '0.2';
     }, 1750);
 
-    // Фаза 4: Шестерёнка настроек ⚙️ проглатывает кнопку и подпрыгивает! (2320 мс)
     setTimeout(() => {
         actor.remove();
         btn.style.display = 'none';
@@ -908,37 +865,25 @@ window.scheduleLangRunawayTimer = function() {
     if (window._hasLangRunAway) return;
     if (window._langRunawayTimer) clearTimeout(window._langRunawayTimer);
     if (window._langBuzzInterval) clearInterval(window._langBuzzInterval);
-
-    // При старте сразу бодро дребезжит 2 секунды
     setTimeout(() => window.triggerLangBuzz(2000), 300);
-
-    // Каждые 10 секунд слегка подрагивает, намекая что скоро сбежит
-    window._langBuzzInterval = setInterval(() => {
-        window.triggerLangBuzz(900);
-    }, 10000);
-
-    // Ровно через 30 секунд бездействия отращивает ноги и убегает в настройки ⚙️!
-    window._langRunawayTimer = setTimeout(() => {
-        window.runAwayLangBadgeToSettings();
-    }, 30000);
+    window._langBuzzInterval = setInterval(() => window.triggerLangBuzz(900), 10000);
+    window._langRunawayTimer = setTimeout(() => window.runAwayLangBadgeToSettings(), 30000);
 };
 
-window.initV32Enhancements = function() {
-    window.applyVideoMasterPresetV32(false);
+window.initV34Enhancements = function() {
+    window.applyVideoMasterPresetV34(false);
     window.updateDualLangButtons();
     window.scheduleLangRunawayTimer();
-
-    // Подправляем контейнер вокруг папки и кнопки RU / EN, чтобы они не теснились
-    const folderTrigger = document.getElementById('folderIconTrigger');
-    if (folderTrigger && folderTrigger.parentElement) {
-        folderTrigger.parentElement.style.width = 'auto';
-        folderTrigger.parentElement.style.minWidth = '85px';
-        folderTrigger.parentElement.style.gap = '8px';
+    const ft = document.getElementById('folderIconTrigger');
+    if (ft && ft.parentElement) {
+        ft.parentElement.style.width = 'auto';
+        ft.parentElement.style.minWidth = '92px';
+        ft.parentElement.style.gap = '8px';
     }
 };
 
 if (document.readyState === 'loading') {
-    document.addEventListener("DOMContentLoaded", () => setTimeout(window.initV32Enhancements, 80));
+    document.addEventListener("DOMContentLoaded", () => setTimeout(window.initV34Enhancements, 80));
 } else {
-    setTimeout(window.initV32Enhancements, 80);
+    setTimeout(window.initV34Enhancements, 80);
 }
