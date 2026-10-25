@@ -628,36 +628,34 @@ window._buildAudioGraphCore = function() {
 
         if (cfg.multiBandEnabled && cfg.multiBandSettings) {
             let lowFreq = Math.max(20, cfg.multiBandSettings.low || 200);
-            let highFreq = Math.max(lowFreq + 100, cfg.multiBandSettings.high || 2500);
-            let effLow = (cfg.opt_midQ && (parseFloat(cfg.val_midQ) || 150) > 110) ? Math.min(lowFreq, 95) : lowFreq;
-            let midCenter = Math.sqrt(effLow * highFreq);
-            let midQ = Math.max(0.68, midCenter / (highFreq - lowFreq));
+            let highFreq = Math.max(lowFreq + 200, cfg.multiBandSettings.high || 3600);
+            // Фокусируем центр СЧ-полосы строго в зоне живого голоса (не ниже 320 Гц по нижнему краю), чтобы басовый гул 50-150 Гц не лез в шёпот!
+            let vocalLowAnchor = Math.max(lowFreq, 320);
+            let midCenter = Math.sqrt(vocalLowAnchor * highFreq);
+            let midQ = Math.max(0.85, midCenter / (highFreq - vocalLowAnchor));
 
-            // Плавная перестройка катушек кроссовера без эффекта искрящего дросселя!
             let now = window.audioCtx.currentTime;
             window.splitLow.frequency.setTargetAtTime(lowFreq, now, 0.012);
             window.splitMid.frequency.setTargetAtTime(midCenter, now, 0.012);
             window.splitHigh.frequency.setTargetAtTime(highFreq, now, 0.012);
 
+            // Басовая полоса: мощный клубный кач по настройкам пользователя
             window.compLow.threshold.value = thresh; window.compLow.knee.value = knee; window.compLow.ratio.value = ratio;
-            window.compLow.attack.value = cfg.limiterSettings.attack / 1000; 
-            window.compLow.release.value = cfg.limiterSettings.release / 1000;
+            window.compLow.attack.value = Math.max(0.015, (cfg.limiterSettings.attack || 26) / 1000);
+            window.compLow.release.value = Math.max(0.04, (cfg.limiterSettings.release || 60) / 1000);
 
-            window.compMid.threshold.value = thresh + 2; window.compMid.knee.value = knee; window.compMid.ratio.value = ratio;
-            window.compMid.attack.value = 0.002; window.compMid.release.value = 0.1;
+            // Вокальная полоса (compMid): мягкая студийная динамика без 2-мс шинкования волны (убивает хрип на шёпоте поверх баса!)
+            window.compMid.threshold.value = Math.min(-6, thresh + 7);
+            window.compMid.knee.value = Math.max(12, knee);
+            window.compMid.ratio.value = Math.min(3.5, Math.max(1.5, ratio * 0.25));
+            window.compMid.attack.value = Math.max(0.025, (cfg.limiterSettings.attack || 26) / 1000);
+            window.compMid.release.value = 0.16;
 
-            window.compHigh.threshold.value = thresh + 4; window.compHigh.knee.value = knee; window.compHigh.ratio.value = ratio;
-            window.compHigh.attack.value = 0.001; window.compHigh.release.value = 0.05;
+            window.compHigh.threshold.value = thresh + 4; window.compHigh.knee.value = knee; window.compHigh.ratio.value = Math.min(6.0, ratio);
+            window.compHigh.attack.value = 0.008; window.compHigh.release.value = 0.08;
 
             currentNode.connect(window.splitLow); currentNode.connect(window.splitMid); currentNode.connect(window.splitHigh);
-            window.splitLow.connect(window.compLow);
-            let midBassGuard = window.trackNode(window.audioCtx.createBiquadFilter(), window.activeDynamicNodes);
-            midBassGuard.type = 'highpass';
-            midBassGuard.frequency.value = Math.min(82, lowFreq * 0.65);
-            midBassGuard.Q.value = 0.707;
-            window.splitMid.connect(midBassGuard);
-            midBassGuard.connect(window.compMid);
-            window.splitHigh.connect(window.compHigh);
+            window.splitLow.connect(window.compLow); window.splitMid.connect(window.compMid); window.splitHigh.connect(window.compHigh);
 
             let postBus = window.trackNode(window.audioCtx.createGain(), window.activeDynamicNodes);
 
@@ -670,7 +668,7 @@ window._buildAudioGraphCore = function() {
                 window.compHigh.connect(postBus);
             } else {
                 let widthPct = parseFloat(cfg.val_midQ); if (isNaN(widthPct) || widthPct < 25) widthPct = 150;
-                let targetQ = cfg.opt_midQ ? Math.max(0.15, Math.min(2.5, midQ / (widthPct / 100.0))) : midQ;
+                let targetQ = cfg.opt_midQ ? Math.max(0.65, Math.min(2.5, midQ / (widthPct / 100.0))) : midQ;
                 window.splitMid.Q.setTargetAtTime(targetQ, now, 0.012);
 
                 let midDb = parseFloat(cfg.val_midPhase); if (isNaN(midDb)) midDb = 1.5;
