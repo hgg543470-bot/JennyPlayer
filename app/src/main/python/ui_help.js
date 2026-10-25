@@ -877,42 +877,57 @@ window.crawlAwayLangBadgeToSettings = function() {
     btn.style.opacity = '0';
     btn.style.pointerEvents = 'none';
 
+    const legsHTML = '<span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span>';
+
     const crawler = document.createElement('div');
-    crawler.className = 'crawler-actor climbing-up';
+    crawler.className = 'crawler-actor';
     crawler.style.left = startRect.left + 'px';
     crawler.style.top = startRect.top + 'px';
     crawler.innerHTML = `
-        <div id="crawlerBubble" style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:2px;white-space:nowrap;">${window.tr('🐛 Ползу в ⚙️...', '🐛 Crawling to ⚙️...')}</div>
-        <div class="jenny-lang-btn" style="white-space:nowrap;padding:4px 8px;border-color:#58a6ff;box-shadow:0 0 10px rgba(88,166,255,0.45);">
-            ${window.renderDualLangHTML(false)}
-        </div>
-        <div class="crawler-feet-wrap">
-            <div class="crawler-foot"></div>
-            <div class="crawler-foot"></div>
-            <div class="crawler-foot"></div>
-            <div class="crawler-foot"></div>
+        <div id="crawlerBubble" style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:8px;white-space:nowrap;">${window.tr('🐛 Ползу в ⚙️...', '🐛 Crawling to ⚙️...')}</div>
+        <div id="crawlerRotator" class="crawler-rotator" style="transform: rotate(0deg);">
+            <div class="crawler-spine">
+                <div class="crawler-legs-row side-a">${legsHTML}</div>
+                <div class="jenny-lang-btn" style="white-space:nowrap;padding:3px 7px;border-color:#58a6ff;box-shadow:0 0 10px rgba(88,166,255,0.45);">
+                    ${window.renderDualLangHTML(false)}
+                </div>
+                <div class="crawler-legs-row side-b">${legsHTML}</div>
+                <div class="crawler-head-antennae">
+                    <span class="c-antenna top"></span>
+                    <span class="c-antenna bot"></span>
+                </div>
+            </div>
         </div>
     `;
     document.body.appendChild(crawler);
 
-    const topLaneY = Math.max(8, gearRect.top - 10);
-    const targetRightX = Math.max(startRect.left + 60, gearRect.left - 18);
+    const rotator = document.getElementById('crawlerRotator');
+    const topLaneY = Math.max(6, gearRect.top - 14);
+    const targetRightX = Math.max(startRect.left + 60, gearRect.left - 20);
 
-    // Фаза 1: Аккуратно ползёт СТРОГО ВВЕРХ до уровня верхней капсулы (150 - 1350 мс)
+    // Шаг 1 (0 - 220 мс): Разворачивается на месте узким торцом ("головой") СТРОГО ВВЕРХ (-90°)
+    setTimeout(() => {
+        if (rotator) rotator.style.transform = 'rotate(-90deg)';
+    }, 30);
+
+    // Шаг 2 (220 - 1420 мс): Ползёт узким торцом вперёд вертикально ВВЕРХ, перебирая лапками по бокам
     setTimeout(() => {
         crawler.style.transition = 'top 1.2s linear';
         crawler.style.top = topLaneY + 'px';
-    }, 150);
+    }, 220);
 
-    // Фаза 2: На углу поворачивает и ползёт ВПРАВО вдоль верхней шапки к шестерёнке (1400 - 3100 мс)
+    // Шаг 3 (1380 - 1650 мс): На верхнем углу поворачивает корпус на 90° ВПРАВО (0° — узким торцом к шестерёнке)
     setTimeout(() => {
-        crawler.classList.remove('climbing-up');
-        crawler.classList.add('creeping-right');
+        if (rotator) rotator.style.transform = 'rotate(0deg)';
+    }, 1380);
+
+    // Шаг 4 (1550 - 3200 мс): Ползёт головой вперёд ВПРАВО до шестерёнки ⚙️
+    setTimeout(() => {
         crawler.style.transition = 'left 1.65s linear';
         crawler.style.left = targetRightX + 'px';
-    }, 1400);
+    }, 1550);
 
-    // Фаза 3: Аккуратно шмыгает внутрь шестерёнки ⚙️ (3100 - 3550 мс)
+    // Шаг 5 (3200 - 3620 мс): Ныряет головой внутрь шестерёнки ⚙️
     setTimeout(() => {
         const b = document.getElementById('crawlerBubble');
         if (b) b.innerText = window.tr('🫡 На месте!', '🫡 Tucked in!');
@@ -921,15 +936,15 @@ window.crawlAwayLangBadgeToSettings = function() {
         crawler.style.top = (gearRect.top + 2) + 'px';
         crawler.style.transform = 'scale(0.12)';
         crawler.style.opacity = '0.1';
-    }, 3100);
+    }, 3200);
 
-    // Фаза 4: Шестерёнка мягко принимает плашку (3520 мс)
+    // Шаг 6 (3620 мс): Шестерёнка мягко принимает плашку
     setTimeout(() => {
         crawler.remove();
         btn.style.display = 'none';
         gear.classList.add('gear-soft-anim');
         setTimeout(() => gear.classList.remove('gear-soft-anim'), 550);
-    }, 3520);
+    }, 3620);
 };
 
 window.scheduleLangRunawayTimer = function() {
