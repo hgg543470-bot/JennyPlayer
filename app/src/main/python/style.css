@@ -269,3 +269,67 @@ details.setting-group summary { color: var(--accent-cyan); font-weight: bold; cu
 .c-antenna.bot { transform: rotate(28deg); transform-origin: left center; }
 
 .gear-soft-anim { animation: gearSoftAccept 0.5s ease-in-out; }
+
+
+/* === JENNY THEME STUDIO V37 === */
+:root {
+    --border-uniform: rgba(115, 65, 190, 0.38);
+    --border-grad: linear-gradient(135deg, rgba(115, 65, 190, 0.55), rgba(88, 166, 255, 0.55));
+}
+
+body[data-theme="amoled"] {
+    --bg-main: #000000 !important;
+    --bg-panel: #000000 !important;
+    --bg-modal: #000000 !important;
+    --bg-setting-box: #000000 !important;
+    --bg-input: #000000 !important;
+}
+
+/* Приводим ВСЕ капсулы, группы и карточки к единой тонкой рамке 1px без толстых боковых полос */
+.capsule,
+details.setting-group,
+.jenny-uniform-card,
+#phaseFocusMasterCard,
+#topAutoCeilMonitor,
+#trackSearchInput {
+    background-color: var(--bg-setting-box) !important;
+    border: 1px solid var(--border-uniform) !important;
+    border-left: 1px solid var(--border-uniform) !important;
+    box-shadow: none !important;
+}
+
+/* Режим градиентных рамок 1px с сохранением скруглений и чистого #000000 внутри */
+body[data-border-mode="grad"] .capsule,
+body[data-border-mode="grad"] details.setting-group,
+body[data-border-mode="grad"] .jenny-uniform-card,
+body[data-border-mode="grad"] #phaseFocusMasterCard,
+body[data-border-mode="grad"] #topAutoCeilMonitor,
+body[data-border-mode="grad"] #trackSearchInput {
+    border: 1px solid transparent !important;
+    border-left: 1px solid transparent !important;
+    background: linear-gradient(var(--bg-setting-box), var(--bg-setting-box)) padding-box, var(--border-grad) border-box !important;
+}
+
+.setting-row {
+    border-bottom: 1px solid var(--border-uniform) !important;
+}
+
+.group-content {
+    border-top: 1px solid var(--border-uniform) !important;
+}
+
+input[type="number"],
+input[type="text"],
+.io-btn {
+    background-color: var(--bg-input) !important;
+    border: 1px solid var(--border-uniform) !important;
+}
+
+.theme-swatch-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.25);
+}

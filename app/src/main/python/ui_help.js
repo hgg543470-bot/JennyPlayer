@@ -997,3 +997,334 @@ if (document.readyState === 'loading') {
 } else {
     setTimeout(window.initV35Enhancements, 80);
 }
+
+
+// 🎨 ПАТЧ V37: РЕДАКТОР ТЕМ, ЧЕСТНЫЙ AMOLED #000000 И ЕДИНЫЕ ТОНКИЕ РАМКИ / ГРАДИЕНТЫ
+window.THEME_PRESETS_V37 = {
+    // Монохромные рамки (solid)
+    solid_purple:  { mode: 'solid', rgb: [115, 65, 190], ru: '🟣 Тёмный Аметист (Дефолт)', en: '🟣 Subtle Amethyst (Default)', preview: '#7341be' },
+    solid_cyan:    { mode: 'solid', rgb: [88, 166, 255], ru: '🔵 Кибер-Циан',              en: '🔵 Cyber Cyan',               preview: '#58a6ff' },
+    solid_emerald: { mode: 'solid', rgb: [63, 185, 80],  ru: '🟢 Изумрудная Матрица',      en: '🟢 Matrix Emerald',           preview: '#3fb950' },
+    solid_gold:    { mode: 'solid', rgb: [227, 179, 65], ru: '🟡 Золотой Винил',           en: '🟡 Vinyl Gold',               preview: '#e3b341' },
+    solid_ruby:    { mode: 'solid', rgb: [248, 81, 73],  ru: '🔴 Рубиновый Лазер',         en: '🔴 Ruby Laser',               preview: '#f85149' },
+    solid_stealth: { mode: 'solid', rgb: [110, 118, 129],ru: '⚪ Стелс-Графит',            en: '⚪ Stealth Graphite',         preview: '#6e7681' },
+    // Градиентные рамки (grad)
+    grad_synth:    { mode: 'grad', c1: [115, 65, 190], c2: [88, 166, 255],  ru: '🌌 Неоновый Синтвейв (Фиолет ➔ Циан)',   en: '🌌 Neon Synthwave (Purple ➔ Cyan)',   preview: 'linear-gradient(135deg,#7341be,#58a6ff)' },
+    grad_sunset:   { mode: 'grad', c1: [163, 113, 247],c2: [227, 179, 65],  ru: '🌅 Кибер-Закат (Фиолет ➔ Золото)',       en: '🌅 Cyber Sunset (Purple ➔ Gold)',     preview: 'linear-gradient(135deg,#a371f7,#e3b341)' },
+    grad_matrix:   { mode: 'grad', c1: [63, 185, 80],  c2: [88, 166, 255],  ru: '🧪 Био-Матрица (Изумруд ➔ Циан)',        en: '🧪 Bio-Matrix (Emerald ➔ Cyan)',      preview: 'linear-gradient(135deg,#3fb950,#58a6ff)' },
+    grad_plasma:   { mode: 'grad', c1: [248, 81, 73],  c2: [227, 179, 65],  ru: '🔥 Плазменный Овердрайв (Рубин ➔ Золото)',en: '🔥 Plasma Overdrive (Ruby ➔ Gold)',   preview: 'linear-gradient(135deg,#f85149,#e3b341)' },
+    grad_cosmos:   { mode: 'grad', c1: [115, 65, 190], c2: [63, 185, 80], c3: [88, 166, 255], ru: '🔮 Глубокий Космос (3-цветный)', en: '🔮 Deep Space (Tri-Color)', preview: 'linear-gradient(135deg,#7341be,#3fb950,#58a6ff)' }
+};
+
+window.JENNY_HELP_DB_RU.theme_studio = {
+    title: "🎨 Редактор тем и тонких контуров",
+    phys: "Переводит все карточки в режим честного <b>#000000 AMOLED</b> (выключенные пиксели) и рисует тонкие 1px рамки выбранного цвета или градиента с заданной прозрачностью.",
+    hear: "Глаза не слепит серым свечением в темноте, а все блоки выглядят строго в едином монолитном стиле.",
+    tip: "Монохромные цвета и градиенты взаимоисключают друг друга — просто ткни в понравившийся вариант!"
+};
+window.JENNY_HELP_DB_EN.theme_studio = {
+    title: "🎨 Theme & Thin Border Studio",
+    phys: "Switches all cards to true <b>#000000 AMOLED</b> black (pixels completely off) and renders uniform 1px solid or gradient borders with adjustable opacity.",
+    hear: "Zero gray backlight bleed in the dark with a clean, unified cyber aesthetic.",
+    tip: "Solid colors and gradients are mutually exclusive — just tap any style to switch!"
+};
+
+window.unifyAllSettingCardsV37 = function() {
+    const sm = document.getElementById('settingsModal');
+    if (sm) {
+        sm.querySelectorAll('.setting-row').forEach(row => {
+            if (row.style && (row.style.borderLeft || row.style.background)) {
+                row.classList.add('jenny-uniform-card');
+                row.style.borderLeft = '';
+                row.style.borderTop = '';
+                row.style.borderRight = '';
+                row.style.borderBottom = '';
+                row.style.background = '';
+            }
+        });
+        // Прячем дубликаты AMOLED и Ползунка громкости из общего списка, так как теперь они живут в Редакторе Тем
+        ['cfg_amoledMode', 'cfg_volSlider'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                const row = el.closest('.setting-row');
+                if (row && !row.closest('#themeModal')) row.style.display = 'none';
+            }
+        });
+    }
+};
+
+window.applyVisualThemeV37 = function() {
+    window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
+    const key = window.appConfig.themeBorderKey || 'solid_purple';
+    const alphaPct = (window.appConfig.themeBorderAlpha !== undefined) ? parseInt(window.appConfig.themeBorderAlpha, 10) : 38;
+    const alpha = Math.max(0.1, Math.min(1.0, alphaPct / 100));
+
+    const preset = window.THEME_PRESETS_V37[key] || window.THEME_PRESETS_V37.solid_purple;
+    const root = document.documentElement;
+
+    if (preset.mode === 'solid') {
+        document.body.setAttribute('data-border-mode', 'solid');
+        const [r, g, b] = preset.rgb;
+        root.style.setProperty('--border-uniform', `rgba(${r}, ${g}, ${b}, ${alpha})`);
+        root.style.setProperty('--border-main', `rgba(${r}, ${g}, ${b}, ${alpha})`);
+        root.style.setProperty('--border-accent', `rgba(${r}, ${g}, ${b}, ${Math.min(1, alpha + 0.15)})`);
+    } else {
+        document.body.setAttribute('data-border-mode', 'grad');
+        const [r1, g1, b1] = preset.c1;
+        const [r2, g2, b2] = preset.c2;
+        if (preset.c3) {
+            const [r3, g3, b3] = preset.c3;
+            root.style.setProperty('--border-grad', `linear-gradient(135deg, rgba(${r1},${g1},${b1},${alpha}), rgba(${r2},${g2},${b2},${alpha}), rgba(${r3},${g3},${b3},${alpha}))`);
+        } else {
+            root.style.setProperty('--border-grad', `linear-gradient(135deg, rgba(${r1},${g1},${b1},${alpha}), rgba(${r2},${g2},${b2},${alpha}))`);
+        }
+        root.style.setProperty('--border-uniform', `rgba(${r1}, ${g1}, ${b1}, ${alpha * 0.75})`);
+        root.style.setProperty('--border-main', `rgba(${r1}, ${g1}, ${b1}, ${alpha * 0.75})`);
+    }
+
+    window.unifyAllSettingCardsV37();
+    window.syncThemeStudioUIV37();
+};
+
+window.selectThemeBorderKeyV37 = function(newKey, ev) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.themeBorderKey = newKey;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.applyVisualThemeV37();
+    if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
+};
+
+window.onThemeAlphaInputV37 = function(val) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.themeBorderAlpha = parseInt(val, 10) || 38;
+    const lbl = document.getElementById('themeAlphaValLabel');
+    if (lbl) lbl.innerText = window.appConfig.themeBorderAlpha + '%';
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.applyVisualThemeV37();
+};
+
+window.onThemeAmoledToggleV37 = function(chk) {
+    const orig = document.getElementById('cfg_amoledMode');
+    if (orig) {
+        orig.checked = chk.checked;
+        if (typeof window.updateSettings === 'function') window.updateSettings();
+    }
+    window.appConfig = window.appConfig || {};
+    window.appConfig.amoledMode = chk.checked;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.applyTheme === 'function') window.applyTheme();
+    window.applyVisualThemeV37();
+};
+
+window.onThemeVolSliderToggleV37 = function(chk) {
+    const orig = document.getElementById('cfg_volSlider');
+    if (orig) {
+        orig.checked = chk.checked;
+        if (typeof window.updateSettings === 'function') window.updateSettings();
+    }
+    window.appConfig = window.appConfig || {};
+    window.appConfig.volSlider = chk.checked;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+};
+
+window.resetVisualThemeV37 = function(ev) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.themeBorderKey = 'solid_purple';
+    window.appConfig.themeBorderAlpha = 38;
+    window.appConfig.amoledMode = true;
+    window.appConfig.volSlider = true;
+    const origAm = document.getElementById('cfg_amoledMode');
+    if (origAm) origAm.checked = true;
+    const origVol = document.getElementById('cfg_volSlider');
+    if (origVol) origVol.checked = true;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.updateSettings === 'function') window.updateSettings();
+    if (typeof window.applyTheme === 'function') window.applyTheme();
+    window.applyVisualThemeV37();
+    if (typeof window.showToast === 'function') {
+        window.showToast(window.tr('🎨 Сброшено: Истинный AMOLED + Тёмный Аметист (38%)', '🎨 Reset: True AMOLED + Subtle Amethyst (38%)'), ev);
+    }
+};
+
+window.syncThemeStudioUIV37 = function() {
+    const cfg = window.appConfig || {};
+    const activeKey = cfg.themeBorderKey || 'solid_purple';
+    const alphaPct = (cfg.themeBorderAlpha !== undefined) ? cfg.themeBorderAlpha : 38;
+
+    Object.keys(window.THEME_PRESETS_V37).forEach(k => {
+        const chk = document.getElementById('chk_theme_' + k);
+        if (chk) chk.checked = (k === activeKey);
+    });
+
+    const slider = document.getElementById('rng_theme_alpha');
+    if (slider) slider.value = alphaPct;
+    const lbl = document.getElementById('themeAlphaValLabel');
+    if (lbl) lbl.innerText = alphaPct + '%';
+
+    const amChk = document.getElementById('chk_theme_amoled');
+    if (amChk) amChk.checked = (cfg.amoledMode !== false);
+    const volChk = document.getElementById('chk_theme_vol');
+    if (volChk) volChk.checked = (cfg.volSlider !== false);
+};
+
+window.openThemeStudioModalV37 = function() {
+    window.ensureThemeStudioModalV37();
+    window.syncThemeStudioUIV37();
+    const sm = document.getElementById('settingsModal');
+    const tm = document.getElementById('themeModal');
+    if (sm) sm.classList.remove('open');
+    if (tm) tm.classList.add('open');
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
+};
+
+window.closeThemeStudioToSettingsV37 = function() {
+    const tm = document.getElementById('themeModal');
+    const sm = document.getElementById('settingsModal');
+    if (tm) tm.classList.remove('open');
+    if (sm) sm.classList.add('open');
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
+};
+
+window.ensureThemeStudioModalV37 = function() {
+    let tm = document.getElementById('themeModal');
+    if (tm) tm.remove();
+
+    tm = document.createElement('div');
+    tm.id = 'themeModal';
+    tm.className = 'modal-overlay';
+
+    const buildPresetRows = (filterMode) => {
+        return Object.entries(window.THEME_PRESETS_V37)
+            .filter(([_, p]) => p.mode === filterMode)
+            .map(([k, p]) => `
+                <div class="setting-row" style="padding:8px 0;">
+                    <label class="toggle-label" style="flex:1;display:flex;align-items:center;gap:8px;">
+                        <input type="checkbox" id="chk_theme_${k}" onchange="window.selectThemeBorderKeyV37('${k}', event)">
+                        <span class="theme-swatch-dot" style="background:${p.preview};"></span>
+                        <span>${window.tr(p.ru, p.en)}</span>
+                    </label>
+                </div>
+            `).join('');
+    };
+
+    tm.innerHTML = `
+        <div class="container">
+            <div style="display:flex;gap:8px;margin-bottom:12px;">
+                <button type="button" onclick="window.closeThemeStudioToSettingsV37()" style="flex:1;padding:10px;background:#11161d;border:1px solid var(--border-uniform);color:#58a6ff;font-size:13px;">
+                    ${window.tr('⬅ Назад в настройки', '⬅ Back to Settings')}
+                </button>
+                <button type="button" onclick="window.resetVisualThemeV37(event)" style="padding:10px 14px;background:#11161d;border:1px solid var(--border-uniform);color:#e3b341;font-size:12.5px;">
+                    ${window.tr('🔄 Сброс', '🔄 Reset')}
+                </button>
+            </div>
+
+            <div class="setting-row jenny-uniform-card" style="padding:10px 12px;border-radius:8px;margin-bottom:10px;">
+                <label class="toggle-label" style="font-weight:bold;color:#e6edf3;">
+                    <input type="checkbox" id="chk_theme_amoled" onchange="window.onThemeAmoledToggleV37(this)">
+                    ${window.tr('🖤 Истинный AMOLED (#000000 во всех блоках)', '🖤 True AMOLED (100% #000000 Cards)')}
+                </label>
+            </div>
+
+            <div class="setting-row jenny-uniform-card" style="padding:10px 12px;border-radius:8px;margin-bottom:12px;">
+                <label class="toggle-label" style="font-weight:bold;color:#e6edf3;">
+                    <input type="checkbox" id="chk_theme_vol" onchange="window.onThemeVolSliderToggleV37(this)">
+                    ${window.tr('🔊 Показывать кнопку громкости на панели', '🔊 Show Volume Button on Transport Bar')}
+                </label>
+            </div>
+
+            <details class="setting-group" open>
+                <summary>${window.tr('💡 Тонкость и заметность рамок', '💡 Border Subtlety & Opacity')}</summary>
+                <div class="group-content">
+                    <div style="display:flex;justify-content:space-between;font-size:12.5px;color:#c9d1d9;margin-bottom:4px;">
+                        <span>${window.tr('Яркость контура 1px (15% = еле видно):', '1px Contour Brightness (15% = Ghost):')}</span>
+                        <span id="themeAlphaValLabel" style="color:#3fb950;font-weight:bold;">38%</span>
+                    </div>
+                    <input type="range" id="rng_theme_alpha" class="hz-slider" min="15" max="100" step="1" value="38" oninput="window.onThemeAlphaInputV37(this.value)">
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>${window.tr('🟣 Монохромные рамки (Единый цвет)', '🟣 Solid Thin Borders (Single Color)')}</summary>
+                <div class="group-content">
+                    <div style="font-size:11.5px;color:#8b949e;margin-bottom:6px;">
+                        ${window.tr('Строго один стиль рамок для всех элементов плеера:', 'Uniform 1px border color across all player elements:')}
+                    </div>
+                    ${buildPresetRows('solid')}
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>${window.tr('🌌 Градиентные рамки (Взаимоисключающие)', '🌌 Gradient Thin Borders (Mutually Exclusive)')}</summary>
+                <div class="group-content">
+                    <div style="font-size:11.5px;color:#8b949e;margin-bottom:6px;">
+                        ${window.tr('При выборе градиента монохромный цвет автоматически выключается:', 'Selecting a gradient automatically turns off solid colors:')}
+                    </div>
+                    ${buildPresetRows('grad')}
+                </div>
+            </details>
+        </div>
+    `;
+
+    const mainWrap = document.getElementById('settingsModal') ? document.getElementById('settingsModal').parentElement : document.body;
+    mainWrap.appendChild(tm);
+};
+
+window.mountThemeStudioButtonV37 = function() {
+    const sm = document.getElementById('settingsModal');
+    if (!sm) return;
+    const topBarRow = document.getElementById('jennyTopBarRow');
+    let btnRow = document.getElementById('jennyThemeStudioBtnRow');
+    if (btnRow) btnRow.remove();
+
+    btnRow = document.createElement('div');
+    btnRow.id = 'jennyThemeStudioBtnRow';
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;align-items:center;';
+
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.onclick = () => window.openThemeStudioModalV37();
+    openBtn.style.cssText = 'flex:1;background:#0a0d12;border:1px solid var(--border-uniform);color:#e3b341;font-weight:bold;padding:11px;border-radius:8px;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;';
+    openBtn.innerHTML = window.tr('🎨 РЕДАКТОР ТЕМ И РАМОК (AMOLED / ГРАДИЕНТЫ)', '🎨 THEME & BORDER STUDIO (AMOLED / GRADIENTS)');
+
+    btnRow.appendChild(openBtn);
+    btnRow.appendChild(window.makeHelpBadge('theme_studio'));
+
+    if (topBarRow) {
+        topBarRow.insertAdjacentElement('afterend', btnRow);
+    } else {
+        const container = sm.querySelector('.container') || sm;
+        container.insertBefore(btnRow, container.firstChild);
+    }
+
+    window.ensureThemeStudioModalV37();
+    window.applyVisualThemeV37();
+};
+
+const _origMountUI_V37 = window.mountJennyStudioUI;
+window.mountJennyStudioUI = function() {
+    _origMountUI_V37();
+    window.mountThemeStudioButtonV37();
+};
+
+// Если кто-то открывает другое модальное окно (⚙️, 🄠, ❤️), закрываем themeModal
+(function() {
+    const origToggleModal = window.toggleModal;
+    if (typeof origToggleModal === 'function' && !window._toggleModalWrappedV37) {
+        window._toggleModalWrappedV37 = true;
+        window.toggleModal = function(modalId) {
+            const tm = document.getElementById('themeModal');
+            if (tm && tm.classList.contains('open') && modalId === 'settingsModal') {
+                tm.classList.remove('open');
+                return;
+            }
+            if (tm) tm.classList.remove('open');
+            return origToggleModal(modalId);
+        };
+    }
+})();
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setTimeout(window.mountThemeStudioButtonV37, 120));
+} else {
+    setTimeout(window.mountThemeStudioButtonV37, 120);
+}
