@@ -619,7 +619,8 @@ window._buildAudioGraphCore = function() {
         if (cfg.multiBandEnabled && cfg.multiBandSettings) {
             let lowFreq = Math.max(20, cfg.multiBandSettings.low || 200);
             let highFreq = Math.max(lowFreq + 100, cfg.multiBandSettings.high || 2500);
-            let midCenter = Math.sqrt(lowFreq * highFreq);
+            let effLow = (cfg.opt_midQ && (parseFloat(cfg.val_midQ) || 150) > 110) ? Math.min(lowFreq, 95) : lowFreq;
+            let midCenter = Math.sqrt(effLow * highFreq);
             let midQ = midCenter / (highFreq - lowFreq);
 
             // Плавная перестройка катушек кроссовера без эффекта искрящего дросселя!
