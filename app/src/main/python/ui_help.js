@@ -89,6 +89,8 @@ window.syncDspModUI = function() {
         if (cfg.val_deEsser === -60) cfg.val_deEsser = -6.0;
         if (cfg.val_midQ < 25) cfg.val_midQ = 150;
         cfg.opt_masterCeil = true;
+        if (cfg.opt_msWidth && cfg.opt_crossfeed) cfg.opt_crossfeed = false;
+        if (cfg.opt_msWidth && cfg.opt_crossfeed) cfg.opt_crossfeed = false;
         localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     }
 
@@ -165,10 +167,26 @@ window.onPhaseFocusChange = function(el, ev) {
     }
 };
 
-window.onDspModChange = function(key) {
+window.onDspModChange = function(key, ev) {
     window.appConfig = window.appConfig || {};
     const chk = document.getElementById('cfg_opt_' + key);
     const inp = document.getElementById('cfg_val_' + key);
+
+    // Взаимоисключение "🎭 Стерео-Ширина" и "🎧 Бинаурал-Колонки" — точь-в-точь как у выбора дуги!
+    if (chk && chk.checked && (key === 'msWidth' || key === 'crossfeed')) {
+        const otherKey = (key === 'msWidth') ? 'crossfeed' : 'msWidth';
+        const otherChk = document.getElementById('cfg_opt_' + otherKey);
+        if ((otherChk && otherChk.checked) || window.appConfig['opt_' + otherKey]) {
+            chk.checked = false;
+            window.appConfig['opt_' + key] = false;
+            try { navigator.vibrate(40); } catch(e){}
+            if (typeof window.showToast === 'function') {
+                window.showToast("Что-то одно из двух!", ev);
+            }
+            return;
+        }
+    }
+
     if (chk) {
         window.appConfig['opt_' + key] = Boolean(chk.checked);
         if (chk.checked) window.ensureParentDspBlocks(key);
@@ -616,7 +634,7 @@ window.mountJennyStudioUI = function() {
         <div class="setting-row" style="border:none;padding:4px 0;gap:6px;">
             <div style="display:flex;align-items:center;flex:1;min-width:0;">
                 <label class="toggle-label" style="color:#e6edf3;font-size:12.5px;margin:0;">
-                    <input type="checkbox" id="cfg_opt_${k}" onchange="window.onDspModChange('${k}')"> ${lbl}
+                    <input type="checkbox" id="cfg_opt_${k}" onchange="window.onDspModChange('${k}', event)"> ${lbl}
                 </label>
                 <span class="jenny-help-badge" onclick="window.showHelpTopic('${hKey}', event)" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;margin-left:5px;cursor:pointer;flex-shrink:0;">❓</span>
             </div>

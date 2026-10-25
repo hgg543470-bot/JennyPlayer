@@ -105,7 +105,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
         }
     }
     if (cfg.opt_midPhase) {
-        let mpDb = parseFloat(cfg.val_midPhase) || 0;
+        let mpDb = Math.min(15, parseFloat(cfg.val_midPhase) || 0);
         if (mpDb > 0) {
             let v = mpDb * 0.45;
             hotDb += v;
@@ -113,7 +113,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
         }
     }
     if (cfg.opt_deEsser) {
-        let deDb = parseFloat(cfg.val_deEsser) || 0;
+        let deDb = Math.min(12, parseFloat(cfg.val_deEsser) || 0);
         if (deDb > 0) {
             let v = deDb * 0.35;
             hotDb += v;
@@ -121,7 +121,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
         }
     }
     if (cfg.opt_punch) {
-        let pDb = parseFloat(cfg.val_punch) || 0;
+        let pDb = Math.min(24, parseFloat(cfg.val_punch) || 0);
         if (pDb > 0) {
             let v = pDb * 0.18;
             hotDb += v;
