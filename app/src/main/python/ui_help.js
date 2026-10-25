@@ -69,7 +69,6 @@ if (!window._ceilMonitorObserverInit) {
     });
 }
 
-
 window.DSP_MOD_DEFAULTS).forEach(k => {
             if (k.startsWith('val_')) cfg[k] = window.DSP_MOD_DEFAULTS[k];
         });
