@@ -34,7 +34,37 @@ window.syncFormatSlotsUI = function() {
     }
 };
 
-window.saveFormatSlotsToConfig = function(triggerReload) {
+window.isTrackAllowedByFormatSlots = function(filename) {
+    if (!filename) return true;
+    const slots = window.getFormatSlotsConfig();
+    const activeExts = slots
+        .filter(s => s && s.en && String(s.ext || '').trim())
+        .map(s => '.' + String(s.ext).trim().toLowerCase().replace(/^\.+/, ''));
+    if (activeExts.length === 0) return false;
+    const lower = String(filename).toLowerCase().trim();
+    return activeExts.some(ext => lower.endsWith(ext));
+};
+
+window.applyFormatFilterToDOM = function() {
+    const uList = document.getElementById('unifiedList');
+    if (!uList) return;
+    const rows = Array.from(uList.children);
+    let visibleCount = 0;
+    rows.forEach(row => {
+        const txt = (row.innerText || '').trim();
+        if (!txt || txt.includes('Загрузка...')) return;
+        // Ищем имя файла в тексте карточки или в атрибутах
+        const allowed = window.isTrackAllowedByFormatSlots(txt);
+        row.style.display = allowed ? '' : 'none';
+        if (allowed) visibleCount++;
+    });
+    const cnt = document.getElementById('tracksCount');
+    if (cnt && rows.length > 0) {
+        cnt.innerText = visibleCount;
+    }
+};
+
+window.saveFormatSlotsToConfig = async function(triggerReload) {
     window.appConfig = window.appConfig || {};
     const slots = [];
     for (let i = 0; i < 8; i++) {
@@ -48,51 +78,47 @@ window.saveFormatSlotsToConfig = function(triggerReload) {
     }
     window.appConfig.formatSlots = slots;
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    fetch('/api/config/save_single', {
-        method: 'POST',
-        body: JSON.stringify({ category: 'main', key: 'formatSlots', value: slots })
-    }).catch(() => {});
+
+    // Мгновенно прячем/показываем карточки треков прямо в списке на экране!
+    window.applyFormatFilterToDOM();
+
+    try {
+        await fetch('/api/config/save_single', {
+            method: 'POST',
+            body: JSON.stringify({ category: 'main', key: 'formatSlots', value: slots })
+        });
+    } catch (e) {}
+
     if (triggerReload && typeof window.fetchData === 'function') {
-        window.fetchData();
+        await window.fetchData();
+        window.applyFormatFilterToDOM();
     }
 };
 
-window.resetFormatSlots = function(ev) {
+window.resetFormatSlots = async function(ev) {
     window.appConfig = window.appConfig || {};
     window.appConfig.formatSlots = JSON.parse(JSON.stringify(window.DEFAULT_FORMAT_SLOTS));
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     window.syncFormatSlotsUI();
-    window.saveFormatSlotsToConfig(true);
+    await window.saveFormatSlotsToConfig(true);
     try { navigator.vibrate(35); } catch(e){}
     if (typeof window.showToast === 'function') {
-        window.showToast("🔄 Форматы сброшены (включая .mp4 и .flac)!", ev);
+        window.showToast("🔄 Все 8 форматов включены!", ev);
     }
 };
 
-// Пропатченный fetchData, который передаёт активные слоты форматов напрямую в /api/data
+// Следим за любыми изменениями внутри #unifiedList (например, после выбора папки или рендера), чтобы фильтр форматов применялся всегда!
 window.installFormatAwareFetchData = function() {
-    if (window._fmtFetchWrapped) return;
-    const origFetch = window.fetchData;
-    if (typeof origFetch !== 'function') return;
-    window._fmtFetchWrapped = true;
-    window.fetchData = async function() {
-        try {
-            const slots = window.getFormatSlotsConfig();
-            const activeExts = slots
-                .filter(s => s && s.en && String(s.ext || '').trim())
-                .map(s => String(s.ext).trim().toLowerCase().replace(/^\.+/, ''))
-                .join(',');
-            const res = await fetch('/api/data?exts=' + encodeURIComponent(activeExts));
-            const data = await res.json();
-            window.allTracks = data.all_tracks || [];
-            window.sessionTracks = data.session_tracks || [];
-            const cnt = document.getElementById('tracksCount');
-            if (cnt) cnt.innerText = window.allTracks.length;
-            if (typeof window.renderAll === 'function') window.renderAll();
-        } catch (e) {
-            return origFetch.apply(this, arguments);
-        }
-    };
+    if (window._fmtListObserverInit) return;
+    window._fmtListObserverInit = true;
+    const uList = document.getElementById('unifiedList');
+    if (uList) {
+        const obs = new MutationObserver(() => {
+            window.applyFormatFilterToDOM();
+        });
+        obs.observe(uList, { childList: true });
+    }
+    window.applyFormatFilterToDOM();
 };
 
 // =========================================================================
