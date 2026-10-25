@@ -198,6 +198,54 @@
                 </div>
             </details>
 
+            <!-- FORMAT_SLOTS_START -->
+            <details id="customFormatsSection" class="setting-group" open style="border-left: 3px solid #58a6ff;">
+                <summary style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>🎵 Форматы файлов (Аудио + MP4)</span>
+                </summary>
+                <div class="group-content">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom: 8px;">
+                        <span style="color:#8b949e; font-size:12px; font-weight:bold;">Активные расширения в папке:</span>
+                        <button type="button" onclick="if(window.resetFormatSlots) window.resetFormatSlots(event)" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                            <input type="checkbox" id="cfg_fmt_1_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+                            <input type="text" id="cfg_fmt_1_val" value=".mp3" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+                        </div>
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                            <input type="checkbox" id="cfg_fmt_2_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+                            <input type="text" id="cfg_fmt_2_val" value=".opus" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+                        </div>
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                            <input type="checkbox" id="cfg_fmt_3_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+                            <input type="text" id="cfg_fmt_3_val" value=".m4a" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+                        </div>
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                            <input type="checkbox" id="cfg_fmt_4_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+                            <input type="text" id="cfg_fmt_4_val" value=".flac" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+                        </div>
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                            <input type="checkbox" id="cfg_fmt_5_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+                            <input type="text" id="cfg_fmt_5_val" value=".wav" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+                        </div>
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                            <input type="checkbox" id="cfg_fmt_6_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+                            <input type="text" id="cfg_fmt_6_val" value=".ogg" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+                        </div>
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                            <input type="checkbox" id="cfg_fmt_7_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+                            <input type="text" id="cfg_fmt_7_val" value=".mp4" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+                        </div>
+                        <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                            <input type="checkbox" id="cfg_fmt_8_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+                            <input type="text" id="cfg_fmt_8_val" value=".aac" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+                        </div>
+                    </div>
+                </div>
+            </details>
+            <!-- FORMAT_SLOTS_END -->
+
             <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #e3b341;">
                 <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
                     <input type="checkbox" id="cfg_amoledMode" onchange="if(window.updateSettings) window.updateSettings()"> 🖤 Режим AMOLED
@@ -353,18 +401,18 @@
     </div>
 
     <!-- ПОДКЛЮЧЕНИЕ РОДНЫХ СКРИПТОВ -->
-    <script src="/engine_audio.js?v=28"></script>
-    <script src="/engine_heads.js?v=28"></script>
-    <script src="/engine_fav.js?v=28"></script>
-    <script src="/ui_init.js?v=28"></script>
-    <script src="/ui_config.js?v=28"></script>
-    <script src="/ui_render.js?v=28"></script>
-    <script src="/ui_playback.js?v=28"></script>
-    <script src="/ui_scrub_engine.js?v=28"></script>
-    <script src="/ui_touch_arc.js?v=28"></script>
-    <script src="/ui_controls.js?v=28"></script>
-    <script src="/ui_export.js?v=28"></script>
-    <script src="/ui_help.js?v=28"></script>
+    <script src="/engine_audio.js?v=29"></script>
+    <script src="/engine_heads.js?v=29"></script>
+    <script src="/engine_fav.js?v=29"></script>
+    <script src="/ui_init.js?v=29"></script>
+    <script src="/ui_config.js?v=29"></script>
+    <script src="/ui_render.js?v=29"></script>
+    <script src="/ui_playback.js?v=29"></script>
+    <script src="/ui_scrub_engine.js?v=29"></script>
+    <script src="/ui_touch_arc.js?v=29"></script>
+    <script src="/ui_controls.js?v=29"></script>
+    <script src="/ui_export.js?v=29"></script>
+    <script src="/ui_help.js?v=29"></script>
 
 </body>
 </html>

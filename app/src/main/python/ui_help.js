@@ -692,7 +692,7 @@ window.mountJennyStudioUI = function() {
     const container = sm.querySelector('.container') || sm;
 
     // Чистим возможные старые дубли из прошлых версий
-    ['phaseFocusMasterCard', 'dspModularSection', 'dspProStudioSection', 'jennyFullGuideBtn', 'dspModularBox', 'customFormatsSection'].forEach(oldId => {
+    ['phaseFocusMasterCard', 'dspModularSection', 'dspProStudioSection', 'jennyFullGuideBtn', 'dspModularBox'].forEach(oldId => {
         const oldEl = document.getElementById(oldId);
         if (oldEl) oldEl.remove();
     });
@@ -870,6 +870,7 @@ window.mountJennyStudioUI = function() {
         else if (txt.includes('Лимитер')) sum.appendChild(window.makeHelpBadge('lim_group'));
         else if (txt.includes('Эквалайзер')) sum.appendChild(window.makeHelpBadge('eq_group'));
         else if (txt.includes('Усилитель')) sum.appendChild(window.makeHelpBadge('boost_group'));
+        else if (txt.includes('Форматы файлов')) sum.appendChild(window.makeHelpBadge('format_slots'));
     });
 
     // 5. Подписи частот и значки ❓ для 5 ползунков в окне Эквалайзера (🄠)
@@ -893,6 +894,14 @@ window.mountJennyStudioUI = function() {
     });
 
     window.syncDspModUI();
+    if (typeof window.syncFormatSlotsUI === 'function') window.syncFormatSlotsUI();
+    if (typeof window.installFormatAwareFetchData === 'function') {
+        window.installFormatAwareFetchData();
+        setTimeout(() => {
+            window.installFormatAwareFetchData();
+            if (typeof window.fetchData === 'function') window.fetchData();
+        }, 100);
+    }
 };
 
 if (document.readyState === 'loading') {
