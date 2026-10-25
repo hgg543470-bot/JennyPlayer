@@ -172,18 +172,20 @@ window.onDspModChange = function(key, ev) {
     const chk = document.getElementById('cfg_opt_' + key);
     const inp = document.getElementById('cfg_val_' + key);
 
-    // Взаимоисключение "🎭 Стерео-Ширина" и "🎧 Бинаурал-Колонки" — точь-в-точь как у выбора дуги!
+    // Авто-переключение между "🎭 Стерео-Ширина" и "🎧 Бинаурал-Колонки" с понятным уведомлением
     if (chk && chk.checked && (key === 'msWidth' || key === 'crossfeed')) {
         const otherKey = (key === 'msWidth') ? 'crossfeed' : 'msWidth';
         const otherChk = document.getElementById('cfg_opt_' + otherKey);
         if ((otherChk && otherChk.checked) || window.appConfig['opt_' + otherKey]) {
-            chk.checked = false;
-            window.appConfig['opt_' + key] = false;
-            try { navigator.vibrate(40); } catch(e){}
+            if (otherChk) otherChk.checked = false;
+            window.appConfig['opt_' + otherKey] = false;
+            try { navigator.vibrate(35); } catch(e){}
             if (typeof window.showToast === 'function') {
-                window.showToast("Что-то одно из двух!", ev);
+                const msg = (key === 'msWidth')
+                    ? "🎭 Стерео ВКЛ (🎧 Бинаурал откл. — что-то одно из двух)"
+                    : "🎧 Бинаурал ВКЛ (🎭 Стерео откл. — что-то одно из двух)";
+                window.showToast(msg, ev);
             }
-            return;
         }
     }
 
