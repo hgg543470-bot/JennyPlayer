@@ -1,15 +1,195 @@
+window.detectInitialLang = function() {
+    window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
+    if (window.appConfig.lang === 'ru' || window.appConfig.lang === 'en') return window.appConfig.lang;
+    const s = String(navigator.language || navigator.userLanguage || 'en').toLowerCase();
+    const d = (s.startsWith('ru') || s.startsWith('uk') || s.startsWith('be')) ? 'ru' : 'en';
+    window.appConfig.lang = d;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    return d;
+};
+window.getLang = function() { return (window.appConfig && window.appConfig.lang) ? window.appConfig.lang : window.detectInitialLang(); };
+window.tr = function(ru, en) { return window.getLang() === 'en' ? en : ru; };
+
+window.toggleLanguage = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    window.appConfig = window.appConfig || {};
+    window.appConfig.lang = (window.getLang() === 'ru') ? 'en' : 'ru';
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    try { navigator.vibrate(25); } catch (e) {}
+    window.applyStaticDOMTranslations();
+    window.mountJennyStudioUI();
+    if (typeof window.calculateAutoMasterPadDb === 'function') window.calculateAutoMasterPadDb(window.appConfig);
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
+    window.translateDynamicListPlaceholders();
+    if (typeof window.showToast === 'function') window.showToast(window.getLang() === 'en' ? "🇬🇧 Language: English" : "🇷🇺 Язык: Русский", ev);
+};
+
+window.localizeCeilingBreakdown = function(rawStr) {
+    if (!rawStr) return window.tr('Базовый запас -0.5 dB', 'Base Headroom -0.5 dB');
+    if (window.getLang() !== 'en') return rawStr;
+    return String(rawStr).replace('Базовый запас -0.5 dB', 'Base Headroom -0.5 dB')
+        .replace(/🎯СЧ/g, '🎯Mid').replace(/🐍ВЧ/g, '🐍DeEss').replace(/🥁Панч/g, '🥁Punch').replace(/🎭Стерео/g, '🎭Stereo').replace(/🎧Бин/g, '🎧Bin');
+};
+
+(function() {
+    const origShowToast = window.showToast;
+    if (typeof origShowToast === 'function' && !window._toastI18nWrapped) {
+        window._toastI18nWrapped = true;
+        window.showToast = function(msg, ev) {
+            let out = String(msg || '');
+            if (window.getLang() === 'en') {
+                const map = {
+                    "Что-то одно из двух! 😅": "Pick only one of the two! 😅",
+                    "⚠️ Сначала выбери трек!": "⚠️ Select a track first!",
+                    "⏳ Рендеринг в OPUS...": "⏳ Rendering to OPUS...",
+                    "🔄 Все 8 форматов включены!": "🔄 All 8 formats enabled!",
+                    "🔒 Блок управления отключён! Для включения выключите «Фазовый фокус»": "🔒 Manual block locked! Disable 'Phase Focus' to unlock",
+                    "🔓 Ручной блок тонкой настройки активен!": "🔓 Manual fine-tuning block unlocked!",
+                    "🎭 Стерео ВКЛ (🎧 Бинаурал откл. — что-то одно из двух)": "🎭 Stereo ON (🎧 Binaural OFF — mutually exclusive)",
+                    "🎧 Бинаурал ВКЛ (🎭 Стерео откл. — что-то одно из двух)": "🎧 Binaural ON (🎭 Stereo OFF — mutually exclusive)",
+                    "🔄 5 опций тракта сброшены!": "🔄 5 DSP path options reset!",
+                    "🔄 Модули PRO Studio сброшены!": "🔄 PRO Studio modules reset!"
+                };
+                if (map[out]) out = map[out];
+                else if (out.startsWith("📁 Папка: ")) out = out.replace("📁 Папка: ", "📁 Folder: ");
+                else if (out.startsWith("✅ Сохранено: ")) out = out.replace("✅ Сохранено: ", "✅ Saved: ");
+            }
+            return origShowToast(out, ev);
+        };
+    }
+    const origEnsureInspector = window.ensureTrackInfoModal;
+    if (typeof origEnsureInspector === 'function' && !window._inspectorI18nWrapped) {
+        window._inspectorI18nWrapped = true;
+        window.ensureTrackInfoModal = function() {
+            origEnsureInspector();
+            const isEn = window.getLang() === 'en';
+            const playBtn = document.getElementById('cpPlayBtn');
+            const copyBtn = document.getElementById('cpCopyBtn');
+            if (playBtn) playBtn.innerText = isEn ? '▶ Play' : '▶ Воспроизвести';
+            if (copyBtn) copyBtn.innerText = isEn ? '📋 Copy' : '📋 Копировать';
+            const modal = document.getElementById('trackInfoModal');
+            if (modal) {
+                const ghost = modal.querySelector('.cp-btn-ghost');
+                if (ghost) ghost.innerText = isEn ? 'Close' : 'Закрыть';
+            }
+        };
+    }
+})();
+
+window.applyStaticDOMTranslations = function() {
+    const isEn = (window.getLang() === 'en');
+    document.documentElement.lang = isEn ? 'en' : 'ru';
+    const folderTrigger = document.getElementById('folderIconTrigger');
+    if (folderTrigger && folderTrigger.parentElement) {
+        let langBtn = document.getElementById('mainLangToggleBtn');
+        if (!langBtn) {
+            langBtn = document.createElement('button');
+            langBtn.id = 'mainLangToggleBtn'; langBtn.type = 'button'; langBtn.className = 'jenny-lang-btn';
+            langBtn.onclick = (e) => window.toggleLanguage(e);
+            folderTrigger.parentElement.appendChild(langBtn);
+        }
+        langBtn.innerText = isEn ? 'EN' : 'RU';
+    }
+    const searchInp = document.getElementById('trackSearchInput');
+    if (searchInp) searchInp.placeholder = isEn ? '🔍 Search tracks...' : '🔍 Поиск по названию...';
+    const nowPlaying = document.getElementById('nowPlaying');
+    if (nowPlaying) {
+        const cur = nowPlaying.innerText.trim();
+        if (cur === 'Выбери трек' || cur === 'Select a track') nowPlaying.innerText = isEn ? 'Select a track' : 'Выбери трек';
+        else if (isEn && cur.startsWith('⏳ Загрузка: ')) nowPlaying.innerText = cur.replace('⏳ Загрузка: ', '⏳ Loading: ');
+        else if (isEn && cur.startsWith('⏳ RAM (пока играет сжатый): ')) nowPlaying.innerText = cur.replace('⏳ RAM (пока играет сжатый): ', '⏳ RAM (buffering PCM): ');
+        else if (cur === '❌ Ошибка загрузки' || cur === '❌ Load error') nowPlaying.innerText = isEn ? '❌ Load error' : '❌ Ошибка загрузки';
+    }
+    const setChk = (id, ru, en) => {
+        const inp = document.getElementById(id);
+        if (!inp || !inp.parentElement) return;
+        Array.from(inp.parentElement.childNodes).forEach(n => {
+            if (n.nodeType === Node.TEXT_NODE && n.nodeValue.trim().length > 0) n.nodeValue = ' ' + (isEn ? en : ru);
+        });
+    };
+    setChk('cfg_studioMode', 'Студийный движок (RAM)', 'Studio Engine (RAM)');
+    setChk('cfg_leftHandedMode', '🖐️ Режим "Левша" (Зеркальная дуга)', '🖐️ Left-Handed Mode (Mirror Arc)');
+    setChk('cfg_pitchLock', '🎵 Сохранять темп (Pitch Lock)', '🎵 Preserve Pitch (Pitch Lock)');
+    setChk('cfg_xNormalSpeed', '🚀 Кастомная скорость (Base)', '🚀 Custom Base Speed');
+    setChk('cfg_autoSaveBase', '↳ Писать выбор дуги сюда', '↳ Save arc selection here');
+    setChk('cfg_autoSaveScrub', '↳ Писать выбор дуги сюда', '↳ Save arc selection here');
+    setChk('cfg_amoledMode', '🖤 Режим AMOLED', '🖤 AMOLED Mode');
+    setChk('cfg_volSlider', '🔊 Показывать ползунок громкости', '🔊 Show Volume Slider');
+    setChk('cfg_firEnabled', 'Включить FIR', 'Enable FIR');
+    setChk('cfg_multiBandEnabled', 'Разделение частот', 'Frequency Split');
+    setChk('cfg_limiterEnabled', 'Включить лимитер', 'Enable Limiter');
+    setChk('cfg_eqEnabled', 'Активировать EQ', 'Enable EQ');
+    setChk('cfg_boosterEnabled', 'Активировать Овердрайв', 'Enable Overdrive');
+
+    const sm = document.getElementById('settingsModal');
+    if (sm) {
+        sm.querySelectorAll('button').forEach(btn => {
+            const t = btn.innerText.trim();
+            if (t.includes('ЗАГРУЗИТЬ ВСЁ') || t.includes('LOAD ALL')) {
+                btn.innerText = isEn ? '📥 LOAD ALL' : '📥 ЗАГРУЗИТЬ ВСЁ';
+                btn.style.background = 'linear-gradient(180deg, #1f6feb 0%, #11469c 100%)'; btn.style.color = '#fff'; btn.style.border = '1px solid #58a6ff';
+            } else if (t.includes('СОХРАНИТЬ ВСЁ') || t.includes('SAVE ALL')) {
+                btn.innerText = isEn ? '💾 SAVE ALL' : '💾 СОХРАНИТЬ ВСЁ';
+                btn.style.background = 'linear-gradient(180deg, #2ea043 0%, #196c2e 100%)'; btn.style.color = '#fff'; btn.style.border = '1px solid #3fb950';
+            } else if (t.includes('Сброс') || t.includes('Reset')) {
+                btn.innerText = isEn ? '🔄 Reset' : '🔄 Сброс';
+            }
+        });
+        sm.querySelectorAll('.setting-row').forEach(row => {
+            if (row.style && row.style.borderLeft) {
+                row.style.borderLeft = '3px solid #7341be'; row.style.borderTop = '1px solid #262c36'; row.style.borderRight = '1px solid #262c36'; row.style.borderBottom = '1px solid #262c36';
+            }
+        });
+        const spanPairs = [
+            ['Дефолтная скорость дуги:', 'Default arc speed:'], ['Кастомные радиальные зоны:', 'Custom radial zones:'],
+            ['Активные расширения в папке:', 'Active folder extensions:'], ['Усиление (Gain):', 'Drive (Gain):'],
+            ['Импульс (ms):', 'Impulse (ms):'], ['Отсечка Баса (Hz):', 'Low Crossover (Hz):'],
+            ['Отсечка Верх (Hz):', 'High Crossover (Hz):'], ['Порог (dB):', 'Threshold (dB):'],
+            ['Смягчение (Knee):', 'Soft Knee (dB):'], ['Сжатие (Ratio):', 'Ratio:'],
+            ['Атака (ms):', 'Attack (ms):'], ['Спад (ms):', 'Release (ms):'], ['Мощность (1-20):', 'Boost Power (1-20):']
+        ];
+        sm.querySelectorAll('span').forEach(sp => {
+            const txt = sp.innerText.trim();
+            spanPairs.forEach(([ru, en]) => { if (txt === ru || txt === en) sp.innerText = isEn ? en : ru; });
+        });
+        const sumPairs = [
+            ['Интеллектуальный Скраббинг', 'Smart Scrubbing', '⚡ '], ['Форматы файлов (Аудио + MP4)', 'File Formats (Audio + MP4)', '🎵 '],
+            ['FIR-Сатуратор (Ламповый окрас)', 'FIR Saturator (Tube Warmth)', '✨ '], ['Многополосный кроссовер (3-Band)', 'Multiband Crossover (3-Band)', '🎚️ '],
+            ['Лимитер (Soft Clipper)', 'Limiter (Soft Clipper)', '🗜️ '], ['Эквалайзер (EQ IIR)', 'Equalizer (5-Band IIR)', '🎛️ '],
+            ['Усилитель (Овердрайв)', 'Preamp Booster (Overdrive)', '🚀 ']
+        ];
+        sm.querySelectorAll('summary').forEach(sum => {
+            const raw = sum.innerText;
+            sumPairs.forEach(([ru, en, icon]) => {
+                if (raw.includes(ru) || raw.includes(en)) {
+                    const fs = sum.querySelector('span:not(.jenny-help-badge)');
+                    if (fs) fs.innerText = icon + (isEn ? en : ru);
+                    else Array.from(sum.childNodes).forEach(n => { if (n.nodeType === Node.TEXT_NODE && n.nodeValue.trim()) n.nodeValue = icon + (isEn ? en : ru); });
+                }
+            });
+        });
+    }
+};
+
+window.translateDynamicListPlaceholders = function() {
+    const isEn = (window.getLang() === 'en');
+    const uList = document.getElementById('unifiedList');
+    if (uList && uList.children.length === 1) {
+        const d = uList.firstElementChild; const t = (d.innerText || '').trim();
+        if (t === 'Загрузка...' || t === 'Loading...') d.innerText = isEn ? 'Loading...' : 'Загрузка...';
+        if (t === 'Папка с музыкой пуста' || t === 'Music folder is empty') d.innerText = isEn ? 'Music folder is empty' : 'Папка с музыкой пуста';
+    }
+    const fList = document.getElementById('favList');
+    if (fList && fList.children.length === 1) {
+        const d = fList.firstElementChild; const t = (d.innerText || '').trim();
+        if (t === 'Пусто' || t === 'Empty') d.innerText = isEn ? 'Empty' : 'Пусто';
+    }
+};
 
 window.DEFAULT_FORMAT_SLOTS = [
-    { en: true, ext: '.mp3' },
-    { en: true, ext: '.opus' },
-    { en: true, ext: '.m4a' },
-    { en: true, ext: '.flac' },
-    { en: true, ext: '.wav' },
-    { en: true, ext: '.ogg' },
-    { en: true, ext: '.mp4' },
-    { en: true, ext: '.aac' }
+    { en: true, ext: '.mp3' }, { en: true, ext: '.opus' }, { en: true, ext: '.m4a' }, { en: true, ext: '.flac' },
+    { en: true, ext: '.wav' }, { en: true, ext: '.ogg' }, { en: true, ext: '.mp4' }, { en: true, ext: '.aac' }
 ];
-
 window.getFormatSlotsConfig = function() {
     window.appConfig = window.appConfig || {};
     if (!Array.isArray(window.appConfig.formatSlots) || window.appConfig.formatSlots.length !== 8) {
@@ -17,59 +197,46 @@ window.getFormatSlotsConfig = function() {
     }
     return window.appConfig.formatSlots;
 };
-
 window.syncFormatSlotsUI = function() {
     const slots = window.getFormatSlotsConfig();
     for (let i = 0; i < 8; i++) {
-        const chk = document.getElementById(`cfg_fmt_${i+1}_en`);
-        const inp = document.getElementById(`cfg_fmt_${i+1}_val`);
+        const chk = document.getElementById(`cfg_fmt_${i+1}_en`); const inp = document.getElementById(`cfg_fmt_${i+1}_val`);
         const s = slots[i] || window.DEFAULT_FORMAT_SLOTS[i];
         if (chk) chk.checked = Boolean(s.en);
         if (inp) {
-            let cleanExt = String(s.ext || '').trim();
-            if (cleanExt && !cleanExt.startsWith('.')) cleanExt = '.' + cleanExt;
-            inp.value = cleanExt;
-            inp.style.opacity = s.en ? '1' : '0.4';
+            let c = String(s.ext || '').trim(); if (c && !c.startsWith('.')) c = '.' + c;
+            inp.value = c; inp.style.opacity = s.en ? '1' : '0.4';
         }
     }
 };
-
 window.isTrackAllowedByFormatSlots = function(filename) {
     if (!filename) return true;
-    const slots = window.getFormatSlotsConfig();
-    const activeExts = slots
-        .filter(s => s && s.en && String(s.ext || '').trim())
-        .map(s => '.' + String(s.ext).trim().toLowerCase().replace(/^\.+/, ''));
+    const activeExts = window.getFormatSlotsConfig().filter(s => s && s.en && String(s.ext || '').trim()).map(s => '.' + String(s.ext).trim().toLowerCase().replace(/^\.+/, ''));
     if (activeExts.length === 0) return false;
     const lower = String(filename).toLowerCase().trim();
     return activeExts.some(ext => lower.endsWith(ext));
 };
-
 window.applyFormatFilterToDOM = function() {
+    window.translateDynamicListPlaceholders();
     const uList = document.getElementById('unifiedList');
     if (!uList) return;
     const rows = Array.from(uList.children);
     let visibleCount = 0;
     rows.forEach(row => {
         const txt = (row.innerText || '').trim();
-        if (!txt || txt.includes('Загрузка...')) return;
-        // Ищем имя файла в тексте карточки или в атрибутах
+        if (!txt || txt.includes('Загрузка...') || txt.includes('Loading...') || txt.includes('Папка с музыкой пуста') || txt.includes('Music folder is empty')) return;
         const allowed = window.isTrackAllowedByFormatSlots(txt);
         row.style.display = allowed ? '' : 'none';
         if (allowed) visibleCount++;
     });
     const cnt = document.getElementById('tracksCount');
-    if (cnt && rows.length > 0) {
-        cnt.innerText = visibleCount;
-    }
+    if (cnt && rows.length > 0) cnt.innerText = visibleCount;
 };
-
 window.saveFormatSlotsToConfig = async function(triggerReload) {
     window.appConfig = window.appConfig || {};
     const slots = [];
     for (let i = 0; i < 8; i++) {
-        const chk = document.getElementById(`cfg_fmt_${i+1}_en`);
-        const inp = document.getElementById(`cfg_fmt_${i+1}_val`);
+        const chk = document.getElementById(`cfg_fmt_${i+1}_en`); const inp = document.getElementById(`cfg_fmt_${i+1}_val`);
         let raw = inp ? inp.value.trim().toLowerCase() : window.DEFAULT_FORMAT_SLOTS[i].ext;
         if (raw && !raw.startsWith('.')) raw = '.' + raw;
         let isEn = chk ? Boolean(chk.checked) : true;
@@ -78,23 +245,10 @@ window.saveFormatSlotsToConfig = async function(triggerReload) {
     }
     window.appConfig.formatSlots = slots;
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-
-    // Мгновенно прячем/показываем карточки треков прямо в списке на экране!
     window.applyFormatFilterToDOM();
-
-    try {
-        await fetch('/api/config/save_single', {
-            method: 'POST',
-            body: JSON.stringify({ category: 'main', key: 'formatSlots', value: slots })
-        });
-    } catch (e) {}
-
-    if (triggerReload && typeof window.fetchData === 'function') {
-        await window.fetchData();
-        window.applyFormatFilterToDOM();
-    }
+    try { await fetch('/api/config/save_single', { method: 'POST', body: JSON.stringify({ category: 'main', key: 'formatSlots', value: slots }) }); } catch (e) {}
+    if (triggerReload && typeof window.fetchData === 'function') { await window.fetchData(); window.applyFormatFilterToDOM(); }
 };
-
 window.resetFormatSlots = async function(ev) {
     window.appConfig = window.appConfig || {};
     window.appConfig.formatSlots = JSON.parse(JSON.stringify(window.DEFAULT_FORMAT_SLOTS));
@@ -102,173 +256,112 @@ window.resetFormatSlots = async function(ev) {
     window.syncFormatSlotsUI();
     await window.saveFormatSlotsToConfig(true);
     try { navigator.vibrate(35); } catch(e){}
-    if (typeof window.showToast === 'function') {
-        window.showToast("🔄 Все 8 форматов включены!", ev);
-    }
+    if (typeof window.showToast === 'function') window.showToast("🔄 Все 8 форматов включены!", ev);
 };
-
-// Следим за любыми изменениями внутри #unifiedList (например, после выбора папки или рендера), чтобы фильтр форматов применялся всегда!
 window.installFormatAwareFetchData = function() {
     if (window._fmtListObserverInit) return;
     window._fmtListObserverInit = true;
     const uList = document.getElementById('unifiedList');
-    if (uList) {
-        const obs = new MutationObserver(() => {
-            window.applyFormatFilterToDOM();
+    if (uList) { const obs = new MutationObserver(() => window.applyFormatFilterToDOM()); obs.observe(uList, { childList: true }); }
+    const np = document.getElementById('nowPlaying');
+    if (np) {
+        const npObs = new MutationObserver(() => {
+            if (window.getLang() === 'en') {
+                const c = np.innerText;
+                if (c.startsWith('⏳ Загрузка: ')) np.innerText = c.replace('⏳ Загрузка: ', '⏳ Loading: ');
+                else if (c.startsWith('⏳ RAM (пока играет сжатый): ')) np.innerText = c.replace('⏳ RAM (пока играет сжатый): ', '⏳ RAM (buffering PCM): ');
+                else if (c === '❌ Ошибка загрузки') np.innerText = '❌ Load error';
+            }
         });
-        obs.observe(uList, { childList: true });
+        npObs.observe(np, { childList: true, characterData: true, subtree: true });
     }
     window.applyFormatFilterToDOM();
 };
-
-// =========================================================================
-// 💡 UI_HELP.JS (МОНИТОР АВТО-МАСТЕРА В ШАПКЕ + БАЗА ЗНАНИЙ + 10 МОДУЛЕЙ)
-// =========================================================================
 
 window._dspInputDebounce = null;
 window.ALL_MOD_KEYS = ['midPhase', 'midQ', 'deEsser', 'cleanFir', 'masterCeil', 'autoRms', 'monoBass', 'msWidth', 'punch', 'crossfeed'];
 
 window.updateTopSearchOrMonitorBar = function() {
     const searchInput = document.getElementById('trackSearchInput');
-    if (!searchInput) return;
+    if (!searchInput || !searchInput.parentElement) return;
     const barWrap = searchInput.parentElement;
-    if (!barWrap) return;
-
-    const sm = document.getElementById('settingsModal');
-    const em = document.getElementById('eqModal');
+    const sm = document.getElementById('settingsModal'); const em = document.getElementById('eqModal');
     const isModalOpen = (sm && sm.classList.contains('open')) || (em && em.classList.contains('open'));
-
     const cfg = window.appConfig || {};
     const ceilOn = Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled);
     const totalTxt = (typeof window.lastComputedCeilingDb !== 'undefined') ? window.lastComputedCeilingDb : -0.5;
-    const detailsTxt = window.lastCeilingBreakdown || 'Базовый запас -0.5 dB';
-
+    const detailsTxt = window.localizeCeilingBreakdown(window.lastCeilingBreakdown);
+    const badge = document.getElementById('autoCeilStatusBadge');
+    if (badge) {
+        badge.innerText = cfg.opt_masterCeil ? `${window.tr('Авто', 'Auto')}: ${totalTxt} dB` : window.tr('ВЫКЛ', 'OFF');
+        badge.style.color = cfg.opt_masterCeil ? '#3fb950' : '#8b949e';
+    }
     let monEl = document.getElementById('topAutoCeilMonitor');
     if (!monEl) {
-        monEl = document.createElement('div');
-        monEl.id = 'topAutoCeilMonitor';
+        monEl = document.createElement('div'); monEl.id = 'topAutoCeilMonitor';
         monEl.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #2ea043;border-radius:8px;padding:8px 11px;font-size:12px;color:#e6edf3;white-space:nowrap;overflow-x:auto;font-family:monospace;box-shadow:0 0 8px rgba(46,160,67,0.25);';
         barWrap.appendChild(monEl);
     }
-
     if (!isModalOpen) {
-        barWrap.style.display = '';
-        barWrap.style.paddingTop = '15px';
-        searchInput.style.display = '';
-        monEl.style.display = 'none';
+        barWrap.style.display = ''; barWrap.style.paddingTop = '15px'; searchInput.style.display = ''; monEl.style.display = 'none';
     } else {
         searchInput.style.display = 'none';
         if (ceilOn) {
-            barWrap.style.display = '';
-            barWrap.style.paddingTop = '12px';
-            monEl.style.display = 'block';
-            monEl.innerHTML = `<span style="color:#3fb950;font-weight:bold;">🛡️ Авто-Потолок: ${totalTxt} dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">${detailsTxt}</span>`;
-        } else {
-            monEl.style.display = 'none';
-            barWrap.style.display = 'none';
-        }
+            barWrap.style.display = ''; barWrap.style.paddingTop = '12px'; monEl.style.display = 'block';
+            monEl.innerHTML = `<span style="color:#3fb950;font-weight:bold;">🛡️ ${window.tr('Авто-Потолок', 'Auto-Ceiling')}: ${totalTxt} dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">${detailsTxt}</span>`;
+        } else { monEl.style.display = 'none'; barWrap.style.display = 'none'; }
     }
 };
 
-window.ensureParentDspBlocks = function(modKey, ev) {
+window.ensureParentDspBlocks = function(modKey) {
     window.appConfig = window.appConfig || {};
     let changed = false;
-    if (modKey === 'cleanFir' || modKey === 'phaseFix') {
-        if (!window.appConfig.firEnabled) {
-            window.appConfig.firEnabled = true;
-            const el = document.getElementById('cfg_firEnabled');
-            if (el) el.checked = true;
-            changed = true;
-        }
+    if ((modKey === 'cleanFir' || modKey === 'phaseFix') && !window.appConfig.firEnabled) {
+        window.appConfig.firEnabled = true; const el = document.getElementById('cfg_firEnabled'); if (el) el.checked = true; changed = true;
     }
     if (['midPhase', 'midQ', 'deEsser', 'phaseFix'].includes(modKey)) {
-        if (!window.appConfig.limiterEnabled) {
-            window.appConfig.limiterEnabled = true;
-            const el = document.getElementById('cfg_limiterEnabled');
-            if (el) el.checked = true;
-            changed = true;
-        }
-        if (!window.appConfig.multiBandEnabled) {
-            window.appConfig.multiBandEnabled = true;
-            const el = document.getElementById('cfg_multiBandEnabled');
-            if (el) el.checked = true;
-            changed = true;
-        }
+        if (!window.appConfig.limiterEnabled) { window.appConfig.limiterEnabled = true; const el = document.getElementById('cfg_limiterEnabled'); if (el) el.checked = true; changed = true; }
+        if (!window.appConfig.multiBandEnabled) { window.appConfig.multiBandEnabled = true; const el = document.getElementById('cfg_multiBandEnabled'); if (el) el.checked = true; changed = true; }
     }
-    if (changed) {
-        localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    }
+    if (changed) localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
 };
 
 window.syncDspModUI = function() {
     window.appConfig = window.appConfig || {};
     const cfg = window.appConfig;
-
     if (!cfg._migratedToRealUnitsV20) {
         cfg._migratedToRealUnitsV20 = true;
-        Object.keys(window.DSP_MOD_DEFAULTS).forEach(k => {
-            if (cfg[k] === undefined) cfg[k] = window.DSP_MOD_DEFAULTS[k];
-        });
+        Object.keys(window.DSP_MOD_DEFAULTS).forEach(k => { if (cfg[k] === undefined) cfg[k] = window.DSP_MOD_DEFAULTS[k]; });
         if (cfg.val_deEsser === -60) cfg.val_deEsser = -6.0;
         if (cfg.val_midQ < 25) cfg.val_midQ = 150;
         cfg.opt_masterCeil = true;
         if (cfg.opt_msWidth && cfg.opt_crossfeed) cfg.opt_crossfeed = false;
-        if (cfg.opt_msWidth && cfg.opt_crossfeed) cfg.opt_crossfeed = false;
         localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     }
-
     const pfEl = document.getElementById('cfg_phaseFix');
     if (pfEl) pfEl.checked = Boolean(cfg.phaseFixEnabled);
-
     window.ALL_MOD_KEYS.forEach(k => {
-        const chk = document.getElementById('cfg_opt_' + k);
-        const inp = document.getElementById('cfg_val_' + k);
+        const chk = document.getElementById('cfg_opt_' + k); const inp = document.getElementById('cfg_val_' + k);
         if (chk) chk.checked = Boolean(cfg['opt_' + k]);
-        if (inp) {
-            let v = cfg['val_' + k];
-            inp.value = (v !== undefined && v !== null && v !== '') ? v : window.DSP_MOD_DEFAULTS['val_' + k];
-        }
+        if (inp) { let v = cfg['val_' + k]; inp.value = (v !== undefined && v !== null && v !== '') ? v : window.DSP_MOD_DEFAULTS['val_' + k]; }
     });
-
-    const wrap = document.getElementById('dspModBodyWrap');
-    const shield = document.getElementById('dspModLockShield');
+    const wrap = document.getElementById('dspModBodyWrap'); const shield = document.getElementById('dspModLockShield');
     if (wrap && shield) {
-        if (cfg.phaseFixEnabled) {
-            wrap.style.opacity = '0.32';
-            wrap.style.filter = 'grayscale(100%)';
-            shield.style.display = 'block';
-        } else {
-            wrap.style.opacity = '1';
-            wrap.style.filter = 'none';
-            shield.style.display = 'none';
-        }
+        wrap.style.opacity = cfg.phaseFixEnabled ? '0.32' : '1';
+        wrap.style.filter = cfg.phaseFixEnabled ? 'grayscale(100%)' : 'none';
+        shield.style.display = cfg.phaseFixEnabled ? 'block' : 'none';
     }
-    if (typeof window.updateTopSearchOrMonitorBar === 'function') {
-        window.updateTopSearchOrMonitorBar();
-    }
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
 };
 
 if (!window._modalClassObserverInit) {
     window._modalClassObserverInit = true;
     const attachModalObs = () => {
-        const obs = new MutationObserver(() => {
-            if (typeof window.updateTopSearchOrMonitorBar === 'function') {
-                window.updateTopSearchOrMonitorBar();
-            }
-        });
-        ['settingsModal', 'eqModal', 'favModal'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) obs.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
-        });
-        if (typeof window.updateTopSearchOrMonitorBar === 'function') {
-            window.updateTopSearchOrMonitorBar();
-        }
+        const obs = new MutationObserver(() => { if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar(); });
+        ['settingsModal', 'eqModal', 'favModal'].forEach(id => { const el = document.getElementById(id); if (el) obs.observe(el, { attributes: true, attributeFilter: ['class', 'style'] }); });
+        if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
     };
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', attachModalObs);
-    } else {
-        attachModalObs();
-    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attachModalObs); else attachModalObs();
 }
 
 window.onPhaseFocusChange = function(el, ev) {
@@ -276,91 +369,50 @@ window.onPhaseFocusChange = function(el, ev) {
     window.appConfig.phaseFixEnabled = Boolean(el.checked);
     if (el.checked) window.ensureParentDspBlocks('phaseFix', ev);
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
     window.syncDspModUI();
-    if (typeof window.buildAudioGraph === 'function') {
-        if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
-        window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
-    }
+    if (typeof window.buildAudioGraph === 'function') { clearTimeout(window._dspInputDebounce); window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90); }
     try { navigator.vibrate(40); } catch(e){}
-    if (el.checked && typeof window.showToast === 'function') {
-        window.showToast("🔒 Блок управления отключён! Для включения выключите «Фазовый фокус»", ev);
-    } else if (!el.checked && typeof window.showToast === 'function') {
-        window.showToast("🔓 Ручной блок тонкой настройки активен!", ev);
-    }
+    if (typeof window.showToast === 'function') window.showToast(el.checked ? "🔒 Блок управления отключён! Для включения выключите «Фазовый фокус»" : "🔓 Ручной блок тонкой настройки активен!", ev);
 };
 
 window.onDspModChange = function(key, ev) {
     window.appConfig = window.appConfig || {};
-    const chk = document.getElementById('cfg_opt_' + key);
-    const inp = document.getElementById('cfg_val_' + key);
-
-    // Авто-переключение между "🎭 Стерео-Ширина" и "🎧 Бинаурал-Колонки" с понятным уведомлением
+    const chk = document.getElementById('cfg_opt_' + key); const inp = document.getElementById('cfg_val_' + key);
     if (chk && chk.checked && (key === 'msWidth' || key === 'crossfeed')) {
         const otherKey = (key === 'msWidth') ? 'crossfeed' : 'msWidth';
         const otherChk = document.getElementById('cfg_opt_' + otherKey);
         if ((otherChk && otherChk.checked) || window.appConfig['opt_' + otherKey]) {
-            if (otherChk) otherChk.checked = false;
-            window.appConfig['opt_' + otherKey] = false;
+            if (otherChk) otherChk.checked = false; window.appConfig['opt_' + otherKey] = false;
             try { navigator.vibrate(35); } catch(e){}
-            if (typeof window.showToast === 'function') {
-                const msg = (key === 'msWidth')
-                    ? "🎭 Стерео ВКЛ (🎧 Бинаурал откл. — что-то одно из двух)"
-                    : "🎧 Бинаурал ВКЛ (🎭 Стерео откл. — что-то одно из двух)";
-                window.showToast(msg, ev);
-            }
+            if (typeof window.showToast === 'function') window.showToast(key === 'msWidth' ? "🎭 Стерео ВКЛ (🎧 Бинаурал откл. — что-то одно из двух)" : "🎧 Бинаурал ВКЛ (🎭 Стерео откл. — что-то одно из двух)", ev);
         }
     }
-
-    if (chk) {
-        window.appConfig['opt_' + key] = Boolean(chk.checked);
-        if (chk.checked) window.ensureParentDspBlocks(key);
-    }
-    if (inp) {
-        let parsed = parseFloat(String(inp.value).replace(',', '.'));
-        if (!isNaN(parsed)) window.appConfig['val_' + key] = parsed;
-    }
+    if (chk) { window.appConfig['opt_' + key] = Boolean(chk.checked); if (chk.checked) window.ensureParentDspBlocks(key); }
+    if (inp) { let p = parseFloat(String(inp.value).replace(',', '.')); if (!isNaN(p)) window.appConfig['val_' + key] = p; }
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
-    if (typeof window.buildAudioGraph === 'function') {
-        if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
-        window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
-    }
+    if (typeof window.buildAudioGraph === 'function') { clearTimeout(window._dspInputDebounce); window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90); }
 };
 
-window.saveDspModRow = async function(key, btnEl, ev) {
+window.saveDspModRow = async function(key, btnEl) {
     window.onDspModChange(key);
-    const val = window.appConfig['val_' + key];
-    const opt = Boolean(window.appConfig['opt_' + key]);
     try {
-        await fetch('/api/config/save_single', { method: 'POST', body: JSON.stringify({category: 'main', key: 'val_' + key, value: val}) });
-        await fetch('/api/config/save_single', { method: 'POST', body: JSON.stringify({category: 'main', key: 'opt_' + key, value: opt}) });
-        if (btnEl) {
-            let old = btnEl.innerHTML; btnEl.innerHTML = '✅';
-            setTimeout(() => btnEl.innerHTML = old, 1000);
-        }
+        await fetch('/api/config/save_single', { method: 'POST', body: JSON.stringify({category: 'main', key: 'val_' + key, value: window.appConfig['val_' + key]}) });
+        await fetch('/api/config/save_single', { method: 'POST', body: JSON.stringify({category: 'main', key: 'opt_' + key, value: Boolean(window.appConfig['opt_' + key])}) });
+        if (btnEl) { let old = btnEl.innerHTML; btnEl.innerHTML = '✅'; setTimeout(() => btnEl.innerHTML = old, 1000); }
     } catch (e) {}
     try { navigator.vibrate(30); } catch(e){}
 };
 
-window.loadDspModRow = async function(key, btnEl, ev) {
+window.loadDspModRow = async function(key, btnEl) {
     try {
-        const res = await fetch('/api/config');
-        const data = await res.json();
-        window.appConfig = window.appConfig || {};
+        const res = await fetch('/api/config'); const data = await res.json();
         window.appConfig['opt_' + key] = (data['opt_' + key] !== undefined) ? Boolean(data['opt_' + key]) : window.DSP_MOD_DEFAULTS['opt_' + key];
         window.appConfig['val_' + key] = (data['val_' + key] !== undefined) ? parseFloat(data['val_' + key]) : window.DSP_MOD_DEFAULTS['val_' + key];
         localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
         window.syncDspModUI();
-        if (typeof window.buildAudioGraph === 'function') {
-        if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
-        window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
-    }
-        if (btnEl) {
-            let old = btnEl.innerHTML; btnEl.innerHTML = '✅';
-            setTimeout(() => btnEl.innerHTML = old, 1000);
-        }
+        if (typeof window.buildAudioGraph === 'function') { clearTimeout(window._dspInputDebounce); window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90); }
+        if (btnEl) { let old = btnEl.innerHTML; btnEl.innerHTML = '✅'; setTimeout(() => btnEl.innerHTML = old, 1000); }
     } catch (e) {}
     try { navigator.vibrate(30); } catch(e){}
 };
@@ -370,295 +422,123 @@ window.resetDspGroup = function(keysList, msg, ev) {
     keysList.forEach(k => {
         window.appConfig['opt_' + k] = window.DSP_MOD_DEFAULTS['opt_' + k];
         window.appConfig['val_' + k] = window.DSP_MOD_DEFAULTS['val_' + k];
-        const chk = document.getElementById('cfg_opt_' + k);
-        const inp = document.getElementById('cfg_val_' + k);
+        const chk = document.getElementById('cfg_opt_' + k); const inp = document.getElementById('cfg_val_' + k);
         if (chk) chk.checked = Boolean(window.DSP_MOD_DEFAULTS['opt_' + k]);
         if (inp) inp.value = window.DSP_MOD_DEFAULTS['val_' + k];
     });
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
-    if (typeof window.buildAudioGraph === 'function') {
-        if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
-        window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
-    }
+    if (typeof window.buildAudioGraph === 'function') { clearTimeout(window._dspInputDebounce); window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90); }
     try { navigator.vibrate(35); } catch(e){}
     if (typeof window.showToast === 'function') window.showToast(msg, ev);
 };
-
-// 📚 ПОЛНАЯ БАЗА ЗНАНИЙ ПО ВСЕМ ПАРАМЕТРАМ ПЛЕЕРА (В РЕАЛЬНЫХ ЕДИНИЦАХ dB / % / Hz)
-window.JENNY_HELP_DB = {
-    format_slots: {
-        title: "🎵 Поддерживаемые форматы файлов (8 слотов)",
-        phys: "Фильтр расширений сканера папки. Поддерживает любые аудио-файлы (<b>mp3, opus, flac, wav, m4a, ogg, aac</b>) и видео-контейнеры со звуковой дорожкой (<b>mp4, webm, mkv</b>).",
-        hear: "Любой включённый формат (даже видео <b>.mp4</b> с нашими тестами!) распаковывается напрямую в 32-bit Float RAM-движок и проходит через весь студийный тракт.",
-        tip: "Галочками можно быстро скрыть или показать нужные типы файлов в плейлисте, а в текстовые поля — вписать любое своё расширение!"
-    },
-    studio_ram: {
-        title: "🚀 Студийный движок (RAM)",
-        phys: "Трек при открытии целиком распаковывается в оперативную память в студийный формат <b>32-bit Float PCM</b> + сразу создаётся его зеркальный реверс-буфер.",
-        hear: "Мгновенная перемотка, скраббинг и разворот трека задом наперёд (тап по левому таймеру) без единой задержки.",
-        tip: "Держи включённым всегда (в строке трека горит «RAM 🚀»)."
-    },
-    phase_focus: {
-        title: "🎯 Фазовый фокус (Авто-пресет 3D + Вокал)",
-        phys: "Готовый комплексный пресет: включает противофазный стерео-хвост в FIR-сатураторе (левое ухо +, правое −), разворачивает фазу середины с усилением <b>+1.7 dB (1.22x)</b> и включает автоматический мастер-потолок.",
-        hear: "<b>ВКЛ:</b> голос выходит вперёд из-под баса, а сцена расширяется вокруг головы.<br><b>ВЫКЛ:</b> разблокирует ручной блок из 5 точечных настроек ниже.",
-        tip: "При включении этой галочки ручной блок из 5 опций ниже блокируется и становится серым, чтобы режимы не конфликтовали."
-    },
-    mod_block: {
-        title: "🧪 Тонкая настройка тракта (5 опций)",
-        phys: "Ручной конструктор фазы вокала (dB), ширины СЧ купола (%), де-эссера ВЧ (dB), чистого FIR-драйва (dB) и автоматического мастер-потолка.",
-        hear: "Работает, когда верхняя галочка «🎯 Фазовый фокус» снята. Позволяет нарулить идеальный баланс между мощным басом и чистым, близким голосом.",
-        tip: "Каждую настройку можно сохранить кнопкой 💾 или сбросить к эталону кнопкой «🔄 Сброс»."
-    },
-    mod_midPhase: {
-        title: "🎯 Фаза СЧ Вокал (dB)",
-        phys: "Переворачивает волну средней полосы кроссовера на 180°, чтобы на стыке частот бас и вокал толкали мембрану наушника синхронно в одну сторону, и добавляет указанное усиление в децибелах (<b>dB</b>).",
-        hear: "<b>ВЫКЛ:</b> глубокий клубный бас, голос чуть позади.<br><b>ВКЛ:</b> вокал сразу делает шаг вперёд прямо к лицу.",
-        tip: "По умолчанию <b>+3 dB</b>. Хочешь голос ещё ближе и громче — ставь <b>+5...+8 dB</b>; хочешь мягче — <b>0...+2 dB</b>."
-    },
-    mod_midQ: {
-        title: "📐 Ширина СЧ купола (%)",
-        phys: "Управляет шириной полосового фильтра средней трубы кроссовера в процентах (где <b>100%</b> — штатная заводская ширина).",
-        hear: "Расширяет охват средних частот, убирая узкий «коробочный» оттенок и делая стыки между басом, голосом и верхами бархатными и плавными.",
-        tip: "По умолчанию <b>150%</b> (в полтора раза шире штатного). Для максимально открытой и широкой середины ставь <b>200%–300%</b> (ниже 25% срабатывает защита от «телефонной щели»)."
-    },
-    mod_deEsser: {
-        title: "🐍 Де-эссер ВЧ (dB)",
-        phys: "При мощном лимитере (-22 dB / Ratio 22) верхний компрессор вытягивает каждую букву «С/Ш/Ч» на уровень бочки. Де-эссер снижает сжатие верхов до 4:1 и меняет уровень ВЧ-полосы на указанное число <b>dB</b>.",
-        hear: "Отрицательные значения (с минусом) убирают режущий свист на буквах «С» и «Ш» без потери мощи баса. Положительные — наоборот, добавляют яркости тарелкам.",
-        tip: "По умолчанию <b>-6 dB</b>. Если трек очень резкий и свистит — ставь <b>-9...-12 dB</b>; если хочется поярче — <b>-3 dB</b>."
-    },
-    mod_cleanFir: {
-        title: "✨ Драйв Чистый FIR (dB)",
-        phys: "Заменяет однополярный хвост FIR-сатуратора на гладкую биполярную кривую без накопления низкочастотного гула и автоматически компенсирует длину импульса (хоть 4 мс, хоть 400 мс).",
-        hear: "Убирает гулкое бубнение в бочке — бас становится сухим, быстрым и упругим, а параметр в <b>dB</b> регулирует насыщенность лампового окраса.",
-        tip: "По умолчанию <b>+3 dB</b>. Для мягкого тёплого окраса ставь <b>0...+4 dB</b>, для плотного сатурационного рычания — <b>+6...+10 dB</b>."
-    },
-    mod_masterCeil: {
-        title: "🛡️ Авто-Мастер-Потолок (Умный Анти-Клип)",
-        phys: "Стоит в самом конце всего аудио-тракта. Автоматически суммирует разгон громкости от всех включённых тобой модулей (FIR + Вокал + Авто-RMS + Панч + Стерео + Бинаурал), вычисляет точную компенсацию перегруза в <b>dB</b> и пропускает сигнал через мягкий аналоговый софт-клиппер <b>Math.tanh</b>.",
-        hear: "Полностью защищает звук от цифрового пердежа, хрипа и аварийного отключения ЦАПа при любых экстремальных комбинациях настроек.",
-        tip: "На зелёном индикаторе справа в реальном времени видно, сколько децибел перегруза сейчас компенсирует система (например, <b>Авто: -4.2 dB</b>). Держи включённым всегда!"
-    },
-    pro_block: {
-        title: "🚀 Мастеринг-Студия PRO (5 спец-модулей)",
-        phys: "Пять студийных процессоров в реальных физических единицах (<b>dB, Hz, %</b>), работающих напрямую с механикой двух мембран наушников и 32-битным RAM-буфером.",
-        hear: "Выравнивают громкость разных песен, собирают саб-бас в кулак по центру, создают 3D-панораму без потери баса, усиливают удар бочки и имитируют акустику комнаты.",
-        tip: "Все 5 модулей автоматически учитываются Авто-Мастер-Потолком и впечатываются в файл при экспорте (💾)!"
-    },
-    pro_autoRms: {
-        title: "⚡ Авто-RMS Цель (dB)",
-        phys: "При загрузке трека в RAM за 2 мс сканирует массив сэмплов песни, вычисляет её реальную среднюю мощность (RMS в dB) и автоматически подстраивает уровень под твой целевой эталон (65% коррекции до лимитера + 35% после).",
-        hear: "Решает проблему «для одной песни настройки те, для другой не те»: и тихие старые записи, и громкие современные треки звучат с одинаковой плотностью и громкостью!",
-        tip: "По умолчанию <b>-10 dB</b>. Для более плотной накачки ставь <b>-8...-6 dB</b>; для спокойного динамичного звука — <b>-12...-14 dB</b>."
-    },
-    pro_monoBass: {
-        title: "🧲 Моно-Саббас (Hz)",
-        phys: "Через фазокогерентную Mid/Side матрицу убирает боковую разницу каналов ниже указанной частоты <b>Hz</b>, собирая весь саб-бас в идеальный синфазный центр (L = R).",
-        hear: "Обе мембраны наушников начинают толкать басовый воздух строго синхронно. Удар бочки бьёт плотным кулаком ровно в центр головы, а вокал и гитары выше этой частоты остаются в широком стерео.",
-        tip: "По умолчанию <b>120 Hz</b> (студийный эталон: <b>100 – 150 Hz</b>)."
-    },
-    pro_msWidth: {
-        title: "🎭 Стерео-Ширина (%)",
-        phys: "Комбинированный Mid/Side процессор + студийный 3D-Даблер (микро-сдвиг 5.8 мс слева и 8.9 мс справа выше 220 Гц). Центральный канал (Mid — бочка, бас и вокал) всегда сохраняется на 100%!",
-        hear: "• <b>0%:</b> чистое Моно (весь звук в одной точке по центру).<br>• <b>100%:</b> оригинальное заводское стерео.<br>• <b>150%–300%:</b> широченный 3D-купол вокруг плеч без провала центрального баса и голоса!",
-        tip: "По умолчанию <b>150%</b>. Оптимальная музыкальная зона для жирного объёма: <b>140% – 250%</b>."
-    },
-    pro_punch: {
-        title: "🥁 Панч-Хлыст (dB)",
-        phys: "Динамический ударный шейпер после лимитера: фокусирует фундаментальный пинок бочки (<b>72 Гц</b>) и атаку рабочего барабана (<b>2100 Гц</b>) с мягким широким куполом без резкого телефонного визга.",
-        hear: "Положительные значения (<b>+4...+10 dB</b>) заставляют бочку физически «пинать» и пробивать микс, отрицательные (<b>-4...-10 dB</b>) делают удар мягким и бархатным.",
-        tip: "По умолчанию <b>+6 dB</b>. Весь прирост энергии автоматически контролируется Авто-Мастер-Потолком, не допуская хрипа."
-    },
-    pro_crossfeed: {
-        title: "🎧 Бинаурал-Колонки (%)",
-        phys: "Имитирует прослушивание настоящих колонок в комнате: подмешивает в левое ухо копию правого канала (и наоборот) с естественной задержкой огибания головы (<b>0.42 мс</b>) и тёплым фильтром (<b>650 Гц</b>).",
-        hear: "Убирает утомляющий «вакуум в голове», добавляет плотный грудной объём и выносит сцену вперёд перед лицом.",
-        tip: "По умолчанию <b>75%</b>. Для лёгкого эффекта комнаты ставь <b>40%–60%</b>, для жирного клубного саунда — <b>100%–150%</b>."
-    },
-    scrub_group: {
-        title: "⚡ Интеллектуальный Скраббинг и Таймеры",
-        phys: "Система живого управления скоростью, направлением и перемоткой трека одним пальцем.",
-        hear: "• <b>Удержание левого/правого края полосы трека + свайп вниз</b> — веер скоростей (слева реверс ⏪, справа вперёд ⏩).<br>• <b>Долгий тап по центру полосы</b> — сброс скорости к нормальной.<br>• <b>Тап по левому таймеру</b> — реверс; <b>по правому таймеру</b> — вперёд.",
-        tip: "Долгий тап по кнопке Play/Pause плавно прокручивает список к играющему треку!"
-    },
-    left_hand: {
-        title: "🖐️ Режим «Левша» (Зеркальная дуга)",
-        phys: "Переносит опорную точку и веер скоростей под большой палец левой руки.",
-        hear: "На звук не влияет — делает свайп дуги удобным для левой руки.",
-        tip: "Переключается мгновенно."
-    },
-    pitch_lock: {
-        title: "🎵 Сохранять темп / Тональность (Pitch Lock)",
-        phys: "Определяет алгоритм изменения скорости трека.",
-        hear: "<b>ВКЛ:</b> меняется только скорость, тембр голоса остаётся родным.<br><b>ВЫКЛ (Vinyl):</b> как виниловая пластинка — при замедлении голос и бит становятся ниже, темнее и жирнее (Slowed).",
-        tip: "При сохранении трека (💾) с Pitch Lock работает фильтр FFmpeg atempo."
-    },
-    base_speed: {
-        title: "🚀 Кастомная скорость (Base)",
-        phys: "Заменяет стандартную скорость 1.0x на твою постоянную скорость.",
-        hear: "Например, <b>0.97x</b> даёт более тяжёлый расслабленный грув на всех треках.",
-        tip: "Галочка «↳ Писать выбор дуги сюда» автоматически сохраняет выбранную на дуге скорость как базовую."
-    },
-    scrub_speed: {
-        title: "⏩ Дефолтная скорость дуги",
-        phys: "Скорость, которая включается сразу при зажатии края полосы прогресса до свайпа по дуге.",
-        hear: "Позволяет в одно касание ускорять или замедлять трек.",
-        tip: "Галочка «↳ Писать выбор дуги сюда» обновляет это поле последним выбором на дуге."
-    },
-    scrub_zones: {
-        title: "🎯 Кастомные радиальные зоны (6 слотов)",
-        phys: "6 кружков скоростей, вылетающих веером при свайпе вниз.",
-        hear: "Настрой свои любимые скорости (например, 0.85, 0.92, 1.15) и отключи лишние.",
-        tip: "Кнопка «🔄 Сброс» возвращает стандартный набор."
-    },
-    amoled_mode: {
-        title: "🖤 Режим AMOLED",
-        phys: "Чистый чёрный фон (#000000) выключает пиксели AMOLED-матрицы.",
-        hear: "Экономит батарею и бережёт глаза в темноте.",
-        tip: "Рекомендуется держать включённым."
-    },
-    vol_slider: {
-        title: "🔊 Показывать ползунок громкости",
-        phys: "Показывает или скрывает кнопку динамика 🔊 / 🔥 на главном экране.",
-        hear: "Управляет предусилителем громкости (до 300% с Овердрайвом).",
-        tip: "При громкости выше 100% значок меняется на 🔥."
-    },
-    fir_group: {
-        title: "✨ FIR-Сатуратор (Ламповый окрас)",
-        phys: "Свёрточный процессор, накладывающий короткий затухающий импульс для насыщения гармониками (с авто-компенсацией длины хвоста).",
-        hear: "Делает цифровую запись густой, тёплой и массивной.",
-        tip: "Регулируется Усилением (Gain) и Импульсом (ms)."
-    },
-    fir_gain: {
-        title: "✨ FIR: Усиление (Gain)",
-        phys: "Мощность сигнала на выходе FIR-сатуратора.",
-        hear: "Чем выше значение (оптимум <b>1.5–2.5</b>), тем плотнее звук вдавливается в лимитер.",
-        tip: "Сохраняется кнопкой 💾."
-    },
-    fir_decay: {
-        title: "✨ FIR: Импульс (ms)",
-        phys: "Длина микро-хвоста сатурации в миллисекундах.",
-        hear: "<b>2–6 ms:</b> плотный собранный удар.<br><b>10–30 ms:</b> жирный клубный объём.",
-        tip: "Для чистого упругого баса без гула включай «✨ Драйв Чистый FIR» в верхнем блоке."
-    },
-    mb_group: {
-        title: "🎚️ Многополосный кроссовер (3-Band)",
-        phys: "Делит звук на 3 отдельные полосы (Бас, Середина, Верх) со своим независимым лимитером в каждой.",
-        hear: "Не даёт мощным ударам баса просаживать громкость высоких частот и вокала.",
-        tip: "Работает совместно с Лимитером (Soft Clipper)."
-    },
-    mb_low: {
-        title: "🎚️ Отсечка Баса (Hz)",
-        phys: "Граница раздела между басовым и средним компрессорами.",
-        hear: "<b>160–280 Hz:</b> бас жмётся отдельно, а голос идёт свободно в средней полосе.<br><b>1200–1600 Hz:</b> слитный клубный памп-эффект.",
-        tip: "На низких значениях (160–250 Hz) обязательно включай «🎯 Фаза СЧ Вокал (dB)», чтобы голос звучал близко и мощно."
-    },
-    mb_high: {
-        title: "🎚️ Отсечка Верх (Hz)",
-        phys: "Граница раздела между средней полосой и верхним компрессором.",
-        hear: "<b>3500–4000 Hz:</b> яркий верх (включай Де-эссер -6 dB от свиста С/Ш).<br><b>7200 Hz:</b> мягкие шипящие, качается только верхний воздух.",
-        tip: "Должна быть выше Отсечки Баса."
-    },
-    lim_group: {
-        title: "🗜️ Лимитер (Soft Clipper)",
-        phys: "Динамический пресс, сжимающий пики и поднимающий среднюю плотность трека (RMS).",
-        hear: "Даёт мощный клубный напор.",
-        tip: "Твой проверенный пресет: Порог -22, Knee 19, Ratio 22, Атака 26, Спад 60."
-    },
-    lim_thresh: {
-        title: "🗜️ Лимитер: Порог (dB)",
-        phys: "Уровень в dB, выше которого включается сжатие.",
-        hear: "Чем ниже число с минусом (<b>-22 dB</b>), тем глубже захват волны и тем плотнее трек.",
-        tip: "Рабочий диапазон: от -15 до -26 dB."
-    },
-    lim_knee: {
-        title: "🗜️ Лимитер: Смягчение (Knee)",
-        phys: "Плавность изгиба кривой сжатия.",
-        hear: "Высокое значение (<b>18–22</b>) делает сжатие мягким и бархатным.",
-        tip: "Убирает резкость на пиках."
-    },
-    lim_ratio: {
-        title: "🗜️ Лимитер: Сжатие (Ratio)",
-        phys: "Степень подавления пиков выше порога.",
-        hear: "Высокие значения (<b>18–22</b>) включают плотное удержание уровня и авто-подъём тихих деталей.",
-        tip: "Для максимального кача держи 16–22."
-    },
-    lim_attack: {
-        title: "🗜️ Лимитер: Атака (ms)",
-        phys: "Время срабатывания пресса после удара бочки.",
-        hear: "<b>20–30 ms</b> пропускают стартовый щелчок ударных, сохраняя атаку.",
-        tip: "Твои 26 ms идеально держат удар бочки."
-    },
-    lim_release: {
-        title: "🗜️ Лимитер: Спад (ms)",
-        phys: "Время восстановления громкости после удара.",
-        hear: "<b>50–70 ms</b> дают упругое дыхание в такт биту.",
-        tip: "Оптимум: 60 ms."
-    },
-    eq_group: {
-        title: "🎛️ Эквалайзер (EQ IIR)",
-        phys: "Включает или отключает 5-полосный эквалайзер из окна 🄠.",
-        hear: "Позволяет в один клик сравнить звук с эквалайзером и без.",
-        tip: "Сами ползунки — под иконкой 🄠 в шапке."
-    },
-    boost_group: {
-        title: "🚀 Усилитель (Овердрайв)",
-        phys: "Увеличивает максимальный предел ползунка громкости выше 100%.",
-        hear: "Разгоняет вход лимитера для экстремальной накачки баса.",
-        tip: "Мощность 5 = до 150% громкости, 10 = до 200%, 20 = до 300%."
-    },
-    eq_band_60: {
-        title: "🔊 60 Гц — Саб-бас и Бочка",
-        phys: "Низкочастотный шельф (Low Shelf) ниже 60–80 Гц.",
-        hear: "Вправо (+) — мощная сабвуферная вибрация; влево (−) — сухой лёгкий низ.",
-        tip: "Основа Bass-Boosted звука."
-    },
-    eq_band_230: {
-        title: "🎸 230 Гц — Мид-бас и Теплота",
-        phys: "Колокол на нижней середине 230 Гц.",
-        hear: "Влево (−) — убирает коробочный бубнёж и очищает бас; вправо (+) — добавляет густоту.",
-        tip: "Лёгкий минус делает саб-бас чище."
-    },
-    eq_band_910: {
-        title: "🎤 910 Гц — Центр вокала",
-        phys: "Среднечастотный фильтр основы голоса и инструментов.",
-        hear: "Вправо (+) — приближает вокал к лицу; влево (−) — утапливает голос вглубь за бас.",
-        tip: "Главный руль близости голоса в эквалайзере."
-    },
-    eq_band_3600: {
-        title: "⚡ 3600 Гц — Чёткость и Присутствие",
-        phys: "Зона максимальной чувствительности слуха (разборчивость слов и атака ударных).",
-        hear: "Вправо (+) — кристальная разборчивость речи; влево (−) — мягкий, не режущий уши звук.",
-        tip: "Управляет резкостью микса."
-    },
-    eq_band_14000: {
-        title: "✨ 14 000 Гц — Воздух и Блеск",
-        phys: "Высокочастотный шельф (High Shelf) самого верхнего спектра.",
-        hear: "Вправо (+) — прозрачный «воздух» и рассыпчатые тарелки без свиста на С/Ш.",
-        tip: "Добавляет Hi-Fi прозрачность."
-    }
+window.JENNY_HELP_DB_RU = {
+    format_slots: { title: "🎵 Поддерживаемые форматы файлов (8 слотов)", phys: "Фильтр расширений сканера папки (<b>mp3, opus, flac, wav, m4a, ogg, aac, mp4</b>).", hear: "Любой включённый формат распаковывается напрямую в 32-bit Float RAM-движок и проходит через весь студийный тракт.", tip: "Галочками можно быстро скрыть или показать нужные типы файлов в плейлисте." },
+    studio_ram: { title: "🚀 Студийный движок (RAM)", phys: "Трек целиком распаковывается в RAM в формат <b>32-bit Float PCM</b> + сразу создаётся его реверс-буфер.", hear: "Мгновенная перемотка, скраббинг и реверс без задержек.", tip: "Держи включённым всегда («RAM 🚀»)." },
+    phase_focus: { title: "🎯 Фазовый фокус (Авто-пресет 3D + Вокал)", phys: "Включает противофазный стерео-хвост в FIR, разворачивает фазу СЧ (+1.7 dB) и включает авто-потолок.", hear: "Голос выходит вперёд из-под баса, а сцена расширяется вокруг головы.", tip: "При включении ручной блок из 5 опций ниже блокируется." },
+    mod_block: { title: "🧪 Тонкая настройка тракта (5 опций)", phys: "Ручной конструктор фазы вокала (dB), ширины СЧ купола (%), де-эссера ВЧ (dB), чистого FIR-драйва (dB) и авто-потолка.", hear: "Работает, когда галочка «🎯 Фазовый фокус» снята.", tip: "Сохраняется кнопкой 💾 или сбрасывается кнопкой «🔄 Сброс»." },
+    mod_midPhase: { title: "🎯 Фаза СЧ Вокал (dB)", phys: "Синхронизирует фазу СЧ-полосы с басом и добавляет усиление в <b>dB</b>.", hear: "Вокал сразу делает шаг вперёд прямо к лицу.", tip: "По умолчанию <b>+3 dB</b> (диапазон +2...+8 dB)." },
+    mod_midQ: { title: "📐 Ширина СЧ купола (%)", phys: "Управляет шириной полосового фильтра средней полосы кроссовера (100% — штатная).", hear: "Убирает коробочный оттенок и делает стыки полос бархатными.", tip: "По умолчанию <b>150%</b> (для широкой середины ставь 200%–300%)." },
+    mod_deEsser: { title: "🐍 Де-эссер ВЧ (dB)", phys: "Снижает сжатие верхов до 4:1 и меняет уровень ВЧ-полосы в <b>dB</b>.", hear: "Убирает режущий свист на буквах «С» и «Ш» без потери баса.", tip: "По умолчанию <b>-6 dB</b>." },
+    mod_cleanFir: { title: "✨ Драйв Чистый FIR (dB)", phys: "Гладкая биполярная кривая FIR-сатуратора с окном Хэннинга без накопления гула.", hear: "Бас становится сухим, быстрым и упругим с ламповым рычанием.", tip: "По умолчанию <b>+3 dB</b>." },
+    mod_masterCeil: { title: "🛡️ Авто-Мастер-Потолок (Умный Анти-Клип)", phys: "Суммирует разгон от всех модулей, вычисляет компенсацию в <b>dB</b> и включает мягкий софт-клиппер <b>Math.tanh</b>.", hear: "Полностью защищает от цифрового клиппинга и хрипа.", tip: "Держи включённым всегда!" },
+    pro_block: { title: "🚀 Мастеринг-Студия PRO (5 спец-модулей)", phys: "Пять студийных процессоров в реальных физических единицах (<b>dB, Hz, %</b>).", hear: "Выравнивают RMS громкость, собирают саб-бас в центр, дают 3D-сцену, панч бочки и бинауральную комнату.", tip: "Учитываются Авто-Потолком и впечатываются при экспорте (💾)!" },
+    pro_autoRms: { title: "⚡ Авто-RMS Цель (dB)", phys: "Сканирует сэмплы песни в RAM и автоматически выравнивает среднюю плотность (RMS) под эталон.", hear: "Тихие и громкие треки звучат с одинаковой плотностью и мощью!", tip: "По умолчанию <b>-10 dB</b>." },
+    pro_monoBass: { title: "🧲 Моно-Саббас (Hz)", phys: "Через Mid/Side матрицу собирает весь саб-бас ниже указанной частоты <b>Hz</b> в идеальный центр (L = R).", hear: "Бочка бьёт плотным кулаком ровно в центр головы.", tip: "По умолчанию <b>120 Hz</b>." },
+    pro_msWidth: { title: "🎭 Стерео-Ширина (%)", phys: "Mid/Side матрица + 2-полосный боковой эксайтер (135 Гц + 8500 Гц) + 90° All-Pass декореллятор.", hear: "Создаёт голографический 3D-купол вокруг плеч без потери баса!", tip: "По умолчанию <b>160%</b>." },
+    pro_punch: { title: "🥁 Панч-Хлыст (dB)", phys: "3-точечный шейпер: усиливает пинок бочки (85 Гц), убирает муть (230 Гц) и подчёркивает атаку снейра (2600 Гц).", hear: "Заставляет ударные физически пробивать микс.", tip: "По умолчанию <b>+6 dB</b>." },
+    pro_crossfeed: { title: "🎧 Бинаурал-Колонки (%)", phys: "Имитирует акустику колонок в комнате с задержкой огибания головы (0.42 мс) и фильтром (650 Гц).", hear: "Убирает вакуум в голове и выносит сцену перед лицом.", tip: "По умолчанию <b>75%</b>." },
+    scrub_group: { title: "⚡ Интеллектуальный Скраббинг и Таймеры", phys: "Управление скоростью, реверсом и перемоткой одним пальцем.", hear: "Удержание края полосы + свайп вниз — веер скоростей; тап по левому таймеру — реверс, по правому — вперёд.", tip: "Долгий тап по Play/Pause прокручивает список к текущему треку!" },
+    left_hand: { title: "🖐️ Режим «Левша»", phys: "Зеркально переносит дугу скоростей под левую руку.", hear: "Удобный свайп большим пальцем левой руки.", tip: "Переключается мгновенно." },
+    pitch_lock: { title: "🎵 Сохранять темп (Pitch Lock)", phys: "Алгоритм сохранения высоты тона при изменении скорости.", hear: "ВКЛ: родной тембр голоса. ВЫКЛ: виниловый Slowed-эффект.", tip: "Работает и при экспорте трека (💾)." },
+    base_speed: { title: "🚀 Кастомная скорость (Base)", phys: "Заменяет стандартную скорость 1.0x на твою постоянную.", hear: "Например, 0.97x даёт расслабленный тяжёлый грув.", tip: "Можно авто-сохранять с дуги." },
+    scrub_speed: { title: "⏩ Дефолтная скорость дуги", phys: "Скорость при зажатии края полосы до свайпа по дуге.", hear: "Мгновенное ускорение или замедление в одно касание.", tip: "Обновляется с дуги." },
+    scrub_zones: { title: "🎯 Кастомные радиальные зоны", phys: "6 слотов скоростей веера.", hear: "Настрой свои любимые скорости.", tip: "Кнопка «🔄 Сброс» возвращает эталон." },
+    amoled_mode: { title: "🖤 Режим AMOLED", phys: "Чистый чёрный фон (#000000).", hear: "Экономит заряд экрана и бережёт глаза.", tip: "Держи включённым." },
+    vol_slider: { title: "🔊 Показывать ползунок громкости", phys: "Иконка динамика 🔊 / 🔥 на главном экране.", hear: "Предусилитель громкости до 300%.", tip: "Выше 100% загорается 🔥." },
+    fir_group: { title: "✨ FIR-Сатуратор", phys: "Свёрточный ламповый сатуратор гармоник.", hear: "Делает звук густым, тёплым и массивным.", tip: "Настраивается Gain и Impulse (ms)." },
+    fir_gain: { title: "✨ FIR: Усиление (Gain)", phys: "Мощность сигнала на выходе FIR.", hear: "Оптимум 1.5–2.5 для плотной накачки.", tip: "Сохраняется кнопкой 💾." },
+    fir_decay: { title: "✨ FIR: Импульс (ms)", phys: "Длина хвоста сатурации в мс.", hear: "2–6 ms: чёткий удар; 10–30 ms: клубный объём.", tip: "Включай «Драйв Чистый FIR» против гула." },
+    mb_group: { title: "🎚️ Многополосный кроссовер (3-Band)", phys: "Делит спектр на Бас, Середину и Верх с независимой компрессией.", hear: "Мощный бас не просаживает вокал и тарелки.", tip: "Работает в паре с Лимитером." },
+    mb_low: { title: "🎚️ Отсечка Баса (Hz)", phys: "Граница между басом и серединой.", hear: "160–320 Hz отделяют саб-бас от голоса; 1600 Hz даёт слитный памп.", tip: "Вокал защищён от басового гула." },
+    mb_high: { title: "🎚️ Отсечка Верх (Hz)", phys: "Граница между серединой и верхами.", hear: "3600–7200 Hz определяют зону блеска и тарелок.", tip: "Выше Отсечки Баса." },
+    lim_group: { title: "🗜️ Лимитер (Soft Clipper)", phys: "Динамический пресс пиков.", hear: "Даёт плотный студийный напор.", tip: "Эталон: -22, 19, 22, 26, 60." },
+    lim_thresh: { title: "🗜️ Порог (dB)", phys: "Уровень включения компрессии.", hear: "-22 dB даёт глубокий захват волны.", tip: "Диапазон -15...-26 dB." },
+    lim_knee: { title: "🗜️ Смягчение (Knee)", phys: "Плавность колена компрессии.", hear: "18–22 делает сжатие мягким.", tip: "Убирает резкость." },
+    lim_ratio: { title: "🗜️ Сжатие (Ratio)", phys: "Сила удержания пиков.", hear: "18–22 вытягивает тихие детали.", tip: "Держи 16–22." },
+    lim_attack: { title: "🗜️ Атака (ms)", phys: "Время пропуска стартового удара бочки.", hear: "26 ms сохраняют хлёсткий удар.", tip: "Оптимум 20–30 ms." },
+    lim_release: { title: "🗜️ Спад (ms)", phys: "Время восстановления после пика.", hear: "60 ms дают упругий кач в такт.", tip: "Оптимум 50–70 ms." },
+    eq_group: { title: "🎛️ Эквалайзер (EQ IIR)", phys: "Включает 5-полосный эквалайзер 🄠.", hear: "Быстрое сравнение звука с EQ и без.", tip: "Ползунки под кнопкой 🄠." },
+    boost_group: { title: "🚀 Усилитель (Овердрайв)", phys: "Разгон громкости выше 100%.", hear: "Экстремальная накачка входа лимитера.", tip: "Мощность 5 = 150%, 20 = 300%." },
+    eq_band_60: { title: "🔊 60 Гц — Саб-бас", phys: "Шельф низких частот.", hear: "Глубокая вибрация сабвуфера.", tip: "Основа баса." },
+    eq_band_230: { title: "🎸 230 Гц — Мид-бас", phys: "Нижняя середина.", hear: "Минус убирает бубнёж, плюс даёт густоту.", tip: "Чистит микс." },
+    eq_band_910: { title: "🎤 910 Гц — Центр вокала", phys: "Основа голоса.", hear: "Плюс приближает вокал к лицу.", tip: "Главный руль голоса." },
+    eq_band_3600: { title: "⚡ 3600 Гц — Чёткость", phys: "Разборчивость речи и атака.", hear: "Плюс даёт ясность, минус смягчает резкость.", tip: "Контроль присутствия." },
+    eq_band_14000: { title: "✨ 14 000 Гц — Воздух", phys: "Верхний шельф блеска.", hear: "Добавляет прозрачность и рассыпчатые тарелки.", tip: "Hi-Fi воздух." }
 };
 
+window.JENNY_HELP_DB_EN = {
+    format_slots: { title: "🎵 Supported File Formats (8 Slots)", phys: "Folder scanner filter (<b>mp3, opus, flac, wav, m4a, ogg, aac, mp4</b>).", hear: "Every enabled format decodes straight into the 32-bit Float RAM engine and flows through the full DSP chain.", tip: "Toggle checkboxes to instantly filter file types in your playlist." },
+    studio_ram: { title: "🚀 Studio Engine (RAM)", phys: "Unpacks the entire track into RAM as <b>32-bit Float PCM</b> + pre-builds a reverse buffer.", hear: "Zero-latency seeking, live scrubbing, and instant reverse playback.", tip: "Keep enabled at all times ('RAM 🚀')." },
+    phase_focus: { title: "🎯 Phase Focus (Auto 3D + Vocal Preset)", phys: "Engages out-of-phase stereo FIR tail, aligns midrange phase (+1.7 dB), and locks Auto-Master Ceiling.", hear: "Vocals step forward out of the bass while the soundstage expands around your head.", tip: "Locks the 5 manual controls below when active." },
+    mod_block: { title: "🧪 Signal Path Fine-Tuning (5 Options)", phys: "Manual toolkit for Vocal Mid Gain (dB), Mid Dome Width (%), HF De-Esser (dB), Clean FIR Drive (dB), and Auto-Ceiling.", hear: "Active when '🎯 Phase Focus' is unchecked.", tip: "Save with 💾 or restore defaults with '🔄 Reset'." },
+    mod_midPhase: { title: "🎯 Vocal Mid Gain (dB)", phys: "Aligns midrange crossover phase with bass and applies gain in <b>dB</b>.", hear: "Vocals immediately step right up to your face.", tip: "Default is <b>+3 dB</b> (+2...+8 dB range)." },
+    mod_midQ: { title: "📐 Mid Dome Width (%)", phys: "Controls midrange crossover filter bandwidth (100% = stock).", hear: "Removes boxy resonances and makes band transitions silky smooth.", tip: "Default is <b>150%</b> (use 200%–300% for wide-open mids)." },
+    mod_deEsser: { title: "🐍 HF De-Esser (dB)", phys: "Relaxes high-band ratio to 4:1 and adjusts treble gain in <b>dB</b>.", hear: "Tames harsh 'S' and 'SH' sibilance under heavy limiting without losing bass.", tip: "Default is <b>-6 dB</b>." },
+    mod_cleanFir: { title: "✨ Clean FIR Drive (dB)", phys: "Smooth bipolar Hanning-windowed FIR impulse curve with zero low-end mud buildup.", hear: "Tight, fast, punchy bass with warm tube harmonic growl.", tip: "Default is <b>+3 dB</b>." },
+    mod_masterCeil: { title: "🛡️ Auto-Master Ceiling (Smart Anti-Clip)", phys: "Sums up gain boosts across all active modules, computes exact attenuation in <b>dB</b>, and feeds an analog <b>Math.tanh</b> soft-clipper.", hear: "Completely prevents digital clipping or distortion under extreme settings.", tip: "Keep enabled at all times!" },
+    pro_block: { title: "🚀 Mastering Studio PRO (5 Spec-Modules)", phys: "Five studio processors in true physical units (<b>dB, Hz, %</b>).", hear: "Normalizes RMS loudness, locks sub-bass dead center, builds a 3D stage, adds drum punch, and simulates room monitors.", tip: "Tracked by Auto-Ceiling and baked into exported files (💾)!" },
+    pro_autoRms: { title: "⚡ Auto-RMS Target (dB)", phys: "Scans track PCM samples in RAM and matches average loudness (RMS) to your target reference.", hear: "Quiet vintage tracks and loud modern masters play with consistent density!", tip: "Default is <b>-10 dB</b>." },
+    pro_monoBass: { title: "🧲 Mono Sub-Bass (Hz)", phys: "Uses a phase-coherent Mid/Side matrix to lock sub-bass below <b>Hz</b> dead center (L = R).", hear: "Kick drums hit like a tight fist right in the center of your head.", tip: "Default is <b>120 Hz</b>." },
+    pro_msWidth: { title: "🎭 Stereo Width (%)", phys: "Mid/Side matrix + 2-band Side Exciter (135 Hz + 8500 Hz) + 90° All-Pass phase decorrelator.", hear: "Creates a huge 3D holographic dome around your shoulders with full center bass!", tip: "Default is <b>160%</b>." },
+    pro_punch: { title: "🥁 Punch Whip (dB)", phys: "3-point transient shaper: boosts kick body (85 Hz), cuts mud (230 Hz), and snaps snare attack (2600 Hz).", hear: "Makes drums physically kick through the mix.", tip: "Default is <b>+6 dB</b>." },
+    pro_crossfeed: { title: "🎧 Binaural Speakers (%)", phys: "Simulates studio monitors in a room with head-shadow delay (0.42 ms) and low-pass filter (650 Hz).", hear: "Eliminates fatiguing in-head isolation and projects the stage in front of you.", tip: "Default is <b>75%</b>." },
+    scrub_group: { title: "⚡ Smart Scrubbing & Timers", phys: "One-thumb live speed, direction, and seek control.", hear: "Hold seekbar edge + swipe down for radial speed fan; tap left timer for reverse, right timer for forward.", tip: "Long-press Play/Pause to scroll to the active track!" },
+    left_hand: { title: "🖐️ Left-Handed Mode", phys: "Mirrors the radial speed arc to the left side.", hear: "Effortless left-thumb scrubbing.", tip: "Switches instantly." },
+    pitch_lock: { title: "🎵 Preserve Pitch (Pitch Lock)", phys: "Time-stretching vs. vinyl pitch algorithm.", hear: "ON: keeps original vocal pitch. OFF: deep vinyl Slowed effect.", tip: "Also applies when exporting tracks (💾)." },
+    base_speed: { title: "🚀 Custom Base Speed", phys: "Overrides standard 1.0x speed with your custom default.", hear: "E.g. 0.97x gives a heavier groove.", tip: "Can auto-save from radial arc." },
+    scrub_speed: { title: "⏩ Default Arc Speed", phys: "Initial speed when holding the seekbar edge.", hear: "Instant one-touch speed boost or slowdown.", tip: "Updates from radial arc." },
+    scrub_zones: { title: "🎯 Custom Radial Zones", phys: "6 speed bubbles fanned out on swipe.", hear: "Customize your favorite speeds.", tip: "Hit '🔄 Reset' for defaults." },
+    amoled_mode: { title: "🖤 AMOLED Mode", phys: "Pure black (#000000) background.", hear: "Saves battery and reduces eye strain.", tip: "Keep ON." },
+    vol_slider: { title: "🔊 Show Volume Slider", phys: "Speaker icon 🔊 / 🔥 on the main bar.", hear: "Digital preamp gain up to 300%.", tip: "Turns into 🔥 above 100%." },
+    fir_group: { title: "✨ FIR Saturator", phys: "Convolver tube harmonic saturator.", hear: "Makes audio thick, warm, and weighty.", tip: "Controlled by Gain and Impulse (ms)." },
+    fir_gain: { title: "✨ FIR: Drive (Gain)", phys: "FIR stage output gain.", hear: "Sweet spot 1.5–2.5 for dense saturation.", tip: "Save with 💾." },
+    fir_decay: { title: "✨ FIR: Impulse (ms)", phys: "Micro-saturation tail length in ms.", hear: "2–6 ms: tight punch; 10–30 ms: club body.", tip: "Enable 'Clean FIR Drive' for zero mud." },
+    mb_group: { title: "🎚️ Multiband Crossover (3-Band)", phys: "Splits audio into Low, Mid, and High bands with independent compression.", hear: "Heavy bass kicks never duck vocals or hi-hats.", tip: "Works with the Limiter." },
+    mb_low: { title: "🎚️ Low Crossover (Hz)", phys: "Split between bass and midrange.", hear: "160–320 Hz separates sub-bass from vocals; 1600 Hz gives club pump.", tip: "Vocal band is protected from bass bleed." },
+    mb_high: { title: "🎚️ High Crossover (Hz)", phys: "Split between midrange and treble.", hear: "3600–7200 Hz controls top-end air and sparkle.", tip: "Higher than Low Crossover." },
+    lim_group: { title: "🗜️ Limiter (Soft Clipper)", phys: "Dynamic peak compressor.", hear: "Delivers hard-hitting club pressure.", tip: "Reference preset: -22, 19, 22, 26, 60." },
+    lim_thresh: { title: "🗜️ Threshold (dB)", phys: "Compression engagement level.", hear: "-22 dB grabs deep into the waveform.", tip: "Range: -15 to -26 dB." },
+    lim_knee: { title: "🗜️ Soft Knee (dB)", phys: "Compression curve smoothness.", hear: "18–22 makes limiting musical and smooth.", tip: "Removes harshness." },
+    lim_ratio: { title: "🗜️ Ratio", phys: "Peak reduction strength.", hear: "18–22 locks levels and lifts quiet details.", tip: "Keep at 16–22." },
+    lim_attack: { title: "🗜️ Attack (ms)", phys: "Transient pass-through time.", hear: "26 ms preserves drum snap.", tip: "Sweet spot: 20–30 ms." },
+    lim_release: { title: "🗜️ Release (ms)", phys: "Recovery time after peaks.", hear: "60 ms creates a bouncy groove.", tip: "Sweet spot: 50–70 ms." },
+    eq_group: { title: "🎛️ Equalizer (5-Band IIR)", phys: "Enables the 5-band EQ in 🄠.", hear: "Instant A/B comparison.", tip: "Sliders are under 🄠." },
+    boost_group: { title: "🚀 Preamp Booster (Overdrive)", phys: "Extends volume above 100%.", hear: "Drives the limiter harder.", tip: "Power 5 = 150%, 20 = 300%." },
+    eq_band_60: { title: "🔊 60 Hz — Sub-Bass", phys: "Low-shelf filter.", hear: "Deep subwoofer rumble.", tip: "Bass foundation." },
+    eq_band_230: { title: "🎸 230 Hz — Mid-Bass", phys: "Lower midrange bell.", hear: "Cut to remove mud, boost for body.", tip: "Cleans up the mix." },
+    eq_band_910: { title: "🎤 910 Hz — Vocal Core", phys: "Vocal fundamental zone.", hear: "Boost to bring vocals closer.", tip: "Main vocal fader." },
+    eq_band_3600: { title: "⚡ 3600 Hz — Clarity", phys: "Articulation and transient snap.", hear: "Boost for clarity, cut to reduce harshness.", tip: "Presence control." },
+    eq_band_14000: { title: "✨ 14,000 Hz — Air", phys: "High-shelf treble filter.", hear: "Adds transparent air and shimmering cymbals.", tip: "Hi-Fi openness." }
+};
+
+window.getHelpDB = function() { return window.getLang() === 'en' ? window.JENNY_HELP_DB_EN : window.JENNY_HELP_DB_RU; };
+window.JENNY_HELP_DB = window.JENNY_HELP_DB_RU;
+
 window.ensureHelpModal = function() {
-    if (document.getElementById('jennyHelpModal')) return;
-    const m = document.createElement('div');
-    m.id = 'jennyHelpModal';
-    m.style.cssText = "display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.8);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:16px;box-sizing:border-box;";
+    let m = document.getElementById('jennyHelpModal'); if (m) m.remove();
+    m = document.createElement('div'); m.id = 'jennyHelpModal';
+    m.style.cssText = "display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.82);backdrop-filter:blur(5px);align-items:center;justify-content:center;padding:16px;box-sizing:border-box;";
     m.onclick = (e) => { if (e.target === m) m.style.display = 'none'; };
-    m.innerHTML = `
-        <div onclick="event.stopPropagation()" style="background:#0d1117;border:1px solid #7341be;border-radius:14px;max-width:440px;width:100%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.9);overflow:hidden;">
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#161b22;border-bottom:1px solid #30363d;">
-                <span id="jhTitle" style="color:#58a6ff;font-weight:bold;font-size:15px;">📖 Справка</span>
-                <button onclick="document.getElementById('jennyHelpModal').style.display='none'" style="background:transparent;border:none;color:#8b949e;font-size:18px;cursor:pointer;padding:2px 6px;">✖</button>
-            </div>
-            <div id="jhBody" style="padding:14px 16px;overflow-y:auto;color:#e6edf3;font-size:13.5px;line-height:1.5;display:flex;flex-direction:column;gap:10px;"></div>
-            <div style="padding:10px 16px;background:#161b22;border-top:1px solid #30363d;display:flex;justify-content:flex-end;">
-                <button onclick="document.getElementById('jennyHelpModal').style.display='none'" style="background:#238636;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:bold;font-size:13px;cursor:pointer;">Понятно 👍</button>
-            </div>
+    m.innerHTML = `<div onclick="event.stopPropagation()" style="background:#0d1117;border:1px solid #7341be;border-radius:14px;max-width:440px;width:100%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.95);overflow:hidden;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#161b22;border-bottom:1px solid #30363d;">
+            <span id="jhTitle" style="color:#58a6ff;font-weight:bold;font-size:15px;">📖 ${window.tr('Справка', 'Help Guide')}</span>
+            <button onclick="document.getElementById('jennyHelpModal').style.display='none'" style="background:transparent;border:none;color:#8b949e;font-size:18px;cursor:pointer;padding:2px 6px;box-shadow:none;">✖</button>
         </div>
-    `;
+        <div id="jhBody" style="padding:14px 16px;overflow-y:auto;color:#e6edf3;font-size:13.5px;line-height:1.5;display:flex;flex-direction:column;gap:10px;"></div>
+        <div style="padding:10px 16px;background:#161b22;border-top:1px solid #30363d;display:flex;justify-content:flex-end;">
+            <button onclick="document.getElementById('jennyHelpModal').style.display='none'" style="background:#238636;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:bold;font-size:13px;cursor:pointer;">${window.tr('Понятно 👍', 'Got it 👍')}</button>
+        </div></div>`;
     document.body.appendChild(m);
 };
 
@@ -666,23 +546,13 @@ window.showHelpTopic = function(key, ev) {
     if (ev) { ev.stopPropagation(); ev.preventDefault(); }
     try { navigator.vibrate(20); } catch(e){}
     window.ensureHelpModal();
-    const item = window.JENNY_HELP_DB[key];
+    const item = window.getHelpDB()[key] || window.JENNY_HELP_DB_RU[key];
     if (!item) return;
     document.getElementById('jhTitle').innerHTML = item.title;
     document.getElementById('jhBody').innerHTML = `
-        <div style="background:#161b22;border-left:3px solid #58a6ff;padding:10px 12px;border-radius:6px;">
-            <div style="color:#58a6ff;font-size:11px;font-weight:bold;margin-bottom:4px;">🔧 ФИЗИКА НА ПАЛЬЦАХ:</div>
-            <div>${item.phys}</div>
-        </div>
-        <div style="background:#161b22;border-left:3px solid #3fb950;padding:10px 12px;border-radius:6px;">
-            <div style="color:#3fb950;font-size:11px;font-weight:bold;margin-bottom:4px;">🎧 ЧТО МЕНЯЕТСЯ НА СЛУХ:</div>
-            <div>${item.hear}</div>
-        </div>
-        <div style="background:#1f1633;border-left:3px solid #a371f7;padding:10px 12px;border-radius:6px;">
-            <div style="color:#d2a8ff;font-size:11px;font-weight:bold;margin-bottom:4px;">💡 ШПАРГАЛКА:</div>
-            <div>${item.tip}</div>
-        </div>
-    `;
+        <div style="background:#161b22;border-left:3px solid #58a6ff;padding:10px 12px;border-radius:6px;"><div style="color:#58a6ff;font-size:11px;font-weight:bold;margin-bottom:4px;">🔧 ${window.tr('ФИЗИКА НА ПАЛЬЦАХ:', 'HOW IT WORKS:')}</div><div>${item.phys}</div></div>
+        <div style="background:#161b22;border-left:3px solid #3fb950;padding:10px 12px;border-radius:6px;"><div style="color:#3fb950;font-size:11px;font-weight:bold;margin-bottom:4px;">🎧 ${window.tr('ЧТО МЕНЯЕТСЯ НА СЛУХ:', 'WHAT YOU HEAR:')}</div><div>${item.hear}</div></div>
+        <div style="background:#1f1633;border-left:3px solid #a371f7;padding:10px 12px;border-radius:6px;"><div style="color:#d2a8ff;font-size:11px;font-weight:bold;margin-bottom:4px;">💡 ${window.tr('ШПАРГАЛКА:', 'PRO TIP:')}</div><div>${item.tip}</div></div>`;
     document.getElementById('jennyHelpModal').style.display = 'flex';
 };
 
@@ -690,231 +560,122 @@ window.showFullHelpGuide = function(ev) {
     if (ev) { ev.stopPropagation(); ev.preventDefault(); }
     try { navigator.vibrate(25); } catch(e){}
     window.ensureHelpModal();
-    document.getElementById('jhTitle').innerHTML = "📖 Полный справочник Jenny Player";
-    const html = Object.values(window.JENNY_HELP_DB).map(item => `
+    document.getElementById('jhTitle').innerHTML = window.tr("📖 Полный справочник Jenny Player", "📖 Jenny Player Full Manual");
+    document.getElementById('jhBody').innerHTML = Object.values(window.getHelpDB()).map(item => `
         <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 12px;">
             <div style="color:#58a6ff;font-weight:bold;font-size:14px;margin-bottom:6px;">${item.title}</div>
-            <div style="margin-bottom:5px;color:#c9d1d9;"><b style="color:#79c0ff;">Физика:</b> ${item.phys}</div>
-            <div style="margin-bottom:5px;color:#c9d1d9;"><b style="color:#56d364;">На слух:</b> ${item.hear}</div>
-            <div style="color:#d2a8ff;font-size:12.5px;"><b>💡 Совет:</b> ${item.tip}</div>
-        </div>
-    `).join('');
-    document.getElementById('jhBody').innerHTML = html;
+            <div style="margin-bottom:5px;color:#c9d1d9;"><b style="color:#79c0ff;">${window.tr('Физика:', 'Physics:')}</b> ${item.phys}</div>
+            <div style="margin-bottom:5px;color:#c9d1d9;"><b style="color:#56d364;">${window.tr('На слух:', 'Sound:')}</b> ${item.hear}</div>
+            <div style="color:#d2a8ff;font-size:12.5px;"><b>💡 ${window.tr('Совет:', 'Tip:')}</b> ${item.tip}</div>
+        </div>`).join('');
     document.getElementById('jennyHelpModal').style.display = 'flex';
 };
 
 window.makeHelpBadge = function(topicKey) {
-    const b = document.createElement('span');
-    b.className = 'jenny-help-badge';
-    b.innerHTML = '❓';
+    const b = document.createElement('span'); b.className = 'jenny-help-badge'; b.innerHTML = '❓';
     b.style.cssText = "display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11.5px;margin-left:6px;cursor:pointer;flex-shrink:0;user-select:none;";
     b.onclick = (e) => window.showHelpTopic(topicKey, e);
     return b;
 };
 
 window.mountJennyStudioUI = function() {
-    const sm = document.getElementById('settingsModal');
-    if (!sm) return;
+    window.detectInitialLang();
+    window.applyStaticDOMTranslations();
+    const sm = document.getElementById('settingsModal'); if (!sm) return;
     const container = sm.querySelector('.container') || sm;
-
-    // Чистим возможные старые дубли из прошлых версий
-    ['phaseFocusMasterCard', 'dspModularSection', 'dspProStudioSection', 'jennyFullGuideBtn', 'dspModularBox'].forEach(oldId => {
-        const oldEl = document.getElementById(oldId);
-        if (oldEl) oldEl.remove();
-    });
+    ['phaseFocusMasterCard', 'dspModularSection', 'dspProStudioSection', 'jennyFullGuideBtn', 'jennyTopBarRow', 'dspModularBox'].forEach(id => { const el = document.getElementById(id); if (el) el.remove(); });
     document.querySelectorAll('.jenny-help-badge, .eq-band-hdr').forEach(el => el.remove());
 
-    // 0. Большая кнопка полного справочника в самом верху настроек ⚙️
-    const guideBtn = document.createElement('button');
-    guideBtn.id = 'jennyFullGuideBtn';
-    guideBtn.type = 'button';
+    const topBarRow = document.createElement('div'); topBarRow.id = 'jennyTopBarRow';
+    topBarRow.style.cssText = "display:flex;gap:8px;margin-bottom:12px;align-items:stretch;";
+    const guideBtn = document.createElement('button'); guideBtn.id = 'jennyFullGuideBtn'; guideBtn.type = 'button';
     guideBtn.onclick = (e) => window.showFullHelpGuide(e);
-    guideBtn.style.cssText = "width:100%;background:#161b22;border:1px solid #7341be;color:#d2a8ff;font-weight:bold;padding:11px;border-radius:8px;margin-bottom:12px;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 0 10px rgba(115,65,190,0.25);";
-    guideBtn.innerHTML = "📖 ПОЛНЫЙ СПРАВОЧНИК ПО НАСТРОЙКАМ (❓)";
-    container.insertBefore(guideBtn, container.firstChild);
+    guideBtn.style.cssText = "flex:1;background:#161b22;border:1px solid #7341be;color:#d2a8ff;font-weight:bold;padding:11px;border-radius:8px;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 0 10px rgba(115,65,190,0.25);";
+    guideBtn.innerHTML = window.tr("📖 СПРАВОЧНИК НАСТРОЕК (❓)", "📖 FULL DSP MANUAL (❓)");
+    const langSwitchBtn = document.createElement('button'); langSwitchBtn.type = 'button';
+    langSwitchBtn.onclick = (e) => window.toggleLanguage(e);
+    langSwitchBtn.style.cssText = "background:#161b22;border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;padding:0 14px;border-radius:8px;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;";
+    langSwitchBtn.innerHTML = window.getLang() === 'en' ? '🌐 EN' : '🌐 RU';
+    topBarRow.appendChild(guideBtn); topBarRow.appendChild(langSwitchBtn);
+    container.insertBefore(topBarRow, container.firstChild);
 
     const studioInput = document.getElementById('cfg_studioMode');
     const ramCard = studioInput ? studioInput.closest('.setting-row') : null;
-
-    // 1. Плашка "🎯 Фазовый фокус" прямо под Студийным движком (RAM)
-    const pfCard = document.createElement('div');
-    pfCard.id = 'phaseFocusMasterCard';
-    pfCard.className = 'setting-row';
-    pfCard.style.cssText = "border:none;background:var(--bg-setting-box);padding:10px;border-radius:6px;margin-bottom:12px;border-left:3px solid #8957e5;display:flex;align-items:center;justify-content:space-between;";
-    pfCard.innerHTML = `
-        <label class="toggle-label" style="color:#e6edf3;font-weight:bold;flex:1;">
-            <input type="checkbox" id="cfg_phaseFix" onchange="window.onPhaseFocusChange(this, event)"> 🎯 Фазовый фокус (Выравнивание вокала и баса)
-        </label>
-    `;
+    const pfCard = document.createElement('div'); pfCard.id = 'phaseFocusMasterCard'; pfCard.className = 'setting-row';
+    pfCard.style.cssText = "background:var(--bg-setting-box);padding:10px;border-radius:6px;margin-bottom:12px;border:1px solid #262c36;border-left:3px solid #7341be;display:flex;align-items:center;justify-content:space-between;";
+    pfCard.innerHTML = `<label class="toggle-label" style="color:#e6edf3;font-weight:bold;flex:1;"><input type="checkbox" id="cfg_phaseFix" onchange="window.onPhaseFocusChange(this, event)"> ${window.tr('🎯 Фазовый фокус (Выравнивание вокала и баса)', '🎯 Phase Focus (Vocal & Bass Alignment)')}</label>`;
     pfCard.appendChild(window.makeHelpBadge('phase_focus'));
 
     const buildRowsHTML = (rowsArr) => rowsArr.map(([k, lbl, stp, hKey]) => {
         if (k === 'masterCeil') {
-            return `
-            <div class="setting-row" style="border:none;padding:6px 0;gap:6px;">
-                <div style="display:flex;align-items:center;flex:1;min-width:0;">
-                    <label class="toggle-label" style="color:#e6edf3;font-size:12.5px;margin:0;">
-                        <input type="checkbox" id="cfg_opt_masterCeil" onchange="window.onDspModChange('masterCeil')"> 🛡️ Авто-Мастер-Потолок:
-                    </label>
-                    <span class="jenny-help-badge" onclick="window.showHelpTopic('${hKey}', event)" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;margin-left:5px;cursor:pointer;flex-shrink:0;">❓</span>
-                </div>
-                <span id="autoCeilStatusBadge" style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:4px 10px;font-size:11.5px;font-weight:bold;color:#3fb950;flex-shrink:0;">Авто: -0.5 dB</span>
-            </div>`;
+            return `<div class="setting-row" style="border:none;padding:6px 0;gap:6px;"><div style="display:flex;align-items:center;flex:1;min-width:0;"><label class="toggle-label" style="color:#e6edf3;font-size:12.5px;margin:0;"><input type="checkbox" id="cfg_opt_masterCeil" onchange="window.onDspModChange('masterCeil')"> ${window.tr('🛡️ Авто-Мастер-Потолок:', '🛡️ Auto-Master Ceiling:')}</label><span class="jenny-help-badge" onclick="window.showHelpTopic('${hKey}', event)" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;margin-left:5px;cursor:pointer;flex-shrink:0;">❓</span></div><span id="autoCeilStatusBadge" style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:4px 10px;font-size:11.5px;font-weight:bold;color:#3fb950;flex-shrink:0;">${window.tr('Авто', 'Auto')}: -0.5 dB</span></div>`;
         }
-        return `
-        <div class="setting-row" style="border:none;padding:4px 0;gap:6px;">
-            <div style="display:flex;align-items:center;flex:1;min-width:0;">
-                <label class="toggle-label" style="color:#e6edf3;font-size:12.5px;margin:0;">
-                    <input type="checkbox" id="cfg_opt_${k}" onchange="window.onDspModChange('${k}', event)"> ${lbl}
-                </label>
-                <span class="jenny-help-badge" onclick="window.showHelpTopic('${hKey}', event)" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;margin-left:5px;cursor:pointer;flex-shrink:0;">❓</span>
-            </div>
-            <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
-                <button type="button" class="io-btn" onclick="window.loadDspModRow('${k}', this, event)">📥</button>
-                <input type="number" step="${stp}" id="cfg_val_${k}" oninput="window.onDspModChange('${k}')" style="width:52px;">
-                <button type="button" class="io-btn" onclick="window.saveDspModRow('${k}', this, event)">💾</button>
-            </div>
-        </div>`;
+        return `<div class="setting-row" style="border:none;padding:4px 0;gap:6px;"><div style="display:flex;align-items:center;flex:1;min-width:0;"><label class="toggle-label" style="color:#e6edf3;font-size:12.5px;margin:0;"><input type="checkbox" id="cfg_opt_${k}" onchange="window.onDspModChange('${k}', event)"> ${lbl}</label><span class="jenny-help-badge" onclick="window.showHelpTopic('${hKey}', event)" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;margin-left:5px;cursor:pointer;flex-shrink:0;">❓</span></div><div style="display:flex;gap:4px;align-items:center;flex-shrink:0;"><button type="button" class="io-btn" onclick="window.loadDspModRow('${k}', this, event)">📥</button><input type="number" step="${stp}" id="cfg_val_${k}" oninput="window.onDspModChange('${k}')" style="width:52px;"><button type="button" class="io-btn" onclick="window.saveDspModRow('${k}', this, event)">💾</button></div></div>`;
     }).join('');
 
-    // 2. Блок "🧪 Тонкая настройка тракта (5 опций)" — блокируется при включённом Фазовом фокусе
     const rowsMod = [
-        ['midPhase',   '🎯 Фаза СЧ Вокал (dB):',  '1',  'mod_midPhase'],
-        ['midQ',       '📐 Ширина СЧ купола (%):', '10', 'mod_midQ'],
-        ['deEsser',    '🐍 Де-эссер ВЧ (dB):',     '1',  'mod_deEsser'],
-        ['cleanFir',   '✨ Драйв Чистый FIR (dB):','1',  'mod_cleanFir'],
-        ['masterCeil', '🛡️ Мастер-потолок (dB):',  '1',  'mod_masterCeil']
+        ['midPhase', window.tr('🎯 Фаза СЧ Вокал (dB):', '🎯 Vocal Mid Gain (dB):'), '1', 'mod_midPhase'],
+        ['midQ', window.tr('📐 Ширина СЧ купола (%):', '📐 Mid Dome Width (%):'), '10', 'mod_midQ'],
+        ['deEsser', window.tr('🐍 Де-эссер ВЧ (dB):', '🐍 HF De-Esser (dB):'), '1', 'mod_deEsser'],
+        ['cleanFir', window.tr('✨ Драйв Чистый FIR (dB):', '✨ Clean FIR Drive (dB):'), '1', 'mod_cleanFir'],
+        ['masterCeil', window.tr('🛡️ Мастер-потолок (dB):', '🛡️ Master Ceiling (dB):'), '1', 'mod_masterCeil']
     ];
+    const modSection = document.createElement('details'); modSection.id = 'dspModularSection'; modSection.className = 'setting-group'; modSection.open = true;
+    modSection.innerHTML = `<summary style="display:flex;align-items:center;justify-content:space-between;"><span>${window.tr('🧪 Тонкая настройка тракта (5 опций)', '🧪 Signal Path Fine-Tuning (5 Options)')}</span><span class="jenny-help-badge" onclick="window.showHelpTopic('mod_block', event)" style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;cursor:pointer;">❓</span></summary><div class="group-content" style="position:relative;"><div id="dspModLockShield" onclick="try{navigator.vibrate(40);}catch(e){}; if(window.showToast) window.showToast('🔒 Блок управления отключён! Для включения выключите «Фазовый фокус»', event);" style="display:none;position:absolute;inset:0;z-index:20;cursor:not-allowed;"></div><div id="dspModBodyWrap" style="transition:opacity 0.2s ease, filter 0.2s ease;"><div class="setting-row" style="border:none;padding:2px 0 8px 0;"><span style="color:#8b949e;font-size:12px;">${window.tr('Модули кроссовера и сатурации:', 'Crossover & saturation modules:')}</span><button type="button" onclick="window.resetDspGroup(['midPhase','midQ','deEsser','cleanFir','masterCeil'], '🔄 5 опций тракта сброшены!', event)" style="font-size:11px;padding:3px 8px;">${window.tr('🔄 Сброс', '🔄 Reset')}</button></div>${buildRowsHTML(rowsMod)}</div></div>`;
 
-    const modSection = document.createElement('details');
-    modSection.id = 'dspModularSection';
-    modSection.className = 'setting-group';
-    modSection.open = true;
-    modSection.style.borderLeft = "3px solid #a371f7";
-    modSection.innerHTML = `
-        <summary style="display:flex;align-items:center;justify-content:space-between;">
-            <span>🧪 Тонкая настройка тракта (5 опций)</span>
-            <span class="jenny-help-badge" onclick="window.showHelpTopic('mod_block', event)" style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;cursor:pointer;">❓</span>
-        </summary>
-        <div class="group-content" style="position:relative;">
-            <div id="dspModLockShield" onclick="try{navigator.vibrate(40);}catch(e){}; if(window.showToast) window.showToast('🔒 Блок управления отключён! Для включения выключите «Фазовый фокус»', event);" style="display:none;position:absolute;inset:0;z-index:20;cursor:not-allowed;"></div>
-            <div id="dspModBodyWrap" style="transition:opacity 0.2s ease, filter 0.2s ease;">
-                <div class="setting-row" style="border:none;padding:2px 0 8px 0;">
-                    <span style="color:#8b949e;font-size:12px;">Модули кроссовера и сатурации:</span>
-                    <button type="button" onclick="window.resetDspGroup(['midPhase','midQ','deEsser','cleanFir','masterCeil'], '🔄 5 опций тракта сброшены!', event)" style="font-size:11px;padding:3px 8px;">🔄 Сброс</button>
-                </div>
-                ${buildRowsHTML(rowsMod)}
-            </div>
-        </div>
-    `;
-
-    // 3. Блок "🚀 Мастеринг-Студия PRO (5 спец-модулей)" — работает всегда!
     const rowsPro = [
-        ['autoRms',   '⚡ Авто-RMS Цель (dB):',   '1',  'pro_autoRms'],
-        ['monoBass',  '🧲 Моно-Саббас (Hz):',     '20', 'pro_monoBass'],
-        ['msWidth',   '🎭 Стерео-Ширина (%):',    '25', 'pro_msWidth'],
-        ['punch',     '🥁 Панч-Хлыст (dB):',      '1',  'pro_punch'],
-        ['crossfeed', '🎧 Бинаурал-Колонки (%):', '10', 'pro_crossfeed']
+        ['autoRms', window.tr('⚡ Авто-RMS Цель (dB):', '⚡ Auto-RMS Target (dB):'), '1', 'pro_autoRms'],
+        ['monoBass', window.tr('🧲 Моно-Саббас (Hz):', '🧲 Mono Sub-Bass (Hz):'), '20', 'pro_monoBass'],
+        ['msWidth', window.tr('🎭 Стерео-Ширина (%):', '🎭 Stereo Width (%):'), '25', 'pro_msWidth'],
+        ['punch', window.tr('🥁 Панч-Хлыст (dB):', '🥁 Punch Whip (dB):'), '1', 'pro_punch'],
+        ['crossfeed', window.tr('🎧 Бинаурал-Колонки (%):', '🎧 Binaural Speakers (%):'), '10', 'pro_crossfeed']
     ];
+    const proSection = document.createElement('details'); proSection.id = 'dspProStudioSection'; proSection.className = 'setting-group'; proSection.open = true;
+    proSection.innerHTML = `<summary style="display:flex;align-items:center;justify-content:space-between;"><span>${window.tr('🚀 Мастеринг-Студия PRO (5 спец-модулей)', '🚀 Mastering Studio PRO (5 Spec-Modules)')}</span><span class="jenny-help-badge" onclick="window.showHelpTopic('pro_block', event)" style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;cursor:pointer;">❓</span></summary><div class="group-content"><div class="setting-row" style="border:none;padding:2px 0 8px 0;"><span style="color:#8b949e;font-size:12px;">${window.tr('Психоакустика и динамика мембран:', 'Psychoacoustics & driver dynamics:')}</span><button type="button" onclick="window.resetDspGroup(['autoRms','monoBass','msWidth','punch','crossfeed'], '🔄 Модули PRO Studio сброшены!', event)" style="font-size:11px;padding:3px 8px;">${window.tr('🔄 Сброс', '🔄 Reset')}</button></div>${buildRowsHTML(rowsPro)}</div>`;
 
-    const proSection = document.createElement('details');
-    proSection.id = 'dspProStudioSection';
-    proSection.className = 'setting-group';
-    proSection.open = true;
-    proSection.style.borderLeft = "3px solid #3fb950";
-    proSection.innerHTML = `
-        <summary style="display:flex;align-items:center;justify-content:space-between;">
-            <span>🚀 Мастеринг-Студия PRO (5 спец-модулей)</span>
-            <span class="jenny-help-badge" onclick="window.showHelpTopic('pro_block', event)" style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;cursor:pointer;">❓</span>
-        </summary>
-        <div class="group-content">
-            <div class="setting-row" style="border:none;padding:2px 0 8px 0;">
-                <span style="color:#8b949e;font-size:12px;">Психоакустика и динамика мембран:</span>
-                <button type="button" onclick="window.resetDspGroup(['autoRms','monoBass','msWidth','punch','crossfeed'], '🔄 Модули PRO Studio сброшены!', event)" style="font-size:11px;padding:3px 8px;">🔄 Сброс</button>
-            </div>
-            ${buildRowsHTML(rowsPro)}
-        </div>
-    `;
+    if (ramCard) { ramCard.insertAdjacentElement('afterend', pfCard); pfCard.insertAdjacentElement('afterend', modSection); modSection.insertAdjacentElement('afterend', proSection); }
+    else { container.appendChild(pfCard); container.appendChild(modSection); container.appendChild(proSection); }
 
-    if (ramCard) {
-        ramCard.insertAdjacentElement('afterend', pfCard);
-        pfCard.insertAdjacentElement('afterend', modSection);
-        modSection.insertAdjacentElement('afterend', proSection);
-    } else {
-        container.appendChild(pfCard);
-        container.appendChild(modSection);
-        container.appendChild(proSection);
-    }
-
-    // 4. Привязываем значки ❓ ко всем штатным пунктам в settingsModal
     const idMap = [
-        ['cfg_studioMode', 'studio_ram'],
-        ['cfg_leftHandedMode', 'left_hand'],
-        ['cfg_pitchLock', 'pitch_lock'],
-        ['cfg_xNormalSpeed', 'base_speed'],
-        ['cfg_amoledMode', 'amoled_mode'],
-        ['cfg_volSlider', 'vol_slider'],
-        ['cfg_firEnabled', 'fir_group'],
-        ['cfg_fir_gain', 'fir_gain'],
-        ['cfg_fir_decay', 'fir_decay'],
-        ['cfg_multiBandEnabled', 'mb_group'],
-        ['cfg_mb_low', 'mb_low'],
-        ['cfg_mb_high', 'mb_high'],
-        ['cfg_limiterEnabled', 'lim_group'],
-        ['cfg_lim_threshold', 'lim_thresh'],
-        ['cfg_lim_knee', 'lim_knee'],
-        ['cfg_lim_ratio', 'lim_ratio'],
-        ['cfg_lim_attack', 'lim_attack'],
-        ['cfg_lim_release', 'lim_release'],
-        ['cfg_eqEnabled', 'eq_group'],
-        ['cfg_boosterEnabled', 'boost_group'],
-        ['cfg_defaultScrubSpeed', 'scrub_speed'],
-        ['cfg_z1_en', 'scrub_zones']
+        ['cfg_studioMode', 'studio_ram'], ['cfg_leftHandedMode', 'left_hand'], ['cfg_pitchLock', 'pitch_lock'], ['cfg_xNormalSpeed', 'base_speed'],
+        ['cfg_amoledMode', 'amoled_mode'], ['cfg_volSlider', 'vol_slider'], ['cfg_firEnabled', 'fir_group'], ['cfg_fir_gain', 'fir_gain'],
+        ['cfg_fir_decay', 'fir_decay'], ['cfg_multiBandEnabled', 'mb_group'], ['cfg_mb_low', 'mb_low'], ['cfg_mb_high', 'mb_high'],
+        ['cfg_limiterEnabled', 'lim_group'], ['cfg_lim_threshold', 'lim_thresh'], ['cfg_lim_knee', 'lim_knee'], ['cfg_lim_ratio', 'lim_ratio'],
+        ['cfg_lim_attack', 'lim_attack'], ['cfg_lim_release', 'lim_release'], ['cfg_eqEnabled', 'eq_group'], ['cfg_boosterEnabled', 'boost_group'],
+        ['cfg_defaultScrubSpeed', 'scrub_speed'], ['cfg_z1_en', 'scrub_zones']
     ];
-
     idMap.forEach(([id, topic]) => {
-        const el = document.getElementById(id);
-        if (!el) return;
+        const el = document.getElementById(id); if (!el) return;
         const lbl = el.closest('label');
-        if (lbl) {
-            lbl.appendChild(window.makeHelpBadge(topic));
-        } else {
-            const row = el.closest('.setting-row');
-            if (row && row.firstElementChild) {
-                row.firstElementChild.appendChild(window.makeHelpBadge(topic));
-            }
-        }
+        if (lbl) lbl.appendChild(window.makeHelpBadge(topic));
+        else { const row = el.closest('.setting-row'); if (row && row.firstElementChild) row.firstElementChild.appendChild(window.makeHelpBadge(topic)); }
     });
 
-    // Значки ❓ на заголовки раскрывающихся секций <summary>
     document.querySelectorAll('#settingsModal summary').forEach(sum => {
         if (sum.querySelector('.jenny-help-badge')) return;
         const txt = sum.innerText || '';
-        if (txt.includes('Интеллектуальный Скраббинг')) sum.appendChild(window.makeHelpBadge('scrub_group'));
-        else if (txt.includes('FIR-Сатуратор')) sum.appendChild(window.makeHelpBadge('fir_group'));
-        else if (txt.includes('Многополосный кроссовер')) sum.appendChild(window.makeHelpBadge('mb_group'));
-        else if (txt.includes('Лимитер')) sum.appendChild(window.makeHelpBadge('lim_group'));
-        else if (txt.includes('Эквалайзер')) sum.appendChild(window.makeHelpBadge('eq_group'));
-        else if (txt.includes('Усилитель')) sum.appendChild(window.makeHelpBadge('boost_group'));
-        else if (txt.includes('Форматы файлов')) sum.appendChild(window.makeHelpBadge('format_slots'));
+        if (txt.includes('Скраббинг') || txt.includes('Scrubbing')) sum.appendChild(window.makeHelpBadge('scrub_group'));
+        else if (txt.includes('FIR')) sum.appendChild(window.makeHelpBadge('fir_group'));
+        else if (txt.includes('кроссовер') || txt.includes('Crossover')) sum.appendChild(window.makeHelpBadge('mb_group'));
+        else if (txt.includes('Лимитер') || txt.includes('Limiter')) sum.appendChild(window.makeHelpBadge('lim_group'));
+        else if (txt.includes('Эквалайзер') || txt.includes('Equalizer')) sum.appendChild(window.makeHelpBadge('eq_group'));
+        else if (txt.includes('Усилитель') || txt.includes('Booster')) sum.appendChild(window.makeHelpBadge('boost_group'));
+        else if (txt.includes('Форматы') || txt.includes('Formats')) sum.appendChild(window.makeHelpBadge('format_slots'));
     });
 
-    // 5. Подписи частот и значки ❓ для 5 ползунков в окне Эквалайзера (🄠)
     const eqBands = [
-        ['eq_60',    '60 Гц — Саб-бас (Глубина и бочка)',         'eq_band_60'],
-        ['eq_230',   '230 Гц — Мид-бас (Теплота / Анти-бубнёж)',  'eq_band_230'],
-        ['eq_910',   '910 Гц — Середина (Основа вокала)',         'eq_band_910'],
-        ['eq_3600',  '3600 Гц — Верхняя СЧ (Близость и чёткость)', 'eq_band_3600'],
-        ['eq_14000', '14 000 Гц — Воздух (Блеск и тарелки)',      'eq_band_14000']
+        ['eq_60', window.tr('60 Гц — Саб-бас (Глубина и бочка)', '60 Hz — Sub-Bass (Depth & Kick)'), 'eq_band_60'],
+        ['eq_230', window.tr('230 Гц — Мид-бас (Теплота / Анти-бубнёж)', '230 Hz — Mid-Bass (Warmth / Mud Cut)'), 'eq_band_230'],
+        ['eq_910', window.tr('910 Гц — Середина (Основа вокала)', '910 Hz — Midrange (Vocal Core)'), 'eq_band_910'],
+        ['eq_3600', window.tr('3600 Гц — Верхняя СЧ (Близость и чёткость)', '3600 Hz — Upper Mid (Clarity & Bite)'), 'eq_band_3600'],
+        ['eq_14000', window.tr('14 000 Гц — Воздух (Блеск и тарелки)', '14,000 Hz — Air (Sparkle & Cymbals)'), 'eq_band_14000']
     ];
     eqBands.forEach(([id, title, topic]) => {
         const slider = document.getElementById(id);
         if (slider) {
-            const hdr = document.createElement('div');
-            hdr.className = 'eq-band-hdr';
+            const hdr = document.createElement('div'); hdr.className = 'eq-band-hdr';
             hdr.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:-12px;color:#c9d1d9;font-size:12.5px;font-weight:bold;";
-            hdr.innerHTML = `<span>${title}</span>`;
-            hdr.appendChild(window.makeHelpBadge(topic));
+            hdr.innerHTML = `<span>${title}</span>`; hdr.appendChild(window.makeHelpBadge(topic));
             slider.parentNode.insertBefore(hdr, slider);
         }
     });
@@ -923,15 +684,9 @@ window.mountJennyStudioUI = function() {
     if (typeof window.syncFormatSlotsUI === 'function') window.syncFormatSlotsUI();
     if (typeof window.installFormatAwareFetchData === 'function') {
         window.installFormatAwareFetchData();
-        setTimeout(() => {
-            window.installFormatAwareFetchData();
-            if (typeof window.fetchData === 'function') window.fetchData();
-        }, 100);
+        setTimeout(() => { window.installFormatAwareFetchData(); if (typeof window.fetchData === 'function') window.fetchData(); }, 100);
     }
 };
 
-if (document.readyState === 'loading') {
-    document.addEventListener("DOMContentLoaded", window.mountJennyStudioUI);
-} else {
-    window.mountJennyStudioUI();
-}
+if (document.readyState === 'loading') document.addEventListener("DOMContentLoaded", window.mountJennyStudioUI);
+else window.mountJennyStudioUI();
