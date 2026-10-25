@@ -123,7 +123,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.opt_punch) {
         let pDb = parseFloat(cfg.val_punch) || 0;
         if (pDb > 0) {
-            let v = pDb * 0.68;
+            let v = pDb * 0.18;
             hotDb += v;
             parts.push(`🥁Панч -${v.toFixed(1)}`);
         }
@@ -317,20 +317,30 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         if (isNaN(punchDb)) punchDb = 6.0;
         let clampedPunch = Math.max(-24, Math.min(24, punchDb));
 
+        // 1. Хлёсткий удар мид-баса (85 Гц)
         let kickBody = reg(ctx.createBiquadFilter());
         kickBody.type = 'peaking';
-        kickBody.frequency.value = 68;
-        kickBody.Q.value = 1.3;
-        kickBody.gain.value = clampedPunch;
+        kickBody.frequency.value = 85;
+        kickBody.Q.value = 1.4;
+        kickBody.gain.value = clampedPunch * 0.75;
 
+        // 2. Анти-муть (230 Гц): при +Панче слегка расчищает коробочный гул, чтобы удар и середина стреляли чётко
+        let mudCut = reg(ctx.createBiquadFilter());
+        mudCut.type = 'peaking';
+        mudCut.frequency.value = 230;
+        mudCut.Q.value = 1.1;
+        mudCut.gain.value = -clampedPunch * 0.35;
+
+        // 3. Хлыст атаки и середины (2600 Гц — 100% отдача при + и уход в глубокий фон при -)
         let snareSnap = reg(ctx.createBiquadFilter());
         snareSnap.type = 'peaking';
-        snareSnap.frequency.value = 2100;
-        snareSnap.Q.value = 0.85;
-        snareSnap.gain.value = clampedPunch * 0.4;
+        snareSnap.frequency.value = 2600;
+        snareSnap.Q.value = 1.0;
+        snareSnap.gain.value = clampedPunch * 0.95;
 
         cur.connect(kickBody);
-        kickBody.connect(snareSnap);
+        kickBody.connect(mudCut);
+        mudCut.connect(snareSnap);
         cur = snareSnap;
     }
 
