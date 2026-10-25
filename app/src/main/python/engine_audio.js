@@ -644,13 +644,20 @@ window._buildAudioGraphCore = function() {
             window.compLow.release.value = cfg.limiterSettings.release / 1000;
 
             window.compMid.threshold.value = thresh + 2; window.compMid.knee.value = knee; window.compMid.ratio.value = ratio;
-            window.compMid.attack.value = 0.002; window.compMid.release.value = 0.1;
+            window.compMid.attack.value = 0.012; window.compMid.release.value = 0.14;
 
             window.compHigh.threshold.value = thresh + 4; window.compHigh.knee.value = knee; window.compHigh.ratio.value = ratio;
             window.compHigh.attack.value = 0.001; window.compHigh.release.value = 0.05;
 
             currentNode.connect(window.splitLow); currentNode.connect(window.splitMid); currentNode.connect(window.splitHigh);
-            window.splitLow.connect(window.compLow); window.splitMid.connect(window.compMid); window.splitHigh.connect(window.compHigh);
+            window.splitLow.connect(window.compLow);
+            let midBassGuard = window.trackNode(window.audioCtx.createBiquadFilter(), window.activeDynamicNodes);
+            midBassGuard.type = 'highpass';
+            midBassGuard.frequency.value = Math.min(82, lowFreq * 0.65);
+            midBassGuard.Q.value = 0.707;
+            window.splitMid.connect(midBassGuard);
+            midBassGuard.connect(window.compMid);
+            window.splitHigh.connect(window.compHigh);
 
             let postBus = window.trackNode(window.audioCtx.createGain(), window.activeDynamicNodes);
 

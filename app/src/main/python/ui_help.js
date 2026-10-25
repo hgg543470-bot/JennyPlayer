@@ -1,78 +1,95 @@
+// =========================================================================
+// 💡 UI_HELP.JS (МОНИТОР АВТО-МАСТЕРА В ШАПКЕ + БАЗА ЗНАНИЙ + 10 МОДУЛЕЙ)
+// =========================================================================
+
+window._dspInputDebounce = null;
+window.ALL_MOD_KEYS = ['midPhase', 'midQ', 'deEsser', 'cleanFir', 'masterCeil', 'autoRms', 'monoBass', 'msWidth', 'punch', 'crossfeed'];
+
 window.updateTopSearchOrMonitorBar = function() {
+    const searchInput = document.getElementById('trackSearchInput');
+    if (!searchInput) return;
+    const barWrap = searchInput.parentElement;
+    if (!barWrap) return;
+
+    const sm = document.getElementById('settingsModal');
+    const em = document.getElementById('eqModal');
+    const isModalOpen = (sm && sm.classList.contains('open')) || (em && em.classList.contains('open'));
+
     const cfg = window.appConfig || {};
     const ceilOn = Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled);
     const totalTxt = (typeof window.lastComputedCeilingDb !== 'undefined') ? window.lastComputedCeilingDb : -0.5;
     const detailsTxt = window.lastCeilingBreakdown || 'Базовый запас -0.5 dB';
-    const bannerHTML = `<span style="color:#3fb950;font-weight:bold;">🛡️ Преамп: ${totalTxt} dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">${detailsTxt}</span>`;
 
-    // Находим ВСЕ поля поиска (и поиск треков, и поиск внутри настроек "Поиск по названию...")
-    const allInputs = Array.from(document.querySelectorAll('input')).filter(inp => {
-        const ph = (inp.placeholder || '').toLowerCase();
-        const id = (inp.id || '').toLowerCase();
-        return ph.includes('поиск') || id.includes('search');
-    });
+    let monEl = document.getElementById('topAutoCeilMonitor');
+    if (!monEl) {
+        monEl = document.createElement('div');
+        monEl.id = 'topAutoCeilMonitor';
+        monEl.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #2ea043;border-radius:8px;padding:8px 11px;font-size:12px;color:#e6edf3;white-space:nowrap;overflow-x:auto;font-family:monospace;box-shadow:0 0 8px rgba(46,160,67,0.25);';
+        barWrap.appendChild(monEl);
+    }
 
-    const settingsPanel = document.getElementById('settingsPanel');
-    const eqPanel = document.getElementById('eqPanel');
-    const isSettingsVisible = (settingsPanel && window.getComputedStyle(settingsPanel).display !== 'none') ||
-                              (eqPanel && window.getComputedStyle(eqPanel).display !== 'none');
-
-    allInputs.forEach(inp => {
-        const insideSettings = (settingsPanel && settingsPanel.contains(inp)) || (eqPanel && eqPanel.contains(inp));
-        const wrap = inp.parentElement;
-        if (!wrap) return;
-
-        let monId = 'autoCeilMon_' + (inp.id || Math.random().toString(36).slice(2, 7));
-        let monEl = wrap.querySelector('.jenny-ceil-monitor');
-        if (!monEl) {
-            monEl = document.createElement('div');
-            monEl.className = 'jenny-ceil-monitor';
-            monEl.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #2ea043;border-radius:8px;padding:7px 10px;font-size:11.5px;color:#e6edf3;white-space:nowrap;overflow-x:auto;font-family:monospace;box-shadow:0 0 8px rgba(46,160,67,0.25);';
-            wrap.appendChild(monEl);
-        }
-
-        if (insideSettings || isSettingsVisible) {
-            // Мы в настройках: прячем само текстовое поле поиска
-            inp.style.display = 'none';
-            if (ceilOn) {
-                wrap.style.display = '';
-                monEl.style.display = 'block';
-                monEl.innerHTML = bannerHTML;
-            } else {
-                // Если галочка Авто-Мастер-Потолка снята — полностью убираем всю плашку вместе с контейнером!
-                monEl.style.display = 'none';
-                wrap.style.display = 'none';
-            }
+    if (!isModalOpen) {
+        barWrap.style.display = '';
+        barWrap.style.paddingTop = '15px';
+        searchInput.style.display = '';
+        monEl.style.display = 'none';
+    } else {
+        searchInput.style.display = 'none';
+        if (ceilOn) {
+            barWrap.style.display = '';
+            barWrap.style.paddingTop = '12px';
+            monEl.style.display = 'block';
+            monEl.innerHTML = `<span style="color:#3fb950;font-weight:bold;">🛡️ Авто-Потолок: ${totalTxt} dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">${detailsTxt}</span>`;
         } else {
-            // Мы в обычном списке песен: возвращаем штатный поиск треков
-            wrap.style.display = '';
-            inp.style.display = '';
             monEl.style.display = 'none';
+            barWrap.style.display = 'none';
         }
-    });
+    }
 };
 
-// Автоматический следящий триггер при любом открытии/закрытии панелей
-if (!window._ceilMonitorObserverInit) {
-    window._ceilMonitorObserverInit = true;
-    document.addEventListener('DOMContentLoaded', () => {
-        setTimeout(() => {
-            if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
-            const obs = new MutationObserver(() => {
-                if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
-            });
-            const sp = document.getElementById('settingsPanel');
-            const ep = document.getElementById('eqPanel');
-            if (sp) obs.observe(sp, { attributes: true, attributeFilter: ['style', 'class'] });
-            if (ep) obs.observe(ep, { attributes: true, attributeFilter: ['style', 'class'] });
-        }, 150);
-    });
-}
+window.ensureParentDspBlocks = function(modKey, ev) {
+    window.appConfig = window.appConfig || {};
+    let changed = false;
+    if (modKey === 'cleanFir' || modKey === 'phaseFix') {
+        if (!window.appConfig.firEnabled) {
+            window.appConfig.firEnabled = true;
+            const el = document.getElementById('cfg_firEnabled');
+            if (el) el.checked = true;
+            changed = true;
+        }
+    }
+    if (['midPhase', 'midQ', 'deEsser', 'phaseFix'].includes(modKey)) {
+        if (!window.appConfig.limiterEnabled) {
+            window.appConfig.limiterEnabled = true;
+            const el = document.getElementById('cfg_limiterEnabled');
+            if (el) el.checked = true;
+            changed = true;
+        }
+        if (!window.appConfig.multiBandEnabled) {
+            window.appConfig.multiBandEnabled = true;
+            const el = document.getElementById('cfg_multiBandEnabled');
+            if (el) el.checked = true;
+            changed = true;
+        }
+    }
+    if (changed) {
+        localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    }
+};
 
-window.DSP_MOD_DEFAULTS).forEach(k => {
-            if (k.startsWith('val_')) cfg[k] = window.DSP_MOD_DEFAULTS[k];
+window.syncDspModUI = function() {
+    window.appConfig = window.appConfig || {};
+    const cfg = window.appConfig;
+
+    if (!cfg._migratedToRealUnitsV20) {
+        cfg._migratedToRealUnitsV20 = true;
+        Object.keys(window.DSP_MOD_DEFAULTS).forEach(k => {
+            if (cfg[k] === undefined) cfg[k] = window.DSP_MOD_DEFAULTS[k];
         });
-        localStorage.setItem('ytm_config', JSON.stringify(cfg));
+        if (cfg.val_deEsser === -60) cfg.val_deEsser = -6.0;
+        if (cfg.val_midQ < 25) cfg.val_midQ = 150;
+        cfg.opt_masterCeil = true;
+        localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     }
 
     const pfEl = document.getElementById('cfg_phaseFix');
@@ -101,7 +118,33 @@ window.DSP_MOD_DEFAULTS).forEach(k => {
             shield.style.display = 'none';
         }
     }
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') {
+        window.updateTopSearchOrMonitorBar();
+    }
 };
+
+if (!window._modalClassObserverInit) {
+    window._modalClassObserverInit = true;
+    const attachModalObs = () => {
+        const obs = new MutationObserver(() => {
+            if (typeof window.updateTopSearchOrMonitorBar === 'function') {
+                window.updateTopSearchOrMonitorBar();
+            }
+        });
+        ['settingsModal', 'eqModal', 'favModal'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) obs.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+        });
+        if (typeof window.updateTopSearchOrMonitorBar === 'function') {
+            window.updateTopSearchOrMonitorBar();
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attachModalObs);
+    } else {
+        attachModalObs();
+    }
+}
 
 window.onPhaseFocusChange = function(el, ev) {
     window.appConfig = window.appConfig || {};
