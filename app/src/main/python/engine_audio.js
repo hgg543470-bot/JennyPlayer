@@ -67,23 +67,18 @@ window.cleanupDynamicNodes = function() {
 window.createSoftClipWaveShaper = function(ctx, bucket) {
     let shaper = window.trackNode(ctx.createWaveShaper(), bucket);
     let half = 32768;
-    let samples = half * 2 + 1; // 65537 — строго НЕЧЁТНОЕ число, чтобы 0.0 попадал точно в центр!
+    let samples = half * 2 + 1; // 65537 — строго НЕЧЁТНОЕ число с точным 0.0 в центре
     let curve = new Float32Array(samples);
-    let gateThresh = 0.002; // Мёртвая зона тишины (-54 dB)
+    let k = 1.25;
+    let norm = Math.tanh(k);
     for (let i = 0; i < samples; i++) {
         let x = (i - half) / half;
-        let ax = Math.abs(x);
-        if (ax <= gateThresh) {
-            curve[i] = 0.0; // Железный математический ноль в тишине — никакого писка!
-        } else {
-            let sign = x < 0 ? -1.0 : 1.0;
-            let normX = (ax - gateThresh) / (1.0 - gateThresh);
-            curve[i] = sign * Math.tanh(normX * 1.32) * 0.96;
-        }
+        // Идеально гладкая линейная зона в районе нуля без ступеньки gateThresh (0% искажений на тихой речи и шёпоте!)
+        curve[i] = Math.tanh(x * k) / norm * 0.98;
     }
     curve[half] = 0.0;
     shaper.curve = curve;
-    shaper.oversample = 'none'; // Отключаем IIR-передискретизацию, которая звенела как дроссель!
+    shaper.oversample = 'none';
     return shaper;
 };
 
