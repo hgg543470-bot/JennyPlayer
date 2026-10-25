@@ -93,12 +93,44 @@ def serve_media(filename):
     return static_file(filename, root=MUSIC_DIR)
 
 
+DEFAULT_FORMAT_SLOTS = [
+    {"en": True, "ext": "mp3"},
+    {"en": True, "ext": "opus"},
+    {"en": True, "ext": "m4a"},
+    {"en": True, "ext": "flac"},
+    {"en": True, "ext": "wav"},
+    {"en": True, "ext": "ogg"},
+    {"en": True, "ext": "mp4"},
+    {"en": True, "ext": "aac"}
+]
+
+def get_allowed_extensions():
+    q_exts = request.query.get('exts', '').strip()
+    if q_exts:
+        exts = [ '.' + x.strip().lower().lstrip('.') for x in q_exts.split(',') if x.strip() ]
+        if exts:
+            return tuple(exts)
+    if os.path.exists(PRESET_FILE):
+        try:
+            with open(PRESET_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            slots = data.get("formatSlots")
+            if isinstance(slots, list) and len(slots) > 0:
+                exts = [ '.' + str(s.get('ext', '')).strip().lower().lstrip('.') for s in slots if s.get('en') and str(s.get('ext', '')).strip() ]
+                if exts:
+                    return tuple(exts)
+        except Exception:
+            pass
+    return ('.mp3', '.opus', '.m4a', '.flac', '.wav', '.ogg', '.mp4', '.aac', '.webm', '.3gp', '.mkv')
+
+
 @route('/api/data')
 def get_data():
     all_tracks = []
+    allowed_exts = get_allowed_extensions()
     if os.path.exists(MUSIC_DIR):
         for f in os.listdir(MUSIC_DIR):
-            if f.lower().endswith(('.opus', '.m4a', '.mp3')) and not f.startswith(('temp_stretcher_', 'temp_final_')):
+            if f.lower().endswith(allowed_exts) and not f.startswith(('temp_stretcher_', 'temp_final_')):
                 full_p = os.path.join(MUSIC_DIR, f)
                 if os.path.isfile(full_p):
                     all_tracks.append(f)
@@ -323,9 +355,13 @@ def get_track_info():
         container_map = {
             'opus': 'OGG / Opus Audio Container',
             'm4a': 'MP4 / ISO Media (Apple Audio)',
+            'mp4': 'MPEG-4 Part 14 (Video/Audio Container)',
             'mp3': 'MPEG-1/2 Audio Layer III',
             'wav': 'RIFF WAVE (Uncompressed PCM)',
-            'flac': 'Free Lossless Audio Codec'
+            'flac': 'Free Lossless Audio Codec',
+            'ogg': 'OGG Vorbis Audio Container',
+            'aac': 'Advanced Audio Coding (ADTS)',
+            'webm': 'WebM Media Audio/Video Container'
         }
         container_desc = container_map.get(ext, f"{ext.upper()} Audio Stream")
 

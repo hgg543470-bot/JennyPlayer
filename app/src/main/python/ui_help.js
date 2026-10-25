@@ -1,3 +1,100 @@
+
+window.DEFAULT_FORMAT_SLOTS = [
+    { en: true, ext: '.mp3' },
+    { en: true, ext: '.opus' },
+    { en: true, ext: '.m4a' },
+    { en: true, ext: '.flac' },
+    { en: true, ext: '.wav' },
+    { en: true, ext: '.ogg' },
+    { en: true, ext: '.mp4' },
+    { en: true, ext: '.aac' }
+];
+
+window.getFormatSlotsConfig = function() {
+    window.appConfig = window.appConfig || {};
+    if (!Array.isArray(window.appConfig.formatSlots) || window.appConfig.formatSlots.length !== 8) {
+        window.appConfig.formatSlots = JSON.parse(JSON.stringify(window.DEFAULT_FORMAT_SLOTS));
+    }
+    return window.appConfig.formatSlots;
+};
+
+window.syncFormatSlotsUI = function() {
+    const slots = window.getFormatSlotsConfig();
+    for (let i = 0; i < 8; i++) {
+        const chk = document.getElementById(`cfg_fmt_${i+1}_en`);
+        const inp = document.getElementById(`cfg_fmt_${i+1}_val`);
+        const s = slots[i] || window.DEFAULT_FORMAT_SLOTS[i];
+        if (chk) chk.checked = Boolean(s.en);
+        if (inp) {
+            let cleanExt = String(s.ext || '').trim();
+            if (cleanExt && !cleanExt.startsWith('.')) cleanExt = '.' + cleanExt;
+            inp.value = cleanExt;
+            inp.style.opacity = s.en ? '1' : '0.4';
+        }
+    }
+};
+
+window.saveFormatSlotsToConfig = function(triggerReload) {
+    window.appConfig = window.appConfig || {};
+    const slots = [];
+    for (let i = 0; i < 8; i++) {
+        const chk = document.getElementById(`cfg_fmt_${i+1}_en`);
+        const inp = document.getElementById(`cfg_fmt_${i+1}_val`);
+        let raw = inp ? inp.value.trim().toLowerCase() : window.DEFAULT_FORMAT_SLOTS[i].ext;
+        if (raw && !raw.startsWith('.')) raw = '.' + raw;
+        let isEn = chk ? Boolean(chk.checked) : true;
+        if (inp) inp.style.opacity = isEn ? '1' : '0.4';
+        slots.push({ en: isEn, ext: raw || window.DEFAULT_FORMAT_SLOTS[i].ext });
+    }
+    window.appConfig.formatSlots = slots;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    fetch('/api/config/save_single', {
+        method: 'POST',
+        body: JSON.stringify({ category: 'main', key: 'formatSlots', value: slots })
+    }).catch(() => {});
+    if (triggerReload && typeof window.fetchData === 'function') {
+        window.fetchData();
+    }
+};
+
+window.resetFormatSlots = function(ev) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.formatSlots = JSON.parse(JSON.stringify(window.DEFAULT_FORMAT_SLOTS));
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.syncFormatSlotsUI();
+    window.saveFormatSlotsToConfig(true);
+    try { navigator.vibrate(35); } catch(e){}
+    if (typeof window.showToast === 'function') {
+        window.showToast("🔄 Форматы сброшены (включая .mp4 и .flac)!", ev);
+    }
+};
+
+// Пропатченный fetchData, который передаёт активные слоты форматов напрямую в /api/data
+window.installFormatAwareFetchData = function() {
+    if (window._fmtFetchWrapped) return;
+    const origFetch = window.fetchData;
+    if (typeof origFetch !== 'function') return;
+    window._fmtFetchWrapped = true;
+    window.fetchData = async function() {
+        try {
+            const slots = window.getFormatSlotsConfig();
+            const activeExts = slots
+                .filter(s => s && s.en && String(s.ext || '').trim())
+                .map(s => String(s.ext).trim().toLowerCase().replace(/^\.+/, ''))
+                .join(',');
+            const res = await fetch('/api/data?exts=' + encodeURIComponent(activeExts));
+            const data = await res.json();
+            window.allTracks = data.all_tracks || [];
+            window.sessionTracks = data.session_tracks || [];
+            const cnt = document.getElementById('tracksCount');
+            if (cnt) cnt.innerText = window.allTracks.length;
+            if (typeof window.renderAll === 'function') window.renderAll();
+        } catch (e) {
+            return origFetch.apply(this, arguments);
+        }
+    };
+};
+
 // =========================================================================
 // 💡 UI_HELP.JS (МОНИТОР АВТО-МАСТЕРА В ШАПКЕ + БАЗА ЗНАНИЙ + 10 МОДУЛЕЙ)
 // =========================================================================
@@ -264,6 +361,12 @@ window.resetDspGroup = function(keysList, msg, ev) {
 
 // 📚 ПОЛНАЯ БАЗА ЗНАНИЙ ПО ВСЕМ ПАРАМЕТРАМ ПЛЕЕРА (В РЕАЛЬНЫХ ЕДИНИЦАХ dB / % / Hz)
 window.JENNY_HELP_DB = {
+    format_slots: {
+        title: "🎵 Поддерживаемые форматы файлов (8 слотов)",
+        phys: "Фильтр расширений сканера папки. Поддерживает любые аудио-файлы (<b>mp3, opus, flac, wav, m4a, ogg, aac</b>) и видео-контейнеры со звуковой дорожкой (<b>mp4, webm, mkv</b>).",
+        hear: "Любой включённый формат (даже видео <b>.mp4</b> с нашими тестами!) распаковывается напрямую в 32-bit Float RAM-движок и проходит через весь студийный тракт.",
+        tip: "Галочками можно быстро скрыть или показать нужные типы файлов в плейлисте, а в текстовые поля — вписать любое своё расширение!"
+    },
     studio_ram: {
         title: "🚀 Студийный движок (RAM)",
         phys: "Трек при открытии целиком распаковывается в оперативную память в студийный формат <b>32-bit Float PCM</b> + сразу создаётся его зеркальный реверс-буфер.",
@@ -589,7 +692,7 @@ window.mountJennyStudioUI = function() {
     const container = sm.querySelector('.container') || sm;
 
     // Чистим возможные старые дубли из прошлых версий
-    ['phaseFocusMasterCard', 'dspModularSection', 'dspProStudioSection', 'jennyFullGuideBtn', 'dspModularBox'].forEach(oldId => {
+    ['phaseFocusMasterCard', 'dspModularSection', 'dspProStudioSection', 'jennyFullGuideBtn', 'dspModularBox', 'customFormatsSection'].forEach(oldId => {
         const oldEl = document.getElementById(oldId);
         if (oldEl) oldEl.remove();
     });
