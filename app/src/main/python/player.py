@@ -77,7 +77,8 @@ def build_atempo_filter(speed):
 @route('/')
 def index():
     try:
-        with open(os.path.join(BASE_DIR, 'index.html'), 'r', encoding='utf-8') as f:
+        response.set_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+        with open(os.path.join(BASE_DIR, 'index.html'), 'r', encoding="utf-8") as f:
             return f.read()
     except Exception:
         return f"<pre>{traceback.format_exc()}</pre>"
@@ -85,7 +86,10 @@ def index():
 
 @route('/<filename:re:.*\\.(js|css)>')
 def serve_static(filename):
-    return static_file(filename, root=BASE_DIR)
+    res = static_file(filename, root=BASE_DIR)
+    res.set_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    res.set_header('Pragma', 'no-cache')
+    return res
 
 
 @route('/api/media/<filename:path>')
