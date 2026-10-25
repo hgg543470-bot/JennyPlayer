@@ -1,94 +1,76 @@
-
 window.updateTopSearchOrMonitorBar = function() {
-    const searchInput = document.getElementById('searchInput');
-    if (!searchInput) return;
-    const barWrap = searchInput.parentElement;
-    if (!barWrap) return;
+    const cfg = window.appConfig || {};
+    const ceilOn = Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled);
+    const totalTxt = (typeof window.lastComputedCeilingDb !== 'undefined') ? window.lastComputedCeilingDb : -0.5;
+    const detailsTxt = window.lastCeilingBreakdown || 'Базовый запас -0.5 dB';
+    const bannerHTML = `<span style="color:#3fb950;font-weight:bold;">🛡️ Преамп: ${totalTxt} dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">${detailsTxt}</span>`;
+
+    // Находим ВСЕ поля поиска (и поиск треков, и поиск внутри настроек "Поиск по названию...")
+    const allInputs = Array.from(document.querySelectorAll('input')).filter(inp => {
+        const ph = (inp.placeholder || '').toLowerCase();
+        const id = (inp.id || '').toLowerCase();
+        return ph.includes('поиск') || id.includes('search');
+    });
 
     const settingsPanel = document.getElementById('settingsPanel');
     const eqPanel = document.getElementById('eqPanel');
-    const isSettingsOpen = (settingsPanel && settingsPanel.style.display === 'block') || (eqPanel && eqPanel.style.display === 'block');
-    const cfg = window.appConfig || {};
-    const ceilOn = Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled);
+    const isSettingsVisible = (settingsPanel && window.getComputedStyle(settingsPanel).display !== 'none') ||
+                              (eqPanel && window.getComputedStyle(eqPanel).display !== 'none');
 
-    let monEl = document.getElementById('topAutoCeilMonitor');
-    if (!monEl) {
-        monEl = document.createElement('div');
-        monEl.id = 'topAutoCeilMonitor';
-        monEl.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #2ea043;border-radius:8px;padding:7px 10px;font-size:11.5px;color:#e6edf3;white-space:nowrap;overflow-x:auto;font-family:monospace;box-shadow:0 0 8px rgba(46,160,67,0.25);';
-        barWrap.appendChild(monEl);
-    }
+    allInputs.forEach(inp => {
+        const insideSettings = (settingsPanel && settingsPanel.contains(inp)) || (eqPanel && eqPanel.contains(inp));
+        const wrap = inp.parentElement;
+        if (!wrap) return;
 
-    if (!isSettingsOpen) {
-        // В списке песен показываем обычный поиск
-        barWrap.style.display = '';
-        searchInput.style.display = '';
-        monEl.style.display = 'none';
-    } else {
-        // В настройках или эквалайзере поиск не нужен!
-        searchInput.style.display = 'none';
-        if (ceilOn) {
-            // Показываем живой монитор Авто-Мастера на месте строки поиска
-            barWrap.style.display = '';
-            monEl.style.display = 'block';
-            let totalTxt = (typeof window.lastComputedCeilingDb !== 'undefined') ? window.lastComputedCeilingDb : -0.5;
-            let detailsTxt = window.lastCeilingBreakdown || 'Базовый запас -0.5 dB';
-            monEl.innerHTML = `<span style="color:#3fb950;font-weight:bold;">🛡️ Преамп: ${totalTxt} dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">${detailsTxt}</span>`;
+        let monId = 'autoCeilMon_' + (inp.id || Math.random().toString(36).slice(2, 7));
+        let monEl = wrap.querySelector('.jenny-ceil-monitor');
+        if (!monEl) {
+            monEl = document.createElement('div');
+            monEl.className = 'jenny-ceil-monitor';
+            monEl.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #2ea043;border-radius:8px;padding:7px 10px;font-size:11.5px;color:#e6edf3;white-space:nowrap;overflow-x:auto;font-family:monospace;box-shadow:0 0 8px rgba(46,160,67,0.25);';
+            wrap.appendChild(monEl);
+        }
+
+        if (insideSettings || isSettingsVisible) {
+            // Мы в настройках: прячем само текстовое поле поиска
+            inp.style.display = 'none';
+            if (ceilOn) {
+                wrap.style.display = '';
+                monEl.style.display = 'block';
+                monEl.innerHTML = bannerHTML;
+            } else {
+                // Если галочка Авто-Мастер-Потолка снята — полностью убираем всю плашку вместе с контейнером!
+                monEl.style.display = 'none';
+                wrap.style.display = 'none';
+            }
         } else {
-            // Если галочка Авто-Мастер-Потолка выключена — полностью прячем всю загораживающую плашку!
+            // Мы в обычном списке песен: возвращаем штатный поиск треков
+            wrap.style.display = '';
+            inp.style.display = '';
             monEl.style.display = 'none';
-            barWrap.style.display = 'none';
         }
-    }
+    });
 };
 
-window._dspInputDebounce = null;
+// Автоматический следящий триггер при любом открытии/закрытии панелей
+if (!window._ceilMonitorObserverInit) {
+    window._ceilMonitorObserverInit = true;
+    document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => {
+            if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
+            const obs = new MutationObserver(() => {
+                if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
+            });
+            const sp = document.getElementById('settingsPanel');
+            const ep = document.getElementById('eqPanel');
+            if (sp) obs.observe(sp, { attributes: true, attributeFilter: ['style', 'class'] });
+            if (ep) obs.observe(ep, { attributes: true, attributeFilter: ['style', 'class'] });
+        }, 150);
+    });
+}
 
-window.ensureParentDspBlocks = function(triggerKey, ev) {
-    window.appConfig = window.appConfig || {};
-    let autoTurned = [];
-    if (triggerKey === 'cleanFir' || triggerKey === 'phaseFix') {
-        if (!window.appConfig.firEnabled) {
-            window.appConfig.firEnabled = true;
-            let el = document.getElementById('cfg_firEnabled');
-            if (el) el.checked = true;
-            autoTurned.push('FIR');
-        }
-    }
-    if (['midPhase', 'midQ', 'deEsser', 'masterCeil', 'phaseFix'].includes(triggerKey)) {
-        if (!window.appConfig.limiterEnabled) {
-            window.appConfig.limiterEnabled = true;
-            let el = document.getElementById('cfg_limiterEnabled');
-            if (el) el.checked = true;
-            autoTurned.push('Лимитер');
-        }
-        if (!window.appConfig.multiBandEnabled) {
-            window.appConfig.multiBandEnabled = true;
-            let el = document.getElementById('cfg_multiBandEnabled');
-            if (el) el.checked = true;
-            autoTurned.push('3-Band Кроссовер');
-        }
-    }
-    if (autoTurned.length > 0 && typeof window.showToast === 'function') {
-        window.showToast("⚡ Авто-включено для работы: " + autoTurned.join(' + '), ev);
-    }
-};
 
-// =========================================================================
-// 📖 UI_HELP.JS (МОДУЛИ ТРАКТА, PRO STUDIO И СПРАВОЧНИК ❓ ПО ВСЕМ ПУНКТАМ)
-// =========================================================================
-
-window.ALL_MOD_KEYS = [
-    'midPhase', 'midQ', 'deEsser', 'cleanFir', 'masterCeil',
-    'autoRms', 'monoBass', 'msWidth', 'punch', 'crossfeed'
-];
-
-window.syncDspModUI = function() {
-    const cfg = window.appConfig || {};
-    // Авто-перевод старых абстрактных цифр в новые dB и %
-    if (!cfg._migratedToRealUnitsV9) {
-        cfg._migratedToRealUnitsV9 = true;
-        Object.keys(window.DSP_MOD_DEFAULTS).forEach(k => {
+window.DSP_MOD_DEFAULTS).forEach(k => {
             if (k.startsWith('val_')) cfg[k] = window.DSP_MOD_DEFAULTS[k];
         });
         localStorage.setItem('ytm_config', JSON.stringify(cfg));
@@ -127,6 +109,7 @@ window.onPhaseFocusChange = function(el, ev) {
     window.appConfig.phaseFixEnabled = Boolean(el.checked);
     if (el.checked) window.ensureParentDspBlocks('phaseFix', ev);
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
     window.syncDspModUI();
     if (typeof window.buildAudioGraph === 'function') {
         if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
@@ -153,6 +136,7 @@ window.onDspModChange = function(key) {
         if (!isNaN(parsed)) window.appConfig['val_' + key] = parsed;
     }
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
     if (typeof window.buildAudioGraph === 'function') {
         if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
         window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
@@ -182,6 +166,7 @@ window.loadDspModRow = async function(key, btnEl, ev) {
         window.appConfig['opt_' + key] = (data['opt_' + key] !== undefined) ? Boolean(data['opt_' + key]) : window.DSP_MOD_DEFAULTS['opt_' + key];
         window.appConfig['val_' + key] = (data['val_' + key] !== undefined) ? parseFloat(data['val_' + key]) : window.DSP_MOD_DEFAULTS['val_' + key];
         localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
         window.syncDspModUI();
         if (typeof window.buildAudioGraph === 'function') {
         if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
@@ -206,6 +191,7 @@ window.resetDspGroup = function(keysList, msg, ev) {
         if (inp) inp.value = window.DSP_MOD_DEFAULTS['val_' + k];
     });
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
     if (typeof window.buildAudioGraph === 'function') {
         if (window._dspInputDebounce) clearTimeout(window._dspInputDebounce);
         window._dspInputDebounce = setTimeout(() => window.buildAudioGraph(), 90);
