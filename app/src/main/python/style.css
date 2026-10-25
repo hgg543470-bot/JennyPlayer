@@ -155,3 +155,46 @@ details.setting-group summary { color: var(--accent-cyan); font-weight: bold; cu
 .runaway-leg.left { animation: legKickLeft 0.13s infinite linear; }
 .runaway-leg.right { animation: legKickRight 0.13s infinite linear; }
 .gear-swallow-anim { animation: gearSwallowHit 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+
+@keyframes crawlInchUp {
+    0%, 100% { transform: scaleX(1) scaleY(1); }
+    50% { transform: scaleX(0.86) scaleY(1.18) translateY(-3px); }
+}
+@keyframes crawlInchRight {
+    0%, 100% { transform: scaleX(1) scaleY(1); }
+    50% { transform: scaleX(1.18) scaleY(0.86) translateX(3px); }
+}
+@keyframes tinyClawStep {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-3px) scale(1.2); }
+}
+@keyframes gearSoftAccept {
+    0% { transform: scale(1) rotate(0deg); }
+    50% { transform: scale(1.35) rotate(-45deg); filter: drop-shadow(0 0 10px #58a6ff); }
+    100% { transform: scale(1) rotate(0deg); }
+}
+.crawler-actor {
+    position: fixed; z-index: 999999; pointer-events: none;
+    display: flex; flex-direction: column; align-items: center;
+}
+.crawler-actor.climbing-up .jenny-lang-btn {
+    animation: crawlInchUp 0.26s infinite ease-in-out !important;
+}
+.crawler-actor.creeping-right .jenny-lang-btn {
+    animation: crawlInchRight 0.26s infinite ease-in-out !important;
+}
+.crawler-feet-wrap {
+    display: flex; gap: 5px; margin-top: 0px;
+}
+.crawler-foot {
+    width: 4px; height: 4px; background: #58a6ff; border-radius: 50%;
+    box-shadow: 0 0 4px #58a6ff;
+    animation: tinyClawStep 0.18s infinite ease-in-out;
+}
+.crawler-foot:nth-child(even) {
+    animation-delay: 0.09s;
+    background: #3fb950;
+    box-shadow: 0 0 4px #3fb950;
+}
+.gear-soft-anim { animation: gearSoftAccept 0.5s ease-in-out; }

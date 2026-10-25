@@ -15,7 +15,7 @@ window.toggleLanguage = function(ev) {
     window.appConfig = window.appConfig || {};
     window.appConfig.lang = (window.getLang() === 'ru') ? 'en' : 'ru';
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    try { navigator.vibrate(25); } catch (e) {}
+    
     window.applyStaticDOMTranslations();
     window.mountJennyStudioUI();
     if (typeof window.calculateAutoMasterPadDb === 'function') window.calculateAutoMasterPadDb(window.appConfig);
@@ -694,7 +694,9 @@ else window.mountJennyStudioUI();
 // =========================================================================
 
 
-// 🦿 ПАТЧ V34: ДЕФОЛТЫ ИЗ ВИДЕО (FIR 1.5 / 1.28) + ДВОЙНОЙ RU / EN + ПОБЕГ НА НОГАХ
+
+
+// 🦿 ПАТЧ V35: ДВА СЦЕНАРИЯ КНОПКИ RU/EN (БЕГ ДО НАЖАТИЯ / УПОЛЗАНИЕ ВВЕРХ-ВПРАВО ПОСЛЕ НАЖАТИЯ)
 window.renderDualLangHTML = function(withGlobe) {
     const isEn = (window.getLang() === 'en');
     const p = withGlobe ? '🌐 ' : '';
@@ -709,6 +711,9 @@ window.updateDualLangButtons = function() {
         mainBtn.innerHTML = window.renderDualLangHTML(false);
         mainBtn.style.whiteSpace = 'nowrap';
         mainBtn.style.padding = '4px 8px';
+        if (window._langTouchedByUser) {
+            mainBtn.classList.remove('lang-buzz-active');
+        }
     }
     const topRow = document.getElementById('jennyTopBarRow');
     if (topRow && topRow.lastElementChild) {
@@ -716,11 +721,11 @@ window.updateDualLangButtons = function() {
     }
 };
 
-window.applyVideoMasterPresetV34 = function(force) {
+window.applyVideoMasterPresetV35 = function(force) {
     window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
-    if (!force && window.appConfig._videoPresetAppliedV34) return;
+    if (!force && window.appConfig._videoPresetAppliedV35) return;
     Object.assign(window.appConfig, {
-        _videoPresetAppliedV34: true, _migratedToRealUnitsV20: true,
+        _videoPresetAppliedV35: true, _migratedToRealUnitsV20: true,
         studioMode: true, phaseFixEnabled: false,
         opt_midPhase: true, val_midPhase: 4,
         opt_midQ: true, val_midQ: 120,
@@ -775,34 +780,31 @@ window.applyVideoMasterPresetV34 = function(force) {
 
 (function() {
     const origLoad = window.loadConfigFromDisk;
-    if (typeof origLoad === 'function' && !window._loadWrappedV34) {
-        window._loadWrappedV34 = true;
+    if (typeof origLoad === 'function' && !window._loadWrappedV35) {
+        window._loadWrappedV35 = true;
         window.loadConfigFromDisk = async function() {
-            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV34);
+            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV35);
             await origLoad();
-            if (!wasApplied) window.applyVideoMasterPresetV34(true);
+            if (!wasApplied) window.applyVideoMasterPresetV35(true);
         };
     }
 })();
 
-const _origToggleLangV34 = window.toggleLanguage;
-window.toggleLanguage = function(ev) {
-    _origToggleLangV34(ev);
-    window.updateDualLangButtons();
-    window.scheduleLangRunawayTimer();
-};
-
 window._langRunawayTimer = null;
 window._langBuzzInterval = null;
 window._hasLangRunAway = false;
+window._langTouchedByUser = false;
 
 window.triggerLangBuzz = function(ms = 1400) {
+    // Дребезжит ТОЛЬКО если пользователь ещё ни разу не трогал кнопку!
+    if (window._langTouchedByUser || window._hasLangRunAway) return;
     const btn = document.getElementById('mainLangToggleBtn');
-    if (!btn || window._hasLangRunAway) return;
+    if (!btn) return;
     btn.classList.add('lang-buzz-active');
     setTimeout(() => { if (btn) btn.classList.remove('lang-buzz-active'); }, ms);
 };
 
+// СЦЕНАРИЙ 1: Не трогали 30 сек -> Срывается с места на длинных ногах вправо и прыгает с сальтухой в ⚙️
 window.runAwayLangBadgeToSettings = function() {
     const btn = document.getElementById('mainLangToggleBtn');
     const gear = document.getElementById('btn-settingsModal');
@@ -821,7 +823,7 @@ window.runAwayLangBadgeToSettings = function() {
     actor.style.left = startRect.left + 'px';
     actor.style.top = startRect.top + 'px';
     actor.innerHTML = `
-        <div id="runawayBubble" style="font-size:10px;color:#e3b341;font-weight:bold;margin-bottom:2px;white-space:nowrap;">💨 Адиос!</div>
+        <div id="runawayBubble" style="font-size:10px;color:#e3b341;font-weight:bold;margin-bottom:2px;white-space:nowrap;">${window.tr('💨 Адиос!', '💨 Adios!')}</div>
         <div class="jenny-lang-btn" style="white-space:nowrap;padding:4px 8px;border-color:#3fb950;box-shadow:0 0 12px rgba(63,185,80,0.6);">
             ${window.renderDualLangHTML(false)}
         </div>
@@ -844,7 +846,7 @@ window.runAwayLangBadgeToSettings = function() {
 
     setTimeout(() => {
         const b = document.getElementById('runawayBubble');
-        if (b) b.innerText = '🤸 Вжух!';
+        if (b) b.innerText = window.tr('🤸 Вжух!', '🤸 Wheee!');
         actor.style.transition = 'left 0.55s ease-in, top 0.55s cubic-bezier(0.2, -0.6, 0.3, 1), transform 0.55s ease-in, opacity 0.55s ease-in';
         actor.style.left = (gearRect.left - 5) + 'px';
         actor.style.top = (gearRect.top - 5) + 'px';
@@ -861,17 +863,110 @@ window.runAwayLangBadgeToSettings = function() {
     }, 2320);
 };
 
+// СЦЕНАРИЙ 2: Язык был выбран (ткнули хотя бы раз) -> Тихо ждёт 30 сек и аккуратно уползает ВВЕРХ, а потом ВПРАВО в ⚙️
+window.crawlAwayLangBadgeToSettings = function() {
+    const btn = document.getElementById('mainLangToggleBtn');
+    const gear = document.getElementById('btn-settingsModal');
+    if (!btn || !gear || window._hasLangRunAway || btn.offsetParent === null) return;
+
+    window._hasLangRunAway = true;
+    if (window._langBuzzInterval) clearInterval(window._langBuzzInterval);
+
+    const startRect = btn.getBoundingClientRect();
+    const gearRect = gear.getBoundingClientRect();
+    btn.style.opacity = '0';
+    btn.style.pointerEvents = 'none';
+
+    const crawler = document.createElement('div');
+    crawler.className = 'crawler-actor climbing-up';
+    crawler.style.left = startRect.left + 'px';
+    crawler.style.top = startRect.top + 'px';
+    crawler.innerHTML = `
+        <div id="crawlerBubble" style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:2px;white-space:nowrap;">${window.tr('🐛 Ползу в ⚙️...', '🐛 Crawling to ⚙️...')}</div>
+        <div class="jenny-lang-btn" style="white-space:nowrap;padding:4px 8px;border-color:#58a6ff;box-shadow:0 0 10px rgba(88,166,255,0.45);">
+            ${window.renderDualLangHTML(false)}
+        </div>
+        <div class="crawler-feet-wrap">
+            <div class="crawler-foot"></div>
+            <div class="crawler-foot"></div>
+            <div class="crawler-foot"></div>
+            <div class="crawler-foot"></div>
+        </div>
+    `;
+    document.body.appendChild(crawler);
+
+    const topLaneY = Math.max(8, gearRect.top - 10);
+    const targetRightX = Math.max(startRect.left + 60, gearRect.left - 18);
+
+    // Фаза 1: Аккуратно ползёт СТРОГО ВВЕРХ до уровня верхней капсулы (150 - 1350 мс)
+    setTimeout(() => {
+        crawler.style.transition = 'top 1.2s linear';
+        crawler.style.top = topLaneY + 'px';
+    }, 150);
+
+    // Фаза 2: На углу поворачивает и ползёт ВПРАВО вдоль верхней шапки к шестерёнке (1400 - 3100 мс)
+    setTimeout(() => {
+        crawler.classList.remove('climbing-up');
+        crawler.classList.add('creeping-right');
+        crawler.style.transition = 'left 1.65s linear';
+        crawler.style.left = targetRightX + 'px';
+    }, 1400);
+
+    // Фаза 3: Аккуратно шмыгает внутрь шестерёнки ⚙️ (3100 - 3550 мс)
+    setTimeout(() => {
+        const b = document.getElementById('crawlerBubble');
+        if (b) b.innerText = window.tr('🫡 На месте!', '🫡 Tucked in!');
+        crawler.style.transition = 'left 0.42s ease-in, top 0.42s ease-in, transform 0.42s ease-in, opacity 0.42s ease-in';
+        crawler.style.left = (gearRect.left + 2) + 'px';
+        crawler.style.top = (gearRect.top + 2) + 'px';
+        crawler.style.transform = 'scale(0.12)';
+        crawler.style.opacity = '0.1';
+    }, 3100);
+
+    // Фаза 4: Шестерёнка мягко принимает плашку (3520 мс)
+    setTimeout(() => {
+        crawler.remove();
+        btn.style.display = 'none';
+        gear.classList.add('gear-soft-anim');
+        setTimeout(() => gear.classList.remove('gear-soft-anim'), 550);
+    }, 3520);
+};
+
 window.scheduleLangRunawayTimer = function() {
     if (window._hasLangRunAway) return;
     if (window._langRunawayTimer) clearTimeout(window._langRunawayTimer);
     if (window._langBuzzInterval) clearInterval(window._langBuzzInterval);
-    setTimeout(() => window.triggerLangBuzz(2000), 300);
-    window._langBuzzInterval = setInterval(() => window.triggerLangBuzz(900), 10000);
-    window._langRunawayTimer = setTimeout(() => window.runAwayLangBadgeToSettings(), 30000);
+
+    if (!window._langTouchedByUser) {
+        // Пока не нажали ни разу — дребезжит со старта и каждые 10 сек, а через 30 сек убегает на ногах
+        setTimeout(() => window.triggerLangBuzz(2000), 300);
+        window._langBuzzInterval = setInterval(() => window.triggerLangBuzz(900), 10000);
+        window._langRunawayTimer = setTimeout(() => window.runAwayLangBadgeToSettings(), 30000);
+    } else {
+        // После первого нажатия — больше НЕ дребезжит, ждёт 30 сек и аккуратно уползает ВВЕРХ -> ВПРАВО
+        const btn = document.getElementById('mainLangToggleBtn');
+        if (btn) btn.classList.remove('lang-buzz-active');
+        window._langRunawayTimer = setTimeout(() => window.crawlAwayLangBadgeToSettings(), 30000);
+    }
 };
 
-window.initV34Enhancements = function() {
-    window.applyVideoMasterPresetV34(false);
+const _origToggleLangV35 = window.toggleLanguage;
+window.toggleLanguage = function(ev) {
+    window._langTouchedByUser = true;
+    if (window._langBuzzInterval) {
+        clearInterval(window._langBuzzInterval);
+        window._langBuzzInterval = null;
+    }
+    const btn = document.getElementById('mainLangToggleBtn');
+    if (btn) btn.classList.remove('lang-buzz-active');
+
+    _origToggleLangV35(ev);
+    window.updateDualLangButtons();
+    window.scheduleLangRunawayTimer();
+};
+
+window.initV35Enhancements = function() {
+    window.applyVideoMasterPresetV35(false);
     window.updateDualLangButtons();
     window.scheduleLangRunawayTimer();
     const ft = document.getElementById('folderIconTrigger');
@@ -883,7 +978,7 @@ window.initV34Enhancements = function() {
 };
 
 if (document.readyState === 'loading') {
-    document.addEventListener("DOMContentLoaded", () => setTimeout(window.initV34Enhancements, 80));
+    document.addEventListener("DOMContentLoaded", () => setTimeout(window.initV35Enhancements, 80));
 } else {
-    setTimeout(window.initV34Enhancements, 80);
+    setTimeout(window.initV35Enhancements, 80);
 }
