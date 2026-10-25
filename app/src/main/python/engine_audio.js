@@ -631,7 +631,7 @@ window._buildAudioGraphCore = function() {
             let highFreq = Math.max(lowFreq + 100, cfg.multiBandSettings.high || 2500);
             let effLow = (cfg.opt_midQ && (parseFloat(cfg.val_midQ) || 150) > 110) ? Math.min(lowFreq, 95) : lowFreq;
             let midCenter = Math.sqrt(effLow * highFreq);
-            let midQ = midCenter / (highFreq - lowFreq);
+            let midQ = Math.max(0.68, midCenter / (highFreq - lowFreq));
 
             // Плавная перестройка катушек кроссовера без эффекта искрящего дросселя!
             let now = window.audioCtx.currentTime;
@@ -644,7 +644,7 @@ window._buildAudioGraphCore = function() {
             window.compLow.release.value = cfg.limiterSettings.release / 1000;
 
             window.compMid.threshold.value = thresh + 2; window.compMid.knee.value = knee; window.compMid.ratio.value = ratio;
-            window.compMid.attack.value = 0.012; window.compMid.release.value = 0.14;
+            window.compMid.attack.value = 0.002; window.compMid.release.value = 0.1;
 
             window.compHigh.threshold.value = thresh + 4; window.compHigh.knee.value = knee; window.compHigh.ratio.value = ratio;
             window.compHigh.attack.value = 0.001; window.compHigh.release.value = 0.05;
@@ -673,8 +673,8 @@ window._buildAudioGraphCore = function() {
                 let targetQ = cfg.opt_midQ ? Math.max(0.15, Math.min(2.5, midQ / (widthPct / 100.0))) : midQ;
                 window.splitMid.Q.setTargetAtTime(targetQ, now, 0.012);
 
-                let midDb = parseFloat(cfg.val_midPhase); if (isNaN(midDb)) midDb = 3.0;
-                window.midPhaseNode.gain.value = cfg.opt_midPhase ? -window.dbToLinear(Math.min(15, midDb)) : 1.0;
+                let midDb = parseFloat(cfg.val_midPhase); if (isNaN(midDb)) midDb = 1.5;
+                window.midPhaseNode.gain.value = cfg.opt_midPhase ? window.dbToLinear(Math.max(-15, Math.min(15, midDb))) : 1.0;
 
                 let deEssDb = parseFloat(cfg.val_deEsser); if (isNaN(deEssDb)) deEssDb = -6.0;
                 if (cfg.opt_deEsser) {
