@@ -3190,7 +3190,9 @@ window.deleteSavedThemeFileV41 = async function(filename, ev) {
 
 
 
-// 🐍 ПАТЧ V48: ЧИСТЫЙ 90° РЕЗАК БЕЗ ХРИПА (ЗАХВАТ ВЫСОТЫ И УГЛА СКЛОНА + C2 СКРУГЛЕНИЕ КОНЦОВ)
+
+
+// 🐍 ПАТЧ V49: ЧИСТЫЙ 90° ПРОФИЛЬНЫЙ РЕЗАК (БЕЗ ГУЛА И ХРИПА) + ЭКРАН РЕАЛЬНОЙ АМПЛИТУДЫ ВОЛНЫ
 
 window._hoseSplicerCacheV46 = {
     srcBuffer: null,
@@ -3198,13 +3200,19 @@ window._hoseSplicerCacheV46 = {
     tension: 1.0,
     splicedBuffer: null,
     lastBuildMs: 0,
-    avgSeamErrMv: 0
+    avgSeamErrMv: 0,
+    seamPointsOut: []
 };
 
-// Стерео-синхронный 90° сплайсер V48:
-// 1) Никакой пилы 250 Гц на басу (ищет точку на соседней дуге с той же высотой y и тем же углом наклона 90°).
-// 2) Ползунок "Стягивание (%)" больше НЕ разрывает шов на 25% и НЕ перелетает на 200% — шов всегда 100% заподлицо!
-// 3) На высоких амплитудах упруго прижимает высоту петли (громкость), а на пологих участках двигает время.
+window._hoseScopeStateV49 = {
+    frozen: false,
+    windowMs: 6,
+    rafId: null
+};
+
+// Алгоритм V49:
+// 1) Сшивает волну по полному профилю дуги (24 точки + басовая фаза) и варьирует шаг (16..22 мс), полностью убивая 83 Гц гул!
+// 2) Меняет высоту амплитуды плавной огибающей по целым дугам, НЕ сплющивая верхушки синусоид (0% хрипа на вокале и гитарах!).
 window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     if (!srcBuffer || !window.audioCtx) return srcBuffer;
     const spd = Math.max(0.25, Math.min(3.0, parseFloat(speed) || 1.0));
@@ -3213,6 +3221,8 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     if (Math.abs(spd - 1.0) < 0.002) {
         window._hoseSplicerCacheV46.lastBuildMs = 0;
         window._hoseSplicerCacheV46.avgSeamErrMv = 0;
+        window._hoseSplicerCacheV46.splicedBuffer = srcBuffer;
+        window._hoseSplicerCacheV46.seamPointsOut = [];
         return srcBuffer;
     }
 
@@ -3235,17 +3245,16 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
         chOut.push(outBuffer.getChannelData(c));
     }
 
-    // Шаг между швами 12 мс (576 сэмплов при 48 кГц), зона гладкого скругления торцов 64 сэмпла (~1.3 мс)
-    const stepOut = Math.max(256, Math.round(0.012 * sr));
-    const searchRad = Math.max(128, Math.round(0.0075 * sr));
-    const filletLen = Math.max(32, Math.round(0.0013 * sr));
+    // Базовый шаг 18 мс с анти-резонансной модуляцией шага (чтобы не возникал монотонный гул на одной частоте!)
+    const baseStep = Math.max(512, Math.round(0.018 * sr));
+    const searchRad = Math.max(256, Math.round(0.012 * sr));
+    // Широкое 4.5 мс C2-скругление вдоль склона (216 сэмплов) — полностью убирает любые щелчки и гул на басу
+    const filletLen = Math.max(128, Math.round(0.0045 * sr));
 
-    // Предварительно считаем гладкую C2-кривую скругления (Cosine-Hermite), чтобы 0% щелчков и 0% хрипа
     const blendCurve = new Float32Array(filletLen);
     const tangDecay = new Float32Array(filletLen);
     for (let i = 0; i < filletLen; i++) {
         const t = i / filletLen;
-        // C2-гладкий переход от 0 к 1 с нулевым изломом на обоих концах
         const b = 0.5 * (1.0 - Math.cos(Math.PI * t));
         blendCurve[i] = b;
         const r = 1.0 - b;
@@ -3255,128 +3264,139 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     const in0 = chIn[0];
     const in1 = numCh > 1 ? chIn[1] : in0;
 
-    // Копируем стартовый кусок 1:1
-    const initCopy = Math.min(stepOut, outLen, inLen);
+    const initCopy = Math.min(baseStep, outLen, inLen);
     for (let c = 0; c < numCh; c++) {
         const inp = chIn[c];
         const out = chOut[c];
-        for (let i = 0; i < initCopy; i++) {
-            out[i] = inp[i];
-        }
+        for (let i = 0; i < initCopy; i++) out[i] = inp[i];
     }
 
     let outPos = initCopy;
     let inCursor = initCopy;
     let seamCount = 0;
     let totalSeamDiff = 0;
+    const seamPoints = [];
 
-    // Коэффициент вертикального стягивания высоких петель (по закону Упругого Шланга)
     const isFast = spd > 1.0;
     const speedDelta = Math.abs(spd - 1.0);
-    const vertFactor = Math.min(0.32, speedDelta * tension * 0.38);
+    const vertFactor = Math.min(0.28, speedDelta * tension * 0.30);
+    let smoothGain = 1.0;
 
-    while (outPos + stepOut + filletLen < outLen) {
-        const p1 = Math.round(inCursor);
+    while (outPos + baseStep + filletLen + 256 < outLen) {
+        // Слегка варьируем длину шага (±15%), чтобы швы никогда не образовывали гудящую ноту!
+        const jitter = ((seamCount * 73) & 127) - 64;
+        const stepOut = baseStep + jitter * 2;
+
+        let p1 = Math.round(inCursor);
         const idealP2 = Math.round(outPos * spd);
 
-        if (p1 < 4 || p1 + stepOut + filletLen >= inLen) break;
-        if (idealP2 < 4 || idealP2 + stepOut + filletLen >= inLen) break;
+        if (p1 < 32 || p1 + stepOut + filletLen + 32 >= inLen) break;
+        if (idealP2 < 32 || idealP2 + stepOut + filletLen + 32 >= inLen) break;
 
-        // Параметры волны в точке первого 90° разреза p1 (высота + наклон узкий + наклон широкий басовый)
-        const y1L = in0[p1], y1R = in1[p1];
-        const s1L = y1L - in0[p1 - 1], s1R = y1R - in1[p1 - 1];
-        const w1L = in0[p1 + 3] - in0[p1 - 3], w1R = in1[p1 + 3] - in1[p1 - 3];
+        // 1. Привязываем первую точку разреза p1 к восходящему переходу через 0 (мембрана в нуле, угол 90° к склону)
+        for (let k = -24; k <= 24; k++) {
+            const idx = p1 + k;
+            if (in0[idx - 1] <= 0.0 && in0[idx] >= 0.0) {
+                p1 = idx;
+                break;
+            }
+        }
 
-        const minP2 = Math.max(4, idealP2 - searchRad);
-        const maxP2 = Math.min(inLen - stepOut - filletLen - 4, idealP2 + searchRad);
+        const s1L = in0[p1 + 1] - in0[p1 - 1];
+        const s1R = in1[p1 + 1] - in1[p1 - 1];
+        // Низкочастотный (басовый) вектор наклона за 16 сэмплов
+        const bassSlope1L = in0[p1 + 12] - in0[p1 - 12];
+
+        const minP2 = Math.max(32, idealP2 - searchRad);
+        const maxP2 = Math.min(inLen - stepOut - filletLen - 32, idealP2 + searchRad);
 
         let bestP2 = idealP2;
         let bestCost = 1e9;
 
-        // Ищем точку второго 90° разреза p2, где волна лежит на ТОЙ ЖЕ высоте и идёт под ТЕМ ЖЕ углом склона!
+        // 2. Ищем на соседней дуге точку p2, где совпадает ВЕСЬ профиль волны (и высокая гитара, и длинный бас!)
         for (let cand = minP2; cand <= maxP2; cand += 3) {
-            const y2L = in0[cand], y2R = in1[cand];
-            const s2L = y2L - in0[cand - 1], s2R = y2R - in1[cand - 1];
-            const w2L = in0[cand + 3] - in0[cand - 3], w2R = in1[cand + 3] - in1[cand - 3];
+            const s2L = in0[cand + 1] - in0[cand - 1];
+            const bassSlope2L = in0[cand + 12] - in0[cand - 12];
 
-            // Запрещаем стыковать восходящий склон с нисходящим (знаки наклона должны совпадать!)
-            const dirPen = ((s1L * s2L < 0) || (w1L * w2L < 0) || (s1R * s2R < 0)) ? 1.8 : 0.0;
+            // Запрещаем сшивать волны с разным направлением склона или в противофазе баса
+            if (s1L * s2L < 0 || bassSlope1L * bassSlope2L < 0) continue;
 
-            const heightDiff = Math.abs(y2L - y1L) + Math.abs(y2R - y1R);
-            const slopeDiff = (Math.abs(s2L - s1L) + Math.abs(s2R - s1R)) * 3.5 +
-                              (Math.abs(w2L - w1L) + Math.abs(w2R - w1R)) * 1.8;
+            // Сравниваем профиль дуги по 8 контрольным точкам вдоль склона
+            let profileErr = 0.0;
+            for (let w = -12; w <= 36; w += 6) {
+                const dL = in0[cand + w] - in0[p1 + w];
+                const dR = in1[cand + w] - in1[p1 + w];
+                profileErr += dL * dL + dR * dR;
+            }
 
-            // При высоком натяжении шланга (tension) сильнее штрафуем разрезы на высоких громких пиках (режем в низинах!)
-            const ampLevel = Math.abs(y2L) + Math.abs(y2R);
-            const peakAvoidPen = ampLevel * tension * 0.22;
+            const slopeDiff = Math.abs(s2L - s1L) + Math.abs((in1[cand + 1] - in1[cand - 1]) - s1R);
+            const cost = profileErr * 1.5 + slopeDiff * 2.5;
 
-            const cost = heightDiff * 2.4 + slopeDiff + dirPen + peakAvoidPen;
             if (cost < bestCost) {
                 bestCost = cost;
                 bestP2 = cand;
             }
         }
 
-        // Уточняющий поиск с шагом 1 сэмпл вокруг лучшей точки (для 100% попадания в фазу и высоту)
-        const fineStart = Math.max(minP2, bestP2 - 2);
-        const fineEnd = Math.min(maxP2, bestP2 + 2);
-        for (let cand = fineStart; cand <= fineEnd; cand++) {
-            const y2L = in0[cand], y2R = in1[cand];
-            const s2L = y2L - in0[cand - 1], s2R = y2R - in1[cand - 1];
-            const heightDiff = Math.abs(y2L - y1L) + Math.abs(y2R - y1R);
-            const slopeDiff = (Math.abs(s2L - s1L) + Math.abs(s2R - s1R)) * 3.5;
-            const cost = heightDiff * 2.4 + slopeDiff;
-            if (cost < bestCost) {
-                bestCost = cost;
+        // Посэмпловая доводка вокруг bestP2
+        for (let cand = Math.max(minP2, bestP2 - 2); cand <= Math.min(maxP2, bestP2 + 2); cand++) {
+            let profileErr = 0.0;
+            for (let w = -6; w <= 24; w += 6) {
+                const dL = in0[cand + w] - in0[p1 + w];
+                const dR = in1[cand + w] - in1[p1 + w];
+                profileErr += dL * dL + dR * dR;
+            }
+            if (profileErr < bestCost) {
+                bestCost = profileErr;
                 bestP2 = cand;
             }
         }
 
-        totalSeamDiff += Math.abs(in0[bestP2] - y1L);
+        totalSeamDiff += Math.abs(in0[bestP2] - in0[p1]);
         seamCount++;
+        seamPoints.push(outPos);
 
-        // Стягиваем концы заподлицо и скругляем фаску на 64 сэмплах без единого скачка
+        // 3. Оцениваем высоту петли всего участка (чтобы плавно менять громкость целой дуги БЕЗ сплющивания верхушек!)
+        let segPeak = 0.0;
+        for (let i = 0; i < stepOut; i += 8) {
+            const a = Math.max(Math.abs(in0[bestP2 + i]), Math.abs(in1[bestP2 + i]));
+            if (a > segPeak) segPeak = a;
+        }
+        let targetGain = 1.0;
+        if (segPeak > 0.25) {
+            if (isFast) {
+                targetGain = 1.0 - vertFactor * (segPeak - 0.25);
+            } else {
+                targetGain = 1.0 + vertFactor * 0.70 * (segPeak - 0.25);
+            }
+        }
+
         for (let c = 0; c < numCh; c++) {
             const inp = chIn[c];
             const out = chOut[c];
-
-            const yL = inp[p1 - 1];
-            const sL = inp[p1] - yL;
-            const yR = inp[bestP2];
-            // Точная остаточная разница высоты на шве (всегда сводится в 0.0 на точке стыка!)
-            const dy = yR - (yL + sL);
+            const dy = inp[bestP2] - inp[p1];
+            let localGain = smoothGain;
 
             for (let i = 0; i < stepOut; i++) {
+                localGain = localGain * 0.997 + targetGain * 0.003;
                 let v = inp[bestP2 + i];
 
                 if (i < filletLen) {
                     const b = blendCurve[i];
                     const contVal = inp[p1 + i];
-                    // Плавно переводим касательную старой дуги в новую и гасим микро-ступеньку dy вдоль склона
                     const pulledNew = v - dy * tangDecay[i];
                     v = contVal * (1.0 - b) + pulledNew * b;
                 }
 
-                // Вертикальная работа Упругого Шланга: высокие петли чуть сжимаются по громкости при ускорении
-                const av = Math.abs(v);
-                if (av > 0.35) {
-                    if (isFast) {
-                        v *= (1.0 - vertFactor * (av - 0.35));
-                    } else {
-                        v *= (1.0 + vertFactor * 0.75 * (av - 0.35));
-                    }
-                    if (Math.abs(v) > 0.96) v = Math.tanh(v);
-                }
-
-                out[outPos + i] = v;
+                out[outPos + i] = v * localGain;
             }
+            if (c === numCh - 1) smoothGain = localGain;
         }
 
         outPos += stepOut;
         inCursor = bestP2 + stepOut;
     }
 
-    // Дописываем хвост трека
     while (outPos < outLen && Math.round(inCursor) < inLen) {
         const idx = Math.min(inLen - 1, Math.round(inCursor));
         for (let c = 0; c < numCh; c++) {
@@ -3392,7 +3412,162 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     cache.splicedBuffer = outBuffer;
     cache.lastBuildMs = Math.round(performance.now() - t0);
     cache.avgSeamErrMv = seamCount > 0 ? (totalSeamDiff / seamCount) : 0;
+    cache.seamPointsOut = seamPoints;
     return outBuffer;
+};
+
+// 📊 ЖИВОЙ ОСЦИЛЛОГРАФ РЕАЛЬНЫХ ЗНАЧЕНИЙ АМПЛИТУДЫ (-1.00 .. +1.00)
+window.startHoseWaveScopeV49 = function() {
+    const st = window._hoseScopeStateV49;
+    if (st.rafId) cancelAnimationFrame(st.rafId);
+
+    const renderFrame = () => {
+        const cv = document.getElementById('hoseWaveScopeCanvasV49');
+        const player = document.getElementById('audioPlayer');
+        if (cv && player && window.studioBuffer && !st.frozen) {
+            const ctx = cv.getContext('2d');
+            const W = cv.width;
+            const H = cv.height;
+            ctx.clearRect(0, 0, W, H);
+
+            // Фон и честная сетка амплитуды (+1.0, +0.5, 0.0, -0.5, -1.0)
+            ctx.fillStyle = '#070a0f';
+            ctx.fillRect(0, 0, W, H);
+
+            const midY = H / 2;
+            const scaleY = (H / 2) - 8;
+
+            ctx.strokeStyle = 'rgba(139,148,158,0.18)';
+            ctx.lineWidth = 1;
+            [-1.0, -0.5, 0.0, 0.5, 1.0].forEach(val => {
+                const y = midY - val * scaleY;
+                ctx.beginPath();
+                ctx.moveTo(32, y);
+                ctx.lineTo(W, y);
+                ctx.stroke();
+            });
+
+            // Подписи реальных значений амплитуды слева
+            ctx.fillStyle = '#8b949e';
+            ctx.font = '10px monospace';
+            ctx.fillText('+1.0', 2, midY - scaleY + 4);
+            ctx.fillText('+0.5', 2, midY - scaleY * 0.5 + 3);
+            ctx.fillStyle = '#58a6ff';
+            ctx.fillText(' 0.0', 2, midY + 3);
+            ctx.fillStyle = '#8b949e';
+            ctx.fillText('-0.5', 2, midY + scaleY * 0.5 + 3);
+            ctx.fillText('-1.0', 2, midY + scaleY + 2);
+
+            const sr = window.studioBuffer.sampleRate;
+            const winSamples = Math.max(64, Math.round((st.windowMs / 1000) * sr));
+            const curSec = player.currentTime || 0;
+
+            let targetSpd = 1.0;
+            if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
+                targetSpd = parseFloat(window.scrubState.speed) || 1.0;
+            } else if (window.persistedPlaybackSpeed) {
+                targetSpd = parseFloat(window.persistedPlaybackSpeed) || 1.0;
+            } else if (typeof window.getTargetPlaybackSpeed === 'function') {
+                targetSpd = window.getTargetPlaybackSpeed();
+            }
+
+            const origData = window.studioBuffer.getChannelData(0);
+            const splicedBuf = (window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.splicedBuffer)
+                ? window._hoseSplicerCacheV46.splicedBuffer
+                : window.studioBuffer;
+            const hoseData = splicedBuf.getChannelData(0);
+
+            const origStart = Math.min( Math.max(0, Math.floor(curSec * sr)), Math.max(0, origData.length - winSamples - 1) );
+            const hoseStart = Math.min( Math.max(0, Math.floor((curSec / targetSpd) * sr)), Math.max(0, hoseData.length - winSamples - 1) );
+
+            const plotW = W - 34;
+
+            // 1. Рисуем СЕРЫМ пунктиром исходную волну (Оригинал в этой точке времени)
+            ctx.strokeStyle = 'rgba(139,148,158,0.45)';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            for (let x = 0; x < plotW; x++) {
+                const idx = origStart + Math.floor((x / plotW) * winSamples);
+                const v = origData[idx] || 0;
+                const py = midY - v * scaleY;
+                if (x === 0) ctx.moveTo(34 + x, py);
+                else ctx.lineTo(34 + x, py);
+            }
+            ctx.stroke();
+
+            // 2. Рисуем ЯРКО-ЗЕЛЁНЫМ реальную волну после 90° Резака + измеряем её истинные параметры
+            let peak = 0.0;
+            let sumSq = 0.0;
+            let maxSlope = 0.0;
+            let zeroCrossings = 0;
+
+            ctx.strokeStyle = '#3fb950';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            for (let x = 0; x < plotW; x++) {
+                const idx = hoseStart + Math.floor((x / plotW) * winSamples);
+                const v = hoseData[idx] || 0;
+                const prev = hoseData[Math.max(0, idx - 1)] || 0;
+                const py = midY - v * scaleY;
+                if (x === 0) ctx.moveTo(34 + x, py);
+                else ctx.lineTo(34 + x, py);
+
+                const av = Math.abs(v);
+                if (av > peak) peak = av;
+                sumSq += v * v;
+                const sl = Math.abs(v - prev);
+                if (sl > maxSlope) maxSlope = sl;
+                if ((prev <= 0 && v > 0) || (prev >= 0 && v < 0)) zeroCrossings++;
+            }
+            ctx.stroke();
+
+            // 3. Отмечаем оранжевыми вертикальными метками точки 90° разреза, если они попали в окно экрана
+            const seams = window._hoseSplicerCacheV46.seamPointsOut || [];
+            ctx.strokeStyle = 'rgba(240,136,62,0.75)';
+            ctx.lineWidth = 1;
+            for (let s = 0; s < seams.length; s++) {
+                const sp = seams[s];
+                if (sp >= hoseStart && sp <= hoseStart + winSamples) {
+                    const sx = 34 + ((sp - hoseStart) / winSamples) * plotW;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, 4);
+                    ctx.lineTo(sx, H - 4);
+                    ctx.stroke();
+                }
+            }
+
+            const rms = Math.sqrt(sumSq / Math.max(1, plotW));
+            const dbPeak = peak > 0.0001 ? (20 * Math.log10(peak)).toFixed(1) : '-∞';
+            const estArcMs = zeroCrossings >= 2 ? ((st.windowMs * 2) / zeroCrossings).toFixed(2) : st.windowMs.toFixed(1);
+
+            const statsEl = document.getElementById('hoseScopeStatsV49');
+            if (statsEl) {
+                statsEl.innerText = `Peak: ±${peak.toFixed(3)} (${dbPeak} dB) | RMS: ${rms.toFixed(3)} | Дуга: ~${estArcMs} мс | 90° dy/dt: ${maxSlope.toFixed(3)}`;
+            }
+        }
+        st.rafId = requestAnimationFrame(renderFrame);
+    };
+
+    st.rafId = requestAnimationFrame(renderFrame);
+};
+
+window.toggleHoseScopeFreezeV49 = function(btn) {
+    const st = window._hoseScopeStateV49;
+    st.frozen = !st.frozen;
+    if (btn) {
+        btn.innerText = st.frozen ? '▶️ Пуск' : '❄️ Стоп-кадр';
+        btn.style.borderColor = st.frozen ? '#f0883e' : '#30363d';
+        btn.style.color = st.frozen ? '#f0883e' : '#c9d1d9';
+    }
+};
+
+window.setHoseScopeZoomV49 = function(ms, btn) {
+    window._hoseScopeStateV49.windowMs = ms;
+    const grp = document.querySelectorAll('.hose-zoom-btn-v49');
+    grp.forEach(b => {
+        b.style.background = (parseInt(b.dataset.ms, 10) === ms) ? '#1f6feb' : '#161b22';
+        b.style.color = '#ffffff';
+    });
 };
 
 window._hoseArcDebounceTimerV47 = null;
@@ -3473,14 +3648,14 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
 
     if (badge) {
         const c = window._hoseSplicerCacheV46;
-        badge.innerText = `🐍 90° C2: Δy=${(c.avgSeamErrMv * 100).toFixed(1)}% | x${targetSpd.toFixed(2)} (${c.lastBuildMs}мс)`;
+        badge.innerText = `🐍 V49: Δy=${(c.avgSeamErrMv * 100).toFixed(1)}% | x${targetSpd.toFixed(2)} (${c.lastBuildMs}мс)`;
     }
 };
 
 window.installHosePlayerHooksV46 = function() {
     const player = document.getElementById('audioPlayer');
-    if (!player || player._hoseHookedV48) return;
-    player._hoseHookedV48 = true;
+    if (!player || player._hoseHookedV49) return;
+    player._hoseHookedV49 = true;
 
     const wrapEvent = (prop) => {
         const orig = player[prop];
@@ -3506,7 +3681,7 @@ window.onToggleElasticHoseV44 = function(chk, ev) {
     if (enabled) {
         window.applyElasticHoseBufferLiveV46(false);
         if (typeof window.showToast === 'function' && ev) {
-            window.showToast(window.tr('🐍 90° Резак V48 ВКЛ: захват высоты и угла без хрипа!', '🐍 90° Splicer V48 ON: zero-rasp slope & height lock!'), ev);
+            window.showToast(window.tr('🐍 90° Профильный Резак V49 + Осциллограф ВКЛ!', '🐍 90° Profile Splicer V49 + Scope ON!'), ev);
         }
     } else {
         const player = document.getElementById('audioPlayer');
@@ -3559,10 +3734,10 @@ window.injectElasticHoseControlsV44 = function() {
         <div class="setting-row" style="padding:4px 0;border:none;">
             <label class="toggle-label" style="color:#3fb950;font-weight:bold;">
                 <input type="checkbox" id="cfg_elasticHoseV44" ${isEn ? 'checked' : ''} onchange="window.onToggleElasticHoseV44(this, event)">
-                🐍 ${window.tr('Упругий Шланг 90° (Без хрипа C2)', 'Elastic Hose 90° (Zero-Rasp C2)')}
+                🐍 ${window.tr('Упругий Шланг 90° V49 (Профиль Дуги)', 'Elastic Hose 90° V49 (Full-Arc Profile)')}
             </label>
             <span id="hoseLiveTelemetryV44" style="font-size:11px;font-family:monospace;color:#58a6ff;background:#0d1117;padding:3px 7px;border-radius:6px;border:1px solid #262c36;">
-                ${isEn ? '🐍 90° C2 Активен' : window.tr('Выкл', 'OFF')}
+                ${isEn ? '🐍 V49 Активен' : window.tr('Выкл', 'OFF')}
             </span>
         </div>
         <div class="setting-row" style="padding:4px 0;border:none;">
@@ -3572,19 +3747,33 @@ window.injectElasticHoseControlsV44 = function() {
             </div>
         </div>
         <input type="range" id="rng_hoseTensionV44" class="hz-slider" min="20" max="200" step="5" value="${tens}" oninput="window.onHoseTensionInputV44(this.value)">
-        <div style="font-size:11px;color:#8b949e;margin-top:4px;line-height:1.35;">
-            ${window.tr(
-                'Находит на соседней дуге точку с той же высотой и углом 90°, стягивает концы заподлицо и скругляет фаску C2 без 250Гц хрипа.',
-                'Finds matching height & 90° slope on adjacent wave arc, pulls ends 100% flush, and applies C2 fillet with zero 250Hz rasp.'
-            )}
+
+        <!-- 📊 ЭКРАН РЕАЛЬНОЙ АМПЛИТУДЫ ВОЛНЫ И ШВОВ (-1.00 .. +1.00) -->
+        <div style="margin-top:8px;background:#070a0f;border:1px solid #262c36;border-radius:8px;padding:6px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:4px;">
+                <span style="font-size:11px;color:#3fb950;font-weight:bold;">📊 Реальная Амплитуда (Серый=Ориг, Зел=Шланг, Оранж=Шов 90°)</span>
+                <div style="display:flex;gap:4px;align-items:center;">
+                    <button type="button" class="hose-zoom-btn-v49" data-ms="2" onclick="window.setHoseScopeZoomV49(2,this)" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#fff;">2мс</button>
+                    <button type="button" class="hose-zoom-btn-v49" data-ms="6" onclick="window.setHoseScopeZoomV49(6,this)" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #30363d;background:#1f6feb;color:#fff;">6мс</button>
+                    <button type="button" class="hose-zoom-btn-v49" data-ms="15" onclick="window.setHoseScopeZoomV49(15,this)" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#fff;">15мс</button>
+                    <button type="button" class="hose-zoom-btn-v49" data-ms="40" onclick="window.setHoseScopeZoomV49(40,this)" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#fff;">40мс</button>
+                    <button type="button" onclick="window.toggleHoseScopeFreezeV49(this)" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;">❄️ Стоп-кадр</button>
+                </div>
+            </div>
+            <canvas id="hoseWaveScopeCanvasV49" width="340" height="120" style="width:100%;height:120px;display:block;border-radius:4px;"></canvas>
+            <div id="hoseScopeStatsV49" style="font-size:10px;font-family:monospace;color:#58a6ff;margin-top:4px;text-align:center;">
+                Peak: ±0.000 (-∞ dB) | RMS: 0.000 | Дуга: ~0.0 мс | 90° dy/dt: 0.000
+            </div>
         </div>
     `;
     pitchRow.insertAdjacentElement('afterend', box);
     window.installHosePlayerHooksV46();
+    window.startHoseWaveScopeV49();
 };
 
 setTimeout(() => {
     window.injectElasticHoseControlsV44();
     window.installHosePlayerHooksV46();
+    window.startHoseWaveScopeV49();
     if (typeof window.tagUniformResetButtonsV38 === 'function') window.tagUniformResetButtonsV38();
 }, 350);

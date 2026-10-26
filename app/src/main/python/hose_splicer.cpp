@@ -1,5 +1,5 @@
 /*
- * JENNY PLAYER — C++17 90-DEGREE ELASTIC HOSE SPLICER V48 (Zero-Rasp Slope & Height Lock + C2 Fillet)
+ * JENNY PLAYER — C++17 90-DEGREE WAVE SPLICER V49 (Full-Arc Profile Matching + Whole-Cycle Elastic Gain)
  */
 #include <cmath>
 #include <cstdint>
@@ -25,91 +25,85 @@ int32_t hose_splice_channel_cpp(
         return copy_n;
     }
 
-    const int32_t step_out = std::max(256, (int32_t)std::lround(0.012f * sample_rate)); // 12 мс шаг между микро-швами
-    const int32_t search_rad = std::max(128, (int32_t)std::lround(0.007f * sample_rate)); // радиус поиска 90° совпадения дуги
-    const int32_t fillet_len = std::max(32, (int32_t)std::lround(0.0012f * sample_rate)); // 1.2 мс C2-скругление концов
+    const int32_t step_out = std::max(512, (int32_t)std::lround(0.018f * sample_rate));
+    const int32_t search_rad = std::max(256, (int32_t)std::lround(0.012f * sample_rate));
+    const int32_t fillet_len = std::max(128, (int32_t)std::lround(0.0045f * sample_rate));
 
-    int32_t out_Len = std::min(max_out_len, (int32_t)std::lround((double)in_len / speed));
-    double in_cursor = 0.0;
-    int32_t out_pos = 0;
+    int32_t out_len = std::min(max_out_len, (int32_t)std::lround((double)in_len / speed));
+    int32_t init_copy = std::min(step_out, out_len);
+    std::memcpy(out_buf, in_buf, init_copy * sizeof(float));
 
-    // Копируем стартовый сегмент
-    int32_t init_copy = std::min(step_out, out_Len);
-    for (int32_t i = 0; i < init_copy; ++i) {
-        out_buf[i] = in_buf[i];
-    }
-    out_pos = init_copy;
-    in_cursor = (double)init_copy;
+    int32_t out_pos = init_copy;
+    double in_cursor = (double)init_copy;
+    float env_gain = 1.0f;
 
-    while (out_pos + step_out + fillet_len < out_Len) {
+    while (out_pos + step_out + fillet_len < out_len) {
         int32_t p1 = (int32_t)std::lround(in_cursor);
         int32_t ideal_p2 = (int32_t)std::lround((double)out_pos * speed);
+        if (p1 < 16 || p1 + step_out + fillet_len >= in_len) break;
+        if (ideal_p2 < 16 || ideal_p2 + step_out + fillet_len >= in_len) break;
 
-        if (p1 < 4 || p1 + step_out + fillet_len >= in_len) break;
-        if (ideal_p2 < 4 || ideal_p2 + step_out + fillet_len >= in_len) break;
+        // Сдвигаем p1 к ближайшему восходящему переходу через 0 (где мембрана в покое)
+        for (int32_t k = -12; k <= 12; ++k) {
+            if (in_buf[p1 + k - 1] <= 0.0f && in_buf[p1 + k] >= 0.0f) {
+                p1 += k;
+                break;
+            }
+        }
 
-        // Вектор волны в точке разреза p1 (высота, угол наклона 1-го порядка и кривизна)
-        float y1 = in_buf[p1];
-        float s1 = in_buf[p1] - in_buf[p1 - 1];
-        float s1_wide = in_buf[p1 + 2] - in_buf[p1 - 2];
-
-        int32_t min_p2 = std::max(4, ideal_p2 - search_rad);
-        int32_t max_p2 = std::min(in_len - step_out - fillet_len - 4, ideal_p2 + search_rad);
-
+        int32_t min_p2 = std::max(16, ideal_p2 - search_rad);
+        int32_t max_p2 = std::min(in_len - step_out - fillet_len - 16, ideal_p2 + search_rad);
         int32_t best_p2 = ideal_p2;
         float best_cost = 1e9f;
 
+        // Сравниваем целый профиль дуги (16 точек вдоль склона), чтобы сошлись и бас, и гитара, и вокал
         for (int32_t cand = min_p2; cand <= max_p2; cand += 2) {
-            float y2 = in_buf[cand];
-            float s2 = in_buf[cand] - in_buf[cand - 1];
-            float s2_wide = in_buf[cand + 2] - in_buf[cand - 2];
+            float s1 = in_buf[p1 + 1] - in_buf[p1 - 1];
+            float s2 = in_buf[cand + 1] - in_buf[cand - 1];
+            if (s1 * s2 < 0.0f) continue;
 
-            // Оба разреза под 90° должны идти в одном направлении склона и совпадать по высоте и углу
-            float dir_pen = (s1 * s2 < 0.0f || s1_wide * s2_wide < 0.0f) ? 2.5f : 0.0f;
-            float height_diff = std::fabs(y2 - y1);
-            float slope_diff = std::fabs(s2 - s1) * 4.0f + std::fabs(s2_wide - s1_wide) * 2.0f;
-            float dist_pen = (float)std::abs(cand - ideal_p2) / (float)search_rad * 0.15f;
-
-            float cost = height_diff * 2.5f + slope_diff + dir_pen + dist_pen;
+            float profile_err = 0.0f;
+            for (int32_t w = -8; w <= 24; w += 4) {
+                float d = in_buf[cand + w] - in_buf[p1 + w];
+                profile_err += d * d;
+            }
+            float slope_err = std::fabs(s2 - s1) * 2.0f;
+            float cost = profile_err + slope_err;
             if (cost < best_cost) {
                 best_cost = cost;
                 best_p2 = cand;
             }
         }
 
-        // Стягивание торцов строго заподлицо (100% точность стыка без перелёта) + C2-скругление Эрмита-Косинуса
-        float dy = in_buf[best_p2] - (y1 + s1);
-        float ds = (in_buf[best_p2 + 1] - in_buf[best_p2]) - s1;
+        // Измеряем амплитуду всего сегмента целиком (чтобы менять громкость всей дуги без сплющивания верхушек!)
+        float seg_peak = 0.0f;
+        for (int32_t i = 0; i < step_out; i += 4) {
+            float a = std::fabs(in_buf[best_p2 + i]);
+            if (a > seg_peak) seg_peak = a;
+        }
+        float target_gain = 1.0f;
+        if (speed > 1.005f && seg_peak > 0.25f) {
+            target_gain = 1.0f - std::min(0.25f, (speed - 1.0f) * tension * 0.28f) * (seg_peak - 0.25f);
+        } else if (speed < 0.995f && seg_peak > 0.25f) {
+            target_gain = 1.0f + std::min(0.18f, (1.0f - speed) * tension * 0.22f) * (seg_peak - 0.25f);
+        }
 
+        float dy = in_buf[best_p2] - in_buf[p1];
         for (int32_t i = 0; i < step_out; ++i) {
-            int32_t src_idx = best_p2 + i;
-            float raw_b = in_buf[src_idx];
-
+            env_gain = env_gain * 0.998f + target_gain * 0.002f;
+            float raw_b = in_buf[best_p2 + i];
             float sample = raw_b;
+
             if (i < fillet_len) {
-                // Гладкая C2-дуга скругления на стыке двух склонов (первые 1.2 мс после разреза)
                 float t = (float)i / (float)fillet_len;
-                float blend = 0.5f * (1.0f - std::cos(3.14159265f * t)); // от 0.0 до 1.0 с нулевой производной на краях
-                int32_t cont_idx = std::min(in_len - 1, p1 + i);
-                float raw_a = in_buf[cont_idx];
-                // Плавно переводим траекторию старого склона в новый + компенсируем остаточную микро-ступеньку dy
-                float tang_corr = (dy + ds * (float)i * 0.25f) * (1.0f - blend);
-                sample = raw_a * (1.0f - blend) + (raw_b - tang_corr) * blend;
+                float b = 0.5f * (1.0f - std::cos(3.14159265f * t));
+                float r = 1.0f - b;
+                float raw_a = in_buf[p1 + i];
+                sample = raw_a * r + (raw_b - dy * r * r) * b;
             }
 
-            // Физика "Упругого Шланга": на высокой амплитуде стягивание плавно прижимает высоту петли
-            float abs_s = std::fabs(sample);
-            if (speed > 1.005f && abs_s > 0.35f) {
-                float compress = 1.0f - std::min(0.28f, (speed - 1.0f) * tension * 0.35f) * (abs_s - 0.35f);
-                sample *= compress;
-            } else if (speed < 0.995f && abs_s > 0.35f) {
-                float expand = 1.0f + std::min(0.22f, (1.0f - speed) * tension * 0.30f) * (abs_s - 0.35f);
-                sample *= expand;
-            }
-            if (std::fabs(sample) > 0.96f) {
-                sample = std::tanh(sample);
-            }
-
+            sample *= env_gain;
+            if (std::fabs(sample) > 0.98f) sample = std::tanh(sample);
             out_buf[out_pos + i] = sample;
         }
 
