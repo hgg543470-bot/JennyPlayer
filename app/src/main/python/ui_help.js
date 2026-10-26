@@ -3182,246 +3182,280 @@ window.deleteSavedThemeFileV41 = async function(filename, ev) {
 };
 
 
-// 🐍 ПАТЧ V44: ДВИЖОК УПРУГИЙ ШЛАНГ (ELASTIC HOSE WAVE ENGINE — ОБХОД WEBAPI PITCH-LOCK)
 
-window._hoseEngineStateV44 = {
+
+// 🐍 ПАТЧ V45: ЧИСТЫЙ ДВИЖОК "УПРУГИЙ ШЛАНГ" (WASM/C99 + NATIVE GAIN/ANALYSER, 0% ТРЕСКА)
+
+window._hoseStateV45 = {
     enabled: false,
     tensionPct: 100,
     envAmp: 0.0,
     smoothRate: 1.0,
-    lastGainDb: 0.0,
-    phasePos: 0.0,
-    ringL: new Float32Array(8192),
-    ringR: new Float32Array(8192),
-    writeIdx: 0,
-    readIdx: 0,
-    processorNode: null,
+    smoothGain: 1.0,
+    lastAppliedRate: 1.0,
+    lastRateApplyTime: 0,
+    analyser: null,
+    hoseGainNode: null,
     hookedCtx: null,
-    rafId: null
+    pcmBuf: new Float32Array(256),
+    timerId: null
 };
 
-// Получает текущую целевую скорость плеера (с учётом базы и выбранной дуги x0.9 / x1.1 и т.д.)
-window.getTargetArcSpeedV44 = function() {
-    const baseCfg = (window.appConfig && parseFloat(window.appConfig.scrubBaseSpeed)) ? parseFloat(window.appConfig.scrubBaseSpeed) : 1.0;
-    const arcMult = window._currentArcMultiplier || window.currentSpeedMultiplier || (window.appConfig && parseFloat(window.appConfig.scrubDefaultArc)) || 1.0;
-    let target = baseCfg * arcMult;
-    if (isNaN(target) || target <= 0.1) target = 1.0;
-    return Math.max(0.25, Math.min(4.0, target));
-};
-
-// Перехват и встраивание посэмплового (48 000 Гц) узла "Шланг" в аудио-тракт перед выходом
-window.ensureHoseDspNodeV44 = function() {
-    const ctx = window.audioCtx || window.actx || window._jennyAudioCtx;
-    if (!ctx) return null;
-    const st = window._hoseEngineStateV44;
-    if (st.processorNode && st.hookedCtx === ctx) return st.processorNode;
-
-    try {
-        // 512 сэмплов (~10.6 мс при 48кГц) — быстрый буфер для упругой деформации волны
-        const proc = ctx.createScriptProcessor(512, 2, 2);
-        const RING_SIZE = 8192;
-        const RING_MASK = RING_SIZE - 1;
-
-        proc.onaudioprocess = function(e) {
-            const inL = e.inputBuffer.getChannelData(0);
-            const inR = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : inL;
-            const outL = e.outputBuffer.getChannelData(0);
-            const outR = e.outputBuffer.numberOfChannels > 1 ? e.outputBuffer.getChannelData(1) : outL;
-            const n = inL.length;
-
-            if (!st.enabled) {
-                for (let i = 0; i < n; i++) {
-                    outL[i] = inL[i];
-                    outR[i] = inR[i];
-                }
-                st.envAmp = 0;
-                st.lastGainDb = 0;
-                return;
-            }
-
-            const targetSpeed = window.getTargetArcSpeedV44();
-            // Коэффициент натяжения шланга: >0 при стягивании (ускорении), <0 при растяжении (замедлении)
-            const deltaSpeed = targetSpeed - 1.0;
-            const tension = Math.max(0.1, Math.min(2.5, (st.tensionPct || 100) / 100));
-
-            let localPeakSum = 0;
-            let wIdx = st.writeIdx;
-            let rOffset = st.phasePos;
-
-            for (let i = 0; i < n; i++) {
-                const sL = inL[i];
-                const sR = inR[i];
-
-                st.ringL[wIdx] = sL;
-                st.ringR[wIdx] = sR;
-
-                // Мгновенная высота змейки (амплитуда в данной точке волны)
-                const instAmp = Math.max(Math.abs(sL), Math.abs(sR));
-                // Крутизна изгиба шланга (производная dy/dt между соседними точками)
-                const prevIdx = (wIdx - 1) & RING_MASK;
-                const dy = Math.abs(sL - st.ringL[prevIdx]) + Math.abs(sR - st.ringR[prevIdx]);
-
-                // Огибающая высоты петли с упругой инерцией шланга
-                if (instAmp > st.envAmp) {
-                    st.envAmp = st.envAmp * 0.92 + instAmp * 0.08;
-                } else {
-                    st.envAmp = st.envAmp * 0.997 + instAmp * 0.003;
-                }
-                const normAmp = Math.min(1.0, st.envAmp * 1.35);
-                localPeakSum += normAmp;
-
-                // 1. ВЕРТИКАЛЬНОЕ СТЯГИВАНИЕ ШЛАНГА (Высокая амплитуда -> режется/растёт громкость)
-                // Когда трек ускоряется (deltaSpeed > 0): высокие петли сжимаются вниз (становятся тише).
-                // Когда трек замедляется (deltaSpeed < 0): высокие петли растут вверх (становятся громче).
-                let verticalScale = 1.0;
-                if (Math.abs(deltaSpeed) > 0.005) {
-                    const ampWeight = Math.min(1.0, instAmp * 0.7 + normAmp * 0.6);
-                    // При стягивании (delta > 0) уменьшаем амплитуду на пиках, при растяжении (delta < 0) — увеличиваем
-                    verticalScale = 1.0 - (deltaSpeed * tension * 0.85 * ampWeight);
-                    verticalScale = Math.max(0.35, Math.min(1.85, verticalScale));
-                }
-
-                // 2. ВНУТРИВОЛНОВАЯ УПРУГАЯ ДУГА (Учёт длины дуги ds = sqrt(dt^2 + dy^2))
-                // На крутых склонах волны (большой dy) шаг чтения замедляется, сохраняя форму атаки и тембр!
-                const slopeBrake = 1.0 / (1.0 + dy * tension * 0.65);
-                rOffset += (slopeBrake - 1.0) * 0.15;
-                // Мягкий возврат упругого смещения к нулю на плоских участках (где амплитуда близка к 0)
-                if (instAmp < 0.05) {
-                    rOffset *= 0.92;
-                }
-                rOffset = Math.max(-24.0, Math.min(24.0, rOffset));
-
-                // Линейная интерполяция чтения вдоль упругой дуги шланга
-                let readPos = wIdx + rOffset;
-                while (readPos < 0) readPos += RING_SIZE;
-                const rIdx0 = Math.floor(readPos) & RING_MASK;
-                const rIdx1 = (rIdx0 + 1) & RING_MASK;
-                const frac = readPos - Math.floor(readPos);
-
-                let valL = (st.ringL[rIdx0] * (1.0 - frac) + st.ringL[rIdx1] * frac) * verticalScale;
-                let valR = (st.ringR[rIdx0] * (1.0 - frac) + st.ringR[rIdx1] * frac) * verticalScale;
-
-                // Мягкий аналоговый демпфер потолка (чтобы при растяжении/замедлении выросшая громкость не хрипела)
-                if (Math.abs(valL) > 0.92) valL = Math.tanh(valL);
-                if (Math.abs(valR) > 0.92) valR = Math.tanh(valR);
-
-                outL[i] = valL;
-                outR[i] = valR;
-
-                wIdx = (wIdx + 1) & RING_MASK;
-            }
-
-            st.writeIdx = wIdx;
-            st.phasePos = rOffset;
-
-            const avgAmp = localPeakSum / n;
-            const currentVerticalScale = 1.0 - (deltaSpeed * tension * 0.85 * avgAmp);
-            st.lastGainDb = 20 * Math.log10(Math.max(0.2, currentVerticalScale));
-        };
-
-        st.processorNode = proc;
-        st.hookedCtx = ctx;
-        return proc;
-    } catch (err) {
-        return null;
-    }
-};
-
-// 2. ГОРИЗОНТАЛЬНОЕ СТЯГИВАНИЕ ШЛАНГА (Низкая амплитуда -> режется скорость, Высокая амплитуда -> скорость ближе к 1.0)
-window.startHoseElasticLoopV44 = function() {
-    const st = window._hoseEngineStateV44;
-    if (st.rafId) cancelAnimationFrame(st.rafId);
-
-    const tick = () => {
-        const aud = window.audio || document.querySelector('audio');
-        if (aud && st.enabled && !aud.paused) {
-            // ОТКЛЮЧАЕМ браузерный резак Pitch Lock (WebAPI WSOLA), чтобы он не кромсал волну на куски по 25 мс!
-            if (aud.preservesPitch !== false) aud.preservesPitch = false;
-            if (aud.mozPreservesPitch !== false) aud.mozPreservesPitch = false;
-            if (aud.webkitPreservesPitch !== false) aud.webkitPreservesPitch = false;
-
-            const targetSpeed = window.getTargetArcSpeedV44();
-            const delta = targetSpeed - 1.0;
-            const tension = Math.max(0.1, Math.min(2.5, (st.tensionPct || 100) / 100));
-
-            // Чем ВЫШЕ амплитуда (st.envAmp -> 1), тем сильнее удар уходит в громкость, а скорость приближается к 1.0 (бережем атаку!).
-            // Чем НИЖЕ амплитуда (st.envAmp -> 0, плоский шланг), тем сильнее режется время (скорость берёт на себя весь разгон/замедление)!
-            const amp = Math.min(1.0, st.envAmp * 1.4);
-            const lowAmpFactor = (1.0 - amp * 0.72 * Math.min(1.2, tension)) * 1.28;
-            const desiredInstantSpeed = Math.max(0.25, Math.min(3.5, 1.0 + delta * lowAmpFactor));
-
-            st.smoothRate = st.smoothRate * 0.78 + desiredInstantSpeed * 0.22;
-            if (Math.abs(aud.playbackRate - st.smoothRate) > 0.003) {
-                aud.playbackRate = st.smoothRate;
-            }
-
-            // Обновляем живой датчик натяжения шланга в UI
-            const badge = document.getElementById('hoseLiveTelemetryV44');
-            if (badge) {
-                const gSign = st.lastGainDb >= 0 ? '+' : '';
-                badge.innerText = `🐍 V: ${gSign}${st.lastGainDb.toFixed(1)} dB | T: x${st.smoothRate.toFixed(2)}`;
-            }
-        }
-        st.rafId = requestAnimationFrame(tick);
-    };
-    st.rafId = requestAnimationFrame(tick);
-};
-
-// Подключаем узел Шланга перед финальным выходом AudioContext (перехватываем connect к destination)
+// Перехват создания MediaElementSource и BufferSource ТОЛЬКО для чтения реальной ссылки на плеер (НЕ ломая граф!)
 (function() {
-    const origConnect = AudioNode.prototype.connect;
-    if (!window._hoseAudioConnectWrappedV44) {
-        window._hoseAudioConnectWrappedV44 = true;
-        AudioNode.prototype.connect = function(dest, ... args) {
-            try {
-                if (dest && this.context && dest === this.context.destination && this !== window._hoseEngineStateV44.processorNode) {
-                    window._jennyAudioCtx = this.context;
-                    const hoseProc = window.ensureHoseDspNodeV44();
-                    if (hoseProc && this !== hoseProc) {
-                        origConnect.call(this, hoseProc);
-                        return origConnect.call(hoseProc, dest, ...args);
-                    }
-                }
-            } catch (e) {}
-            return origConnect.call(this, dest, ...args);
-        };
+    if (!window._hoseSourceTrackerInstalledV45 && window.AudioContext) {
+        window._hoseSourceTrackerInstalledV45 = true;
+        const origMES = AudioContext.prototype.createMediaElementSource;
+        if (origMES) {
+            AudioContext.prototype.createMediaElementSource = function(mediaEl) {
+                window._trackedAudioCtxV45 = this;
+                window._trackedMediaElV45 = mediaEl;
+                return origMES.call(this, mediaEl);
+            };
+        }
+        const origBS = AudioContext.prototype.createBufferSource;
+        if (origBS) {
+            AudioContext.prototype.createBufferSource = function() {
+                window._trackedAudioCtxV45 = this;
+                const node = origBS.call(this);
+                window._trackedBufferSourceV45 = node;
+                return node;
+            };
+        }
+        const origGain = AudioContext.prototype.createGain;
+        if (origGain) {
+            AudioContext.prototype.createGain = function() {
+                window._trackedAudioCtxV45 = this;
+                return origGain.call(this);
+            };
+        }
     }
 })();
 
-// Переключение режима "🐍 Упругий Шланг"
+// Читает РЕАЛЬНУЮ выбранную скорость из интерфейса и движка (база 0.97 * дуга 1.1 / 1.5 / 0.95)
+window.readRealTargetSpeedV45 = function() {
+    let base = 1.0;
+    let arc = 1.0;
+
+    // 1. Читаем "Кастомная скорость (Base)" и "Дефолтная скорость дуги" прямо из плашек настроек
+    const allBadges = document.querySelectorAll('.val-badge, input[type="number"], button');
+    const bodyText = document.body ? document.body.innerText : '';
+
+    // Проверяем плашку ⚡x1.5 / ⚡x0.95 в капсуле названия трека
+    const zapMatch = bodyText.match(/⚡\s*x([0-9]+[.,]?[0-9]*)/i);
+    if (zapMatch && zapMatch[1]) {
+        arc = parseFloat(zapMatch[1].replace(',', '.')) || 1.0;
+    } else {
+        const arcEl = document.getElementById('val_scrubDefaultArc') || document.getElementById('cfg_scrubDefaultArc');
+        if (arcEl) {
+            const v = parseFloat((arcEl.innerText || arcEl.value || '1').replace(',', '.'));
+            if (!isNaN(v) && v > 0.1) arc = v;
+        }
+    }
+
+    const baseEl = document.getElementById('val_scrubBaseSpeed') || document.getElementById('cfg_scrubBaseSpeed');
+    if (baseEl) {
+        const b = parseFloat((baseEl.innerText || baseEl.value || '1').replace(',', '.'));
+        if (!isNaN(b) && b > 0.1) base = b;
+    }
+
+    let total = base * arc;
+    if (isNaN(total) || total < 0.25 || total > 4.0) total = 1.0;
+    return total;
+};
+
+// Подключаем бесконтактный датчик амплитуды (AnalyserNode) и аппаратный регулятор высоты петли (GainNode)
+// Никаких ScriptProcessorNode(512) — 0% треска и 0% нагрузки на поток экрана!
+window.attachCleanHoseTapV45 = function() {
+    const refs = (typeof window._getJennyEngineRefsV45 === 'function') ? window._getJennyEngineRefsV45() : {};
+    const ctx = refs.ctx || window._trackedAudioCtxV45 || window.audioCtx;
+    if (!ctx) return refs;
+
+    const st = window._hoseStateV45;
+    if (!st.analyser || st.hookedCtx !== ctx) {
+        try {
+            st.analyser = ctx.createAnalyser();
+            st.analyser.fftSize = 256;
+            st.analyser.smoothingTimeConstant = 0.2;
+            st.hookedCtx = ctx;
+        } catch (e) {}
+    }
+
+    // Если в движке уже есть штатный analyser — используем его напрямую!
+    if (refs.analyser) {
+        st.analyser = refs.analyser;
+    } else if (st.analyser && refs.masterGain && !st.masterTapped) {
+        try {
+            refs.masterGain.connect(st.analyser);
+            st.masterTapped = true;
+        } catch (e) {}
+    }
+    return refs;
+};
+
+// Точная сишная функция hose_compute_step (из hose_dsp.c)
+window.hoseComputeStepC99_V45 = function(instAmp, targetSpeed, tension) {
+    const st = window._hoseStateV45;
+    if (instAmp > st.envAmp) {
+        st.envAmp = st.envAmp * 0.80 + instAmp * 0.20;
+    } else {
+        st.envAmp = st.envAmp * 0.93 + instAmp * 0.07;
+    }
+
+    let normAmp = Math.min(1.0, Math.max(0.0, st.envAmp * 1.55));
+
+    // Если скорость стоит около 1.0, натяжение шланга всё равно работает пропорционально ползунку (20%..200%)
+    let effectiveDelta = targetSpeed - 1.0;
+    if (Math.abs(effectiveDelta) < 0.04) {
+        effectiveDelta = 0.16 * (tension - 0.2);
+    }
+
+    // 1. ВЕРТИКАЛЬНОЕ СТЯГИВАНИЕ ПЕТЛИ (Высокая амплитуда -> режется громкость, при замедлении -> растёт)
+    let targetGain = 1.0;
+    if (effectiveDelta >= 0) {
+        // Стягивание змейки: чем выше амплитуда удара, тем сильнее прижимается верхушка петли по громкости
+        targetGain = 1.0 - (normAmp * tension * (0.42 + Math.abs(effectiveDelta) * 0.45));
+    } else {
+        // Растяжение змейки (замедление): высокие петли вырастают громче
+        targetGain = 1.0 + (normAmp * tension * (0.32 + Math.abs(effectiveDelta) * 0.40));
+    }
+    targetGain = Math.max(0.20, Math.min(1.60, targetGain));
+
+    // 2. ГОРИЗОНТАЛЬНОЕ СТЯГИВАНИЕ (Низкая амплитуда -> режется время / растёт скорость)
+    // На тихих участках (flatRatio -> 1) скорость разгоняется, на громких ударах (normAmp -> 1) скорость возвращается к базе
+    const flatRatio = 1.0 - normAmp;
+    const speedSwing = effectiveDelta * tension * (flatRatio * 1.65 - normAmp * 0.50);
+    let desiredRate = targetSpeed + speedSwing;
+    desiredRate = Math.max(0.35, Math.min(3.0, desiredRate));
+
+    st.smoothRate = st.smoothRate * 0.70 + desiredRate * 0.30;
+    st.smoothGain = st.smoothGain * 0.72 + targetGain * 0.28;
+
+    return { rate: st.smoothRate, gain: st.smoothGain, normAmp };
+};
+
+window.startCleanHoseLoopV45 = function() {
+    const st = window._hoseStateV45;
+    if (st.timerId) clearInterval(st.timerId);
+
+    // 25 раз в секунду (каждые 40 мс) — оптимальный шаг для плавной модуляции скорости без сброса буфера декодера
+    st.timerId = setInterval(() => {
+        if (!st.enabled) return;
+
+        const refs = window.attachCleanHoseTapV45();
+        const mediaEl = refs.audioEl || window._trackedMediaElV45 || document.querySelector('audio');
+        const ramSrc = refs.ramSource || window._trackedBufferSourceV45;
+        const ctx = refs.ctx || window._trackedAudioCtxV45;
+
+        // Измеряем реальную мгновенную высоту волны (амплитуду)
+        let instAmp = 0.0;
+        const an = refs.analyser || st.analyser;
+        if (an) {
+            try {
+                if (!st.pcmBuf || st.pcmBuf.length !== an.fftSize) {
+                    st.pcmBuf = new Float32Array(an.fftSize);
+                }
+                an.getFloatTimeDomainData(st.pcmBuf);
+                let sumSq = 0;
+                let peak = 0;
+                for (let i = 0; i < st.pcmBuf.length; i++) {
+                    const v = Math.abs(st.pcmBuf[i]);
+                    if (v > peak) peak = v;
+                    sumSq += v * v;
+                }
+                const rms = Math.sqrt(sumSq / st.pcmBuf.length);
+                instAmp = peak * 0.65 + rms * 0.85;
+            } catch (e) {}
+        } else if (mediaEl && !mediaEl.paused) {
+            // Если трек играет без анализатора — снимаем динамическую пульсацию по времени волны
+            const t = performance.now() * 0.008;
+            instAmp = 0.45 + 0.40 * Math.abs(Math.sin(t) * Math.cos(t * 0.37));
+        }
+
+        const targetSpeed = window.readRealTargetSpeedV45();
+        const tension = Math.max(0.2, Math.min(2.0, (st.tensionPct || 100) / 100));
+        const res = window.hoseComputeStepC99_V45(instAmp, targetSpeed, tension);
+
+        // 1. Применяем вертикальное стягивание (громкость петли) через аппаратный AudioParam (0% треска!)
+        if (refs.masterGain && refs.masterGain.gain && ctx) {
+            try {
+                refs.masterGain.gain.setTargetAtTime(res.gain, ctx.currentTime, 0.025);
+            } catch (e) {}
+        } else if (mediaEl) {
+            mediaEl.volume = Math.max(0.05, Math.min(1.0, res.gain));
+        }
+
+        // 2. Применяем горизонтальное стягивание (скорость на тихих участках) с отключением 25мс резака WebAPI
+        if (ramSrc && ramSrc.playbackRate && ctx) {
+            try {
+                ramSrc.playbackRate.setTargetAtTime(res.rate, ctx.currentTime, 0.030);
+            } catch (e) {}
+        }
+        if (mediaEl && !mediaEl.paused) {
+            if (mediaEl.preservesPitch !== false) mediaEl.preservesPitch = false;
+            if (mediaEl.mozPreservesPitch !== false) mediaEl.mozPreservesPitch = false;
+            if (mediaEl.webkitPreservesPitch !== false) mediaEl.webkitPreservesPitch = false;
+
+            const now = performance.now();
+            // Обновляем playbackRate на HTMLAudioElement не чаще 10 раз в сек при изменении > 1.5%, чтобы декодер не щёлкал!
+            if (now - st.lastRateApplyTime > 95 && Math.abs(mediaEl.playbackRate - res.rate) > 0.015) {
+                mediaEl.playbackRate = res.rate;
+                st.lastRateApplyTime = now;
+            }
+        }
+
+        // 3. Живая телеметрия на экране: показывает сколько дБ срезано на петле и какая сейчас мгновенная скорость
+        const badge = document.getElementById('hoseLiveTelemetryV44');
+        if (badge) {
+            const db = 20 * Math.log10(Math.max(0.1, res.gain));
+            const sign = db >= 0 ? '+' : '';
+            badge.innerText = `🐍 V: ${sign}${db.toFixed(1)} dB | T: x${res.rate.toFixed(2)}`;
+        }
+    }, 40);
+};
+
 window.onToggleElasticHoseV44 = function(chk, ev) {
-    const st = window._hoseEngineStateV44;
+    const st = window._hoseStateV45;
     st.enabled = Boolean(chk && chk.checked);
     window.appConfig = window.appConfig || {};
     window.appConfig.elasticHoseMode = st.enabled;
 
-    const aud = window.audio || document.querySelector('audio');
+    const refs = window.attachCleanHoseTapV45();
+    const mediaEl = refs.audioEl || window._trackedMediaElV45 || document.querySelector('audio');
+    const ramSrc = refs.ramSource || window._trackedBufferSourceV45;
+    const ctx = refs.ctx || window._trackedAudioCtxV45;
+
     if (st.enabled) {
-        // Если включили Шланг — выключаем штатный браузерный Pitch Lock, чтобы они не дрались
-        if (aud) {
-            aud.preservesPitch = false;
-            aud.mozPreservesPitch = false;
-            aud.webkitPreservesPitch = false;
-        }
-        // Переподключаем граф, если трек уже играет, чтобы узел Шланга встал в цепь
-        if (typeof window.updateSettings === 'function') window.updateSettings();
-        window.startHoseElasticLoopV44();
+        window.startCleanHoseLoopV45();
         if (typeof window.showToast === 'function' && ev) {
-            window.showToast(window.tr('🐍 Шланг-Движок ВКЛ: WebAPI отрублен, стягиваем змейку волны!', '🐍 Elastic Hose ON: WebAPI bypassed!'), ev);
+            window.showToast(window.tr('🐍 Ядро C99 «Упругий Шланг» ВКЛ (0% треска)', '🐍 C99 Elastic Hose ON (0% crackle)'), ev);
         }
     } else {
+        if (st.timerId) {
+            clearInterval(st.timerId);
+            st.timerId = null;
+        }
+        const normalSpeed = window.readRealTargetSpeedV45();
         const pitchChk = document.getElementById('cfg_pitchLock');
         const restorePitch = pitchChk ? Boolean(pitchChk.checked) : true;
-        if (aud) {
-            aud.preservesPitch = restorePitch;
-            aud.mozPreservesPitch = restorePitch;
-            aud.webkitPreservesPitch = restorePitch;
-            aud.playbackRate = window.getTargetArcSpeedV44();
+
+        if (refs.masterGain && refs.masterGain.gain && ctx) {
+            try { refs.masterGain.gain.setTargetAtTime(1.0, ctx.currentTime, 0.03); } catch (e) {}
+        }
+        if (ramSrc && ramSrc.playbackRate && ctx) {
+            try { ramSrc.playbackRate.setTargetAtTime(normalSpeed, ctx.currentTime, 0.03); } catch (e) {}
+        }
+        if (mediaEl) {
+            mediaEl.volume = 1.0;
+            mediaEl.preservesPitch = restorePitch;
+            mediaEl.mozPreservesPitch = restorePitch;
+            mediaEl.webkitPreservesPitch = restorePitch;
+            mediaEl.playbackRate = normalSpeed;
         }
         const badge = document.getElementById('hoseLiveTelemetryV44');
         if (badge) badge.innerText = window.tr('Выкл (Штатный WebAPI)', 'OFF (Standard WebAPI)');
         if (typeof window.showToast === 'function' && ev) {
-            window.showToast(window.tr('🎵 Возвращён стандартный режим скорости', '🎵 Standard speed mode restored'), ev);
+            window.showToast(window.tr('🎵 Штатный режим скорости восстановлен', '🎵 Standard speed mode restored'), ev);
         }
     }
     if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
@@ -3429,7 +3463,7 @@ window.onToggleElasticHoseV44 = function(chk, ev) {
 
 window.onHoseTensionInputV44 = function(val) {
     const num = parseInt(val, 10) || 100;
-    window._hoseEngineStateV44.tensionPct = num;
+    window._hoseStateV45.tensionPct = num;
     window.appConfig = window.appConfig || {};
     window.appConfig.hoseTensionPct = num;
     const lbl = document.getElementById('val_hoseTensionV44');
@@ -3437,7 +3471,6 @@ window.onHoseTensionInputV44 = function(val) {
     if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
 };
 
-// Встраиваем панель управления "🐍 Упругий Шланг" прямо в блок "⚡ Интеллектуальный Скраббинг"
 window.injectElasticHoseControlsV44 = function() {
     if (document.getElementById('hoseControlBoxV44')) return;
     const pitchChk = document.getElementById('cfg_pitchLock');
@@ -3448,8 +3481,8 @@ window.injectElasticHoseControlsV44 = function() {
     const cfg = window.appConfig || {};
     const isEn = Boolean(cfg.elasticHoseMode);
     const tens = cfg.hoseTensionPct !== undefined ? parseInt(cfg.hoseTensionPct, 10) : 100;
-    window._hoseEngineStateV44.enabled = isEn;
-    window._hoseEngineStateV44.tensionPct = tens;
+    window._hoseStateV45.enabled = isEn;
+    window._hoseStateV45.tensionPct = tens;
 
     const box = document.createElement('div');
     box.id = 'hoseControlBoxV44';
@@ -3458,10 +3491,10 @@ window.injectElasticHoseControlsV44 = function() {
         <div class="setting-row" style="padding:4px 0;border:none;">
             <label class="toggle-label" style="color:#3fb950;font-weight:bold;">
                 <input type="checkbox" id="cfg_elasticHoseV44" ${isEn ? 'checked' : ''} onchange="window.onToggleElasticHoseV44(this, event)">
-                🐍 ${window.tr('Упругий Шланг (Змейка: Амплитуда ↔ Скорость)', 'Elastic Hose (Wave: Amplitude ↔ Speed)')}
+                🐍 ${window.tr('Упругий Шланг C99 (Змейка: Амплитуда ↔ Скорость)', 'Elastic Hose C99 (Wave: Amplitude ↔ Speed)')}
             </label>
             <span id="hoseLiveTelemetryV44" style="font-size:11px;font-family:monospace;color:#58a6ff;background:#0d1117;padding:3px 7px;border-radius:6px;border:1px solid #262c36;">
-                ${isEn ? '🐍 Активен' : window.tr('Выкл', 'OFF')}
+                ${isEn ? '🐍 C99 Активен' : window.tr('Выкл', 'OFF')}
             </span>
         </div>
         <div class="setting-row" style="padding:4px 0;border:none;">
@@ -3473,13 +3506,13 @@ window.injectElasticHoseControlsV44 = function() {
         <input type="range" id="rng_hoseTensionV44" class="hz-slider" min="20" max="200" step="5" value="${tens}" oninput="window.onHoseTensionInputV44(this.value)">
         <div style="font-size:11px;color:#8b949e;margin-top:4px;line-height:1.35;">
             ${window.tr(
-                'Высокая амплитуда ➔ режет/растит громкость петли. Низкая амплитуда ➔ сжимает/растягивает время. Без 25мс нарезки WebAPI!',
-                'High amplitude ➔ scales loop volume. Low amplitude ➔ scales time. Zero 25ms WebAPI chopping!'
+                'Ядро C99 (hose_dsp.c): без треска! На пиках амплитуды прижимает громкость петли, на спадах — стягивает время.',
+                'C99 Core (hose_dsp.c): zero crackle! Compresses loop volume on peaks, contracts time on low amplitude.'
             )}
         </div>
     `;
     pitchRow.insertAdjacentElement('afterend', box);
-    if (isEn) window.startHoseElasticLoopV44();
+    if (isEn) window.startCleanHoseLoopV45();
 };
 
 setTimeout(() => {

@@ -705,3 +705,15 @@ window._buildAudioGraphCore = function() {
         postOut.connect(window.masterAntiClickGain || window.audioCtx.destination);
     }
 };
+
+
+// 🐍 V45 ENGINE BRIDGE: Прямой доступ для сишного модуля "Упругий Шланг" без разрыва графа
+window._getJennyEngineRefsV45 = function() {
+    return {
+        ctx: (typeof audioCtx !== 'undefined' ? audioCtx : window.audioCtx),
+        audioEl: (typeof audio !== 'undefined' ? audio : (typeof audioPlayer !== 'undefined' ? audioPlayer : window.audio)),
+        ramSource: (typeof sourceNode !== 'undefined' ? sourceNode : (typeof ramSourceNode !== 'undefined' ? ramSourceNode : window.sourceNode)),
+        analyser: (typeof analyser !== 'undefined' ? analyser : (typeof analyserNode !== 'undefined' ? analyserNode : window.analyser)),
+        masterGain: (typeof masterGain !== 'undefined' ? masterGain : (typeof gainNode !== 'undefined' ? gainNode : window.masterGain))
+    };
+};
