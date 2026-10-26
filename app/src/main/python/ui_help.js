@@ -3294,13 +3294,15 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
         if (idealP2 < 32 || idealP2 + stepOut + filletLen + 32 >= inLen) break;
 
         // 1. Привязываем первую точку разреза p1 к восходящему переходу через 0 (мембрана в нуле, угол 90° к склону)
-        for (let k = -24; k <= 24; k++) {
-            const idx = p1 + k;
-            if (in0[idx - 1] <= 0.0 && in0[idx] >= 0.0) {
-                p1 = idx;
-                break;
-            }
+        let advK = 0;
+        for (let k = 0; k <= 36; k++) {
+            if (in0[inCursor + k - 1] <= 0.0 && in0[inCursor + k] >= 0.0) { advK = k; break; }
         }
+        for (let k = 0; k < advK && outPos < outLen; k++) {
+            for (let c = 0; c < numCh; c++) chOut[c][outPos] = chIn[c][inCursor] * smoothGain;
+            outPos++; inCursor++;
+        }
+        p1 = inCursor;
 
         const s1L = in0[p1 + 1] - in0[p1 - 1];
         const s1R = in1[p1 + 1] - in1[p1 - 1];
@@ -3354,7 +3356,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
 
         totalSeamDiff += Math.abs(in0[bestP2] - in0[p1]);
         seamCount++;
-        seamPoints.push(outPos);
+        seamPoints.push(outPos); if(!cache.seamLogs) cache.seamLogs=[]; if(seamCount===1) cache.seamLogs=[]; cache.seamLogs.push({idx:seamCount, outPos:outPos, t:(outPos*spd)/sr, p1:p1, p2:bestP2, shift:bestP2-p1, dy:Math.abs(in0[bestP2]-in0[p1]), sA:s1L, sB:in0[bestP2+1]-in0[bestP2-1]});
 
         // 3. Оцениваем высоту петли всего участка (чтобы плавно менять громкость целой дуги БЕЗ сплющивания верхушек!)
         let segPeak = 0.0;
@@ -3384,7 +3386,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
                 if (i < filletLen) {
                     const b = blendCurve[i];
                     const contVal = inp[p1 + i];
-                    const pulledNew = v - dy * tangDecay[i];
+                    const pulledNew = v;
                     v = contVal * (1.0 - b) + pulledNew * b;
                 }
 
@@ -3779,174 +3781,39 @@ setTimeout(() => {
 }, 350);
 
 
-// 🐍 ПАТЧ V50: УСТРАНЕНИЕ РАЗРЫВА p1 ("БУЛАВКИ") + ОТЛАДЧИК hose_debug_log.txt
-window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
-    if (!srcBuffer || !window.audioCtx) return srcBuffer;
-    const spd = Math.max(0.25, Math.min(3.0, parseFloat(speed) || 1.0));
-    const tension = Math.max(0.2, Math.min(2.0, (parseFloat(tensionPct) || 100) / 100));
-    const cache = window._hoseSplicerCacheV46;
-    if (Math.abs(spd - 1.0) < 0.002) {
-        cache.splicedBuffer = srcBuffer; cache.seamPointsOut = []; cache.maxBoundaryStep = 0;
-        return srcBuffer;
-    }
-    if (cache.srcBuffer === srcBuffer && Math.abs(cache.speed - spd) < 0.002 && Math.abs(cache.tension - tension) < 0.02 && cache.splicedBuffer) {
-        return cache.splicedBuffer;
-    }
-    const t0 = performance.now(), sr = srcBuffer.sampleRate, numCh = srcBuffer.numberOfChannels, inLen = srcBuffer.length;
-    const outLen = Math.max(1024, Math.floor(inLen / spd));
-    const outBuffer = window.audioCtx.createBuffer(numCh, outLen, sr);
-    const chIn = [], chOut = [];
-    for (let c = 0; c < numCh; c++) { chIn.push(srcBuffer.getChannelData(c)); chOut.push(outBuffer.getChannelData(c)); }
-
-    const baseStep = Math.max(640, Math.round(0.020 * sr));
-    const searchRad = Math.max(320, Math.round(0.013 * sr));
-    const filletLen = Math.max(192, Math.round(0.0055 * sr));
-    const blend = new Float32Array(filletLen);
-    for (let i = 0; i < filletLen; i++) blend[i] = 0.5 * (1.0 - Math.cos(Math.PI * i / filletLen));
-
-    const in0 = chIn[0], in1 = numCh > 1 ? chIn[1] : in0;
-    const initCopy = Math.min(baseStep, outLen, inLen);
-    for (let c = 0; c < numCh; c++) for (let i = 0; i < initCopy; i++) chOut[c][i] = chIn[c][i];
-
-    let outPos = initCopy, inCursor = initCopy, seamCount = 0, totalDiff = 0, maxJump = 0;
-    const seamPoints = [], seamLogs = [];
-    const vertFactor = Math.min(0.26, Math.abs(spd - 1.0) * tension * 0.28);
-    let smoothGain = 1.0;
-
-    while (outPos + baseStep + filletLen + 128 < outLen) {
-        const stepOut = baseStep + (((seamCount * 73) & 127) - 64) * 2;
-        if (inCursor < 32 || inCursor + stepOut + filletLen + 64 >= inLen) break;
-
-        // Доводим inCursor до восходящего 0.0 БЕЗ ПРЫЖКА (копируем все k сэмплов 1:1!)
-        let advK = 0;
-        for (let k = 0; k <= 40; k++) {
-            if (in0[inCursor + k - 1] <= 0.0 && in0[inCursor + k] >= 0.0) { advK = k; break; }
-        }
-        for (let k = 0; k < advK && outPos < outLen; k++) {
-            for (let c = 0; c < numCh; c++) chOut[c][outPos] = chIn[c][inCursor] * smoothGain;
-            outPos++; inCursor++;
-        }
-
-        const p1 = inCursor, idealP2 = Math.round(outPos * spd);
-        if (p1 + stepOut + filletLen + 32 >= inLen || idealP2 < 32 || idealP2 + stepOut + filletLen + 32 >= inLen) break;
-
-        const s1L = in0[p1 + 1] - in0[p1 - 1], s1R = in1[p1 + 1] - in1[p1 - 1], bs1 = in0[p1 + 12] - in0[p1 - 12];
-        const minP2 = Math.max(32, idealP2 - searchRad), maxP2 = Math.min(inLen - stepOut - filletLen - 32, idealP2 + searchRad);
-        let bestP2 = idealP2, bestCost = 1e9;
-
-        const evalCand = (cand) => {
-            const s2L = in0[cand + 1] - in0[cand - 1], bs2 = in0[cand + 12] - in0[cand - 12];
-            if (s1L * s2L < 0 || bs1 * bs2 < 0) return 1e9;
-            let err = 0.0;
-            for (let w = 0; w < filletLen; w += 12) {
-                const dL = in0[cand + w] - in0[p1 + w], dR = in1[cand + w] - in1[p1 + w];
-                err += dL * dL + dR * dR;
-            }
-            const startDiff = Math.abs(in0[cand] - in0[p1]) + Math.abs(in1[cand] - in1[p1]);
-            const slDiff = Math.abs(s2L - s1L) + Math.abs((in1[cand + 1] - in1[cand - 1]) - s1R);
-            return err * 1.4 + startDiff * 4.5 + slDiff * 3.0;
-        };
-
-        for (let cand = minP2; cand <= maxP2; cand += 3) {
-            const c = evalCand(cand); if (c < bestCost) { bestCost = c; bestP2 = cand; }
-        }
-        for (let cand = Math.max(minP2, bestP2 - 2); cand <= Math.min(maxP2, bestP2 + 2); cand++) {
-            const c = evalCand(cand); if (c < bestCost) { bestCost = c; bestP2 = cand; }
-        }
-
-        let segPeak = 0.0;
-        for (let i = 0; i < stepOut; i += 8) {
-            const a = Math.max(Math.abs(in0[bestP2 + i]), Math.abs(in1[bestP2 + i]));
-            if (a > segPeak) segPeak = a;
-        }
-        let targetGain = 1.0;
-        if (segPeak > 0.25) targetGain = spd > 1.0 ? (1.0 - vertFactor * (segPeak - 0.25)) : (1.0 + vertFactor * 0.7 * (segPeak - 0.25));
-
-        const prevL = chOut[0][outPos - 1];
-        const expStep = Math.abs(in0[p1] * smoothGain - prevL);
-
-        for (let c = 0; c < numCh; c++) {
-            const inp = chIn[c], out = chOut[c];
-            let g = smoothGain;
-            for (let i = 0; i < stepOut; i++) {
-                g = g * 0.9985 + targetGain * 0.0015;
-                let v = inp[bestP2 + i];
-                if (i < filletLen) v = inp[p1 + i] * (1.0 - blend[i]) + v * blend[i];
-                out[outPos + i] = v * g;
-            }
-            if (c === numCh - 1) smoothGain = g;
-        }
-
-        const jErr = Math.abs(Math.abs(chOut[0][outPos] - prevL) - expStep);
-        if (jErr > maxJump) maxJump = jErr;
-        const dy = Math.abs(in0[bestP2] - in0[p1]);
-        totalDiff += dy;
-
-        seamLogs.push({
-            idx: seamCount, outPos, t: (outPos * spd) / sr, p1, p2: bestP2,
-            shift: bestP2 - p1, dy, sA: s1L, sB: in0[bestP2 + 1] - in0[bestP2 - 1], jErr, peak: segPeak
-        });
-        seamCount++; seamPoints.push(outPos);
-        outPos += stepOut; inCursor = bestP2 + stepOut;
-    }
-
-    while (outPos < outLen && Math.round(inCursor) < inLen) {
-        const idx = Math.min(inLen - 1, Math.round(inCursor));
-        for (let c = 0; c < numCh; c++) chOut[c][outPos] = chIn[c][idx] * smoothGain;
-        outPos++; inCursor += spd;
-    }
-
-    cache.srcBuffer = srcBuffer; cache.speed = spd; cache.tension = tension;
-    cache.splicedBuffer = outBuffer; cache.lastBuildMs = Math.round(performance.now() - t0);
-    cache.avgSeamErrMv = seamCount > 0 ? (totalDiff / seamCount) : 0;
-    cache.maxBoundaryStep = maxJump; cache.seamPointsOut = seamPoints; cache.seamLogs = seamLogs;
-    setTimeout(() => window.dumpHoseDebugV50(false), 20);
-    return outBuffer;
-};
-
-window.dumpHoseDebugV50 = function(manual) {
-    const c = window._hoseSplicerCacheV46, player = document.getElementById('audioPlayer');
-    const logs = c.seamLogs || [], curSec = player ? (player.currentTime || 0) : 0;
+window.dumpHoseDebugV52 = function() {
+    const c = window._hoseSplicerCacheV46 || {}, player = document.getElementById('audioPlayer');
+    const logs = c.seamLogs || [], cur = player ? (player.currentTime || 0) : 0;
     let out = [
-        `=== 🐍 JENNY V50 SEAM DEBUGGER (${window.currentPlayingTrack || 'Track'}) ===`,
-        `Speed: x${(c.speed||1).toFixed(2)} | Tension: ${Math.round((c.tension||1)*100)}% | Build: ${c.lastBuildMs}ms | Seams: ${logs.length}`,
-        `Avg_dy: ${(c.avgSeamErrMv*100).toFixed(3)}% | Max_Boundary_Jump: ${(c.maxBoundaryStep||0).toFixed(6)}`,
-        `--- БЛИЖАЙШИЕ ШВЫ К ${curSec.toFixed(2)}с ---`
+        `=== JENNY V52 SEAM DEBUG (${window.currentPlayingTrack || 'Track'}) ===`,
+        `Speed: x${(c.speed||1).toFixed(2)} | Tension: ${Math.round((c.tension||1)*100)}% | Build: ${c.lastBuildMs||0}ms | Seams: ${logs.length} | Avg_dy: ${((c.avgSeamErrMv||0)*100).toFixed(2)}%`
     ];
-    const near = [...logs].sort((a,b) => Math.abs(a.t - curSec) - Math.abs(b.t - curSec)).slice(0, 5).sort((a,b) => a.t - b.t);
-    near.forEach(s => {
-        out.push(`#${s.idx} @${s.t.toFixed(3)}s | shift:${s.shift} | dy:${s.dy.toFixed(4)} | sA:${s.sA.toFixed(4)} sB:${s.sB.toFixed(4)} | jump:${s.jErr.toFixed(6)}`);
-    });
+    const near = [...logs].sort((a,b) => Math.abs(a.t - cur) - Math.abs(b.t - cur)).slice(0, 4).sort((a,b) => a.t - b.t);
+    near.forEach(s => out.push(`#${s.idx} @${s.t.toFixed(3)}s | shift:${s.shift} | dy:${s.dy.toFixed(4)} | sA:${s.sA.toFixed(4)} sB:${s.sB.toFixed(4)}`));
     if (near[0] && c.splicedBuffer && c.srcBuffer) {
         const s = near[0], oA = c.splicedBuffer.getChannelData(0), iA = c.srcBuffer.getChannelData(0);
-        out.push(`--- СЭМПЛЫ ВОКРУГ ШВА #${s.idx} (${s.t.toFixed(3)}с) [k | Orig_p1 | Orig_p2 | Hose_Out | Step] ---`);
-        for (let k = -5; k <= 10; k++) {
-            const vO = oA[s.outPos + k] || 0, vPrev = oA[s.outPos + k - 1] || 0;
-            out.push(`${String(k).padStart(3)} | ${(iA[s.p1+k]||0).toFixed(4)} | ${(iA[s.p2+k]||0).toFixed(4)} | ${vO.toFixed(4)} | ${(vO-vPrev).toFixed(4)}${k===0?' <--ШОВ':''}`);
+        out.push(`--- SAMPLES @ SEAM #${s.idx} (k | Orig_p1 | Orig_p2 | Hose_Out | Step) ---`);
+        for (let k = -4; k <= 8; k++) {
+            const vO = oA[s.outPos + k] || 0, vP = oA[s.outPos + k - 1] || 0;
+            out.push(`${String(k).padStart(2)} | ${(iA[s.p1+k]||0).toFixed(4)} | ${(iA[s.p2+k]||0).toFixed(4)} | ${vO.toFixed(4)} | ${(vO-vP).toFixed(4)}${k===0?' <--CUT':''}`);
         }
     }
-    const txt = out.join('
-');
-    const ta = document.getElementById('hoseDebugTextAreaV50');
+    const txt = out.join('\n');
+    const ta = document.getElementById('hoseDebugTextAreaV52');
     if (ta) ta.value = txt;
-    fetch('/api/hose_debug', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({log:txt}) }).catch(()=>{});
-    if (manual && navigator.clipboard) navigator.clipboard.writeText(txt).catch(()=>{});
-    if (manual && typeof window.showToast === 'function') window.showToast('📝 Лог скопирован и сохранён в hose_debug_log.txt!');
-    return txt;
+    if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(()=>{});
+    if (typeof window.showToast === 'function') window.showToast('📋 Отчёт швов скопирован в буфер!');
 };
-
 setTimeout(() => {
-    const box = document.getElementById('hoseControlBoxV44');
-    if (box && !document.getElementById('hoseDebugTextAreaV50')) {
-        const div = document.createElement('div');
-        div.style.cssText = 'margin-top:6px;border-top:1px solid #21262d;padding-top:6px;';
-        div.innerHTML = `
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                <span style="font-size:10px;color:#f0883e;font-weight:bold;">📝 Отладчик V50 (hose_debug_log.txt):</span>
-                <button type="button" onclick="window.dumpHoseDebugV50(true)" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">📋 Замер + Копировать</button>
-            </div>
-            <textarea id="hoseDebugTextAreaV50" readonly rows="4" style="width:100%;background:#0d1117;color:#8b949e;font-family:monospace;font-size:9px;border:1px solid #21262d;border-radius:4px;padding:4px;"></textarea>
-        `;
-        box.appendChild(div);
+    const stEl = document.getElementById('hoseScopeStatsV49');
+    if (stEl && !document.getElementById('hoseDebugTextAreaV52')) {
+        const d = document.createElement('div');
+        d.style.cssText = 'margin-top:6px;border-top:1px solid #21262d;padding-top:6px;';
+        d.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <span style="font-size:10px;color:#f0883e;font-weight:bold;">📝 Отладчик 90° швов (V52):</span>
+            <button type="button" onclick="window.dumpHoseDebugV52()" style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">📋 Замер + Копировать</button>
+        </div>
+        <textarea id="hoseDebugTextAreaV52" readonly rows="4" style="width:100%;background:#0d1117;color:#8b949e;font-family:monospace;font-size:9px;border:1px solid #21262d;border-radius:4px;padding:4px;"></textarea>`;
+        stEl.parentElement.appendChild(d);
     }
 }, 500);
