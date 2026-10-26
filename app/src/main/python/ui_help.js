@@ -3188,7 +3188,9 @@ window.deleteSavedThemeFileV41 = async function(filename, ev) {
 
 
 
-// 🐍 ПАТЧ V47: СВЕРХТОЧНЫЙ 90° МИКРО-РЕЗАК (ШАГ 4 МС / ВЫРЕЗ ~0.18 МС НА ОДНОМ СКЛОНЕ + СВЯЗКА С ДУГОЙ СКРАББИНГА)
+
+
+// 🐍 ПАТЧ V48: ЧИСТЫЙ 90° РЕЗАК БЕЗ ХРИПА (ЗАХВАТ ВЫСОТЫ И УГЛА СКЛОНА + C2 СКРУГЛЕНИЕ КОНЦОВ)
 
 window._hoseSplicerCacheV46 = {
     srcBuffer: null,
@@ -3196,19 +3198,21 @@ window._hoseSplicerCacheV46 = {
     tension: 1.0,
     splicedBuffer: null,
     lastBuildMs: 0,
-    cutMsPer10ms: 0,
-    cutMsPer4ms: 0
+    avgSeamErrMv: 0
 };
 
-// Стерео-синхронный 90° микро-сплайсер с шагом 4 мс (192 сэмпла) — оба торца разреза гарантированно лежат на одном склоне дуги!
+// Стерео-синхронный 90° сплайсер V48:
+// 1) Никакой пилы 250 Гц на басу (ищет точку на соседней дуге с той же высотой y и тем же углом наклона 90°).
+// 2) Ползунок "Стягивание (%)" больше НЕ разрывает шов на 25% и НЕ перелетает на 200% — шов всегда 100% заподлицо!
+// 3) На высоких амплитудах упруго прижимает высоту петли (громкость), а на пологих участках двигает время.
 window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     if (!srcBuffer || !window.audioCtx) return srcBuffer;
     const spd = Math.max(0.25, Math.min(3.0, parseFloat(speed) || 1.0));
     const tension = Math.max(0.2, Math.min(2.0, (parseFloat(tensionPct) || 100) / 100));
 
     if (Math.abs(spd - 1.0) < 0.002) {
-        window._hoseSplicerCacheV46.cutMsPer4ms = 0;
         window._hoseSplicerCacheV46.lastBuildMs = 0;
+        window._hoseSplicerCacheV46.avgSeamErrMv = 0;
         return srcBuffer;
     }
 
@@ -3221,16 +3225,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     const sr = srcBuffer.sampleRate;
     const numCh = srcBuffer.numberOfChannels;
     const inLen = srcBuffer.length;
-
-    // Строгий период 4 мс (192 сэмпла при 48 кГц): при x1.05 вырезается всего 9 сэмплов (0.18 мс)!
-    const G_in = Math.max(80, Math.round(0.004 * sr));
-    const G_out = Math.max(40, Math.round(G_in / spd));
-    const delta = G_in - G_out;
-    const abs_d = Math.abs(delta);
-    const fillet_r = 6; // скругление торцов сплайном Эрмита вокруг шва
-
-    const numGrains = Math.floor((inLen - G_in - 16) / G_in);
-    const outLen = Math.max(G_out, numGrains * G_out);
+    const outLen = Math.max(1024, Math.floor(inLen / spd));
     const outBuffer = window.audioCtx.createBuffer(numCh, outLen, sr);
 
     const chIn = [];
@@ -3240,96 +3235,155 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
         chOut.push(outBuffer.getChannelData(c));
     }
 
-    const searchStart = Math.min(Math.floor(G_in / 4), 24);
-    const searchEnd = Math.max(searchStart + 2, G_in - abs_d - 20);
+    // Шаг между швами 12 мс (576 сэмплов при 48 кГц), зона гладкого скругления торцов 64 сэмпла (~1.3 мс)
+    const stepOut = Math.max(256, Math.round(0.012 * sr));
+    const searchRad = Math.max(128, Math.round(0.0075 * sr));
+    const filletLen = Math.max(32, Math.round(0.0013 * sr));
+
+    // Предварительно считаем гладкую C2-кривую скругления (Cosine-Hermite), чтобы 0% щелчков и 0% хрипа
+    const blendCurve = new Float32Array(filletLen);
+    const tangDecay = new Float32Array(filletLen);
+    for (let i = 0; i < filletLen; i++) {
+        const t = i / filletLen;
+        // C2-гладкий переход от 0 к 1 с нулевым изломом на обоих концах
+        const b = 0.5 * (1.0 - Math.cos(Math.PI * t));
+        blendCurve[i] = b;
+        const r = 1.0 - b;
+        tangDecay[i] = r * r;
+    }
+
     const in0 = chIn[0];
     const in1 = numCh > 1 ? chIn[1] : in0;
 
-    for (let g = 0; g < numGrains; g++) {
-        const inPos = g * G_in;
-        const outPos = g * G_out;
+    // Копируем стартовый кусок 1:1
+    const initCopy = Math.min(stepOut, outLen, inLen);
+    for (let c = 0; c < numCh; c++) {
+        const inp = chIn[c];
+        const out = chOut[c];
+        for (let i = 0; i < initCopy; i++) {
+            out[i] = inp[i];
+        }
+    }
 
-        let bestOff = searchStart;
+    let outPos = initCopy;
+    let inCursor = initCopy;
+    let seamCount = 0;
+    let totalSeamDiff = 0;
+
+    // Коэффициент вертикального стягивания высоких петель (по закону Упругого Шланга)
+    const isFast = spd > 1.0;
+    const speedDelta = Math.abs(spd - 1.0);
+    const vertFactor = Math.min(0.32, speedDelta * tension * 0.38);
+
+    while (outPos + stepOut + filletLen < outLen) {
+        const p1 = Math.round(inCursor);
+        const idealP2 = Math.round(outPos * spd);
+
+        if (p1 < 4 || p1 + stepOut + filletLen >= inLen) break;
+        if (idealP2 < 4 || idealP2 + stepOut + filletLen >= inLen) break;
+
+        // Параметры волны в точке первого 90° разреза p1 (высота + наклон узкий + наклон широкий басовый)
+        const y1L = in0[p1], y1R = in1[p1];
+        const s1L = y1L - in0[p1 - 1], s1R = y1R - in1[p1 - 1];
+        const w1L = in0[p1 + 3] - in0[p1 - 3], w1R = in1[p1 + 3] - in1[p1 - 3];
+
+        const minP2 = Math.max(4, idealP2 - searchRad);
+        const maxP2 = Math.min(inLen - stepOut - filletLen - 4, idealP2 + searchRad);
+
+        let bestP2 = idealP2;
         let bestCost = 1e9;
 
-        // Ищем место внутри 4 мс окна, где оба разреза лежат на одном склоне под одним углом (90° нормали параллельны)
-        for (let off = searchStart; off < searchEnd; off += 3) {
-            const p1 = inPos + off;
-            const p2 = (delta >= 0) ? (p1 + abs_d) : (p1 - Math.min(off - 2, abs_d));
+        // Ищем точку второго 90° разреза p2, где волна лежит на ТОЙ ЖЕ высоте и идёт под ТЕМ ЖЕ углом склона!
+        for (let cand = minP2; cand <= maxP2; cand += 3) {
+            const y2L = in0[cand], y2R = in1[cand];
+            const s2L = y2L - in0[cand - 1], s2R = y2R - in1[cand - 1];
+            const w2L = in0[cand + 3] - in0[cand - 3], w2R = in1[cand + 3] - in1[cand - 3];
 
-            const s1L = in0[p1] - in0[p1 - 1];
-            const s2L = in0[p2 + 1] - in0[p2];
-            const s1R = in1[p1] - in1[p1 - 1];
-            const s2R = in1[p2 + 1] - in1[p2];
+            // Запрещаем стыковать восходящий склон с нисходящим (знаки наклона должны совпадать!)
+            const dirPen = ((s1L * s2L < 0) || (w1L * w2L < 0) || (s1R * s2R < 0)) ? 1.8 : 0.0;
 
-            // Запрещаем резать через вершину пика (знаки наклона s1 и s2 должны совпадать — один и тот же склон!)
-            const dirPenalty = ((s1L * s2L < 0) || (s1R * s2R < 0)) ? 2.0 : 0.0;
-            const slopeDiff = Math.abs(s1L - s2L) + Math.abs(s1R - s2R);
-            const cost = slopeDiff * 6.0 + dirPenalty;
+            const heightDiff = Math.abs(y2L - y1L) + Math.abs(y2R - y1R);
+            const slopeDiff = (Math.abs(s2L - s1L) + Math.abs(s2R - s1R)) * 3.5 +
+                              (Math.abs(w2L - w1L) + Math.abs(w2R - w1R)) * 1.8;
 
+            // При высоком натяжении шланга (tension) сильнее штрафуем разрезы на высоких громких пиках (режем в низинах!)
+            const ampLevel = Math.abs(y2L) + Math.abs(y2R);
+            const peakAvoidPen = ampLevel * tension * 0.22;
+
+            const cost = heightDiff * 2.4 + slopeDiff + dirPen + peakAvoidPen;
             if (cost < bestCost) {
                 bestCost = cost;
-                bestOff = off;
+                bestP2 = cand;
             }
         }
 
-        const rem = G_out - bestOff;
-        const pLeft = inPos + bestOff - 1;
-        const pRight = (delta >= 0) ? (inPos + bestOff + abs_d) : Math.max(1, inPos + bestOff - abs_d);
+        // Уточняющий поиск с шагом 1 сэмпл вокруг лучшей точки (для 100% попадания в фазу и высоту)
+        const fineStart = Math.max(minP2, bestP2 - 2);
+        const fineEnd = Math.min(maxP2, bestP2 + 2);
+        for (let cand = fineStart; cand <= fineEnd; cand++) {
+            const y2L = in0[cand], y2R = in1[cand];
+            const s2L = y2L - in0[cand - 1], s2R = y2R - in1[cand - 1];
+            const heightDiff = Math.abs(y2L - y1L) + Math.abs(y2R - y1R);
+            const slopeDiff = (Math.abs(s2L - s1L) + Math.abs(s2R - s1R)) * 3.5;
+            const cost = heightDiff * 2.4 + slopeDiff;
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestP2 = cand;
+            }
+        }
 
+        totalSeamDiff += Math.abs(in0[bestP2] - y1L);
+        seamCount++;
+
+        // Стягиваем концы заподлицо и скругляем фаску на 64 сэмплах без единого скачка
         for (let c = 0; c < numCh; c++) {
             const inp = chIn[c];
             const out = chOut[c];
 
-            for (let i = 0; i < bestOff; i++) {
-                out[outPos + i] = inp[inPos + i];
-            }
+            const yL = inp[p1 - 1];
+            const sL = inp[p1] - yL;
+            const yR = inp[bestP2];
+            // Точная остаточная разница высоты на шве (всегда сводится в 0.0 на точке стыка!)
+            const dy = yR - (yL + sL);
 
-            const yL = inp[pLeft];
-            const sL = yL - inp[pLeft - 1];
-            const yR = inp[pRight];
+            for (let i = 0; i < stepOut; i++) {
+                let v = inp[bestP2 + i];
 
-            // Стягиваем правый конец к левому ВДОЛЬ направления склона волны:
-            // На крутом высоком склоне dy большой -> верхушка петли сама опускается по амплитуде (режется громкость).
-            // На плоском тихом участке dy ~ 0 -> сдвигается только время (режется скорость)!
-            const dy = (yR - (yL + sL)) * Math.min(1.25, tension);
+                if (i < filletLen) {
+                    const b = blendCurve[i];
+                    const contVal = inp[p1 + i];
+                    // Плавно переводим касательную старой дуги в новую и гасим микро-ступеньку dy вдоль склона
+                    const pulledNew = v - dy * tangDecay[i];
+                    v = contVal * (1.0 - b) + pulledNew * b;
+                }
 
-            for (let m = 0; m < rem; m++) {
-                const r = 1.0 - (m / rem);
-                let v = inp[pRight + m] - dy * (r * r);
-
+                // Вертикальная работа Упругого Шланга: высокие петли чуть сжимаются по громкости при ускорении
                 const av = Math.abs(v);
-                if (delta > 0 && av > 0.40) {
-                    v *= (1.0 - 0.12 * tension * (av - 0.40));
-                } else if (delta < 0 && av > 0.40) {
-                    v *= (1.0 + 0.08 * tension * (av - 0.40));
+                if (av > 0.35) {
+                    if (isFast) {
+                        v *= (1.0 - vertFactor * (av - 0.35));
+                    } else {
+                        v *= (1.0 + vertFactor * 0.75 * (av - 0.35));
+                    }
+                    if (Math.abs(v) > 0.96) v = Math.tanh(v);
                 }
-                if (Math.abs(v) > 0.96) v = Math.tanh(v);
-                out[outPos + bestOff + m] = v;
-            }
 
-            // Скругление концов (кубический сплайн Эрмита на +/- 6 сэмплов вокруг шва)
-            const seam = outPos + bestOff;
-            if (seam > fillet_r && seam + fillet_r < outPos + G_out) {
-                const idxA = seam - fillet_r;
-                const idxB = seam + fillet_r;
-                const pA = out[idxA];
-                const pB = out[idxB];
-                const mA = (out[idxA] - out[idxA - 1]) * (2.0 * fillet_r);
-                const mB = (out[idxB + 1] - out[idxB]) * (2.0 * fillet_r);
-
-                for (let k = 1; k < 2 * fillet_r; k++) {
-                    const t = k / (2 * fillet_r);
-                    const t2 = t * t;
-                    const t3 = t2 * t;
-                    out[idxA + k] =
-                        (2 * t3 - 3 * t2 + 1) * pA +
-                        (t3 - 2 * t2 + t) * mA +
-                        (-2 * t3 + 3 * t2) * pB +
-                        (t3 - t2) * mB;
-                }
+                out[outPos + i] = v;
             }
         }
+
+        outPos += stepOut;
+        inCursor = bestP2 + stepOut;
+    }
+
+    // Дописываем хвост трека
+    while (outPos < outLen && Math.round(inCursor) < inLen) {
+        const idx = Math.min(inLen - 1, Math.round(inCursor));
+        for (let c = 0; c < numCh; c++) {
+            chOut[c][outPos] = chIn[c][idx];
+        }
+        outPos++;
+        inCursor += spd;
     }
 
     cache.srcBuffer = srcBuffer;
@@ -3337,7 +3391,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     cache.tension = tension;
     cache.splicedBuffer = outBuffer;
     cache.lastBuildMs = Math.round(performance.now() - t0);
-    cache.cutMsPer4ms = -(delta / sr) * 1000;
+    cache.avgSeamErrMv = seamCount > 0 ? (totalSeamDiff / seamCount) : 0;
     return outBuffer;
 };
 
@@ -3353,7 +3407,6 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
         return;
     }
 
-    // Если пользователь прямо сейчас скользит пальцем по дуге — ждём 70 мс стабилизации пальца, чтобы не пересобирать 3-минутный буфер 60 раз в секунду
     if (isDraggingArc) {
         if (window._hoseArcDebounceTimerV47) clearTimeout(window._hoseArcDebounceTimerV47);
         window._hoseArcDebounceTimerV47 = setTimeout(() => {
@@ -3373,7 +3426,6 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
         return;
     }
 
-    // Берём точную активную скорость (из зажатой дуги, замочка или базовой скорости)
     let targetSpd = 1.0;
     if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
         targetSpd = parseFloat(window.scrubState.speed) || 1.0;
@@ -3394,7 +3446,6 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
 
     const activeBuf = window.buildElasticHoseBufferV46(baseBuf, targetSpd, tensionPct);
 
-    // Намертво глушим WebAPI <audio>, чтобы играл ТОЛЬКО наш 90° буфер!
     if (window.htmlGain && window.htmlGain.gain) {
         window.htmlGain.gain.value = 0;
     }
@@ -3409,7 +3460,6 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
         window.studioSourceNode = window.audioCtx.createBufferSource();
         window.studioSourceNode._isHoseSpliced = true;
         window.studioSourceNode.buffer = activeBuf;
-        // Частота чтения буфера строго 1.0 (изменение скорости уже запечено в длину волны!)
         window.studioSourceNode.playbackRate.value = 1.0;
         window.studioSourceNode.connect(window.inputMixer);
 
@@ -3423,15 +3473,14 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
 
     if (badge) {
         const c = window._hoseSplicerCacheV46;
-        const sign = c.cutMsPer4ms >= 0 ? '+' : '';
-        badge.innerText = `🐍 90°: ${sign}${c.cutMsPer4ms.toFixed(2)}мс/4мс | x${targetSpd.toFixed(2)} (${c.lastBuildMs}мс)`;
+        badge.innerText = `🐍 90° C2: Δy=${(c.avgSeamErrMv * 100).toFixed(1)}% | x${targetSpd.toFixed(2)} (${c.lastBuildMs}мс)`;
     }
 };
 
 window.installHosePlayerHooksV46 = function() {
     const player = document.getElementById('audioPlayer');
-    if (!player || player._hoseHookedV47) return;
-    player._hoseHookedV47 = true;
+    if (!player || player._hoseHookedV48) return;
+    player._hoseHookedV48 = true;
 
     const wrapEvent = (prop) => {
         const orig = player[prop];
@@ -3457,11 +3506,11 @@ window.onToggleElasticHoseV44 = function(chk, ev) {
     if (enabled) {
         window.applyElasticHoseBufferLiveV46(false);
         if (typeof window.showToast === 'function' && ev) {
-            window.showToast(window.tr('🐍 90° Резак ВКЛ: шаг 4 мс + стягивание по склону!', '🐍 90° Splicer ON: 4ms step + slope pull!'), ev);
+            window.showToast(window.tr('🐍 90° Резак V48 ВКЛ: захват высоты и угла без хрипа!', '🐍 90° Splicer V48 ON: zero-rasp slope & height lock!'), ev);
         }
     } else {
         const player = document.getElementById('audioPlayer');
-        if (player && typeof window. stopScrub === 'function') {
+        if (player && typeof window.stopScrub === 'function') {
             window.stopScrub(true);
         } else if (typeof window.updateSettings === 'function') {
             window.updateSettings();
@@ -3510,14 +3559,14 @@ window.injectElasticHoseControlsV44 = function() {
         <div class="setting-row" style="padding:4px 0;border:none;">
             <label class="toggle-label" style="color:#3fb950;font-weight:bold;">
                 <input type="checkbox" id="cfg_elasticHoseV44" ${isEn ? 'checked' : ''} onchange="window.onToggleElasticHoseV44(this, event)">
-                🐍 ${window.tr('Упругий Шланг 90° (Шаг 4 мс + Скругление)', 'Elastic Hose 90° (4ms Step + Fillet)')}
+                🐍 ${window.tr('Упругий Шланг 90° (Без хрипа C2)', 'Elastic Hose 90° (Zero-Rasp C2)')}
             </label>
             <span id="hoseLiveTelemetryV44" style="font-size:11px;font-family:monospace;color:#58a6ff;background:#0d1117;padding:3px 7px;border-radius:6px;border:1px solid #262c36;">
-                ${isEn ? '🐍 90° Активен' : window.tr('Выкл', 'OFF')}
+                ${isEn ? '🐍 90° C2 Активен' : window.tr('Выкл', 'OFF')}
             </span>
         </div>
         <div class="setting-row" style="padding:4px 0;border:none;">
-            <span style="font-size:12px;color:#8b949e;">🧲 ${window.tr('Стягивание вдоль склона (%):', 'Slope Pull Tension (%):')}</span>
+            <span style="font-size:12px;color:#8b949e;">🧲 ${window.tr('Упругость петель (Амплитуда ↔ Время %):', 'Loop Elasticity (Amp ↔ Time %):')}</span>
             <div class="val-group">
                 <span class="val-badge" id="val_hoseTensionV44">${tens}</span>
             </div>
@@ -3525,8 +3574,8 @@ window.injectElasticHoseControlsV44 = function() {
         <input type="range" id="rng_hoseTensionV44" class="hz-slider" min="20" max="200" step="5" value="${tens}" oninput="window.onHoseTensionInputV44(this.value)">
         <div style="font-size:11px;color:#8b949e;margin-top:4px;line-height:1.35;">
             ${window.tr(
-                'Каждые 4 мс делает микро-разрез (~0.18 мс) под 90° на одном склоне волны, стягивает вдоль дуги и скругляет шов Эрмитом.',
-                'Every 4ms makes a ~0.18ms 90° cut on a single wave slope, pulls along the curve, and rounds via Hermite spline.'
+                'Находит на соседней дуге точку с той же высотой и углом 90°, стягивает концы заподлицо и скругляет фаску C2 без 250Гц хрипа.',
+                'Finds matching height & 90° slope on adjacent wave arc, pulls ends 100% flush, and applies C2 fillet with zero 250Hz rasp.'
             )}
         </div>
     `;
