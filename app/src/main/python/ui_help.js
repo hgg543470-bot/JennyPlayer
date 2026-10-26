@@ -1670,3 +1670,803 @@ setTimeout(() => {
     window.ensureThemeStudioModalV37();
     window.applyVisualThemeV37();
 }, 180);
+
+
+// 🚀 ПАТЧ V39: СТЫКОВКА RU/EN В НАСТРОЙКАХ, НЕПОЛНЫЙ JSON С БЛИЖАЙШИМ ЦВЕТОМ И ЧЕСТНЫЕ ФАЙЛЫ .JSON
+
+window.STANDARD_PALETTE_V39 = [
+    { hex: '#7341be', nameRu: 'Тёмный Аметист', nameEn: 'Subtle Amethyst' },
+    { hex: '#a371f7', nameRu: 'Неоновый Пурпур', nameEn: 'Neon Purple' },
+    { hex: '#58a6ff', nameRu: 'Кибер-Циан',     nameEn: 'Cyber Cyan' },
+    { hex: '#3fb950', nameRu: 'Изумруд',        nameEn: 'Matrix Emerald' },
+    { hex: '#e3b341', nameRu: 'Золотой Винил',  nameEn: 'Vinyl Gold' },
+    { hex: '#f85149', nameRu: 'Рубиновый Лазер',nameEn: 'Ruby Laser' },
+    { hex: '#da3633', nameRu: 'Алый Драйв',     nameEn: 'Crimson Drive' },
+    { hex: '#6e7681', nameRu: 'Стелс-Графит',   nameEn: 'Stealth Graphite' },
+    { hex: '#000000', nameRu: 'Чистый AMOLED',  nameEn: 'Pure AMOLED' },
+    { hex: '#0d1117', nameRu: 'Тёмная Полночь', nameEn: 'Dark Midnight' }
+];
+
+window.FIELD_LABELS_V39 = {
+    amoledMode:       { ru: 'Режим AMOLED',       en: 'AMOLED Mode' },
+    volSlider:        { ru: 'Кнопка громкости',   en: 'Volume Button' },
+    themeBorderKey:   { ru: 'Стиль рамок',        en: 'Border Style' },
+    themeBorderAlpha: { ru: 'Яркость рамок',      en: 'Border Opacity' },
+    bgColor:          { ru: 'Оттенок фона',       en: 'Background Color' },
+    resetBtnColor:    { ru: 'Кнопки «Сброс»',     en: 'Reset Buttons' },
+    ioBtnColor:       { ru: 'Кнопки памяти 📥/💾',en: 'Memory Buttons' },
+    checkboxColor:    { ru: 'Галочки',            en: 'Checkboxes' },
+    sliderColor:      { ru: 'Ползунки и ❓',       en: 'Sliders & ❓' },
+    transportColor:   { ru: 'Кнопки Play/Перемотка', en: 'Play & Triangles' }
+};
+
+window.parseHexToRgbV39 = function(hex) {
+    let c = String(hex || '').replace('#', '').trim();
+    if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+    if (!/^[0-9a-fA-F]{6}$/.test(c)) return null;
+    const n = parseInt(c, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+
+window.findNearestStandardColorV39 = function(targetHex, fallbackHex) {
+    const rgb = window.parseHexToRgbV39(targetHex) || window.parseHexToRgbV39(fallbackHex) || [115, 65, 190];
+    let best = window.STANDARD_PALETTE_V39[0];
+    let minDist = Infinity;
+    window.STANDARD_PALETTE_V39.forEach(item => {
+        if (item.hex === '#000000' && fallbackHex !== '#000000') return;
+        const pRgb = window.parseHexToRgbV39(item.hex);
+        if (!pRgb) return;
+        const d = Math.pow(rgb[0]-pRgb[0], 2) + Math.pow(rgb[1]-pRgb[1], 2) + Math.pow(rgb[2]-pRgb[2], 2);
+        if (d < minDist) {
+            minDist = d;
+            best = item;
+        }
+    });
+    return best;
+};
+
+// 1. УПРАВЛЕНИЕ ВИДИМОСТЬЮ И СТЫКОВКОЙ КНОПКИ RU / EN В НАСТРОЙКАХ
+window.syncSettingsLangBtnVisibilityV39 = function(animateDock) {
+    const topRow = document.getElementById('jennyTopBarRow');
+    if (!topRow || topRow.children.length < 2) return;
+    const langBtnInSettings = topRow.lastElementChild;
+    langBtnInSettings.id = 'settingsDockedLangBtn';
+
+    if (!window._hasLangRunAway) {
+        // Пока плашка на главном экране — в настройках её НЕТ!
+        langBtnInSettings.style.display = 'none';
+        langBtnInSettings.classList.remove('lang-docked-appear');
+    } else {
+        langBtnInSettings.style.display = 'flex';
+        langBtnInSettings.innerHTML = window.renderDualLangHTML(true);
+        if (animateDock) {
+            langBtnInSettings.classList.remove('lang-docked-appear');
+            void langBtnInSettings.offsetWidth;
+            langBtnInSettings.classList.add('lang-docked-appear');
+        }
+    }
+};
+
+// Эффект перелёта и стыковки из шестерёнки ⚙️ прямо в слот внутри открытых настроек
+window.dockLangBadgeIntoOpenSettingsV39 = function() {
+    const sm = document.getElementById('settingsModal');
+    const gear = document.getElementById('btn-settingsModal');
+    const topRow = document.getElementById('jennyTopBarRow');
+
+    if (!sm || !sm.classList.contains('open') || !gear || !topRow || topRow.children.length < 2) {
+        window.syncSettingsLangBtnVisibilityV39(true);
+        return;
+    }
+
+    const langBtnInSettings = topRow.lastElementChild;
+    // Показываем кнопку прозрачной, чтобы flex-строка плавно сдвинула "СПРАВОЧНИК НАСТРОЕК" влево и открыла гнездо
+    langBtnInSettings.style.display = 'flex';
+    langBtnInSettings.style.opacity = '0';
+    langBtnInSettings.style.transition = 'none';
+    langBtnInSettings.innerHTML = window.renderDualLangHTML(true);
+
+    setTimeout(() => {
+        const gearRect = gear.getBoundingClientRect();
+        const slotRect = langBtnInSettings.getBoundingClientRect();
+
+        // Создаём капсулу, вылетающую из шестерёнки ⚙️ вниз прямо в открывшееся гнездо настроек
+        const flyer = document.createElement('div');
+        flyer.style.cssText = `position:fixed;z-index:999999;pointer-events:none;left:${gearRect.left - 10}px;top:${gearRect.top + 6}px;transform:scale(0.35);opacity:0.9;transition:all 0.42s cubic-bezier(0.22, 1.3, 0.36, 1);`;
+        flyer.innerHTML = `<div class="jenny-lang-btn" style="padding:8px 12px;border-color:#3fb950;box-shadow:0 0 18px #3fb950;background:#0d1117;">${window.renderDualLangHTML(true)}</div>`;
+        document.body.appendChild(flyer);
+
+        requestAnimationFrame(() => {
+            flyer.style.left = slotRect.left + 'px';
+            flyer.style.top = slotRect.top + 'px';
+            flyer.style.transform = 'scale(1)';
+        });
+
+        setTimeout(() => {
+            flyer.remove();
+            langBtnInSettings.style.opacity = '1';
+            langBtnInSettings.classList.add('lang-docked-appear');
+        }, 420);
+    }, 60);
+};
+
+// Перехватываем оба сценария побега, чтобы в финале срабатывала стыковка с настройками!
+(function() {
+    const wrapRunawayDocking = () => {
+        const origRun = window.runAwayLangBadgeToSettings;
+        if (typeof origRun === 'function' && !window._runWrappedV39) {
+            window._runWrappedV39 = true;
+            window.runAwayLangBadgeToSettings = function() {
+                origRun();
+                setTimeout(() => window.dockLangBadgeIntoOpenSettingsV39(), 2330);
+            };
+        }
+        const origCrawl = window.crawlAwayLangBadgeToSettings;
+        if (typeof origCrawl === 'function' && !window._crawlWrappedV39) {
+            window._crawlWrappedV39 = true;
+            window.crawlAwayLangBadgeToSettings = function() {
+                origCrawl();
+                setTimeout(() => window.dockLangBadgeIntoOpenSettingsV39(), 3630);
+            };
+        }
+    };
+    wrapRunawayDocking();
+    setTimeout(wrapRunawayDocking, 200);
+})();
+
+const _origUpdateDualV39 = window.updateDualLangButtons;
+window.updateDualLangButtons = function() {
+    if (typeof _origUpdateDualV39 === 'function') _origUpdateDualV39();
+    window.syncSettingsLangBtnVisibilityV39(false);
+};
+
+// 2. УМНЫЙ ПАРСЕР НЕПОЛНОГО ИЛИ ОБОРВАННОГО JSON С АВТОПОДБОРОМ БЛИЖАЙШЕГО ЦВЕТА
+window.salvagePartialJsonV39 = function(rawText) {
+    let txt = String(rawText || '').trim();
+    if (!txt) return null;
+
+    // Попытка 1: чистый JSON.parse
+    try {
+        const obj = JSON.parse(txt);
+        if (obj && typeof obj === 'object') return obj;
+    } catch (e) {}
+
+    // Попытка 2: чиним оборванный конец (запятые, незакрытые кавычки и фигурную скобку)
+    let fixed = txt.replace(/,\s*$/, '');
+    if (!fixed.startsWith('{')) fixed = '{' + fixed;
+    const quoteCount = (fixed.match(/"/g) || []).length;
+    if (quoteCount % 2 !== 0) fixed += '"';
+    fixed = fixed.replace(/,\s*\}/g, '}');
+    if (!fixed.endsWith('}')) fixed += '}';
+    try {
+        const obj = JSON.parse(fixed);
+        if (obj && typeof obj === 'object') return obj;
+    } catch (e) {}
+
+    // Попытка 3: Построчное вытаскивание всех распознаваемых пар ключ-значение регулярками
+    const extracted = {};
+    const kvRegex = /"?([a-zA-Z0-9_]+)"?\s*:\s*("[^"]*"|true|false|-?\d+(?:\.\d+)?|#[0-9a-fA-F]{3,6})/g;
+    let m;
+    while ((m = kvRegex.exec(txt)) !== null) {
+        const k = m[1];
+        let v = m[2];
+        if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+        else if (v === 'true') v = true;
+        else if (v === 'false') v = false;
+        else if (!v.startsWith('#') && !isNaN(Number(v))) v = Number(v);
+        extracted[k] = v;
+    }
+    return Object.keys(extracted).length > 0 ? extracted : null;
+};
+
+window.applySmartPartialThemeV39 = function(rawObj, ev) {
+    if (!rawObj || typeof rawObj !== 'object') return false;
+
+    const defaults = window.DEFAULT_THEME_CONFIG_V38;
+    const colorKeys = ['resetBtnColor', 'ioBtnColor', 'checkboxColor', 'sliderColor', 'transportColor', 'bgColor'];
+    const allKeys = ['amoledMode', 'volSlider', 'themeBorderKey', 'themeBorderAlpha', ...colorKeys];
+
+    // Находим любой валидный цвет внутри присланного JSON, чтобы искать ближайший стандартный оттенок к задумке автора
+    let referenceHex = null;
+    for (const ck of colorKeys) {
+        if (rawObj[ck] && window.parseHexToRgbV39(rawObj[ck])) {
+            referenceHex = rawObj[ck];
+            break;
+        }
+    }
+
+    const missingRu = [];
+    const missingEn = [];
+    const finalTheme = { jenny_theme_v: "1.1" };
+    let usedNearestNameRu = null;
+    let usedNearestNameEn = null;
+
+    allKeys.forEach(k => {
+        const isProvided = (rawObj[k] !== undefined && rawObj[k] !== null && rawObj[k] !== '');
+        if (isProvided) {
+            if (colorKeys.includes(k)) {
+                // Если цвет указан криво, подбираем ближайший стандартный
+                if (window.parseHexToRgbV39(rawObj[k])) {
+                    finalTheme[k] = rawObj[k];
+                } else {
+                    const near = window.findNearestStandardColorV39(referenceHex, defaults[k]);
+                    finalTheme[k] = near.hex;
+                }
+            } else {
+                finalTheme[k] = rawObj[k];
+            }
+        } else {
+            // Поле НЕ дописано в JSON!
+            const lbl = window.FIELD_LABELS_V39[k] || { ru: k, en: k };
+            missingRu.push(lbl.ru);
+            missingEn.push(lbl.en);
+
+            if (colorKeys.includes(k)) {
+                const near = window.findNearestStandardColorV39(referenceHex, defaults[k]);
+                finalTheme[k] = near.hex;
+                if (!usedNearestNameRu) {
+                    usedNearestNameRu = near.nameRu + ' (' + near.hex + ')';
+                    usedNearestNameEn = near.nameEn + ' (' + near.hex + ')';
+                }
+            } else {
+                finalTheme[k] = defaults[k];
+            }
+        }
+    });
+
+    window.appConfig = window.appConfig || {};
+    Object.assign(window.appConfig, finalTheme);
+
+    const origAm = document.getElementById('cfg_amoledMode');
+    if (origAm) origAm.checked = Boolean(finalTheme.amoledMode);
+    const origVol = document.getElementById('cfg_volSlider');
+    if (origVol) origVol.checked = Boolean(finalTheme.volSlider);
+
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.applyTheme === 'function') window.applyTheme();
+    window.applyVisualThemeV37();
+    window.syncThemeStudioUIV38();
+    if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
+
+    const reportBox = document.getElementById('themeJsonReportBox');
+    if (missingRu.length === 0) {
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#3fb950';
+            reportBox.innerHTML = window.tr('✅ Все параметры JSON распознаны и применены в полном объёме!', '✅ All JSON parameters recognized and applied!');
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('✅ Полный JSON темы применён!', '✅ Full Theme JSON applied!'), ev);
+        }
+    } else {
+        const msgRu = `⚠️ В JSON не дописаны: <b>${missingRu.join(', ')}</b>.<br>🎨 Применено то, что есть + подставлен ближайший стандартный цвет: <b style="color:#3fb950;">${usedNearestNameRu || 'Тёмный Аметист'}</b>`;
+        const msgEn = `⚠️ Missing in JSON: <b>${missingEn.join(', ')}</b>.<br>🎨 Applied provided fields + nearest standard color: <b style="color:#3fb950;">${usedNearestNameEn || 'Subtle Amethyst'}</b>`;
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#e3b341';
+            reportBox.innerHTML = window.tr(msgRu, msgEn);
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr(`⚠️ Не указано (${missingRu.length}): подставлен ближайший стандартный цвет!`, `⚠️ Missing (${missingEn.length}): nearest standard color applied!`), ev);
+        }
+    }
+    return finalTheme;
+};
+
+// Переопределяем кнопку "✅ Применить JSON"
+window.applyThemeFromTextareaV38 = function(ev) {
+    const box = document.getElementById('themeJsonTextarea');
+    const raw = box ? box.value.trim() : '';
+    const reportBox = document.getElementById('themeJsonReportBox');
+
+    if (!raw) {
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#f85149';
+            reportBox.innerHTML = window.tr('⚠️ Поле пустое (0 байт)! Вставь JSON-код темы или нажми «Копировать JSON».', '⚠️ Field is empty (0 bytes)! Paste a JSON theme or tap "Copy JSON".');
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('⚠️ Поле пустое (0 байт)! Нечего применять.', '⚠️ Field is empty (0 bytes)!'), ev);
+        }
+        return;
+    }
+
+    const salvaged = window.salvagePartialJsonV39(raw);
+    if (!salvaged) {
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#f85149';
+            reportBox.innerHTML = window.tr('❌ В тексте нет ни одного параметра темы (например, "sliderColor": "#58a6ff").', '❌ No recognizable theme fields found in text.');
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('❌ Не найдено параметров темы в тексте!', '❌ No theme parameters found!'), ev);
+        }
+        return;
+    }
+
+    const fullApplied = window.applySmartPartialThemeV39(salvaged, ev);
+    if (box && fullApplied) {
+        box.value = JSON.stringify(fullApplied, null, 2);
+    }
+};
+
+// 3. ЧЕСТНОЕ СОХРАНЕНИЕ И ОТКРЫТИЕ ФАЙЛОВ .JSON ЧЕРЕЗ PYTHON БЭКЕНД
+window.downloadThemeJsonFileV38 = async function(ev) {
+    const box = document.getElementById('themeJsonTextarea');
+    const raw = box ? box.value.trim() : '';
+    const reportBox = document.getElementById('themeJsonReportBox');
+
+    if (!raw) {
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#f85149';
+            reportBox.innerHTML = window.tr('⚠️ В поле 0 байт! Сначала нажми «📋 Копировать JSON» (чтобы выгрузить текущую тему в поле) или вставь свой код.', '⚠️ 0 bytes in text box! Tap "📋 Copy JSON" first or paste your code.');
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('⚠️ В поле 0 байт! Нажми «Копировать JSON» перед сохранением.', '⚠️ 0 bytes! Tap "Copy JSON" first.'), ev);
+        }
+        return;
+    }
+
+    const salvaged = window.salvagePartialJsonV39(raw) || window.getCurrentThemeObjectV38();
+    const completeTheme = window.applySmartPartialThemeV39(salvaged, null) || window.getCurrentThemeObjectV38();
+    const fileName = `jenny_${completeTheme.themeBorderKey || 'theme'}_${Math.floor(Date.now()/1000)}.json`;
+
+    try {
+        const res = await fetch('/api/themes/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: fileName, data: completeTheme })
+        });
+        const ans = await res.json();
+        if (ans && ans.status === 'ok') {
+            if (reportBox) {
+                reportBox.style.display = 'block';
+                reportBox.style.borderColor = '#3fb950';
+                reportBox.innerHTML = window.tr(
+                    `💾 <b>Файл реально сохранён (${ans.bytes} байт):</b><br><span style="color:#58a6ff;word-break:break-all;">${ans.path}</span>`,
+                    `💾 <b>File saved (${ans.bytes} bytes):</b><br><span style="color:#58a6ff;word-break:break-all;">${ans.path}</span>`
+                );
+            }
+            if (typeof window.showToast === 'function') {
+                window.showToast(window.tr(`💾 Сохранено (${ans.bytes} Б): Download/JennyThemes/${ans.filename}`, `💾 Saved (${ans.bytes} B): Download/JennyThemes/${ans.filename}`), ev);
+            }
+            return;
+        }
+    } catch (e) {}
+};
+
+window.openSavedThemesModalV39 = async function(ev) {
+    let m = document.getElementById('jennyThemeFilesModal');
+    if (m) m.remove();
+
+    m = document.createElement('div');
+    m.id = 'jennyThemeFilesModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:15px;box-sizing:border-box;';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    m.innerHTML = `
+        <div onclick="event.stopPropagation()" style="background:#05070a;border:1px solid var(--border-uniform);border-radius:14px;max-width:420px;width:100%;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 0 25px rgba(0,0,0,0.95);">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0d1117;border-bottom:1px solid #262c36;">
+                <span style="color:#58a6ff;font-weight:bold;font-size:14px;">📂 ${window.tr('Сохранённые файлы .json', 'Saved .json Theme Files')}</span>
+                <button type="button" onclick="document.getElementById('jennyThemeFilesModal').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;padding:2px 6px;">✖</button>
+            </div>
+            <div id="jennyThemeFilesList" style="padding:12px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:#e6edf3;">
+                <div style="color:#8b949e;text-align:center;padding:15px;">⏳ ${window.tr('Сканируем папку Download/JennyThemes...', 'Scanning Download/JennyThemes...')}</div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(m);
+
+    try {
+        const res = await fetch('/api/themes/list', { method: 'POST' });
+        const ans = await res.json();
+        const listEl = document.getElementById('jennyThemeFilesList');
+        if (!listEl) return;
+
+        const files = (ans && ans.files) ? ans.files : [];
+        if (files.length === 0) {
+            listEl.innerHTML = `<div style="color:#8b949e;text-align:center;padding:15px;">${window.tr('В папке Download/JennyThemes пока нет сохранённых .json файлов.<br><br>Нажми «💾 Сохранить .json», чтобы создать первый файл!', 'No .json files in Download/JennyThemes yet.<br><br>Tap "💾 Save .json" first!')}</div>`;
+            return;
+        }
+
+        window._loadedThemeFilesCacheV39 = files;
+        listEl.innerHTML = `<div style="font-size:11px;color:#8b949e;margin-bottom:4px;">📁 ${ans.dir}</div>` + files.map((f, idx) => `
+            <div style="display:flex;justify-content:space-between;align-items:center;background:#0d1117;border:1px solid #262c36;border-radius:8px;padding:8px 10px;gap:8px;">
+                <div style="min-width:0;flex:1;">
+                    <div style="color:#3fb950;font-weight:bold;word-break:break-all;">${f.filename}</div>
+                    <div style="color:#8b949e;font-size:11px;">${f.bytes} ${window.tr('байт', 'bytes')}</div>
+                </div>
+                <button type="button" onclick="window.pickSavedThemeFileByIndexV39(${idx}, event)" style="padding:6px 12px;color:#58a6ff;border-color:#58a6ff;flex-shrink:0;">
+                    ${window.tr('Загрузить', 'Load')}
+                </button>
+            </div>
+        `).join('');
+    } catch (e) {
+        const listEl = document.getElementById('jennyThemeFilesList');
+        if (listEl) listEl.innerHTML = `<div style="color:#f85149;">❌ ${window.tr('Ошибка чтения папки тем', 'Error reading themes folder')}</div>`;
+    }
+};
+
+window.pickSavedThemeFileByIndexV39 = function(idx, ev) {
+    const files = window._loadedThemeFilesCacheV39 || [];
+    const item = files[idx];
+    if (!item) return;
+    const box = document.getElementById('themeJsonTextarea');
+    if (box) box.value = item.content;
+    const modal = document.getElementById('jennyThemeFilesModal');
+    if (modal) modal.remove();
+    window.applyThemeFromTextareaV38(ev);
+};
+
+// 4. ВСТРОЕННАЯ ПАЛИТРА ЦВЕТА (БЕЗ ЧЁРНОГО ЭКРАНА WEBVIEW)
+window.openCustomColorSwatchesV39 = function(propKey, btnEl) {
+    let m = document.getElementById('jennyQuickColorModal');
+    if (m) m.remove();
+
+    const curHex = (window.appConfig && window.appConfig[propKey]) ? window.appConfig[propKey] : '#7341be';
+    m = document.createElement('div');
+    m.id = 'jennyQuickColorModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.8);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    const swatchesHTML = window.STANDARD_PALETTE_V39.map(p => `
+        <button type="button" onclick="window.selectCustomSwatchV39('${propKey}', '${p.hex}')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid ${p.hex};border-radius:8px;color:#e6edf3;justify-content:flex-start;">
+            <span style="width:16px;height:16px;border-radius:50%;background:${p.hex};display:inline-block;border:1px solid #fff;"></span>
+            <span style="font-size:12px;">${window.tr(p.nameRu, p.nameEn)}</span>
+        </button>
+    `).join('');
+
+    m.innerHTML = `
+        <div onclick="event.stopPropagation()" style="background:#05070a;border:1px solid var(--border-uniform);border-radius:14px;max-width:380px;width:100%;padding:14px;box-shadow:0 0 24px rgba(0,0,0,0.95);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <span style="color:#58a6ff;font-weight:bold;font-size:13.5px;">🎨 ${window.tr('Выбери цвет группы', 'Select Group Color')}</span>
+                <button type="button" onclick="document.getElementById('jennyQuickColorModal').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:10px;">
+                ${swatchesHTML}
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <span style="font-size:12px;color:#8b949e;">HEX:</span>
+                <input type="text" id="customHexInputV39" value="${curHex}" style="flex:1;padding:6px;" placeholder="#7341be">
+                <button type="button" onclick="window.selectCustomSwatchV39('${propKey}', document.getElementById('customHexInputV39').value)" style="padding:6px 12px;color:#3fb950;">OK</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(m);
+};
+
+window.selectCustomSwatchV39 = function(propKey, hexVal) {
+    if (!window.parseHexToRgbV39(hexVal)) {
+        const near = window.findNearestStandardColorV39(hexVal, '#7341be');
+        hexVal = near.hex;
+    }
+    window.onGroupColorInputV38(propKey, hexVal);
+    window.syncThemeStudioUIV38();
+    const m = document.getElementById('jennyQuickColorModal');
+    if (m) m.remove();
+};
+
+// Заменяем глючные <input type="color"> на аккуратные цветные кнопки и обновляем кнопки JSON
+window.upgradeThemeModalControlsV39 = function() {
+    const colorMap = [
+        ['clr_theme_reset', 'resetBtnColor'],
+        ['clr_theme_io', 'ioBtnColor'],
+        ['clr_theme_chk', 'checkboxColor'],
+        ['clr_theme_slider', 'sliderColor'],
+        ['clr_theme_transport', 'transportColor'],
+        ['clr_theme_bg', 'bgColor']
+    ];
+    const t = window.getCurrentThemeObjectV38();
+    colorMap.forEach(([id, propKey]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.tagName === 'INPUT') {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.id = id;
+            btn.className = 'jenny-color-btn';
+            btn.style.background = t[propKey] || '#7341be';
+            btn.onclick = () => window.openCustomColorSwatchesV39(propKey, btn);
+            el.replaceWith(btn);
+        } else {
+            el.style.background = t[propKey] || '#7341be';
+        }
+    });
+
+    // Добавляем блок отчёта под текстовым полем JSON
+    const box = document.getElementById('themeJsonTextarea');
+    if (box && !document.getElementById('themeJsonReportBox')) {
+        const rep = document.createElement('div');
+        rep.id = 'themeJsonReportBox';
+        rep.style.cssText = 'display:none;background:#0d1117;border:1px solid #3fb950;border-radius:6px;padding:8px 10px;font-size:11.5px;color:#e6edf3;margin-bottom:8px;line-height:1.4;';
+        box.insertAdjacentElement('afterend', rep);
+    }
+
+    // Привязываем кнопку "📂 Открыть .json" к нашему менеджеру файлов
+    const fileInp = document.getElementById('themeJsonFileInput');
+    if (fileInp && fileInp.previousElementSibling) {
+        const openBtn = fileInp.previousElementSibling;
+        openBtn.onclick = (e) => window.openSavedThemesModalV39(e);
+    }
+};
+
+const _origSyncUIV38 = window.syncThemeStudioUIV38;
+window.syncThemeStudioUIV38 = function() {
+    if (typeof _origSyncUIV38 === 'function') _origSyncUIV38();
+    window.upgradeThemeModalControlsV39();
+};
+
+setTimeout(() => {
+    window.syncSettingsLangBtnVisibilityV39(false);
+    window.upgradeThemeModalControlsV39();
+}, 220);
+
+
+// 🔇 ПАТЧ V40: ИЗОЛЯЦИЯ ТЕМ ОТ ЗВУКА + ДУБЛИРОВАНИЕ ФАЙЛОВ .JSON В ПАМЯТИ
+window._themeSaveDebounceTimer = null;
+
+window.saveThemeOnlyQuietlyV40 = function() {
+    if (window._themeSaveDebounceTimer) clearTimeout(window._themeSaveDebounceTimer);
+    window._themeSaveDebounceTimer = setTimeout(() => {
+        try {
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig || {}));
+            if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
+        } catch (e) {}
+    }, 320);
+};
+
+// Применение темы меняет ТОЛЬКО CSS-переменные, вообще не трогая аудио-движок
+window.applyVisualThemeV37 = function() {
+    window.appConfig = window.appConfig || {};
+    const key = window.appConfig.themeBorderKey || 'solid_purple';
+    const alphaPct = (window.appConfig.themeBorderAlpha !== undefined) ? parseInt(window.appConfig.themeBorderAlpha, 10) : 38;
+    const alpha = Math.max(0.1, Math.min(1.0, alphaPct / 100));
+
+    const preset = window.THEME_PRESETS_V37[key] || window.THEME_PRESETS_V37.solid_purple;
+    const root = document.documentElement;
+
+    if (preset.mode === 'solid') {
+        document.body.setAttribute('data-border-mode', 'solid');
+        const [r, g, b] = preset.rgb;
+        root.style.setProperty('--border-uniform', `rgba(${r}, ${g}, ${b}, ${alpha})`);
+        root.style.setProperty('--border-main', `rgba(${r}, ${g}, ${b}, ${alpha})`);
+        root.style.setProperty('--border-accent', `rgba(${r}, ${g}, ${b}, ${Math.min(1, alpha + 0.15)})`);
+    } else {
+        document.body.setAttribute('data-border-mode', 'grad');
+        const [r1, g1, b1] = preset.c1;
+        const [r2, g2, b2] = preset.c2;
+        if (preset.c3) {
+            const [r3, g3, b3] = preset.c3;
+            root.style.setProperty('--border-grad', `linear-gradient(135deg, rgba(${r1},${g1},${b1},${alpha}), rgba(${r2},${g2},${b2},${alpha}), rgba(${r3},${g3},${b3},${alpha}))`);
+        } else {
+            root.style.setProperty('--border-grad', `linear-gradient(135deg, rgba(${r1},${g1},${b1},${alpha}), rgba(${r2},${g2},${b2},${alpha}))`);
+        }
+        root.style.setProperty('--border-uniform', `rgba(${r1}, ${g1}, ${b1}, ${alpha * 0.75})`);
+        root.style.setProperty('--border-main', `rgba(${r1}, ${g1}, ${b1}, ${alpha * 0.75})`);
+    }
+
+    if (typeof window.applyGroupColorsV38 === 'function') {
+        window.applyGroupColorsV38();
+    }
+};
+
+window.applyGroupColorsV38 = function() {
+    const t = window.getCurrentThemeObjectV38();
+    const root = document.documentElement;
+    root.style.setProperty('--reset-btn-fg', t.resetBtnColor);
+    root.style.setProperty('--reset-btn-border', window.hexToRgbaV38(t.resetBtnColor, 0.48));
+    root.style.setProperty('--reset-btn-bg', window.hexToRgbaV38(t.resetBtnColor, 0.08));
+    root.style.setProperty('--io-btn-border', window.hexToRgbaV38(t.ioBtnColor, 0.55));
+    root.style.setProperty('--accent-green', t.checkboxColor);
+    root.style.setProperty('--slider-thumb-fg', t.sliderColor);
+    root.style.setProperty('--help-badge-fg', t.sliderColor);
+    root.style.setProperty('--accent-cyan', t.sliderColor);
+    root.style.setProperty('--transport-accent', t.transportColor);
+
+    if (!t.amoledMode && t.bgColor && t.bgColor !== '#000000') {
+        document.body.setAttribute('data-bg-preset', 'custom');
+        root.style.setProperty('--custom-bg-color', t.bgColor);
+    } else {
+        document.body.removeAttribute('data-bg-preset');
+    }
+
+    const jsonBox = document.getElementById('themeJsonTextarea');
+    if (jsonBox && document.activeElement !== jsonBox) {
+        jsonBox.value = JSON.stringify(t);
+    }
+};
+
+window.onThemeAmoledToggleV37 = function(chk) {
+    const isAm = Boolean(chk && chk.checked);
+    window.appConfig = window.appConfig || {};
+    window.appConfig.amoledMode = isAm;
+    const orig = document.getElementById('cfg_amoledMode');
+    if (orig) orig.checked = isAm;
+    if (isAm) {
+        document.body.setAttribute('data-theme', 'amoled');
+        document.body.removeAttribute('data-bg-preset');
+    } else {
+        document.body.removeAttribute('data-theme');
+    }
+    window.applyVisualThemeV37();
+    window.saveThemeOnlyQuietlyV40();
+};
+
+window.onThemeVolSliderToggleV37 = function(chk) {
+    const showVol = Boolean(chk && chk.checked);
+    window.appConfig = window.appConfig || {};
+    window.appConfig.volSlider = showVol;
+    const orig = document.getElementById('cfg_volSlider');
+    if (orig) orig.checked = showVol;
+    if (typeof window.applyTheme === 'function') window.applyTheme();
+    window.saveThemeOnlyQuietlyV40();
+};
+
+window.onThemeAlphaInputV37 = function(val) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.themeBorderAlpha = parseInt(val, 10) || 38;
+    const lbl = document.getElementById('themeAlphaValLabel');
+    if (lbl) lbl.innerText = window.appConfig.themeBorderAlpha + '%';
+    window.applyVisualThemeV37();
+    window.saveThemeOnlyQuietlyV40();
+};
+
+window.selectThemeBorderKeyV37 = function(newKey, ev) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.themeBorderKey = newKey;
+    window.applyVisualThemeV37();
+    window.syncThemeStudioUIV37();
+    window.saveThemeOnlyQuietlyV40();
+};
+
+window.onGroupColorInputV38 = function(propKey, hexVal) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig[propKey] = hexVal;
+    if (propKey === 'bgColor' && hexVal !== '#000000') {
+        window.appConfig.amoledMode = false;
+        document.body.removeAttribute('data-theme');
+        const amChk = document.getElementById('chk_theme_amoled');
+        if (amChk) amChk.checked = false;
+    }
+    window.applyVisualThemeV37();
+    window.saveThemeOnlyQuietlyV40();
+};
+
+window.resetVisualThemeV37 = function(ev) {
+    window.appConfig = window.appConfig || {};
+    Object.assign(window.appConfig, window.DEFAULT_THEME_CONFIG_V38);
+    const origAm = document.getElementById('cfg_amoledMode');
+    if (origAm) origAm.checked = true;
+    const origVol = document.getElementById('cfg_volSlider');
+    if (origVol) origVol.checked = true;
+    document.body.setAttribute('data-theme', 'amoled');
+    document.body.removeAttribute('data-bg-preset');
+    window.applyVisualThemeV37();
+    window.syncThemeStudioUIV38();
+    window.saveThemeOnlyQuietlyV40();
+    if (typeof window.showToast === 'function') {
+        window.showToast(window.tr('🎨 Сброшено: Истинный AMOLED + Тёмный Аметист (38%)', '🎨 Reset: True AMOLED + Subtle Amethyst (38%)'), ev);
+    }
+};
+
+// Надёжное сохранение .json (и на диск в Download/JennyThemes, и в локальный реестр)
+window.downloadThemeJsonFileV38 = async function(ev) {
+    const box = document.getElementById('themeJsonTextarea');
+    const raw = box ? box.value.trim() : '';
+    const reportBox = document.getElementById('themeJsonReportBox');
+
+    if (!raw) {
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#f85149';
+            reportBox.innerHTML = window.tr('⚠️ В поле 0 байт! Сначала нажми «📋 Копировать JSON» (чтобы выгрузить текущую тему в поле) или вставь свой код.', '⚠️ 0 bytes in text box! Tap "📋 Copy JSON" first or paste your code.');
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('⚠️ В поле 0 байт! Нажми «Копировать JSON» перед сохранением.', '⚠️ 0 bytes! Tap "Copy JSON" first.'), ev);
+        }
+        return;
+    }
+
+    const salvaged = window.salvagePartialJsonV39(raw) || window.getCurrentThemeObjectV38();
+    const completeTheme = window.applySmartPartialThemeV39(salvaged, null) || window.getCurrentThemeObjectV38();
+    const contentStr = JSON.stringify(completeTheme, null, 2);
+    const byteLen = new Blob([contentStr]).size;
+    const fileName = `jenny_${completeTheme.themeBorderKey || 'theme'}_${Math.floor(Date.now()/1000)}.json`;
+
+    // Сохраняем в локальный реестр как железный резерв
+    const localFiles = JSON.parse(localStorage.getItem('jenny_saved_themes_v40') || '[]');
+    localFiles.unshift({
+        filename: fileName,
+        path: `/storage/emulated/0/Download/JennyThemes/${fileName}`,
+        bytes: byteLen,
+        content: contentStr
+    });
+    localStorage.setItem('jenny_saved_themes_v40', JSON.stringify(localFiles.slice(0, 30)));
+
+    let savedPath = `/storage/emulated/0/Download/JennyThemes/${fileName}`;
+    try {
+        const res = await fetch('/api/themes/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: fileName, data: completeTheme })
+        });
+        const ans = await res.json();
+        if (ans && ans.path) savedPath = ans.path;
+    } catch (e) {}
+
+    if (reportBox) {
+        reportBox.style.display = 'block';
+        reportBox.style.borderColor = '#3fb950';
+        reportBox.innerHTML = window.tr(
+            `💾 <b>Файл сохранён (${byteLen} байт):</b><br><span style="color:#58a6ff;word-break:break-all;">${savedPath}</span>`,
+            `💾 <b>File saved (${byteLen} bytes):</b><br><span style="color:#58a6ff;word-break:break-all;">${savedPath}</span>`
+        );
+    }
+    if (typeof window.showToast === 'function') {
+        window.showToast(window.tr(`💾 Сохранено (${byteLen} Б): ${fileName}`, `💾 Saved (${byteLen} B): ${fileName}`), ev);
+    }
+};
+
+// Открытие списка сохранённых .json (объединяет файлы с диска и из памяти)
+window.openSavedThemesModalV39 = async function(ev) {
+    let m = document.getElementById('jennyThemeFilesModal');
+    if (m) m.remove();
+
+    m = document.createElement('div');
+    m.id = 'jennyThemeFilesModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:15px;box-sizing:border-box;';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    m.innerHTML = `
+        <div onclick="event.stopPropagation()" style="background:#05070a;border:1px solid var(--border-uniform);border-radius:14px;max-width:420px;width:100%;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 0 25px rgba(0,0,0,0.95);">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0d1117;border-bottom:1px solid #262c36;">
+                <span style="color:#58a6ff;font-weight:bold;font-size:14px;">📂 ${window.tr('Сохранённые файлы .json', 'Saved .json Theme Files')}</span>
+                <button type="button" onclick="document.getElementById('jennyThemeFilesModal').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;padding:2px 6px;">✖</button>
+            </div>
+            <div id="jennyThemeFilesList" style="padding:12px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:#e6edf3;"></div>
+        </div>
+    `;
+    document.body.appendChild(m);
+
+    let files = JSON.parse(localStorage.getItem('jenny_saved_themes_v40') || '[]');
+    let dirName = '/storage/emulated/0/Download/JennyThemes';
+
+    try {
+        const res = await fetch('/api/themes/list', { method: 'POST' });
+        const ans = await res.json();
+        if (ans && Array.isArray(ans.files) && ans.files.length > 0) {
+            dirName = ans.dir || dirName;
+            const seen = new Set(ans.files.map(x => x.filename));
+            files = [...ans.files, ...files.filter(x => !seen.has(x.filename))];
+        }
+    } catch (e) {}
+
+    const listEl = document.getElementById('jennyThemeFilesList');
+    if (!listEl) return;
+
+    if (files.length === 0) {
+        listEl.innerHTML = `<div style="color:#8b949e;text-align:center;padding:15px;">${window.tr('Пока нет сохранённых .json файлов.<br><br>Нажми «💾 Скачать .json», чтобы сохранить первую тему!', 'No saved .json files yet.<br><br>Tap "💾 Save .json" first!')}</div>`;
+        return;
+    }
+
+    window._loadedThemeFilesCacheV39 = files;
+    listEl.innerHTML = `<div style="font-size:11px;color:#8b949e;margin-bottom:4px;">📁 ${dirName}</div>` + files.map((f, idx) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;background:#0d1117;border:1px solid #262c36;border-radius:8px;padding:8px 10px;gap:8px;">
+            <div style="min-width:0;flex:1;">
+                <div style="color:#3fb950;font-weight:bold;word-break:break-all;">${f.filename}</div>
+                <div style="color:#8b949e;font-size:11px;">${f.bytes} ${window.tr('байт', 'bytes')}</div>
+            </div>
+            <button type="button" onclick="window.pickSavedThemeFileByIndexV39(${idx}, event)" style="padding:6px 12px;color:#58a6ff;border-color:#58a6ff;flex-shrink:0;">
+                ${window.tr('Загрузить', 'Load')}
+            </button>
+        </div>
+    `).join('');
+};
+
+setTimeout(() => {
+    window.unifyAllSettingCardsV37();
+    window.tagUniformResetButtonsV38();
+    window.applyVisualThemeV37();
+    window.syncSettingsLangBtnVisibilityV39(false);
+    window.upgradeThemeModalControlsV39();
+}, 250);
