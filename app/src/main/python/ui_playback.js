@@ -325,7 +325,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
         player.onratechange = () => {
             if (window.appConfig.studioMode && window.studioSourceNode) {
-                window.studioSourceNode.playbackRate.value = player.playbackRate;
+                if (window.appConfig.elasticHoseMode && window.studioSourceNode._isHoseSpliced && player.playbackRate !== 10.0) {
+                    window.studioSourceNode.playbackRate.value = 1.0;
+                } else {
+                    window.studioSourceNode.playbackRate.value = player.playbackRate;
+                }
             }
         };
 

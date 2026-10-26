@@ -33,7 +33,10 @@ window.startScrub = function(side, speed) {
         player.preservesPitch = isPitchLocked;
 
         if (window.appConfig.studioMode && window.studioBuffer) {
-            if (isPitchLocked && speed !== 1.0) {
+            if (window.appConfig && window.appConfig.elasticHoseMode && typeof window.applyElasticHoseBufferLiveV46 === 'function') {
+                if (window.htmlGain) window.htmlGain.gain.value = 0;
+                window.applyElasticHoseBufferLiveV46(true);
+            } else if (isPitchLocked && speed !== 1.0) {
                 if (window.htmlGain) window.htmlGain.gain.value = 1;
                 window.isStudioPlaying = false;
                 if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
@@ -131,7 +134,10 @@ window.stopScrub = function(keepLockedSpeed = false) {
 
         if (window.appConfig.studioMode && window.studioBuffer) {
             let isRev = window.isReversed || window.scrubState.isPhysicallyReversed;
-            if (isPitchLocked && baseSpd !== 1.0 && !isRev) {
+            if (window.appConfig && window.appConfig.elasticHoseMode && typeof window.applyElasticHoseBufferLiveV46 === 'function') {
+                if (window.htmlGain) window.htmlGain.gain.value = 0;
+                window.applyElasticHoseBufferLiveV46(false);
+            } else if (isPitchLocked && baseSpd !== 1.0 && !isRev) {
                 if (window.htmlGain) window.htmlGain.gain.value = 1;
                 window.isStudioPlaying = false;
             } else {
