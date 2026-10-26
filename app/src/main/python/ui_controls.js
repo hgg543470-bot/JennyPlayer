@@ -4,30 +4,66 @@
 
 window.toggleReverseMode = function(targetReversed) {
     if (!window.appConfig.studioMode || !window.studioBuffer) return;
-    if (window.isReversed === targetReversed) return;
-    
-    if (window.scrubState && (window.scrubState.active || window.scrubState.locked)) {
-        if(typeof window.stopScrub === 'function') window.stopScrub();
-    }
-    if (!window.reversedStudioBuffer) return;
-    
-    window.isReversed = targetReversed;
-    
     const player = document.getElementById('audioPlayer');
-    if (window.studioSourceNode) {
-        try { window.studioSourceNode.stop(); } catch(e){}
-        window.studioSourceNode.disconnect();
+    const wasReversedNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+
+    // Если нажали правый таймер (targetReversed = false), всегда сбрасываем любой скраб и реверс в нормальный режим вперёд!
+    if (!targetReversed) {
+        if (!wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
+        window.isReversed = false;
+        if (window.scrubState) {
+            window.scrubState.active = false;
+            window.scrubState.locked = false;
+            window.scrubState.side = null;
+            window.scrubState.isPhysicallyReversed = false;
+        }
+        window.persistedPlaybackSpeed = null;
+        window.persistedPlaybackSide = 'right';
+        const lockEl = document.getElementById('speedLockIndicator');
+        if (lockEl) lockEl.style.display = 'none';
+
+        if (wasReversedNow && player && isFinite(player.duration)) {
+            player.currentTime = Math.max(0, Math.min(player.duration, player.duration - player.currentTime));
+        }
+        const baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+        if (player) player.playbackRate = baseSpd;
+        if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            window.syncMasterPlaybackEngineV59(false);
+        }
+        if (player && isFinite(player.duration) && typeof window.updateProgressUI === 'function') {
+            window.updateProgressUI(player.currentTime, player.duration, false);
+        }
+        return;
     }
-    window.studioSourceNode = window.audioCtx.createBufferSource();
-    window.studioSourceNode.buffer = targetReversed ? window.reversedStudioBuffer : window.studioBuffer;
-    window.studioSourceNode.playbackRate.value = player ? player.playbackRate : 1.0;
-    window.studioSourceNode.connect(window.inputMixer);
-    
-    if (player && isFinite(player.duration)) player.currentTime = player.duration - player.currentTime; 
-    
-    let startPos = player ? player.currentTime : 0; 
-    window.studioSourceNode.start(0, startPos);
-    if (window.appConfig && window.appConfig.elasticHoseMode && typeof window.applyElasticHoseBufferLiveV46 === 'function') window.applyElasticHoseBufferLiveV46(false);
+
+    // Если нажали левый таймер (targetReversed = true)
+    if (!window.reversedStudioBuffer) return;
+    if (wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
+
+    if (window.scrubState && (window.scrubState.active || window.scrubState.locked)) {
+        window.scrubState.active = false;
+        window.scrubState.locked = false;
+        window.scrubState.side = null;
+        window.scrubState.isPhysicallyReversed = false;
+        window.persistedPlaybackSpeed = null;
+        window.persistedPlaybackSide = 'right';
+        const lockEl = document.getElementById('speedLockIndicator');
+        if (lockEl) lockEl.style.display = 'none';
+    }
+
+    window.isReversed = true;
+    if (!wasReversedNow && player && isFinite(player.duration)) {
+        player.currentTime = Math.max(0, Math.min(player.duration, player.duration - player.currentTime));
+    }
+    const baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+    if (player) player.playbackRate = baseSpd;
+
+    if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+        window.syncMasterPlaybackEngineV59(false);
+    }
+    if (player && isFinite(player.duration) && typeof window.updateProgressUI === 'function') {
+        window.updateProgressUI(player.currentTime, player.duration, true);
+    }
 };
 
 window.setupTimeBlockControls = function() {
@@ -39,67 +75,87 @@ window.setupTimeBlockControls = function() {
     let pressTimer = null;
     let isLongPress = false;
     let jumpInterval = null;
+    let wasPlayingBeforeJump = false;
+
+    const startSilent10xSeek = (dirSign) => {
+        if (!player) return;
+        wasPlayingBeforeJump = !player.paused;
+        player.pause();
+        if (jumpInterval) clearInterval(jumpInterval);
+        jumpInterval = setInterval(() => {
+            if (!isFinite(player.duration) || player.duration <= 0) return;
+            const isVisualReverse = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+            // dirSign = -1 (влево к началу песни), +1 (вправо к концу песни)
+            const bufferStep = isVisualReverse ? (-dirSign * 1.0) : (dirSign * 1.0);
+            player.currentTime = Math.max(0, Math.min(player.duration - 0.05, player.currentTime + bufferStep));
+            if (typeof window.updateProgressUI === 'function') {
+                window.updateProgressUI(player.currentTime, player.duration, isVisualReverse);
+            }
+        }, 100);
+    };
+
+    const stopSilent10xSeek = () => {
+        if (jumpInterval) {
+            clearInterval(jumpInterval);
+            jumpInterval = null;
+        }
+        if (player && wasPlayingBeforeJump) {
+            player.play().then(() => {
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+            }).catch(() => {});
+        } else if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            window.syncMasterPlaybackEngineV59(false);
+        }
+    };
 
     leftBlock.addEventListener('touchstart', (e) => {
         isLongPress = false;
+        clearTimeout(pressTimer);
         pressTimer = setTimeout(() => {
             isLongPress = true;
             try { navigator.vibrate(30); } catch(e){}
-            if (player) {
-                player.pause();
-                jumpInterval = setInterval(() => {
-                    player.currentTime = Math.max(0, player.currentTime - 1.0);
-                    let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-                    window.updateProgressUI(player.currentTime, player.duration, isVisualReverse);
-                }, 100);
-            }
+            startSilent10xSeek(-1);
         }, 160);
     }, {passive: true});
 
     leftBlock.addEventListener('touchend', () => {
         clearTimeout(pressTimer);
         if (isLongPress) {
-            clearInterval(jumpInterval);
-            if (player) player.play();
+            stopSilent10xSeek();
         } else {
             window.toggleReverseMode(true);
         }
     });
 
-    leftBlock.addEventListener('touchcancel', () => { clearTimeout(pressTimer); clearInterval(jumpInterval); });
+    leftBlock.addEventListener('touchcancel', () => {
+        clearTimeout(pressTimer);
+        if (isLongPress) stopSilent10xSeek();
+    });
 
     rightBlock.addEventListener('touchstart', (e) => {
         isLongPress = false;
+        clearTimeout(pressTimer);
         pressTimer = setTimeout(() => {
             isLongPress = true;
             try { navigator.vibrate(30); } catch(e){}
-            if (player) {
-                player.playbackRate = 10.0;
-                if (window.studioSourceNode) window.studioSourceNode.playbackRate.value = 10.0;
-            }
+            startSilent10xSeek(+1);
         }, 160);
     }, {passive: true});
 
     rightBlock.addEventListener('touchend', () => {
         clearTimeout(pressTimer);
         if (isLongPress) {
-            if (player) {
-                let baseSpd = typeof window.getTargetPlaybackSpeed === 'function' ? window.getTargetPlaybackSpeed() : 1.0;
-                player.playbackRate = baseSpd;
-                if (typeof window.syncMasterPlaybackEngineV59 === 'function') window.syncMasterPlaybackEngineV59(false);
-            }
+            stopSilent10xSeek();
         } else {
             window.toggleReverseMode(false);
         }
     });
 
-    rightBlock.addEventListener('touchcancel', () => { 
-        clearTimeout(pressTimer); 
-        if (player) {
-            let baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
-            player.playbackRate = baseSpd;
-            if (window.studioSourceNode) window.studioSourceNode.playbackRate.value = baseSpd;
-        } 
+    rightBlock.addEventListener('touchcancel', () => {
+        clearTimeout(pressTimer);
+        if (isLongPress) stopSilent10xSeek();
     });
 };
 

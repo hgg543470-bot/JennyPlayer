@@ -5,11 +5,16 @@ window.startScrub = function(side, speed) {
     const player = document.getElementById('audioPlayer');
     if (!player) return;
 
-    let wasAlreadyReversed = window.scrubState.isPhysicallyReversed;
+    const wasReversedNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    const wantReverseNow = (side === 'left');
 
     window.scrubState.active = true;
     window.scrubState.side = side;
     window.scrubState.speed = speed;
+    window.scrubState.isPhysicallyReversed = wantReverseNow;
+    if (!wantReverseNow) {
+        window.isReversed = false;
+    }
 
     window.persistedPlaybackSpeed = speed;
     window.persistedPlaybackSide = side;
@@ -17,89 +22,41 @@ window.startScrub = function(side, speed) {
     let lockEl = document.getElementById('speedLockIndicator');
     if (lockEl) {
         lockEl.style.display = 'block';
-        lockEl.innerText = `${window.scrubState.locked ? '🔒' : '🔄'} ${side === 'left' ? '⏪' : '⏩'} x${speed}`;
+        lockEl.innerText = `${window.scrubState.locked ? '🔒' : '🔄'} ${wantReverseNow ? '⏪' : '⏩'} x${speed}`;
+    }
+
+    // Если направление (вперёд <-> назад) изменилось, переворачиваем currentTime строго один раз!
+    if (wasReversedNow !== wantReverseNow && isFinite(player.duration) && player.duration > 0) {
+        let flippedPos = player.duration - player.currentTime;
+        if (!isFinite(flippedPos) || flippedPos < 0) flippedPos = 0;
+        player.currentTime = Math.min(player.duration, flippedPos);
     }
 
     let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
     let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig && window.appConfig.pitchLock);
 
-    if (side === 'right') {
-        if (wasAlreadyReversed && window.studioSourceNode) {
-             window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect();
-        }
+    player.playbackRate = speed;
+    player.preservesPitch = Boolean(isPitchLocked && !wantReverseNow && !(window.appConfig && window.appConfig.elasticHoseMode));
 
-        window.scrubState.isPhysicallyReversed = false;
-        player.playbackRate = speed;
-        player.preservesPitch = isPitchLocked;
-
-        if (window.appConfig.studioMode && window.studioBuffer) {
-            if (window.appConfig && window.appConfig.elasticHoseMode && typeof window.applyElasticHoseBufferLiveV46 === 'function') {
-                if (window.htmlGain) window.htmlGain.gain.value = 0;
-                window.applyElasticHoseBufferLiveV46(true);
-            } else if (isPitchLocked && speed !== 1.0) {
-                if (window.htmlGain) window.htmlGain.gain.value = 1;
-                window.isStudioPlaying = false;
-                if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} try { window.studioSourceNode.disconnect(); } catch(e){} window.studioSourceNode = null; }
-            } else {
-                if (window.htmlGain) window.htmlGain.gain.value = 0;
-
-                if (!wasAlreadyReversed && window.isStudioPlaying && window.studioSourceNode && !window.studioSourceNode._isHoseSpliced) {
-                     window.studioSourceNode.playbackRate.value = speed;
-                } else {
-                     if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} try { window.studioSourceNode.disconnect(); } catch(e){} window.studioSourceNode = null; }
-                     window.studioSourceNode = window.audioCtx.createBufferSource();
-                     window.studioSourceNode.buffer = window.studioBuffer;
-                     window.studioSourceNode.playbackRate.value = speed;
-                     window.studioSourceNode.connect(window.inputMixer);
-                     window.studioSourceNode.start(0, player.currentTime);
-                     window.isStudioPlaying = true;
-                }
-            }
-        } else {
-            if (window.htmlGain) window.htmlGain.gain.value = 1;
-        }
-
-        if (player.paused) player.play().catch(e=>{});
-
-    } else {
-        if (!wasAlreadyReversed && window.studioSourceNode) {
-             window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect();
-        }
-
-        window.scrubState.isPhysicallyReversed = true;
-        player.playbackRate = speed;
-
-        if (window.appConfig.studioMode && window.reversedStudioBuffer) {
-            if (window.htmlGain) window.htmlGain.gain.value = 0;
-
-            if (wasAlreadyReversed && window.isStudioPlaying && window.studioSourceNode) {
-                 window.studioSourceNode.playbackRate.value = speed;
-            } else {
-                 if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} try { window.studioSourceNode.disconnect(); } catch(e){} window.studioSourceNode = null; }
-                 window.studioSourceNode = window.audioCtx.createBufferSource();
-                 window.studioSourceNode.buffer = window.reversedStudioBuffer;
-                 window.studioSourceNode.playbackRate.value = speed;
-                 window.studioSourceNode.connect(window.inputMixer);
-
-                 let startPos = player.duration - player.currentTime;
-                 if (!isFinite(startPos) || startPos < 0) startPos = 0;
-                 player.currentTime = startPos;
-                 window.studioSourceNode.start(0, startPos);
-                 window.isStudioPlaying = true;
-            }
-        }
-        if (player.paused) player.play().catch(e=>{});
+    if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+        window.syncMasterPlaybackEngineV59(true);
     }
+
+    if (player.paused) player.play().catch(e => {});
 };
 
 window.stopScrub = function(keepLockedSpeed = false) {
     const player = document.getElementById('audioPlayer');
-    if (!window.scrubState.active && !window.scrubState.locked) return;
+    if (!window.scrubState.active && !window.scrubState.locked && !window.isReversed) return;
+
+    const wasReversedNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
     if (!keepLockedSpeed) {
         window.scrubState.active = false;
         window.scrubState.locked = false;
         window.scrubState.side = null;
+        window.scrubState.speed = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+        window.scrubState.isPhysicallyReversed = false;
         window.persistedPlaybackSpeed = null;
         window.persistedPlaybackSide = 'right';
 
@@ -109,51 +66,26 @@ window.stopScrub = function(keepLockedSpeed = false) {
         window.scrubState.active = false;
     }
 
-    let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
-    let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig && window.appConfig.pitchLock);
+    const nowReversed = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
     if (player) {
         let baseSpd = (keepLockedSpeed && window.persistedPlaybackSpeed)
             ? window.persistedPlaybackSpeed
             : (typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0);
 
-        if (window.scrubState.isPhysicallyReversed && !keepLockedSpeed) {
-            if (isFinite(player.duration)) {
-                player.currentTime = Math.max(0, player.duration - player.currentTime);
-            }
-            window.scrubState.isPhysicallyReversed = false;
+        if (wasReversedNow !== nowReversed && isFinite(player.duration) && player.duration > 0) {
+            player.currentTime = Math.max(0, Math.min(player.duration, player.duration - player.currentTime));
         }
+
+        let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
+        let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig && window.appConfig.pitchLock);
 
         player.playbackRate = baseSpd;
-        player.preservesPitch = isPitchLocked;
+        player.preservesPitch = Boolean(isPitchLocked && !nowReversed && !(window.appConfig && window.appConfig.elasticHoseMode));
 
-        if (window.studioSourceNode) {
-            window.studioSourceNode.onended = null;
-            try { window.studioSourceNode.stop(); } catch(e){}
-            try { window.studioSourceNode.disconnect(); } catch(e){}
-            window.studioSourceNode = null;
+        if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            window.syncMasterPlaybackEngineV59(false);
         }
-
-        if (window.appConfig.studioMode && window.studioBuffer) {
-            let isRev = window.isReversed || window.scrubState.isPhysicallyReversed;
-            if (window.appConfig && window.appConfig.elasticHoseMode && typeof window.applyElasticHoseBufferLiveV46 === 'function') {
-                if (window.htmlGain) window.htmlGain.gain.value = 0;
-                window.applyElasticHoseBufferLiveV46(false);
-            } else if (isPitchLocked && baseSpd !== 1.0 && !isRev) {
-                if (window.htmlGain) window.htmlGain.gain.value = 1;
-                window.isStudioPlaying = false;
-            } else {
-                if (window.htmlGain) window.htmlGain.gain.value = 0;
-                window.studioSourceNode = window.audioCtx.createBufferSource();
-                window.studioSourceNode.buffer = isRev ? window.reversedStudioBuffer : window.studioBuffer;
-                window.studioSourceNode.playbackRate.value = baseSpd;
-                window.studioSourceNode.connect(window.inputMixer);
-                window.studioSourceNode.start(0, player.currentTime);
-                window.isStudioPlaying = true;
-            }
-        } else {
-             if (window.htmlGain) window.htmlGain.gain.value = 1;
-        }
-        if (player.paused) player.play().catch(e=>{});
+        if (player.paused) player.play().catch(e => {});
     }
 };

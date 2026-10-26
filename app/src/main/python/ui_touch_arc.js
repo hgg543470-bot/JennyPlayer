@@ -177,17 +177,16 @@ window.setupSeekZone = function() {
                 isSeekingAllowed = false; 
                 try { navigator.vibrate(50); } catch(err){}
                 
-                // Останавливаем скраббинг, если он был залочен
-                if (window.scrubState.active || window.scrubState.locked) {
-                    if (typeof window.stopScrub === 'function') window.stopScrub();
+                // Сбрасываем и залоченный скраббинг, и любой реверс к нормальному воспроизведению вперёд
+                if (window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed)) {
+                    if (typeof window.toggleReverseMode === 'function') window.toggleReverseMode(false);
+                } else if (window.scrubState.active || window.scrubState.locked) {
+                    if (typeof window.stopScrub === 'function') window.stopScrub(false);
                 }
-                
-                // Принудительно ставим базовую скорость из настроек
                 let baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
                 const player = document.getElementById('audioPlayer');
                 if (player) player.playbackRate = baseSpd;
                 if (typeof window.syncMasterPlaybackEngineV59 === 'function') window.syncMasterPlaybackEngineV59(false);
-                else if (window.studioSourceNode) window.studioSourceNode.playbackRate.value = baseSpd;
                 
                 // Показываем визуальное подтверждение на 1 секунду
                 let lockEl = document.getElementById('speedLockIndicator');

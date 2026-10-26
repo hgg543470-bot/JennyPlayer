@@ -3820,9 +3820,8 @@ setTimeout(() => {
 }, 500);
 
 
-// 🐍 ПАТЧ V59: ИСПРАВЛЕНИЕ НЕВИДИМЫХ ГАЛОЧЕК + ЧЕСТНЫЙ ДИСПЕТЧЕР 3 РЕЖИМОВ (ШЛАНГ V52 / WEBAPI PITCHLOCK / ВИНИЛ)
+// 🐍 ПАТЧ V60: ЧЕСТНЫЙ ДИСПЕТЧЕР 3 РЕЖИМОВ + ИСПРАВЛЕНИЕ ВЫХОДА ИЗ РЕВЕРСА И БЕСШУМНЫЙ 10x SEEK
 
-// Защита от чёрных (невидимых) галочек на чёрном фоне AMOLED
 (function() {
     const fixDarkCheckboxColor = () => {
         if (window.appConfig && (window.appConfig.checkboxColor === '#000000' || window.appConfig.checkboxColor === '#0d1117')) {
@@ -3879,7 +3878,7 @@ window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
     }
     window.isStudioPlaying = false;
 
-    // РЕЖИМ 2: 🌐 ШТАТНЫЙ WEBAPI PITCH LOCK (HTML5 <audio> с preservesPitch = true)
+    // РЕЖИМ 2: 🌐 ШТАТНЫЙ WEBAPI PITCH LOCK (ТОЛЬКО ВПЕРЁД НА HTML5 <audio>)
     if (isWebApiPitch && !isRev) {
         if (window.htmlGain && window.htmlGain.gain) {
             window.htmlGain.gain.value = 1.0;
@@ -3925,7 +3924,7 @@ window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
 
     if (badge) {
         badge.style.color = '#8b949e';
-        badge.innerText = `💿 Винил (Без PitchLock) | x${targetSpd.toFixed(2)}`;
+        badge.innerText = `💿 Винил (${isRev ? '⏪ Реверс' : 'Без PitchLock'}) | x${targetSpd.toFixed(2)}`;
     }
 };
 
@@ -3933,7 +3932,6 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
     return window.syncMasterPlaybackEngineV59(isDraggingArc);
 };
 
-// Делаем две галочки взаимоисключающими, чтобы всегда было на 100% наглядно, какой из 3 режимов играет
 window.onToggleElasticHoseV44 = function(chk, ev) {
     const enabled = Boolean(chk && chk.checked);
     window.appConfig = window.appConfig || {};
@@ -3962,9 +3960,8 @@ window.onToggleElasticHoseV44 = function(chk, ev) {
 
 setTimeout(() => {
     const pitchChk = document.getElementById('cfg_pitchLock');
-    const hoseChk = document.getElementById('cfg_elasticHoseV44');
-    if (pitchChk && !pitchChk._hookedV59) {
-        pitchChk._hookedV59 = true;
+    if (pitchChk && !pitchChk._hookedV60) {
+        pitchChk._hookedV60 = true;
         if (window.appConfig && window.appConfig.elasticHoseMode && pitchChk.checked) {
             pitchChk.checked = false;
             window.appConfig.pitchLock = false;
@@ -3984,17 +3981,6 @@ setTimeout(() => {
             }
         };
     }
-
-    const origStopScrub = window.stopScrub;
-    if (typeof origStopScrub === 'function' && !origStopScrub._hookedV59) {
-        window.stopScrub = function(keepLockedSpeed = false) {
-            const r = origStopScrub.apply(this, arguments);
-            window.syncMasterPlaybackEngineV59(false);
-            return r;
-        };
-        window.stopScrub._hookedV59 = true;
-    }
-
     window.syncMasterPlaybackEngineV59(false);
 }, 500);
 
@@ -4086,7 +4072,7 @@ window.cutAndSaveV52SliceV59 = function(grabTime, saveToDisk) {
     const o0 = origBuf.getChannelData(0), m0 = modBuf.getChannelData(0);
     const seams = (cache.seamLogs || []).filter(s => s.outPos >= modStart && s.outPos <= modEnd);
     const rep = [
-        `=== ✂️ V59 (ЧИСТОЕ ЯДРО V52) СРЕЗ x${targetSpd.toFixed(2)} ===`,
+        `=== ✂️ V60 (ЧИСТОЕ ЯДРО V52) СРЕЗ x${targetSpd.toFixed(2)} ===`,
         `Трек: ${window.currentPlayingTrack || 'Track'} | Avg_dy по треку: ${((cache.avgSeamErrMv||0)*100).toFixed(2)}%`,
         `Кусок ШЛАНГА (x${targetSpd.toFixed(2)}): modSample #${modStart}..#${modEnd} (${modLen} сэмплов / ${(modLen/sr*1000).toFixed(1)} мс)`,
         `Кусок ОРИГИНАЛА (x1.00): origSample #${origStart}..#${origEnd} (${origLen} сэмплов / ${(origLen/sr*1000).toFixed(1)} мс)`,
@@ -4148,7 +4134,7 @@ setTimeout(() => {
         box.id = 'hoseSliceBoxV59';
         box.style.cssText = 'margin-top:6px;border-top:1px solid #21262d;padding-top:6px;';
         box.innerHTML = `
-            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V59 (Чистое ядро V52 + /Music/mp3_test):</div>
+            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V60 (Чистое ядро V52 + /Music/mp3_test):</div>
             <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">
                 <span style="font-size:10px;color:#8b949e;">Поз(с):</span>
                 <input type="number" id="v59SliceStartSec" value="15.000" step="0.1" style="width:58px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
