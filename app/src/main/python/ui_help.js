@@ -3819,25 +3819,27 @@ setTimeout(() => {
 }, 500);
 
 
-// 🐍 ПАТЧ V55: КАРТА СЭМПЛОВ (ТЕКУЩАЯ СКОРОСТЬ ➔ ОРИГИНАЛ) + ЭКСПОРТ КУСКОВ В /storage/emulated/0/Music/mp3_test
+
+
+// 🐍 ПАТЧ V56: ОДНОСТОРОННИЙ ХРАПОВИК НАПРАВЛЕНИЯ (БЕЗ ОТКАТОВ НАЗАД) + СИНХРОНИЗАЦИЯ ЦЕЛОГО ПЕРИОДА ДУГИ
 
 window.getHoseSpeedCoeffsV55 = function(spd, tension, sr) {
     const delta = Math.abs(spd - 1.0);
     let stepMs = 0.016;
     if (delta <= 0.08) stepMs = 0.022;
     else if (spd < 0.75) stepMs = 0.010;
-    else if (spd > 1.45) stepMs = 0.013;
+    else if (spd > 1.45) stepMs = 0.014;
 
     const searchMs = delta <= 0.08 ? 0.0055 : (spd < 0.75 ? 0.0050 : 0.0070);
-    const filletMs = delta <= 0.08 ? 0.0035 : 0.0045;
+    const filletMs = delta <= 0.08 ? 0.0035 : 0.0042;
     return {
         stepMs,
         baseStep: Math.max(320, Math.round(stepMs * sr)),
         searchRad: Math.max(160, Math.round(searchMs * sr)),
         filletLen: Math.max(96, Math.round(filletMs * sr)),
-        cutDyWeight: 10.0 + delta * 6.0,
-        slopeWeight: 5.0 + tension * 1.5,
-        vertFactor: Math.min(0.25, delta * tension * 0.25)
+        cutDyWeight: 12.0 + delta * 6.0,
+        slopeWeight: 5.5 + tension * 1.5,
+        vertFactor: Math.min(0.24, delta * tension * 0.24)
     };
 };
 
@@ -3861,7 +3863,6 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     const chIn = [], chOut = [];
     for (let c = 0; c < numCh; c++) { chIn.push(srcBuffer.getChannelData(c)); chOut.push(outBuffer.getChannelData(c)); }
 
-    // Побитовая карта соответствия: origMap[outSample] = точный номер сэмпла в оригинале!
     const origMap = new Int32Array(outLen);
     const cfg = window.getHoseSpeedCoeffsV55(spd, tension, sr);
     const baseStep = cfg.baseStep, searchRad = cfg.searchRad, filletLen = cfg.filletLen;
@@ -3883,6 +3884,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
         const stepOut = baseStep + (((seamCount * 73) & 63) - 32) * 2;
         if (inCursor < 32 || inCursor + stepOut + filletLen + 64 >= inLen) break;
 
+        // 1. Доводим p1 строго до восходящего перехода через 0.0 (без пропуска сэмплов)
         let advK = 0;
         for (let k = 0; k <= 44; k++) {
             if (in0[inCursor + k - 1] <= 0.0 && in0[inCursor + k] >= 0.0) { advK = k; break; }
@@ -3896,24 +3898,49 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
         const p1 = inCursor, idealP2 = Math.round(outPos * spd);
         if (p1 + stepOut + filletLen + 32 >= inLen || idealP2 < 32 || idealP2 + stepOut + filletLen + 32 >= inLen) break;
 
+        // 2. ОДНОСТОРОННИЙ ХРАПОВИК V56:
+        // При ускорении (spd > 1) разрешены ТОЛЬКО прыжки вперёд (cand >= p1 + minShift).
+        // При замедлении (spd < 1) разрешены ТОЛЬКО прыжки назад (cand <= p1 - minShift).
+        const expShift = Math.round(stepOut * Math.abs(spd - 1.0));
+        const minShift = Math.max(16, Math.min(120, Math.round(expShift * 0.30)));
+        const maxShift = Math.max(minShift + 96, Math.round(expShift * 1.90));
+
+        const ratchetMin = spd > 1.0 ? (p1 + minShift) : (p1 - maxShift);
+        const ratchetMax = spd > 1.0 ? (p1 + maxShift) : (p1 - minShift);
+
+        let minP2 = Math.max(32, ratchetMin, idealP2 - searchRad);
+        let maxP2 = Math.min(inLen - stepOut - filletLen - 32, ratchetMax, idealP2 + searchRad);
+        if (minP2 > maxP2) {
+            const center = spd > 1.0 ? (p1 + expShift) : (p1 - expShift);
+            minP2 = Math.max(32, Math.min(inLen - stepOut - filletLen - 64, center - 64));
+            maxP2 = Math.min(inLen - stepOut - filletLen - 32, minP2 + 128);
+        }
+
         const y1L = in0[p1], y1R = in1[p1];
         const s1L = in0[p1 + 1] - in0[p1 - 1], s1R = in1[p1 + 1] - in1[p1 - 1], bs1L = in0[p1 + 8] - in0[p1 - 8];
-        const minP2 = Math.max(32, idealP2 - searchRad), maxP2 = Math.min(inLen - stepOut - filletLen - 32, idealP2 + searchRad);
-        const minShift = Math.max(14, Math.min(80, Math.floor(Math.abs(stepOut * (spd - 1.0)) * 0.35)));
 
-        let bestP2 = idealP2, bestCost = 1e9;
+        let bestP2 = Math.max(minP2, Math.min(maxP2, idealP2)), bestCost = 1e9;
+
         const evalCand = (cand) => {
-            if (Math.abs(cand - p1) < minShift) return 1e9; // Запрет shift: 0
+            if (spd > 1.0 && cand < p1 + minShift) return 1e9;
+            if (spd < 1.0 && cand > p1 - minShift) return 1e9;
+
             const s2L = in0[cand + 1] - in0[cand - 1], s2R = in1[cand + 1] - in1[cand - 1], bs2L = in0[cand + 8] - in0[cand - 8];
-            if (s1L * s2L < 0 || bs1L * bs2L < 0) return 1e9; // Запрет встречных углов
+            if (s1L * s2L < 0 || bs1L * bs2L < 0) return 1e9;
+
+            // Бонус за попадание точно в восходящий переход через 0.0 (целое число периодов дуги -> 0% сдвига тона!)
+            const zcPen = (in0[cand - 1] <= 0.005 && in0[cand] >= -0.005) ? 0.0 : 0.12;
             const cutDy = Math.abs(in0[cand] - y1L) + Math.abs(in1[cand] - y1R);
             const cutDs = Math.abs(s2L - s1L) + Math.abs(s2R - s1R);
+
+            // Сравниваем профиль волны до разреза (-8) и после разреза (+32)
             let profErr = 0.0;
-            for (let w = 0; w <= 32; w += 8) {
+            for (let w = -8; w <= 32; w += 8) {
                 const dL = in0[cand + w] - in0[p1 + w], dR = in1[cand + w] - in1[p1 + w];
                 profErr += dL * dL + dR * dR;
             }
-            return cutDy * cfg.cutDyWeight + cutDs * cfg.slopeWeight + profErr * 1.5 + (Math.abs(cand - idealP2) / searchRad) * 0.25;
+            const driftPen = (Math.abs(cand - idealP2) / searchRad) * 0.35;
+            return cutDy * cfg.cutDyWeight + cutDs * cfg.slopeWeight + profErr * 1.6 + zcPen + driftPen;
         };
 
         for (let cand = minP2; cand <= maxP2; cand += 2) {
@@ -3972,51 +3999,37 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     return outBuffer;
 };
 
-// Кодировщик AudioBuffer -> WAV Base64 (32-bit Float IEEE — сохраняет сэмплы 1:1 до последнего бита!)
 window.encodeAudioBufferToWavB64V55 = function(audioBuf) {
     const numCh = audioBuf.numberOfChannels, sr = audioBuf.sampleRate, len = audioBuf.length;
-    const bytesPerSample = 4, blockAlign = numCh * bytesPerSample, dataSize = len * blockAlign;
+    const blockAlign = numCh * 4, dataSize = len * blockAlign;
     const buf = new ArrayBuffer(44 + dataSize), view = new DataView(buf);
     const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-
     writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
-    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 3, true); // 3 = IEEE Float32
+    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 3, true);
     view.setUint16(22, numCh, true); view.setUint32(24, sr, true);
     view.setUint32(28, sr * blockAlign, true); view.setUint16(32, blockAlign, true); view.setUint16(34, 32, true);
     writeStr(36, 'data'); view.setUint32(40, dataSize, true);
-
     const chData = [];
     for (let c = 0; c < numCh; c++) chData.push(audioBuf.getChannelData(c));
     let offset = 44;
     for (let i = 0; i < len; i++) {
-        for (let c = 0; c < numCh; c++) {
-            view.setFloat32(offset, chData[c][i], true);
-            offset += 4;
-        }
+        for (let c = 0; c < numCh; c++) { view.setFloat32(offset, chData[c][i], true); offset += 4; }
     }
     const bytes = new Uint8Array(buf);
     let binary = '';
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-    }
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     return btoa(binary);
 };
 
 window._hoseTestSliceV55 = { origBuf: null, modBuf: null, activeNode: null };
 
-// ✂️ ВЫРЕЗКА ОТ ТЕКУЩЕЙ СКОРОСТИ ➔ К ОРИГИНАЛУ (С АВТОСОХРАНЕНИЕМ В /storage/emulated/0/Music/mp3_test)
 window.cutAndSaveFromCurrentSpeedV55 = function(grabCurrentTime, saveToDisk) {
     if (!window.studioBuffer || !window.audioCtx) return;
     const player = document.getElementById('audioPlayer');
     const startInp = document.getElementById('hoseSliceStartSecV55');
     const durInp = document.getElementById('hoseSliceDurMsV55');
+    if (grabCurrentTime && player && startInp) startInp.value = (player.currentTime || 0).toFixed(3);
 
-    if (grabCurrentTime && player && startInp) {
-        startInp.value = (player.currentTime || 0).toFixed(3);
-    }
-
-    // Убеждаемся, что буфер текущей скорости собран
     let targetSpd = 1.0;
     if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
         targetSpd = parseFloat(window.scrubState.speed) || 1.0;
@@ -4035,12 +4048,10 @@ window.cutAndSaveFromCurrentSpeedV55 = function(grabCurrentTime, saveToDisk) {
     const trackSec = Math.max(0, parseFloat(startInp ? startInp.value : 0) || 0);
     const modDurMs = Math.max(20, Math.min(15000, parseFloat(durInp ? durInp.value : 500) || 500));
 
-    // 1. Вычисляем диапазон сэмплов в ТЕКУЩЕЙ СКОРОСТИ (в изменённом буфере): [modStart .. modEnd]
     const modStart = Math.min(modTotalLen - 64, Math.max(0, Math.round((trackSec / targetSpd) * sr)));
     const modSliceLen = Math.max(64, Math.min(modTotalLen - modStart, Math.round((modDurMs / 1000) * sr)));
     const modEnd = modStart + modSliceLen - 1;
 
-    // 2. По карте origMap находим ТОЧНЫЕ номера начального и конечного сэмпла в оригинале!
     let origStart = cache.origMap ? cache.origMap[modStart] : Math.round(modStart * targetSpd);
     let origEnd = cache.origMap ? cache.origMap[modEnd] : Math.round(modEnd * targetSpd);
     if (origEnd <= origStart) origEnd = Math.min(origTotalLen - 1, origStart + modSliceLen);
@@ -4049,20 +4060,13 @@ window.cutAndSaveFromCurrentSpeedV55 = function(grabCurrentTime, saveToDisk) {
     const origBuf = window.audioCtx.createBuffer(numCh, origSliceLen, sr);
     const modBuf = window.audioCtx.createBuffer(numCh, modSliceLen, sr);
 
-    // 3. Копируем оба куска и запираем начальный и конечный сэмплы в 100% совпадение (разница 0.000000!)
     const edgeLock = Math.min(32, Math.floor(modSliceLen / 4));
     for (let c = 0; c < numCh; c++) {
-        const oIn = window.studioBuffer.getChannelData(c);
-        const mIn = activeModBuf.getChannelData(c);
-        const oSlice = origBuf.getChannelData(c);
-        const mSlice = modBuf.getChannelData(c);
-
+        const oIn = window.studioBuffer.getChannelData(c), mIn = activeModBuf.getChannelData(c);
+        const oSlice = origBuf.getChannelData(c), mSlice = modBuf.getChannelData(c);
         oSlice.set(oIn.subarray(origStart, origEnd + 1));
         mSlice.set(mIn.subarray(modStart, modEnd + 1));
-
-        // Плавная подводка крайних 32 сэмплов к точному значению сэмпла оригинала (чтобы убрать малейшую разницу от smoothGain)
-        const startDiff = oSlice[0] - mSlice[0];
-        const endDiff = oSlice[origSliceLen - 1] - mSlice[modSliceLen - 1];
+        const startDiff = oSlice[0] - mSlice[0], endDiff = oSlice[origSliceLen - 1] - mSlice[modSliceLen - 1];
         for (let k = 0; k < edgeLock; k++) {
             const w = 1.0 - (k / edgeLock);
             mSlice[k] += startDiff * (w * w);
@@ -4079,7 +4083,7 @@ window.cutAndSaveFromCurrentSpeedV55 = function(grabCurrentTime, saveToDisk) {
     const seamsInSlice = (cache.seamLogs || []).filter(s => s.outPos >= modStart && s.outPos <= modEnd);
 
     let rep = [
-        `=== ✂️ V55 ТЕСТ-РЕЗАК ОТ ТЕКУЩЕЙ СКОРОСТИ (x${targetSpd.toFixed(2)}) ➔ К ОРИГИНАЛУ ===`,
+        `=== ✂️ V56 ТЕСТ-РЕЗАК (ХРАПОВИК НАПРАВЛЕНИЯ x${targetSpd.toFixed(2)}) ➔ К ОРИГИНАЛУ ===`,
         `Трек: ${window.currentPlayingTrack || 'Track'} | Позиция: ${trackSec.toFixed(3)}с`,
         `Кусок ТЕКУЩЕЙ СКОРОСТИ (x${targetSpd.toFixed(2)}): modSample #${modStart}..#${modEnd} (${modSliceLen} сэмплов / ${(modSliceLen/sr*1000).toFixed(1)} мс)`,
         `Ответный кусок ОРИГИНАЛА (x1.00): origSample #${origStart}..#${origEnd} (${origSliceLen} сэмплов / ${(origSliceLen/sr*1000).toFixed(1)} мс)`,
@@ -4113,7 +4117,7 @@ window.cutAndSaveFromCurrentSpeedV55 = function(grabCurrentTime, saveToDisk) {
             })
         }).then(r => r.json()).then(res => {
             if (res.status === 'ok' && typeof window.showToast === 'function') {
-                window.showToast(`💾 Сохранено в /Music/mp3_test: ${res.prefix}`);
+                window.showToast(`💾 V56: Сохранено в /Music/mp3_test: ${res.prefix}`);
             }
         }).catch(() => {});
     }
@@ -4123,11 +4127,9 @@ window.playTestSliceV55 = function(mode) {
     const st = window._hoseTestSliceV55;
     if (!st.origBuf || !st.modBuf) window.cutAndSaveFromCurrentSpeedV55(false, false);
     if (!st.origBuf || !window.audioCtx) return;
-
     const player = document.getElementById('audioPlayer');
     if (player && !player.paused) player.pause();
     if (st.activeNode) { try { st.activeNode.stop(); st.activeNode.disconnect(); } catch(e){} }
-
     const playBuf = (b, next) => {
         const src = window.audioCtx.createBufferSource();
         src.buffer = b;
@@ -4144,13 +4146,11 @@ window.playTestSliceV55 = function(mode) {
 setTimeout(() => {
     const ta = document.getElementById('hoseDebugTextAreaV52');
     if (ta && !document.getElementById('hoseSliceBoxV55')) {
-        const oldBox = document.getElementById('hoseSliceBoxV54');
-        if (oldBox) oldBox.remove();
         const box = document.createElement('div');
         box.id = 'hoseSliceBoxV55';
         box.style.cssText = 'margin-top:6px;border-top:1px solid #21262d;padding-top:6px;';
         box.innerHTML = `
-            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V55 (Текущая скорость ➔ Оригинал + /Music/mp3_test):</div>
+            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V56 (Храповик + /Music/mp3_test):</div>
             <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">
                 <span style="font-size:10px;color:#8b949e;">Поз(с):</span>
                 <input type="number" id="hoseSliceStartSecV55" value="15.000" step="0.1" style="width:58px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
