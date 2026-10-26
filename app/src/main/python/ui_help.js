@@ -3480,7 +3480,8 @@ window.startHoseWaveScopeV49 = function() {
             const hoseData = splicedBuf.getChannelData(0);
 
             const origStart = Math.min( Math.max(0, Math.floor(curSec * sr)), Math.max(0, origData.length - winSamples - 1) );
-            const hoseStart = Math.min( Math.max(0, Math.floor((curSec / targetSpd) * sr)), Math.max(0, hoseData.length - winSamples - 1) );
+            const isHoseActiveNow = Boolean(window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.splicedBuffer);
+            const hoseStart = isHoseActiveNow ? Math.min(Math.max(0, Math.floor((curSec / targetSpd) * sr)), Math.max(0, hoseData.length - winSamples - 1)) : origStart;
 
             const plotW = W - 34;
 
@@ -3524,7 +3525,7 @@ window.startHoseWaveScopeV49 = function() {
             ctx.stroke();
 
             // 3. Отмечаем оранжевыми вертикальными метками точки 90° разреза, если они попали в окно экрана
-            const seams = window._hoseSplicerCacheV46.seamPointsOut || [];
+            const seams = (window.appConfig && window.appConfig.elasticHoseMode) ? (window._hoseSplicerCacheV46.seamPointsOut || []) : [];
             ctx.strokeStyle = 'rgba(240,136,62,0.75)';
             ctx.lineWidth = 1;
             for (let s = 0; s < seams.length; s++) {
@@ -3819,204 +3820,132 @@ setTimeout(() => {
 }, 500);
 
 
-// 🐍 ПАТЧ V55: КАРТА СЭМПЛОВ (ТЕКУЩАЯ СКОРОСТЬ ➔ ОРИГИНАЛ) + ЭКСПОРТ КУСКОВ В /storage/emulated/0/Music/mp3_test
+// 🐍 ПАТЧ V58: ЧЕСТНОЕ ПЕРЕКЛЮЧЕНИЕ (ШЛАНГ V52 / WEBAPI PITCH LOCK / ВИНИЛ) + СЭМПЛ-РЕЗАК В /Music/mp3_test
 
-window.getHoseSpeedCoeffsV55 = function(spd, tension, sr) {
-    const delta = Math.abs(spd - 1.0);
-    let stepMs = 0.016;
-    if (delta <= 0.08) stepMs = 0.022;
-    else if (spd < 0.75) stepMs = 0.010;
-    else if (spd > 1.45) stepMs = 0.013;
+// Синхронизатор режимов, когда Упругий Шланг ВЫКЛЮЧЕН:
+// Если включена верхняя галочка Pitch Lock -> включаем настоящий WebAPI Pitch Lock (через htmlGain + player.preservesPitch = true), а не RAM-винил!
+window.syncNonHoseSpeedModeV58 = function() {
+    const player = document.getElementById('audioPlayer');
+    if (!player) return;
+    const isHose = Boolean(window.appConfig && window.appConfig.elasticHoseMode);
+    if (isHose) return;
 
-    const searchMs = delta <= 0.08 ? 0.0055 : (spd < 0.75 ? 0.0050 : 0.0070);
-    const filletMs = delta <= 0.08 ? 0.0035 : 0.0045;
-    return {
-        stepMs,
-        baseStep: Math.max(320, Math.round(stepMs * sr)),
-        searchRad: Math.max(160, Math.round(searchMs * sr)),
-        filletLen: Math.max(96, Math.round(filletMs * sr)),
-        cutDyWeight: 10.0 + delta * 6.0,
-        slopeWeight: 5.0 + tension * 1.5,
-        vertFactor: Math.min(0.25, delta * tension * 0.25)
-    };
+    const pitchChk = document.getElementById('cfg_pitchLock');
+    const isWebApiPitch = Boolean(pitchChk ? pitchChk.checked : (window.appConfig && window.appConfig.pitchLock));
+    const badge = document.getElementById('hoseLiveTelemetryV44');
+
+    let targetSpd = 1.0;
+    if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
+        targetSpd = parseFloat(window.scrubState.speed) || 1.0;
+    } else if (window.persistedPlaybackSpeed) {
+        targetSpd = parseFloat(window.persistedPlaybackSpeed) || 1.0;
+    } else if (typeof window.getTargetPlaybackSpeed === 'function') {
+        targetSpd = window.getTargetPlaybackSpeed();
+    }
+
+    if (isWebApiPitch && Math.abs(targetSpd - 1.0) > 0.002) {
+        // Останавливаем беспитчевый studioSourceNode и пускаем звук через HTML5-плеер с настоящим WebAPI preservesPitch = true в тот же inputMixer!
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+            window.studioSourceNode = null;
+        }
+        window.isStudioPlaying = false;
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+        player.preservesPitch = true;
+        player.mozPreservesPitch = true;
+        player.webkitPreservesPitch = true;
+        if (Math.abs(player.playbackRate - targetSpd) > 0.005) player.playbackRate = targetSpd;
+        if (badge) badge.innerText = `🌐 WebAPI PitchLock | x${targetSpd.toFixed(2)}`;
+    } else {
+        player.preservesPitch = false;
+        player.mozPreservesPitch = false;
+        player.webkitPreservesPitch = false;
+        if (badge) badge.innerText = `💿 Винил (Без PitchLock) | x${targetSpd.toFixed(2)}`;
+    }
 };
 
-window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
-    if (!srcBuffer || !window.audioCtx) return srcBuffer;
-    const spd = Math.max(0.25, Math.min(3.0, parseFloat(speed) || 1.0));
-    const tension = Math.max(0.2, Math.min(2.0, (parseFloat(tensionPct) || 100) / 100));
-    const cache = window._hoseSplicerCacheV46;
-
-    if (Math.abs(spd - 1.0) < 0.002) {
-        cache.splicedBuffer = srcBuffer; cache.seamPointsOut = []; cache.seamLogs = []; cache.origMap = null;
-        return srcBuffer;
+const _origApplyHoseV52 = window.applyElasticHoseBufferLiveV46;
+window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
+    const isHose = Boolean(window.appConfig && window.appConfig.elasticHoseMode);
+    if (!isHose) {
+        window.syncNonHoseSpeedModeV58();
+        return;
     }
-    if (cache.srcBuffer === srcBuffer && Math.abs(cache.speed - spd) < 0.002 && Math.abs(cache.tension - tension) < 0.02 && cache.splicedBuffer) {
-        return cache.splicedBuffer;
-    }
+    return _origApplyHoseV52(isDraggingArc);
+};
 
-    const t0 = performance.now(), sr = srcBuffer.sampleRate, numCh = srcBuffer.numberOfChannels, inLen = srcBuffer.length;
-    const outLen = Math.max(1024, Math.floor(inLen / spd));
-    const outBuffer = window.audioCtx.createBuffer(numCh, outLen, sr);
-    const chIn = [], chOut = [];
-    for (let c = 0; c < numCh; c++) { chIn.push(srcBuffer.getChannelData(c)); chOut.push(outBuffer.getChannelData(c)); }
-
-    // Побитовая карта соответствия: origMap[outSample] = точный номер сэмпла в оригинале!
-    const origMap = new Int32Array(outLen);
-    const cfg = window.getHoseSpeedCoeffsV55(spd, tension, sr);
-    const baseStep = cfg.baseStep, searchRad = cfg.searchRad, filletLen = cfg.filletLen;
-    const blend = new Float32Array(filletLen);
-    for (let i = 0; i < filletLen; i++) blend[i] = 0.5 * (1.0 - Math.cos(Math.PI * i / filletLen));
-
-    const in0 = chIn[0], in1 = numCh > 1 ? chIn[1] : in0;
-    const initCopy = Math.min(baseStep, outLen, inLen);
-    for (let i = 0; i < initCopy; i++) {
-        origMap[i] = i;
-        for (let c = 0; c < numCh; c++) chOut[c][i] = chIn[c][i];
-    }
-
-    let outPos = initCopy, inCursor = initCopy, seamCount = 0, totalDiff = 0;
-    const seamPoints = [], seamLogs = [];
-    let smoothGain = 1.0;
-
-    while (outPos + baseStep + filletLen + 64 < outLen) {
-        const stepOut = baseStep + (((seamCount * 73) & 63) - 32) * 2;
-        if (inCursor < 32 || inCursor + stepOut + filletLen + 64 >= inLen) break;
-
-        let advK = 0;
-        for (let k = 0; k <= 44; k++) {
-            if (in0[inCursor + k - 1] <= 0.0 && in0[inCursor + k] >= 0.0) { advK = k; break; }
-        }
-        for (let k = 0; k < advK && outPos < outLen; k++) {
-            origMap[outPos] = inCursor;
-            for (let c = 0; c < numCh; c++) chOut[c][outPos] = chIn[c][inCursor] * smoothGain;
-            outPos++; inCursor++;
-        }
-
-        const p1 = inCursor, idealP2 = Math.round(outPos * spd);
-        if (p1 + stepOut + filletLen + 32 >= inLen || idealP2 < 32 || idealP2 + stepOut + filletLen + 32 >= inLen) break;
-
-        const y1L = in0[p1], y1R = in1[p1];
-        const s1L = in0[p1 + 1] - in0[p1 - 1], s1R = in1[p1 + 1] - in1[p1 - 1], bs1L = in0[p1 + 8] - in0[p1 - 8];
-        const minP2 = Math.max(32, idealP2 - searchRad), maxP2 = Math.min(inLen - stepOut - filletLen - 32, idealP2 + searchRad);
-        const minShift = Math.max(14, Math.min(80, Math.floor(Math.abs(stepOut * (spd - 1.0)) * 0.35)));
-
-        let bestP2 = idealP2, bestCost = 1e9;
-        const evalCand = (cand) => {
-            if (Math.abs(cand - p1) < minShift) return 1e9; // Запрет shift: 0
-            const s2L = in0[cand + 1] - in0[cand - 1], s2R = in1[cand + 1] - in1[cand - 1], bs2L = in0[cand + 8] - in0[cand - 8];
-            if (s1L * s2L < 0 || bs1L * bs2L < 0) return 1e9; // Запрет встречных углов
-            const cutDy = Math.abs(in0[cand] - y1L) + Math.abs(in1[cand] - y1R);
-            const cutDs = Math.abs(s2L - s1L) + Math.abs(s2R - s1R);
-            let profErr = 0.0;
-            for (let w = 0; w <= 32; w += 8) {
-                const dL = in0[cand + w] - in0[p1 + w], dR = in1[cand + w] - in1[p1 + w];
-                profErr += dL * dL + dR * dR;
+// Перехватываем переключение верхней галочки cfg_pitchLock и смену скорости
+setTimeout(() => {
+    const pitchChk = document.getElementById('cfg_pitchLock');
+    if (pitchChk && !pitchChk._hookedV58) {
+        pitchChk._hookedV58 = true;
+        pitchChk.addEventListener('change', () => {
+            if (window.appConfig) window.appConfig.pitchLock = pitchChk.checked;
+            if (!window.appConfig || !window.appConfig.elasticHoseMode) {
+                setTimeout(() => window.syncNonHoseSpeedModeV58(), 20);
             }
-            return cutDy * cfg.cutDyWeight + cutDs * cfg.slopeWeight + profErr * 1.5 + (Math.abs(cand - idealP2) / searchRad) * 0.25;
-        };
-
-        for (let cand = minP2; cand <= maxP2; cand += 2) {
-            const c = evalCand(cand); if (c < bestCost) { bestCost = c; bestP2 = cand; }
-        }
-        for (let cand = Math.max(minP2, bestP2 - 1); cand <= Math.min(maxP2, bestP2 + 1); cand++) {
-            const c = evalCand(cand); if (c < bestCost) { bestCost = c; bestP2 = cand; }
-        }
-
-        let segPeak = 0.0;
-        for (let i = 0; i < stepOut; i += 8) {
-            const a = Math.max(Math.abs(in0[bestP2 + i]), Math.abs(in1[bestP2 + i]));
-            if (a > segPeak) segPeak = a;
-        }
-        let targetGain = 1.0;
-        if (segPeak > 0.25) targetGain = spd > 1.0 ? (1.0 - cfg.vertFactor * (segPeak - 0.25)) : (1.0 + cfg.vertFactor * 0.65 * (segPeak - 0.25));
-
-        for (let i = 0; i < stepOut; i++) origMap[outPos + i] = bestP2 + i;
-
-        for (let c = 0; c < numCh; c++) {
-            const inp = chIn[c], out = chOut[c], dy = inp[bestP2] - inp[p1];
-            let g = smoothGain;
-            for (let i = 0; i < stepOut; i++) {
-                g = g * 0.9985 + targetGain * 0.0015;
-                let v = inp[bestP2 + i];
-                if (i < filletLen) {
-                    const b = blend[i], r = 1.0 - b;
-                    v = inp[p1 + i] * r + (v - dy * r * r) * b;
-                }
-                out[outPos + i] = v * g;
-            }
-            if (c === numCh - 1) smoothGain = g;
-        }
-
-        const dyCut = Math.abs(in0[bestP2] - y1L);
-        totalDiff += dyCut;
-        seamLogs.push({
-            idx: seamCount + 1, outPos, t: (outPos * spd) / sr, p1, p2: bestP2,
-            shift: bestP2 - p1, dy: dyCut, sA: s1L, sB: in0[bestP2 + 1] - in0[bestP2 - 1]
         });
-        seamCount++; seamPoints.push(outPos);
-        outPos += stepOut; inCursor = bestP2 + stepOut;
     }
-
-    while (outPos < outLen) {
-        const idx = Math.min(inLen - 1, Math.max(0, Math.round(inCursor)));
-        origMap[outPos] = idx;
-        for (let c = 0; c < numCh; c++) chOut[c][outPos] = chIn[c][idx] * smoothGain;
-        outPos++; inCursor += spd;
+    const origUpd = window.updateSettings;
+    if (typeof origUpd === 'function' && ! origUpd._hookedV58) {
+        window.updateSettings = function() {
+            const r = origUpd.apply(this, arguments);
+            if (!window.appConfig || !window.appConfig.elasticHoseMode) {
+                window.syncNonHoseSpeedModeV58();
+            } else {
+                window.applyElasticHoseBufferLiveV46(false);
+            }
+            return r;
+        };
+        window.updateSettings._hookedV58 = true;
     }
+}, 450);
 
-    cache.srcBuffer = srcBuffer; cache.speed = spd; cache.tension = tension;
-    cache.splicedBuffer = outBuffer; cache.lastBuildMs = Math.round(performance.now() - t0);
-    cache.avgSeamErrMv = seamCount > 0 ? (totalDiff / seamCount) : 0;
-    cache.seamPointsOut = seamPoints; cache.seamLogs = seamLogs; cache.origMap = origMap;
-    return outBuffer;
-};
-
-// Кодировщик AudioBuffer -> WAV Base64 (32-bit Float IEEE — сохраняет сэмплы 1:1 до последнего бита!)
-window.encodeAudioBufferToWavB64V55 = function(audioBuf) {
+// ✂️ СЭМПЛ-РЕЗАК ДЛЯ ЧИСТОГО ДВИЖКА V52 (ПО ТАБЛИЦЕ seamLogs, БЕЗ ВМЕШАТЕЛЬСТВА В ЯДРО V52)
+window.encodeAudioBufferToWavB64V58 = function(audioBuf) {
     const numCh = audioBuf.numberOfChannels, sr = audioBuf.sampleRate, len = audioBuf.length;
-    const bytesPerSample = 4, blockAlign = numCh * bytesPerSample, dataSize = len * blockAlign;
+    const blockAlign = numCh * 4, dataSize = len * blockAlign;
     const buf = new ArrayBuffer(44 + dataSize), view = new DataView(buf);
     const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-
     writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
-    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 3, true); // 3 = IEEE Float32
+    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 3, true);
     view.setUint16(22, numCh, true); view.setUint32(24, sr, true);
     view.setUint32(28, sr * blockAlign, true); view.setUint16(32, blockAlign, true); view.setUint16(34, 32, true);
     writeStr(36, 'data'); view.setUint32(40, dataSize, true);
-
     const chData = [];
     for (let c = 0; c < numCh; c++) chData.push(audioBuf.getChannelData(c));
     let offset = 44;
     for (let i = 0; i < len; i++) {
-        for (let c = 0; c < numCh; c++) {
-            view.setFloat32(offset, chData[c][i], true);
-            offset += 4;
-        }
+        for (let c = 0; c < numCh; c++) { view.setFloat32(offset, chData[c][i], true); offset += 4; }
     }
     const bytes = new Uint8Array(buf);
     let binary = '';
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-    }
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
     return btoa(binary);
 };
 
-window._hoseTestSliceV55 = { origBuf: null, modBuf: null, activeNode: null };
+window.mapModSampleToOrigV58 = function(modSample, logs, spd, origLen) {
+    if (!logs || !logs.length) return Math.min(origLen - 1, Math.max(0, Math.round(modSample * spd)));
+    let lastSeam = null;
+    for (let i = 0; i < logs.length; i++) {
+        if (logs[i].outPos <= modSample) lastSeam = logs[i];
+        else break;
+    }
+    if (!lastSeam) return Math.min(origLen - 1, Math.max(0, modSample));
+    return Math.min(origLen - 1, Math.max(0, lastSeam.p2 + (modSample - lastSeam.outPos)));
+};
 
-// ✂️ ВЫРЕЗКА ОТ ТЕКУЩЕЙ СКОРОСТИ ➔ К ОРИГИНАЛУ (С АВТОСОХРАНЕНИЕМ В /storage/emulated/0/Music/mp3_test)
-window.cutAndSaveFromCurrentSpeedV55 = function(grabCurrentTime, saveToDisk) {
+window._hoseTestSliceV58 = { origBuf: null, modBuf: null, activeNode: null };
+
+window.cutAndSaveV52SliceV58 = function(grabTime, saveToDisk) {
     if (!window.studioBuffer || !window.audioCtx) return;
     const player = document.getElementById('audioPlayer');
-    const startInp = document.getElementById('hoseSliceStartSecV55');
-    const durInp = document.getElementById('hoseSliceDurMsV55');
+    const startInp = document.getElementById('v58SliceStartSec');
+    const durInp = document.getElementById('v58SliceDurMs');
+    if (grabTime && player && startInp) startInp.value = (player.currentTime || 0).toFixed(3);
 
-    if (grabCurrentTime && player && startInp) {
-        startInp.value = (player.currentTime || 0).toFixed(3);
-    }
-
-    // Убеждаемся, что буфер текущей скорости собран
     let targetSpd = 1.0;
     if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
         targetSpd = parseFloat(window.scrubState.speed) || 1.0;
@@ -4028,77 +3957,62 @@ window.cutAndSaveFromCurrentSpeedV55 = function(grabCurrentTime, saveToDisk) {
     const tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined) ? window.appConfig.hoseTensionPct : 100;
     const activeModBuf = window.buildElasticHoseBufferV46(window.studioBuffer, targetSpd, tensionPct);
 
-    const cache = window._hoseSplicerCacheV46;
+    const cache = window._hoseSplicerCacheV46 || {};
     const sr = window.studioBuffer.sampleRate, numCh = window.studioBuffer.numberOfChannels;
-    const origTotalLen = window.studioBuffer.length, modTotalLen = activeModBuf.length;
+    const origTotal = window.studioBuffer.length, modTotal = activeModBuf.length;
 
-    const trackSec = Math.max(0, parseFloat(startInp ? startInp.value : 0) || 0);
-    const modDurMs = Math.max(20, Math.min(15000, parseFloat(durInp ? durInp.value : 500) || 500));
+    const trackSec = Math.max(0, parseFloat(startInp ? startInp.value : 15.0) || 15.0);
+    const durMs = Math.max(20, parseFloat(durInp ? durInp.value : 500) || 500);
 
-    // 1. Вычисляем диапазон сэмплов в ТЕКУЩЕЙ СКОРОСТИ (в изменённом буфере): [modStart .. modEnd]
-    const modStart = Math.min(modTotalLen - 64, Math.max(0, Math.round((trackSec / targetSpd) * sr)));
-    const modSliceLen = Math.max(64, Math.min(modTotalLen - modStart, Math.round((modDurMs / 1000) * sr)));
-    const modEnd = modStart + modSliceLen - 1;
+    const modStart = Math.min(modTotal - 64, Math.max(0, Math.round((trackSec / targetSpd) * sr)));
+    const modLen = Math.max(64, Math.min(modTotal - modStart, Math.round((durMs / 1000) * sr)));
+    const modEnd = modStart + modLen - 1;
 
-    // 2. По карте origMap находим ТОЧНЫЕ номера начального и конечного сэмпла в оригинале!
-    let origStart = cache.origMap ? cache.origMap[modStart] : Math.round(modStart * targetSpd);
-    let origEnd = cache.origMap ? cache.origMap[modEnd] : Math.round(modEnd * targetSpd);
-    if (origEnd <= origStart) origEnd = Math.min(origTotalLen - 1, origStart + modSliceLen);
-    const origSliceLen = origEnd - origStart + 1;
+    const origStart = window.mapModSampleToOrigV58(modStart, cache.seamLogs, targetSpd, origTotal);
+    let origEnd = window.mapModSampleToOrigV58(modEnd, cache.seamLogs, targetSpd, origTotal);
+    if (origEnd <= origStart) origEnd = Math.min(origTotal - 1, origStart + modLen);
+    const origLen = origEnd - origStart + 1;
 
-    const origBuf = window.audioCtx.createBuffer(numCh, origSliceLen, sr);
-    const modBuf = window.audioCtx.createBuffer(numCh, modSliceLen, sr);
+    const origBuf = window.audioCtx.createBuffer(numCh, origLen, sr);
+    const modBuf = window.audioCtx.createBuffer(numCh, modLen, sr);
+    const edgeLock = Math.min(32, Math.floor(modLen / 4));
 
-    // 3. Копируем оба куска и запираем начальный и конечный сэмплы в 100% совпадение (разница 0.000000!)
-    const edgeLock = Math.min(32, Math.floor(modSliceLen / 4));
     for (let c = 0; c < numCh; c++) {
-        const oIn = window.studioBuffer.getChannelData(c);
-        const mIn = activeModBuf.getChannelData(c);
-        const oSlice = origBuf.getChannelData(c);
-        const mSlice = modBuf.getChannelData(c);
-
-        oSlice.set(oIn.subarray(origStart, origEnd + 1));
-        mSlice.set(mIn.subarray(modStart, modEnd + 1));
-
-        // Плавная подводка крайних 32 сэмплов к точному значению сэмпла оригинала (чтобы убрать малейшую разницу от smoothGain)
-        const startDiff = oSlice[0] - mSlice[0];
-        const endDiff = oSlice[origSliceLen - 1] - mSlice[modSliceLen - 1];
+        const oIn = window.studioBuffer.getChannelData(c), mIn = activeModBuf.getChannelData(c);
+        const oSl = origBuf.getChannelData(c), mSl = modBuf.getChannelData(c);
+        oSl.set(oIn.subarray(origStart, origEnd + 1));
+        mSl.set(mIn.subarray(modStart, modEnd + 1));
+        const sDiff = oSl[0] - mSl[0], eDiff = oSl[origLen - 1] - mSl[modLen - 1];
         for (let k = 0; k < edgeLock; k++) {
             const w = 1.0 - (k / edgeLock);
-            mSlice[k] += startDiff * (w * w);
-            mSlice[modSliceLen - 1 - k] += endDiff * (w * w);
+            mSl[k] += sDiff * (w * w);
+            mSl[modLen - 1 - k] += eDiff * (w * w);
         }
-        mSlice[0] = oSlice[0];
-        mSlice[modSliceLen - 1] = oSlice[origSliceLen - 1];
+        mSl[0] = oSl[0];
+        mSl[modLen - 1] = oSl[origLen - 1];
     }
 
-    window._hoseTestSliceV55.origBuf = origBuf;
-    window._hoseTestSliceV55.modBuf = modBuf;
+    window._hoseTestSliceV58.origBuf = origBuf;
+    window._hoseTestSliceV58.modBuf = modBuf;
 
     const o0 = origBuf.getChannelData(0), m0 = modBuf.getChannelData(0);
-    const seamsInSlice = (cache.seamLogs || []).filter(s => s.outPos >= modStart && s.outPos <= modEnd);
-
-    let rep = [
-        `=== ✂️ V55 ТЕСТ-РЕЗАК ОТ ТЕКУЩЕЙ СКОРОСТИ (x${targetSpd.toFixed(2)}) ➔ К ОРИГИНАЛУ ===`,
-        `Трек: ${window.currentPlayingTrack || 'Track'} | Позиция: ${trackSec.toFixed(3)}с`,
-        `Кусок ТЕКУЩЕЙ СКОРОСТИ (x${targetSpd.toFixed(2)}): modSample #${modStart}..#${modEnd} (${modSliceLen} сэмплов / ${(modSliceLen/sr*1000).toFixed(1)} мс)`,
-        `Ответный кусок ОРИГИНАЛА (x1.00): origSample #${origStart}..#${origEnd} (${origSliceLen} сэмплов / ${(origSliceLen/sr*1000).toFixed(1)} мс)`,
-        `ПРОВЕРКА ПЕРВОГО СЭМПЛА (#${origStart}): Ориг[0]=${o0[0].toFixed(6)} | Изм[0]=${m0[0].toFixed(6)} | Diff=${Math.abs(o0[0]-m0[0]).toFixed(6)}`,
-        `ПРОВЕРКА ПОСЛЕДНЕГО СЭМПЛА (#${origEnd}): Ориг[end]=${o0[origSliceLen-1].toFixed(6)} | Изм[end]=${m0[modSliceLen-1].toFixed(6)} | Diff=${Math.abs(o0[origSliceLen-1]-m0[modSliceLen-1]).toFixed(6)}`,
-        `--- ШВЫ ВНУТРИ ВЫРЕЗАННОГО КУСКА (${seamsInSlice.length} шт.) ---`
-    ];
-    seamsInSlice.slice(0, 12).forEach(s => {
-        rep.push(`#${s.idx} @${s.t.toFixed(3)}s | shift:${s.shift} | dy:${s.dy.toFixed(4)} | sA:${s.sA.toFixed(4)} sB:${s.sB.toFixed(4)}`);
-    });
-    const reportTxt = rep.join('\n');
+    const seams = (cache.seamLogs || []).filter(s => s.outPos >= modStart && s.outPos <= modEnd);
+    const rep = [
+        `=== ✂️ V58 (ЧИСТОЕ ЯДРО V52 8a82c5b) СРЕЗ x${targetSpd.toFixed(2)} ===`,
+        `Трек: ${window.currentPlayingTrack || 'Track'} | Avg_dy по треку: ${((cache.avgSeamErrMv||0)*100).toFixed(2)}%`,
+        `Кусок ШЛАНГА (x${targetSpd.toFixed(2)}): modSample #${modStart}..#${modEnd} (${modLen} сэмплов / ${(modLen/sr*1000).toFixed(1)} мс)`,
+        `Кусок ОРИГИНАЛА (x1.00): origSample #${origStart}..#${origEnd} (${origLen} сэмплов / ${(origLen/sr*1000).toFixed(1)} мс)`,
+        `СТАРТ (#${origStart}): Ориг[0]=${o0[0].toFixed(6)} | Изм[0]=${m0[0].toFixed(6)} | Diff=${Math.abs(o0[0]-m0[0]).toFixed(6)}`,
+        `ФИНИШ (#${origEnd}): Ориг[end]=${o0[origLen-1].toFixed(6)} | Изм[end]=${m0[modLen-1].toFixed(6)} | Diff=${Math.abs(o0[origLen-1]-m0[modLen-1]).toFixed(6)}`,
+        `--- ШВЫ ВНУТРИ КУСКА (${seams.length} шт.) ---`,
+        ...seams.slice(0, 12).map(s => `#${s.idx} @${s.t.toFixed(3)}s | shift:${s.shift} | dy:${s.dy.toFixed(4)} | sA:${s.sA.toFixed(4)} sB:${s.sB.toFixed(4)}`)
+    ].join('\n');
 
     const ta = document.getElementById('hoseDebugTextAreaV52');
-    if (ta) ta.value = reportTxt;
-    if (navigator.clipboard) navigator.clipboard.writeText(reportTxt).catch(()=>{});
+    if (ta) ta.value = rep;
+    if (navigator.clipboard) navigator.clipboard.writeText(rep).catch(()=>{});
 
     if (saveToDisk) {
-        const origB64 = window.encodeAudioBufferToWavB64V55(origBuf);
-        const hoseB64 = window.encodeAudioBufferToWavB64V55(modBuf);
         fetch('/api/save_test_slices', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4107,27 +4021,25 @@ window.cutAndSaveFromCurrentSpeedV55 = function(grabCurrentTime, saveToDisk) {
                 speed_str: `x${targetSpd.toFixed(2)}`,
                 orig_start: origStart,
                 orig_end: origEnd,
-                orig_wav_b64: origB64,
-                hose_wav_b64: hoseB64,
-                report_txt: reportTxt
+                orig_wav_b64: window.encodeAudioBufferToWavB64V58(origBuf),
+                hose_wav_b64: window.encodeAudioBufferToWavB64V58(modBuf),
+                report_txt: rep
             })
         }).then(r => r.json()).then(res => {
             if (res.status === 'ok' && typeof window.showToast === 'function') {
                 window.showToast(`💾 Сохранено в /Music/mp3_test: ${res.prefix}`);
             }
-        }).catch(() => {});
+        }).catch(()=>{});
     }
 };
 
-window.playTestSliceV55 = function(mode) {
-    const st = window._hoseTestSliceV55;
-    if (!st.origBuf || !st.modBuf) window.cutAndSaveFromCurrentSpeedV55(false, false);
+window.playTestSliceV58 = function(mode) {
+    const st = window._hoseTestSliceV58;
+    if (!st.origBuf || !st.modBuf) window.cutAndSaveV52SliceV58(false, false);
     if (!st.origBuf || !window.audioCtx) return;
-
     const player = document.getElementById('audioPlayer');
     if (player && !player.paused) player.pause();
     if (st.activeNode) { try { st.activeNode.stop(); st.activeNode.disconnect(); } catch(e){} }
-
     const playBuf = (b, next) => {
         const src = window.audioCtx.createBufferSource();
         src.buffer = b;
@@ -4143,26 +4055,24 @@ window.playTestSliceV55 = function(mode) {
 
 setTimeout(() => {
     const ta = document.getElementById('hoseDebugTextAreaV52');
-    if (ta && !document.getElementById('hoseSliceBoxV55')) {
-        const oldBox = document.getElementById('hoseSliceBoxV54');
-        if (oldBox) oldBox.remove();
+    if (ta && !document.getElementById('hoseSliceBoxV58')) {
         const box = document.createElement('div');
-        box.id = 'hoseSliceBoxV55';
+        box.id = 'hoseSliceBoxV58';
         box.style.cssText = 'margin-top:6px;border-top:1px solid #21262d;padding-top:6px;';
         box.innerHTML = `
-            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V55 (Текущая скорость ➔ Оригинал + /Music/mp3_test):</div>
+            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V58 (Чистое ядро V52 + /Music/mp3_test):</div>
             <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">
                 <span style="font-size:10px;color:#8b949e;">Поз(с):</span>
-                <input type="number" id="hoseSliceStartSecV55" value="15.000" step="0.1" style="width:58px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
-                <button type="button" onclick="window.cutAndSaveFromCurrentSpeedV55(true, true)" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">📍 С плеера + В mp3_test</button>
+                <input type="number" id="v58SliceStartSec" value="15.000" step="0.1" style="width:58px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
+                <button type="button" onclick="window.cutAndSaveV52SliceV58(true, true)" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">📍 С плеера + В mp3_test</button>
                 <span style="font-size:10px;color:#8b949e;">Мс:</span>
-                <input type="number" id="hoseSliceDurMsV55" value="500" step="50" style="width:48px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
-                <button type="button" onclick="window.cutAndSaveFromCurrentSpeedV55(false, true)" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #58a6ff;background:#161b22;color:#58a6ff;">💾 Вырезать в mp3_test</button>
+                <input type="number" id="v58SliceDurMs" value="500" step="50" style="width:48px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
+                <button type="button" onclick="window.cutAndSaveV52SliceV58(false, true)" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #58a6ff;background:#161b22;color:#58a6ff;">💾 Вырезать в mp3_test</button>
             </div>
             <div style="display:flex;gap:4px;flex-wrap:wrap;">
-                <button type="button" onclick="window.playTestSliceV55('mod')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">▶️ Кусок Шланга</button>
-                <button type="button" onclick="window.playTestSliceV55('orig')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #8b949e;background:#161b22;color:#c9d1d9;">▶️ Кусок Ориг</button>
-                <button type="button" onclick="window.playTestSliceV55('ab')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #f0883e;background:#161b22;color:#f0883e;">🔁 Сравнить Шланг➔Ориг</button>
+                <button type="button" onclick="window.playTestSliceV58('mod')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">▶️ Кусок Шланга</button>
+                <button type="button" onclick="window.playTestSliceV58('orig')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #8b949e;background:#161b22;color:#c9d1d9;">▶️ Кусок Ориг</button>
+                <button type="button" onclick="window.playTestSliceV58('ab')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #f0883e;background:#161b22;color:#f0883e;">🔁 Сравнить Шланг➔Ориг</button>
             </div>
         `;
         ta.parentElement.appendChild(box);

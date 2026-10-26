@@ -205,10 +205,10 @@ public class MainActivity extends AppCompatActivity {
                 Python.getInstance().getModule("player").callAttr("start_server");
             }).start();
             isPageLoaded = true;
-            webView.postDelayed(() -> webView.loadUrl("http://127.0.0.1:8082"), 1500);
+            webView.postDelayed(() -> webView.loadUrl("http://127.0.0.1:8080"), 1500);
         } else if (!isPageLoaded) {
             isPageLoaded = true;
-            webView.loadUrl("http://127.0.0.1:8082");
+            webView.loadUrl("http://127.0.0.1:8080");
         }
     }
 }
