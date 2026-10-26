@@ -2470,3 +2470,351 @@ setTimeout(() => {
     window.syncSettingsLangBtnVisibilityV39(false);
     window.upgradeThemeModalControlsV39();
 }, 250);
+
+
+// 🚀 ПАТЧ V41: 0% ЗАИКАНИЙ (RAF + CONTAIN), РЕАЛЬНАЯ ПАПКА JENNYTHEMES, ВВОД ИМЕНИ И АВТОСОХРАНЕНИЕ В ФАЙЛ
+
+// 1. Защита от выбора черного/темного фона (#000000 и #0d1117) для кнопок и галочек в неполном JSON!
+window.findNearestStandardColorV39 = function(targetHex, fallbackHex) {
+    const isBgTarget = (fallbackHex === '#000000' || fallbackHex === '#0d1117');
+    const rgb = window.parseHexToRgbV39(targetHex) || window.parseHexToRgbV39(fallbackHex) || [115, 65, 190];
+    let best = window.STANDARD_PALETTE_V39[0];
+    let minDist = Infinity;
+    window.STANDARD_PALETTE_V39.forEach(item => {
+        // Для кнопок, галочек и ползунков НИКОГДА не подставляем чёрный или тёмно-синий фон, чтобы интерфейс не сливался!
+        if (!isBgTarget && (item.hex === '#000000' || item.hex === '#0d1117')) return;
+        const pRgb = window.parseHexToRgbV39(item.hex);
+        if (!pRgb) return;
+        const d = Math.pow(rgb[0]-pRgb[0], 2) + Math.pow(rgb[1]-pRgb[1], 2) + Math.pow(rgb[2]-pRgb[2], 2);
+        if (d < minDist) {
+            minDist = d;
+            best = item;
+        }
+    });
+    return best;
+};
+
+// 2. Отключаем перерисовку фонового плейлиста, когда открыты настройки или редактор тем (убирает микротычку CPU/GPU)
+window.updateModalGpuLockV41 = function() {
+    const sm = document.getElementById('settingsModal');
+    const tm = document.getElementById('themeModal');
+    const eq = document.getElementById('eqModal');
+    const isAnyOpen = (sm && sm.classList.contains('open')) || (tm && tm.classList.contains('open')) || (eq && eq.classList.contains('open'));
+    if (isAnyOpen) {
+        document.body.classList.add('modal-open-gpu-lock');
+    } else {
+        document.body.classList.remove('modal-open-gpu-lock');
+    }
+};
+
+(function() {
+    const origOpenTM = window.openThemeStudioModalV37;
+    if (typeof origOpenTM === 'function') {
+        window.openThemeStudioModalV37 = function() {
+            origOpenTM();
+            window.updateModalGpuLockV41();
+        };
+    }
+    const origCloseTM = window.closeThemeStudioToSettingsV37;
+    if (typeof origCloseTM === 'function') {
+        window.closeThemeStudioToSettingsV37 = function() {
+            origCloseTM();
+            window.updateModalGpuLockV41();
+        };
+    }
+    const origToggleM = window.toggleModal;
+    if (typeof origToggleM === 'function' && !window._gpuLockToggleWrappedV41) {
+        window._gpuLockToggleWrappedV41 = true;
+        window.toggleModal = function(id) {
+            const r = origToggleM(id);
+            setTimeout(window.updateModalGpuLockV41, 20);
+            return r;
+        };
+    }
+})();
+
+// 3. Низкоприоритетный планировщик отрисовки темы (не отбирает кванты времени у звукового потока)
+window._themeRafPendingV41 = false;
+window._lastThemePaintTimeV41 = 0;
+
+window.scheduleLowPriorityThemePaintV41 = function() {
+    if (window._themeRafPendingV41) return;
+    window._themeRafPendingV41 = true;
+
+    const doPaint = () => {
+        window._themeRafPendingV41 = false;
+        window._lastThemePaintTimeV41 = performance.now();
+        window.applyVisualThemeImmediateV41();
+    };
+
+    const elapsed = performance.now() - window._lastThemePaintTimeV41;
+    // Ограничиваем частоту пересчёта стилей при скролле ползунка до ~22 кадров/сек, отдавая приоритет аудио
+    if (elapsed < 45) {
+        setTimeout(() => requestAnimationFrame(doPaint), 45 - elapsed);
+    } else {
+        requestAnimationFrame(doPaint);
+    }
+};
+
+window.applyVisualThemeImmediateV41 = function() {
+    window.appConfig = window.appConfig || {};
+    const key = window.appConfig.themeBorderKey || 'solid_purple';
+    const alphaPct = (window.appConfig.themeBorderAlpha !== undefined) ? parseInt(window.appConfig.themeBorderAlpha, 10) : 38;
+    const alpha = Math.max(0.1, Math.min(1.0, alphaPct / 100));
+
+    const preset = window.THEME_PRESETS_V37[key] || window.THEME_PRESETS_V37.solid_purple;
+    const root = document.documentElement;
+
+    if (preset.mode === 'solid') {
+        if (document.body.getAttribute('data-border-mode') !== 'solid') {
+            document.body.setAttribute('data-border-mode', 'solid');
+        }
+        const [r, g, b] = preset.rgb;
+        const cStr = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        root.style.setProperty('--border-uniform', cStr);
+        root.style.setProperty('--border-main', cStr);
+        root.style.setProperty('--border-accent', `rgba(${r}, ${g}, ${b}, ${Math.min(1, alpha + 0.15)})`);
+    } else {
+        if (document.body.getAttribute('data-border-mode') !== 'grad') {
+            document.body.setAttribute('data-border-mode', 'grad');
+        }
+        const [r1, g1, b1] = preset.c1;
+        const [r2, g2, b2] = preset.c2;
+        if (preset.c3) {
+            const [r3, g3, b3] = preset.c3;
+            root.style.setProperty('--border-grad', `linear-gradient(135deg, rgba(${r1},${g1},${b1},${alpha}), rgba(${r2},${g2},${b2},${alpha}), rgba(${r3},${g3},${b3},${alpha}))`);
+        } else {
+            root.style.setProperty('--border-grad', `linear-gradient(135deg, rgba(${r1},${g1},${b1},${alpha}), rgba(${r2},${g2},${b2},${alpha}))`);
+        }
+        const uStr = `rgba(${r1}, ${g1}, ${b1}, ${alpha * 0.75})`;
+        root.style.setProperty('--border-uniform', uStr);
+        root.style.setProperty('--border-main', uStr);
+    }
+
+    if (typeof window.applyGroupColorsV38 === 'function') {
+        window.applyGroupColorsV38();
+    }
+};
+
+window.applyVisualThemeV37 = function() {
+    window.scheduleLowPriorityThemePaintV41();
+};
+
+// Тихое сохранение + опциональное автосохранение прямо в .json файл
+window.saveThemeOnlyQuietlyV40 = function() {
+    if (window._themeSaveDebounceTimer) clearTimeout(window._themeSaveDebounceTimer);
+    window._themeSaveDebounceTimer = setTimeout(() => {
+        try {
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig || {}));
+            if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
+            if (window.appConfig && window.appConfig.themeAutoSaveFile) {
+                window.silentAutoSaveThemeToFileV41();
+            }
+        } catch (e) {}
+    }, 450);
+};
+
+// 4. УПРАВЛЕНИЕ ИМЕНЕМ ФАЙЛА, АВТО-КОПИЯМИ И АВТОСОХРАНЕНИЕМ В .JSON
+window.injectThemeFileOptionsUIV41 = function() {
+    const box = document.getElementById('themeJsonTextarea');
+    if (!box || document.getElementById('themeFileNamingRowV41')) return;
+
+    const cfg = window.appConfig || {};
+    const spawnCopies = cfg.themeSpawnCopies !== undefined ? Boolean(cfg.themeSpawnCopies) : false;
+    const autoSaveFile = Boolean(cfg.themeAutoSaveFile);
+    const customName = cfg.themeCustomFileName || 'my_jenny_theme';
+
+    const wrap = document.createElement('div');
+    wrap.id = 'themeFileNamingRowV41';
+    wrap.style.cssText = 'background:#070a0f;border:1px solid var(--border-uniform);border-radius:8px;padding:8px 10px;margin-bottom:8px;display:flex;flex-direction:column;gap:6px;';
+    wrap.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;color:#8b949e;white-space:nowrap;">📝 ${window.tr('Имя файла:', 'File name:')}</span>
+            <input type="text" id="inp_theme_filename_v41" value="${customName}" placeholder="my_jenny_theme" oninput="window.onThemeFileNamePolicyChangeV41()" style="flex:1;padding:5px 8px;font-size:12px;color:#3fb950;font-family:monospace;">
+            <span style="font-size:12px;color:#8b949e;">.json</span>
+        </div>
+        <label class="toggle-label" style="font-size:11.5px;color:#c9d1d9;">
+            <input type="checkbox" id="chk_theme_spawn_copies_v41" ${spawnCopies ? 'checked' : ''} onchange="window.onThemeFileNamePolicyChangeV41()">
+            ${window.tr('⚡ Плодить копии (добавлять время к имени файла)', '⚡ Spawn copies (append timestamp to filename)')}
+        </label>
+        <label class="toggle-label" style="font-size:11.5px;color:#c9d1d9;">
+            <input type="checkbox" id="chk_theme_autosave_file_v41" ${autoSaveFile ? 'checked' : ''} onchange="window.onThemeFileNamePolicyChangeV41()">
+            ${window.tr('🔄 Автосохранение в этот .json файл при изменениях', '🔄 Auto-save to this .json file on changes')}
+        </label>
+    `;
+    box.insertAdjacentElement('beforebegin', wrap);
+};
+
+window.onThemeFileNamePolicyChangeV41 = function() {
+    window.appConfig = window.appConfig || {};
+    const nameInp = document.getElementById('inp_theme_filename_v41');
+    const copyChk = document.getElementById('chk_theme_spawn_copies_v41');
+    const autoChk = document.getElementById('chk_theme_autosave_file_v41');
+
+    if (nameInp) window.appConfig.themeCustomFileName = nameInp.value.trim() || 'my_jenny_theme';
+    if (copyChk) window.appConfig.themeSpawnCopies = Boolean(copyChk.checked);
+    if (autoChk) window.appConfig.themeAutoSaveFile = Boolean(autoChk.checked);
+    window.saveThemeOnlyQuietlyV40();
+};
+
+window.resolveTargetThemeFileNameV41 = function(completeTheme) {
+    const nameInp = document.getElementById('inp_theme_filename_v41');
+    const copyChk = document.getElementById('chk_theme_spawn_copies_v41');
+    let base = (nameInp && nameInp.value.trim()) ? nameInp.value.trim() : (window.appConfig.themeCustomFileName || `jenny_${completeTheme.themeBorderKey || 'theme'}`);
+    base = base.replace(/\.json$/i, '').trim() || 'my_jenny_theme';
+    const shouldSpawn = copyChk ? copyChk.checked : Boolean(window.appConfig.themeSpawnCopies);
+    if (shouldSpawn) {
+        return `${base}_${Math.floor(Date.now()/1000)}.json`;
+    }
+    return `${base}.json`;
+};
+
+window.silentAutoSaveThemeToFileV41 = async function() {
+    const completeTheme = window.getCurrentThemeObjectV38();
+    const fileName = window.resolveTargetThemeFileNameV41(completeTheme);
+    try {
+        await fetch('/api/themes/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: fileName, data: completeTheme })
+        });
+    } catch (e) {}
+};
+
+// Честное сохранение .json с выводом ПОЛНОГО ПУТИ в уведомлении (Toast)
+window.downloadThemeJsonFileV38 = async function(ev) {
+    const box = document.getElementById('themeJsonTextarea');
+    let raw = box ? box.value.trim() : '';
+    const reportBox = document.getElementById('themeJsonReportBox');
+
+    if (!raw) {
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#f85149';
+            reportBox.innerHTML = window.tr('⚠️ В поле 0 байт! Сначала нажми «📋 Копировать JSON» или вставь свой код.', '⚠️ 0 bytes in text box! Tap "📋 Copy JSON" first or paste your code.');
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('⚠️ В поле 0 байт! Нажми «Копировать JSON» перед сохранением.', '⚠️ 0 bytes! Tap "Copy JSON" first.'), ev);
+        }
+        return;
+    }
+
+    const salvaged = window.salvagePartialJsonV39(raw) || window.getCurrentThemeObjectV38();
+    const completeTheme = window.applySmartPartialThemeV39(salvaged, null) || window.getCurrentThemeObjectV38();
+    const fileName = window.resolveTargetThemeFileNameV41(completeTheme);
+
+    try {
+        const res = await fetch('/api/themes/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: fileName, data: completeTheme })
+        });
+        const ans = await res.json();
+        if (ans && ans.status === 'ok' && ans.path) {
+            if (reportBox) {
+                reportBox.style.display = 'block';
+                reportBox.style.borderColor = '#3fb950';
+                reportBox.innerHTML = window.tr(
+                    `💾 <b>Файл сохранён (${ans.bytes} байт):</b><br><span style="color:#58a6ff;word-break:break-all;">${ans.path}</span>`,
+                    `💾 <b>File saved (${ans.bytes} bytes):</b><br><span style="color:#58a6ff;word-break:break-all;">${ans.path}</span>`
+                );
+            }
+            if (typeof window.showToast === 'function') {
+                window.showToast(window.tr(`💾 Путь: ${ans.path}`, `💾 Path: ${ans.path}`), ev);
+            }
+            return;
+        } else {
+            throw new Error((ans && ans.err) ? ans.err : 'Write error');
+        }
+    } catch (e) {
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#f85149';
+            reportBox.innerHTML = `❌ Ошибка записи на диск: ${e.message || e}`;
+        }
+    }
+};
+
+// Открытие списка РЕАЛЬНЫХ файлов с диска + кнопка удаления лишних копий 🗑️
+window.openSavedThemesModalV39 = async function(ev) {
+    let m = document.getElementById('jennyThemeFilesModal');
+    if (m) m.remove();
+
+    m = document.createElement('div');
+    m.id = 'jennyThemeFilesModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:15px;box-sizing:border-box;';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    m.innerHTML = `
+        <div onclick="event.stopPropagation()" style="background:#05070a;border:1px solid var(--border-uniform);border-radius:14px;max-width:420px;width:100%;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 0 25px rgba(0,0,0,0.95);">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0d1117;border-bottom:1px solid #262c36;">
+                <span style="color:#58a6ff;font-weight:bold;font-size:14px;">📂 ${window.tr('Сохранённые файлы .json', 'Saved .json Theme Files')}</span>
+                <button type="button" onclick="document.getElementById('jennyThemeFilesModal').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;padding:2px 6px;">✖</button>
+            </div>
+            <div id="jennyThemeFilesList" style="padding:12px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:#e6edf3;">
+                <div style="color:#8b949e;text-align:center;padding:15px;">⏳ ${window.tr('Читаем папку Download/JennyThemes...', 'Reading Download/JennyThemes...')}</div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(m);
+    await window.refreshSavedThemesListV41();
+};
+
+window.refreshSavedThemesListV41 = async function() {
+    const listEl = document.getElementById('jennyThemeFilesList');
+    if (!listEl) return;
+    try {
+        const res = await fetch('/api/themes/list', { method: 'POST' });
+        const ans = await res.json();
+        const files = (ans && Array.isArray(ans.files)) ? ans.files : [];
+        const dirName = (ans && ans.dir) ? ans.dir : '/storage/emulated/0/Download/JennyThemes';
+
+        if (files.length === 0) {
+            listEl.innerHTML = `<div style="color:#8b949e;text-align:center;padding:15px;">${window.tr('В папке Download/JennyThemes пока нет файлов.<br><br>Нажми «💾 Скачать .json», чтобы создать реальный файл на диске!', 'No files in Download/JennyThemes yet.<br><br>Tap "💾 Save .json" to create a file on disk!')}</div>`;
+            return;
+        }
+
+        window._loadedThemeFilesCacheV39 = files;
+        listEl.innerHTML = `<div style="font-size:11px;color:#8b949e;margin-bottom:4px;">📁 ${dirName}</div>` + files.map((f, idx) => `
+            <div style="display:flex;justify-content:space-between;align-items:center;background:#0d1117;border:1px solid #262c36;border-radius:8px;padding:8px 10px;gap:6px;">
+                <div style="min-width:0;flex:1;">
+                    <div style="color:#3fb950;font-weight:bold;word-break:break-all;">${f.filename}</div>
+                    <div style="color:#8b949e;font-size:10.5px;word-break:break-all;">${f.path} (${f.bytes} Б)</div>
+                </div>
+                <button type="button" onclick="window.pickSavedThemeFileByIndexV39(${idx}, event)" style="padding:6px 10px;color:#58a6ff;border-color:#58a6ff;flex-shrink:0;">
+                    ${window.tr('Загрузить', 'Load')}
+                </button>
+                <button type="button" onclick="window.deleteSavedThemeFileV41('${f.filename}', event)" style="padding:6px 8px;color:#f85149;border-color:rgba(248,81,73,0.4);flex-shrink:0;" title="Удалить">
+                    🗑️
+                </button>
+            </div>
+        `).join('');
+    } catch (e) {
+        listEl.innerHTML = `<div style="color:#f85149;">❌ Ошибка связи с сервером: ${e.message || e}</div>`;
+    }
+};
+
+window.deleteSavedThemeFileV41 = async function(filename, ev) {
+    try {
+        await fetch('/api/themes/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename })
+        });
+        await window.refreshSavedThemesListV41();
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr(`🗑️ Удалено: ${filename}`, `🗑️ Deleted: ${filename}`), ev);
+        }
+    } catch (e) {}
+};
+
+const _origUpgradeV39 = window.upgradeThemeModalControlsV39;
+window.upgradeThemeModalControlsV39 = function() {
+    if (typeof _origUpgradeV39 === 'function') _origUpgradeV39();
+    window.injectThemeFileOptionsUIV41();
+};
+
+setTimeout(() => {
+    window.injectThemeFileOptionsUIV41();
+    window.applyVisualThemeImmediateV41();
+}, 260);

@@ -442,3 +442,13 @@ input[type="range"].hz-slider::-webkit-slider-thumb {
     box-shadow: inset 0 0 4px rgba(0,0,0,0.6);
     flex-shrink: 0;
 }
+
+
+/* === JENNY V41 GPU & AUDIO PRIORITY === */
+.capsule {
+    contain: layout style paint;
+}
+body.modal-open-gpu-lock #playlistContainer {
+    content-visibility: hidden !important;
+    contain: strict !important;
+}
