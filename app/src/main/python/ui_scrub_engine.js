@@ -25,7 +25,6 @@ window.startScrub = function(side, speed) {
         lockEl.innerText = `${window.scrubState.locked ? '🔒' : '🔄'} ${wantReverseNow ? '⏪' : '⏩'} x${speed}`;
     }
 
-    // Если направление (вперёд <-> назад) изменилось, переворачиваем currentTime строго один раз!
     if (wasReversedNow !== wantReverseNow && isFinite(player.duration) && player.duration > 0) {
         let flippedPos = player.duration - player.currentTime;
         if (!isFinite(flippedPos) || flippedPos < 0) flippedPos = 0;

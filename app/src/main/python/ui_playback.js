@@ -145,6 +145,8 @@ window.playTrack = async function(filename, listContext = 'main') {
 
         const response = await fetch('/api/media/' + encodeURIComponent(filename));
         const blob = await response.blob();
+        window._lastTrackBlob = blob;
+        window._lastTrackBlobName = filename;
 
         let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
         let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig.pitchLock === true);
@@ -169,75 +171,36 @@ window.playTrack = async function(filename, listContext = 'main') {
 
         if (window.appConfig.studioMode) {
             if(titleEl) titleEl.innerText = "⏳ RAM (пока играет сжатый): " + filename;
-
-            let arrayBuffer = await blob.arrayBuffer();
-            let decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
-
-            if (window.currentPlayingTrack === filename) {
-                window.studioBuffer = decodedBuffer;
-                if (window.appConfig && window.appConfig.opt_autoRms && window.preAmpNode && typeof window.computeBufferAutoGain === 'function') {
-                    window.preAmpNode.gain.value = 0.6 * window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
-                }
-                let currentTargetSpd = window.getTargetPlaybackSpeed();
-                let nowRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-
-                if (nowRev) {
-                    window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
-                    if (player && player.paused) {
-                         player.play().catch(e => {});
-                    }
-                    if (window.htmlGain) window.htmlGain.gain.value = 0;
-
-                    if (player && !player.paused) {
-                        if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
-                        window.studioSourceNode = window.audioCtx.createBufferSource();
-                        window.studioSourceNode.buffer = window.reversedStudioBuffer;
-                        window.studioSourceNode.playbackRate.value = currentTargetSpd;
-                        window.studioSourceNode.connect(window.inputMixer);
-
-                        let startPos = player.currentTime;
-                        if (!isFinite(startPos) || startPos < 0) startPos = 0;
-                        window.studioSourceNode.start(0, startPos);
-                        window.isStudioPlaying = true;
-                    }
-                } else {
-                    setTimeout(async () => {
-                        window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
-                    }, 50);
-
-                    if (window.appConfig && window.appConfig.elasticHoseMode && typeof window.applyElasticHoseBufferLiveV46 === 'function') {
-                        window.applyElasticHoseBufferLiveV46(false);
-                    } else if (isPitchLocked && currentTargetSpd !== 1.0) {
-                        if (window.htmlGain) window.htmlGain.gain.value = 1;
-                        window.isStudioPlaying = false;
-                        if (player) {
-                            player.playbackRate = currentTargetSpd;
-                            player.preservesPitch = true;
-                        }
-                    } else {
-                        if (window.htmlGain) window.htmlGain.gain.value = 0;
-
-                        if (player && !player.paused) {
-                            if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
-                            window.studioSourceNode = window.audioCtx.createBufferSource();
-
-                            window.studioSourceNode.buffer = window.studioBuffer;
-                            window.studioSourceNode.playbackRate.value = currentTargetSpd;
-                            window.studioSourceNode.connect(window.inputMixer);
-
-                            let startPos = player.currentTime;
-                            if (!isFinite(startPos) || startPos < 0) startPos = 0;
-                            window.studioSourceNode.start(0, startPos);
-
-                            window.isStudioPlaying = true;
-                        }
-                    }
-                }
-
-                if(titleEl) titleEl.innerText = "RAM 🚀: " + filename;
-            }
         } else {
             if(titleEl) titleEl.innerText = filename;
+        }
+
+        // Всегда декодируем PCM-буфер в фоне: это даёт живой осциллограф в любом режиме и 0 мс ожидание при включении RAM/Шланга!
+        let arrayBuffer = await blob.arrayBuffer();
+        let decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
+
+        if (window.currentPlayingTrack === filename) {
+            window.studioBuffer = decodedBuffer;
+            if (window.appConfig && window.appConfig.opt_autoRms && window.preAmpNode && typeof window.computeBufferAutoGain === 'function') {
+                window.preAmpNode.gain.value = 0.6 * window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
+            }
+            let nowRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+            if (nowRev) {
+                window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
+            } else {
+                setTimeout(async () => {
+                    if (window.currentPlayingTrack === filename && !window.reversedStudioBuffer) {
+                        window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
+                    }
+                }, 50);
+            }
+
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+            if (titleEl) {
+                titleEl.innerText = (window.appConfig && window.appConfig.studioMode ? "RAM 🚀: " : "") + filename;
+            }
         }
         if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
     } catch(error) {

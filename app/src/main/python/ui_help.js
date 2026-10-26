@@ -3820,7 +3820,7 @@ setTimeout(() => {
 }, 500);
 
 
-// 🐍 ПАТЧ V60: ЧЕСТНЫЙ ДИСПЕТЧЕР 3 РЕЖИМОВ + ИСПРАВЛЕНИЕ ВЫХОДА ИЗ РЕВЕРСА И БЕСШУМНЫЙ 10x SEEK
+// 🐍 ПАТЧ V61: АВТО-ПОДГРУЗКА RAM-БУФЕРА + ЧЕСТНОЕ ВЫКЛЮЧЕНИЕ RAM БЕЗ ЗАВИСАНИЯ ОСЦИЛЛОГРАФА
 
 (function() {
     const fixDarkCheckboxColor = () => {
@@ -3833,6 +3833,38 @@ setTimeout(() => {
     fixDarkCheckboxColor();
     setTimeout(fixDarkCheckboxColor, 400);
 })();
+
+// Если по любой причине studioBuffer ещё не декодирован, подгружает его на лету из кэша или сети!
+window._loadingStudioBufV61 = false;
+window.ensureStudioBufferLoadedV61 = async function() {
+    if (window.studioBuffer || window._loadingStudioBufV61 || !window.currentPlayingTrack) return;
+    if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+    if (!window.audioCtx) return;
+
+    window._loadingStudioBufV61 = true;
+    try {
+        const trackName = window.currentPlayingTrack;
+        let blob = (window._lastTrackBlob && window._lastTrackBlobName === trackName) ? window._lastTrackBlob : null;
+        if (!blob) {
+            const res = await fetch('/api/media/' + encodeURIComponent(trackName));
+            blob = await res.blob();
+            window._lastTrackBlob = blob;
+            window._lastTrackBlobName = trackName;
+        }
+        const ab = await blob.arrayBuffer();
+        const decoded = await window.audioCtx.decodeAudioData(ab);
+        if (window.currentPlayingTrack === trackName) {
+            window.studioBuffer = decoded;
+            if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+                window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decoded);
+            }
+            window._loadingStudioBufV61 = false;
+            window.syncMasterPlaybackEngineV59(false);
+            return;
+        }
+    } catch (e) {}
+    window._loadingStudioBufV61 = false;
+};
 
 window.getActiveTargetSpeedV59 = function() {
     const player = document.getElementById('audioPlayer');
@@ -3856,20 +3888,33 @@ window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
 
     const hoseChk = document.getElementById('cfg_elasticHoseV44');
     const pitchChk = document.getElementById('cfg_pitchLock');
+    const studioChk = document.getElementById('cfg_studioMode');
     const badge = document.getElementById('hoseLiveTelemetryV44');
 
+    const isStudioRam = Boolean(studioChk ? studioChk.checked : (window.appConfig && window.appConfig.studioMode));
     const isHose = Boolean(hoseChk ? hoseChk.checked : (window.appConfig && window.appConfig.elasticHoseMode));
     const isWebApiPitch = Boolean(pitchChk ? pitchChk.checked : (window.appConfig && window.appConfig.pitchLock));
     const targetSpd = window.getActiveTargetSpeedV59();
     const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
-    // РЕЖИМ 1: 🐍 НАШ УПРУГИЙ ШЛАНГ V52 (РАБОТАЕТ В RAM И ВПЕРЁД, И В РЕВЕРСЕ)
+    // Если буфера ещё нет в памяти, запускаем фоновую подгрузку, чтобы осциллограф и RAM работали без зависаний
+    if (!window.studioBuffer && window.currentPlayingTrack) {
+        window.ensureStudioBufferLoadedV61();
+    }
+
+    // РЕЖИМ 1: 🐍 НАШ УПРУГИЙ ШЛАНГ V52
     if (isHose) {
         if (badge) badge.style.color = '#58a6ff';
+        if (!window.studioBuffer) {
+            // Пока буфер декодируется (доли секунды), не глушим звук — пусть играет HTML5, а как декодируется, сам включится V52!
+            if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+            if (badge) badge.innerText = `⏳ Декодирование в RAM...`;
+            return;
+        }
         return _pureV52ApplyHose(isDraggingArc);
     }
 
-    // Останавливаем и ОБНУЛЯЕМ studioSourceNode, чтобы никогда не возникало второго потока
+    // Останавливаем и ОБНУЛЯЕМ studioSourceNode
     if (window.studioSourceNode) {
         window.studioSourceNode.onended = null;
         try { window.studioSourceNode.stop(); } catch (e) {}
@@ -3878,7 +3923,7 @@ window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
     }
     window.isStudioPlaying = false;
 
-    // РЕЖИМ 2: 🌐 ШТАТНЫЙ WEBAPI PITCH LOCK (ТОЛЬКО ВПЕРЁД НА HTML5 <audio>)
+    // РЕЖИМ 2: 🌐 ШТАТНЫЙ WEBAPI PITCH LOCK (HTML5 <audio> с preservesPitch = true)
     if (isWebApiPitch && !isRev) {
         if (window.htmlGain && window.htmlGain.gain) {
             window.htmlGain.gain.value = 1.0;
@@ -3904,7 +3949,7 @@ window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
         player.playbackRate = targetSpd;
     }
 
-    if (window.appConfig && window.appConfig.studioMode && window.studioBuffer && window.audioCtx) {
+    if (isStudioRam && window.studioBuffer && window.audioCtx) {
         if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
         if (!player.paused) {
             const rawBuf = isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer;
@@ -3938,9 +3983,17 @@ window.onToggleElasticHoseV44 = function(chk, ev) {
     window.appConfig.elasticHoseMode = enabled;
 
     const pitchChk = document.getElementById('cfg_pitchLock');
-    if (enabled && pitchChk && pitchChk.checked) {
-        pitchChk.checked = false;
-        window.appConfig.pitchLock = false;
+    const studioChk = document.getElementById('cfg_studioMode');
+    if (enabled) {
+        if (pitchChk && pitchChk.checked) {
+            pitchChk.checked = false;
+            window.appConfig.pitchLock = false;
+        }
+        // Если включаем наш Шланг, автоматически включаем и тумблер Студийного движка (RAM)
+        if (studioChk && !studioChk.checked) {
+            studioChk.checked = true;
+            window.appConfig.studioMode = true;
+        }
     }
 
     window.installHosePlayerHooksV46();
@@ -3960,8 +4013,33 @@ window.onToggleElasticHoseV44 = function(chk, ev) {
 
 setTimeout(() => {
     const pitchChk = document.getElementById('cfg_pitchLock');
-    if (pitchChk && !pitchChk._hookedV60) {
-        pitchChk._hookedV60 = true;
+    const studioChk = document.getElementById('cfg_studioMode');
+
+    if (studioChk && !studioChk._hookedV61) {
+        studioChk._hookedV61 = true;
+        studioChk.addEventListener('change', (ev) => {
+            window.appConfig = window.appConfig || {};
+            window.appConfig.studioMode = studioChk.checked;
+            const hoseChk = document.getElementById('cfg_elasticHoseV44');
+            const titleEl = document.getElementById('nowPlaying');
+            if (!studioChk.checked && hoseChk && hoseChk.checked) {
+                // Если пользователь вручную выключил RAM, выключаем и галочку Шланга, чтобы плеер честно перешел на HTML5!
+                hoseChk.checked = false;
+                window.appConfig.elasticHoseMode = false;
+                if (typeof window.showToast === 'function') {
+                    window.showToast('🎵 RAM выключен: переход на штатный HTML5 поток', ev);
+                }
+            }
+            if (titleEl && window.currentPlayingTrack) {
+                titleEl.innerText = (studioChk.checked ? "RAM 🚀: " : "") + window.currentPlayingTrack;
+            }
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+            window.syncMasterPlaybackEngineV59(false);
+        });
+    }
+
+    if (pitchChk && !pitchChk._hookedV61) {
+        pitchChk._hookedV61 = true;
         if (window.appConfig && window.appConfig.elasticHoseMode && pitchChk.checked) {
             pitchChk.checked = false;
             window.appConfig.pitchLock = false;
@@ -4072,7 +4150,7 @@ window.cutAndSaveV52SliceV59 = function(grabTime, saveToDisk) {
     const o0 = origBuf.getChannelData(0), m0 = modBuf.getChannelData(0);
     const seams = (cache.seamLogs || []).filter(s => s.outPos >= modStart && s.outPos <= modEnd);
     const rep = [
-        `=== ✂️ V60 (ЧИСТОЕ ЯДРО V52) СРЕЗ x${targetSpd.toFixed(2)} ===`,
+        `=== ✂️ V61 (ЧИСТОЕ ЯДРО V52) СРЕЗ x${targetSpd.toFixed(2)} ===`,
         `Трек: ${window.currentPlayingTrack || 'Track'} | Avg_dy по треку: ${((cache.avgSeamErrMv||0)*100).toFixed(2)}%`,
         `Кусок ШЛАНГА (x${targetSpd.toFixed(2)}): modSample #${modStart}..#${modEnd} (${modLen} сэмплов / ${(modLen/sr*1000).toFixed(1)} мс)`,
         `Кусок ОРИГИНАЛА (x1.00): origSample #${origStart}..#${origEnd} (${origLen} сэмплов / ${(origLen/sr*1000).toFixed(1)} мс)`,
@@ -4134,7 +4212,7 @@ setTimeout(() => {
         box.id = 'hoseSliceBoxV59';
         box.style.cssText = 'margin-top:6px;border-top:1px solid #21262d;padding-top:6px;';
         box.innerHTML = `
-            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V60 (Чистое ядро V52 + /Music/mp3_test):</div>
+            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V61 (Чистое ядро V52 + /Music/mp3_test):</div>
             <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">
                 <span style="font-size:10px;color:#8b949e;">Поз(с):</span>
                 <input type="number" id="v59SliceStartSec" value="15.000" step="0.1" style="width:58px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">

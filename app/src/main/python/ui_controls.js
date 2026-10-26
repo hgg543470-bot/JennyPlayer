@@ -7,7 +7,6 @@ window.toggleReverseMode = function(targetReversed) {
     const player = document.getElementById('audioPlayer');
     const wasReversedNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
-    // Если нажали правый таймер (targetReversed = false), всегда сбрасываем любой скраб и реверс в нормальный режим вперёд!
     if (!targetReversed) {
         if (!wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
         window.isReversed = false;
@@ -36,7 +35,6 @@ window.toggleReverseMode = function(targetReversed) {
         return;
     }
 
-    // Если нажали левый таймер (targetReversed = true)
     if (!window.reversedStudioBuffer) return;
     if (wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
 
@@ -85,7 +83,6 @@ window.setupTimeBlockControls = function() {
         jumpInterval = setInterval(() => {
             if (!isFinite(player.duration) || player.duration <= 0) return;
             const isVisualReverse = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
-            // dirSign = -1 (влево к началу песни), +1 (вправо к концу песни)
             const bufferStep = isVisualReverse ? (-dirSign * 1.0) : (dirSign * 1.0);
             player.currentTime = Math.max(0, Math.min(player.duration - 0.05, player.currentTime + bufferStep));
             if (typeof window.updateProgressUI === 'function') {

@@ -177,7 +177,6 @@ window.setupSeekZone = function() {
                 isSeekingAllowed = false; 
                 try { navigator.vibrate(50); } catch(err){}
                 
-                // Сбрасываем и залоченный скраббинг, и любой реверс к нормальному воспроизведению вперёд
                 if (window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed)) {
                     if (typeof window.toggleReverseMode === 'function') window.toggleReverseMode(false);
                 } else if (window.scrubState.active || window.scrubState.locked) {
