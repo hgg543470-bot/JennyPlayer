@@ -442,5 +442,20 @@ def start_server():
     run(host='127.0.0.1', port=8080, quiet=True, server='waitress')
 
 
+
+@app.route('/api/hose_debug', methods=['POST'])
+def api_save_hose_debug():
+    try:
+         data = request.get_json(force=True, silent=True) or {}
+         txt = data.get('log', '')
+         p1 = os.path.join(os.path.dirname(__file__), 'hose_debug_log.txt')
+         with open(p1, 'w', encoding='utf-8') as f: f.write(txt)
+         try:
+             with open('/sdcard/Download/hose_debug_log.txt', 'w', encoding='utf-8') as f2: f2.write(txt)
+         except Exception: pass
+         return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "msg": str(e)}), 500
+
 if __name__ == "__main__":
     start_server()
