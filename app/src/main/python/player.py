@@ -433,6 +433,53 @@ def get_track_info():
         return {"status": "error", "error": str(e)}
 
 
+
+
+@post('/api/save_test_slices')
+def save_test_slices():
+    import base64, datetime, re
+    try:
+        req = json.loads(request.body.read().decode('utf-8'))
+        out_dir = '/storage/emulated/0/Music/mp3_test'
+        os.makedirs(out_dir, exist_ok=True)
+
+        track = re.sub(r'[^a-zA-Z0-9а-яА-Я_-]', '_', os.path.splitext(req.get('track', 'track'))[0])[:24]
+        spd_str = req.get('speed_str', 'x1.00')
+        s_start = req.get('orig_start', 0)
+        s_end = req.get('orig_end', 0)
+        stamp = datetime.datetime.now().strftime('%H%M%S')
+        prefix = f"{stamp}_{track}_s{s_start}_to_s{s_end}"
+
+        orig_wav_path = os.path.join(out_dir, f"{prefix}_1_ORIG.wav")
+        hose_wav_path = os.path.join(out_dir, f"{prefix}_2_HOSE_{spd_str}.wav")
+        log_path = os.path.join(out_dir, f"{prefix}_3_DEBUG.txt")
+
+        with open(orig_wav_path, 'wb') as f1:
+            f1.write(base64.b64decode(req['orig_wav_b64']))
+        with open(hose_wav_path, 'wb') as f2:
+            f2.write(base64.b64decode(req['hose_wav_b64']))
+        with open(log_path, 'w', encoding='utf-8') as f3:
+            f3.write(req.get('report_txt', ''))
+
+        # Дополнительно конвертируем оба куска в .mp3 в ту же папку через штатный FFmpeg
+        try:
+            ffmpeg_bin = find_ffmpeg_binary()
+            orig_mp3 = os.path.join(out_dir, f"{prefix}_1_ORIG.mp3")
+            hose_mp3 = os.path.join(out_dir, f"{prefix}_2_HOSE_{spd_str}.mp3")
+            subprocess.run([ffmpeg_bin, '-y', '-i', orig_wav_path, '-b:a', '320k', orig_mp3],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run([ffmpeg_bin, '-y', '-i', hose_wav_path, '-b:a', '320k', hose_mp3],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except Exception:
+            pass
+
+        response.content_type = 'application/json'
+        return json.dumps({"status": "ok", "folder": out_dir, "prefix": prefix})
+    except Exception as e:
+        response.status = 500
+        return {"status": "error", "error": str(e)}
+
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
