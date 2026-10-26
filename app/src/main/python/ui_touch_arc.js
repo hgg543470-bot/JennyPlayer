@@ -234,7 +234,7 @@ window.setupSeekZone = function() {
 
         let threshold = window.innerHeight * 0.05; 
 
-        if (deltaY > threshold || isScrubbing) {
+        if (Math.abs(deltaY) > threshold || isScrubbing) {
             isSeekingAllowed = false; 
             if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
 

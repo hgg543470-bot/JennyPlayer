@@ -79,14 +79,14 @@ window.localizeCeilingBreakdown = function(rawStr) {
 window.applyStaticDOMTranslations = function() {
     const isEn = (window.getLang() === 'en');
     document.documentElement.lang = isEn ? 'en' : 'ru';
-    const folderTrigger = document.getElementById('folderIconTrigger');
-    if (folderTrigger && folderTrigger.parentElement) {
+    const folderTrigger = document.getElementById('langSlotWrap') || document.getElementById('folderIconTrigger');
+    if (folderTrigger) {
         let langBtn = document.getElementById('mainLangToggleBtn');
         if (!langBtn) {
             langBtn = document.createElement('button');
             langBtn.id = 'mainLangToggleBtn'; langBtn.type = 'button'; langBtn.className = 'jenny-lang-btn';
             langBtn.onclick = (e) => window.toggleLanguage(e);
-            folderTrigger.parentElement.appendChild(langBtn);
+            (document.getElementById('langSlotWrap') || folderTrigger.parentElement).appendChild(langBtn);
         }
         langBtn.innerHTML = window.renderDualLangHTML ? window.renderDualLangHTML(false) : 'RU / EN';
     }
@@ -4230,3 +4230,687 @@ setTimeout(() => {
         ta.parentElement.appendChild(box);
     }
 }, 600);
+
+
+// 📂 ПАТЧ V62 (ЭТАП 1): МЕНЕДЖЕР ПАПОК С ГАЛОЧКАМИ И ➕ + ТРАЕКТОРИЯ ГУСЕНИЦЫ СНИЗУ ВВЕРХ В ⚙️
+
+window.getSavedFoldersListV62 = function() {
+    window.appConfig = window.appConfig || {};
+    if (!Array.isArray(window.appConfig.savedFolders) || window.appConfig.savedFolders.length === 0) {
+        window.appConfig.savedFolders = [
+            '/storage/emulated/0/Music',
+            '/storage/emulated/0/Music/mp3_test',
+            '/storage/emulated/0/Download'
+        ];
+    }
+    const cur = (window.lastData && window.lastData.current_folder) ? window.lastData.current_folder.replace(/\/+$/, '') : '/storage/emulated/0/Music';
+    const norm = window.appConfig.savedFolders.map(x => String(x).replace(/\/+$/, ''));
+    if (cur && !norm.includes(cur)) norm.unshift(cur);
+    window.appConfig.savedFolders = norm;
+    return norm;
+};
+
+window.openFolderManagerModalV62 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    let m = document.getElementById('jennyFolderManagerModal');
+    if (m) m.remove();
+
+    const folders = window.getSavedFoldersListV62();
+    const curFolder = ((window.lastData && window.lastData.current_folder) ? window.lastData.current_folder : '/storage/emulated/0/Music').replace(/\/+$/, '');
+
+    m = document.createElement('div');
+    m.id = 'jennyFolderManagerModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:15px;box-sizing:border-box;';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    const rowsHtml = folders.map((p, idx) => {
+        const isSel = (p === curFolder);
+        const shortName = p.split('/').filter(Boolean).pop() || p;
+        return `
+            <div onclick="window.selectSavedFolderV62(${idx})" style="display:flex;justify-content:space-between;align-items:center;background:#0d1117;border:1px solid ${isSel ? '#3fb950' : '#262c36'};border-radius:8px;padding:8px 10px;gap:8px;cursor:pointer;">
+                <input type="checkbox" ${isSel ? 'checked' : ''} style="pointer-events:none;">
+                <div style="min-width:0;flex:1;">
+                    <div style="color:${isSel ? '#3fb950' : '#e6edf3'};font-weight:bold;font-size:13px;">📁 ${shortName}</div>
+                    <div style="color:#8b949e;font-size:10.5px;word-break:break-all;">${p}</div>
+                </div>
+                ${folders.length > 1 ? `<button type="button" onclick="event.stopPropagation();window.removeSavedFolderV62(${idx})" style="padding:5px 8px;color:#f85149;border-color:rgba(248,81,73,0.35);">🗑️</button>` : ''}
+            </div>
+        `;
+    }).join('');
+
+    m.innerHTML = `
+        <div onclick="event.stopPropagation()" style="background:#05070a;border:1px solid var(--border-uniform);border-radius:14px;max-width:420px;width:100%;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 0 25px rgba(0,0,0,0.95);">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0d1117;border-bottom:1px solid #262c36;">
+                <span style="color:#58a6ff;font-weight:bold;font-size:14px;">📁 ${window.tr('Выбор папки с музыкой', 'Music Folders')}</span>
+                <button type="button" onclick="document.getElementById('jennyFolderManagerModal').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;padding:2px 6px;">✖</button>
+            </div>
+            <div style="padding:12px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;">
+                ${rowsHtml}
+                <div style="border-top:1px solid #21262d;padding-top:10px;margin-top:4px;display:flex;gap:6px;align-items:center;">
+                    <input type="text" id="newFolderInputV62" placeholder="/storage/emulated/0/..." style="flex:1;padding:7px 8px;font-size:12px;text-align:left !important;">
+                    <button type="button" onclick="window.addNewFolderFromInputV62()" style="padding:7px 12px;color:#3fb950;border-color:#3fb950;">➕</button>
+                    <button type="button" onclick="window.triggerSystemFolderPickerV62()" style="padding:7px 10px;color:#58a6ff;border-color:#58a6ff;" title="Проводник">📂</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(m);
+};
+
+window.selectSavedFolderV62 = async function(idx) {
+    const folders = window.getSavedFoldersListV62();
+    const target = folders[idx];
+    if (!target) return;
+    await window.onNativeFolderPicked(target);
+    const m = document.getElementById('jennyFolderManagerModal');
+    if (m) m.remove();
+};
+
+window.addNewFolderFromInputV62 = async function() {
+    const inp = document.getElementById('newFolderInputV62');
+    let val = inp ? inp.value.trim() : '';
+    if (!val) return;
+    if (!val.startsWith('/')) val = '/storage/emulated/0/' + val;
+    val = val.replace(/\/+$/, '');
+    const folders = window.getSavedFoldersListV62();
+    if (!folders.includes(val)) folders.unshift(val);
+    window.appConfig.savedFolders = folders;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    await window.onNativeFolderPicked(val);
+    window.openFolderManagerModalV62();
+};
+
+window.removeSavedFolderV62 = function(idx) {
+    const folders = window.getSavedFoldersListV62();
+    if (folders.length <= 1) return;
+    folders.splice(idx, 1);
+    window.appConfig.savedFolders = folders;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.openFolderManagerModalV62();
+};
+
+window.triggerSystemFolderPickerV62 = function() {
+    const m = document.getElementById('jennyFolderManagerModal');
+    if (m) m.remove();
+    const filePicker = document.getElementById('systemFolderPicker');
+    if (window.AndroidBridge && typeof window.AndroidBridge.pickFolder === 'function') {
+        window.AndroidBridge.pickFolder();
+    } else if (filePicker) {
+        filePicker.click();
+    }
+};
+
+const _origNativePickedV62 = window.onNativeFolderPicked;
+window.onNativeFolderPicked = async function(folderPath) {
+    if (folderPath) {
+        let p = String(folderPath).trim();
+        if (!p.startsWith('/')) p = '/storage/emulated/0/' + p;
+        p = p.replace(/\/+$/, '');
+        const folders = window.getSavedFoldersListV62();
+        if (!folders.includes(p)) {
+            folders.unshift(p);
+            window.appConfig.savedFolders = folders;
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+        }
+    }
+    return _origNativePickedV62(folderPath);
+};
+
+// Пересчитываем маршрут гусеницы RU/EN снизу вверх к шестерёнке ⚙️ (и для правшей, и для левшей!)
+window.crawlAwayLangBadgeToSettings = function() {
+    const btn = document.getElementById('mainLangToggleBtn');
+    const gear = document.getElementById('btn-settingsModal');
+    if (!btn || !gear || window._hasLangRunAway || btn.offsetParent === null) return;
+
+    window._hasLangRunAway = true;
+    if (window._langBuzzInterval) clearInterval(window._langBuzzInterval);
+
+    const startRect = btn.getBoundingClientRect();
+    const gearRect = gear.getBoundingClientRect();
+    btn.style.opacity = '0';
+    btn.style.pointerEvents = 'none';
+
+    const legsHTML = '<span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span>';
+    const crawler = document.createElement('div');
+    crawler.className = 'crawler-actor';
+    crawler.style.left = startRect.left + 'px';
+    crawler.style.top = startRect.top + 'px';
+    crawler.innerHTML = `
+        <div id="crawlerBubble" style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:8px;white-space:nowrap;">${window.tr('🐛 Ползу в ⚙️...', '🐛 Crawling to ⚙️...')}</div>
+        <div id="crawlerRotator" class="crawler-rotator" style="transform: rotate(0deg);">
+            <div class="crawler-spine">
+                <div class="crawler-legs-row side-a">${legsHTML}</div>
+                <div class="jenny-lang-btn" style="white-space:nowrap;padding:3px 7px;border-color:#58a6ff;box-shadow:0 0 10px rgba(88,166,255,0.45);">
+                    ${window.renderDualLangHTML(false)}
+                </div>
+                <div class="crawler-legs-row side-b">${legsHTML}</div>
+                <div class="crawler-head-antennae"><span class="c-antenna top"></span><span class="c-antenna bot"></span></div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(crawler);
+
+    const rotator = document.getElementById('crawlerRotator');
+    const topLaneY = Math.max(8, gearRect.top + 4);
+    const goingRight = gearRect.left >= startRect.left;
+    const horizAngle = goingRight ? 'rotate(0deg)' : 'rotate(180deg)';
+
+    setTimeout(() => { if (rotator) rotator.style.transform = 'rotate(-90deg)'; }, 30);
+    setTimeout(() => {
+        crawler.style.transition = 'top 1.35s linear';
+        crawler.style.top = topLaneY + 'px';
+    }, 220);
+    setTimeout(() => { if (rotator) rotator.style.transform = horizAngle; }, 1550);
+    setTimeout(() => {
+        crawler.style.transition = 'left 1.45s linear';
+        crawler.style.left = gearRect.left + 'px';
+    }, 1700);
+    setTimeout(() => {
+        crawler.style.transition = 'transform 0.4s ease-in, opacity 0.4s ease-in';
+        crawler.style.transform = 'scale(0.12)';
+        crawler.style.opacity = '0.1';
+    }, 3180);
+    setTimeout(() => {
+        crawler.remove();
+        btn.style.display = 'none';
+        gear.classList.add('gear-soft-anim');
+        setTimeout(() => gear.classList.remove('gear-soft-anim'), 550);
+        if (typeof window.dockLangBadgeIntoOpenSettingsV39 === 'function') window.dockLangBadgeIntoOpenSettingsV39();
+    }, 3600);
+};
+
+
+// 🎛️ ПАТЧ V62 (ЭТАП 2): 3-ПОЗИЦИОННЫЙ ТУМБЛЕР (JBUF / VINYL / WEB API GOOGLE) + СКРЫТИЕ СПРАВОК (❓)
+
+window.initDefaultEngineModeJbufV62 = function() {
+    window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
+    // По умолчанию включаем наш движок JBUF 90° с питчлоком
+    if (!window.appConfig._jbufDefaultSetV62) {
+        window.appConfig._jbufDefaultSetV62 = true;
+        window.appConfig.engineModeV62 = 'jbuf';
+        window.appConfig.elasticHoseMode = true;
+        window.appConfig.pitchLock = false;
+        window.appConfig.studioMode = true;
+        localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    }
+    if (!window.appConfig.engineModeV62) {
+        if (window.appConfig.elasticHoseMode) window.appConfig.engineModeV62 = 'jbuf';
+        else if (window.appConfig.pitchLock) window.appConfig.engineModeV62 = 'webapi';
+        else window.appConfig.engineModeV62 = 'vinyl';
+    }
+};
+window.initDefaultEngineModeJbufV62();
+
+window.onToggleHideHelpBadgesV62 = function(chk, ev) {
+    const hide = Boolean(chk && chk.checked);
+    window.appConfig = window.appConfig || {};
+    window.appConfig.hideHelpBadges = hide;
+    document.body.classList.toggle('hide-help-badges', hide);
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
+    if (typeof window.showToast === 'function' && ev) {
+        window.showToast(hide ? window.tr('🙈 Значки справок (❓) скрыты', '🙈 Help badges (❓) hidden') : window.tr('📖 Значки справок (❓) включены', '📖 Help badges (❓) visible'), ev);
+    }
+};
+
+window.injectHideHelpToggleV62 = function() {
+    document.body.classList.toggle('hide-help-badges', Boolean(window.appConfig && window.appConfig.hideHelpBadges));
+    const themeRow = document.getElementById('jennyThemeStudioBtnRow');
+    if (!themeRow || document.getElementById('hideHelpRowV62')) return;
+
+    const isHidden = Boolean(window.appConfig && window.appConfig.hideHelpBadges);
+    const row = document.createElement('div');
+    row.id = 'hideHelpRowV62';
+    row.className = 'setting-row jenny-uniform-card';
+    row.style.cssText = 'padding:9px 12px;border-radius:8px;margin-bottom:12px;';
+    row.innerHTML = `
+        <label class="toggle-label" style="font-weight:bold;color:#e6edf3;width:100%;">
+            <input type="checkbox" id="cfg_hideHelpV62" ${isHidden ? 'checked' : ''} onchange="window.onToggleHideHelpBadgesV62(this, event)">
+            🙈 ${window.tr('Скрыть все справки и подсказки (❓)', 'Hide all help badges & manual (❓)')}
+        </label>
+    `;
+    themeRow.insertAdjacentElement('afterend', row);
+};
+
+window.setAudioEngineModeV62 = function(mode, ev) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.engineModeV62 = mode;
+
+    const pitchChk = document.getElementById('cfg_pitchLock');
+    const hoseChk = document.getElementById('cfg_elasticHoseV44');
+    const studioChk = document.getElementById('cfg_studioMode');
+
+    if (mode === 'jbuf') {
+        window.appConfig.elasticHoseMode = true;
+        window.appConfig.pitchLock = false;
+        window.appConfig.studioMode = true;
+        if (hoseChk) hoseChk.checked = true;
+        if (pitchChk) pitchChk.checked = false;
+        if (studioChk) studioChk.checked = true;
+    } else if (mode === 'vinyl') {
+        window.appConfig.elasticHoseMode = false;
+        window.appConfig.pitchLock = false;
+        if (hoseChk) hoseChk.checked = false;
+        if (pitchChk) pitchChk.checked = false;
+    } else if (mode === 'webapi') {
+        window.appConfig.elasticHoseMode = false;
+        window.appConfig.pitchLock = true;
+        if (hoseChk) hoseChk.checked = false;
+        if (pitchChk) pitchChk.checked = true;
+    }
+
+    window.syncEngineTumblerUIV62();
+    if (typeof window.installHosePlayerHooksV46 === 'function') window.installHosePlayerHooksV46();
+    if (typeof window.syncMasterPlaybackEngineV59 === 'function') window.syncMasterPlaybackEngineV59(false);
+
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
+
+    if (typeof window.showToast === 'function' && ev) {
+        const msgMap = {
+            jbuf: window.tr('⚡ Движок: JBUF 90° (Студийный RAM Питчлок)', '⚡ Engine: JBUF 90° (Studio RAM PitchLock)'),
+            vinyl: window.tr('💿 Движок: VINYL (Пластинка без питчлока)', '💿 Engine: VINYL (Natural Pitch Shift)'),
+            webapi: window.tr('🌐 Движок: Web API Google (Штатный браузерный)', '🌐 Engine: Web API Google (Stock Browser)')
+        };
+        window.showToast(msgMap[mode] || msgMap.jbuf, ev);
+    }
+};
+
+window.syncEngineTumblerUIV62 = function() {
+    window.initDefaultEngineModeJbufV62();
+    const mode = window.appConfig.engineModeV62 || 'jbuf';
+    const bJbuf = document.getElementById('tmb_mode_jbuf');
+    const bVinyl = document.getElementById('tmb_mode_vinyl');
+    const bWeb = document.getElementById('tmb_mode_webapi');
+
+    if (bJbuf) bJbuf.className = 'jbuf-tumbler-btn' + (mode === 'jbuf' ? ' active-jbuf' : '');
+    if (bVinyl) bVinyl.className = 'jbuf-tumbler-btn' + (mode === 'vinyl' ? ' active-vinyl' : '');
+    if (bWeb) bWeb.className = 'jbuf-tumbler-btn' + (mode === 'webapi' ? ' active-webapi' : '');
+};
+
+window.upgradeToThreeWayTumblerV62 = function() {
+    const pitchChk = document.getElementById('cfg_pitchLock');
+    const hoseChk = document.getElementById('cfg_elasticHoseV44');
+    const hoseBox = document.getElementById('hoseControlBoxV44');
+    if (!hoseBox) return;
+
+    // Скрываем старую одиночную строку cfg_pitchLock, так как теперь оба питчлока и винил объединены в 3-позиционный тумблер
+    if (pitchChk) {
+        const oldRow = pitchChk.closest('.setting-row');
+        if (oldRow) oldRow.style.display = 'none';
+    }
+    if (hoseChk) {
+        const oldHoseRow = hoseChk.closest('.setting-row');
+        if (oldHoseRow && !document.getElementById('jbufThreeWayBarV62')) {
+            const bar = document.createElement('div');
+            bar.id = 'jbufThreeWayBarV62';
+            bar.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                    <span style="font-size:12px;font-weight:bold;color:#e6edf3;">🎛️ ${window.tr('Звуковой движок скорости:', 'Speed Audio Engine:')}</span>
+                </div>
+                <div class="jbuf-tumbler-track">
+                    <button type="button" id="tmb_mode_jbuf" class="jbuf-tumbler-btn" onclick="window.setAudioEngineModeV62('jbuf', event)">⚡ JBUF 90°</button>
+                    <button type="button" id="tmb_mode_vinyl" class="jbuf-tumbler-btn" onclick="window.setAudioEngineModeV62('vinyl', event)">💿 VINYL</button>
+                    <button type="button" id="tmb_mode_webapi" class="jbuf-tumbler-btn" onclick="window.setAudioEngineModeV62('webapi', event)">🌐 Web API Google</button>
+                </div>
+            `;
+            oldHoseRow.insertAdjacentElement('beforebegin', bar);
+            // В старой строке оставляем только телеметрию справа, пряча дублирующий чекбокс
+            const lbl = oldHoseRow.querySelector('label');
+            if (lbl) lbl.style.display = 'none';
+            oldHoseRow.style.justifyContent = 'flex-end';
+        }
+    }
+    window.syncEngineTumblerUIV62();
+};
+
+const _origMountV62 = window.mountJennyStudioUI;
+window.mountJennyStudioUI = function() {
+    if (typeof _origMountV62 === 'function') _origMountV62();
+    window.injectHideHelpToggleV62();
+    setTimeout(() => {
+        window.upgradeToThreeWayTumblerV62();
+        window.syncMasterPlaybackEngineV59(false);
+    }, 80);
+};
+
+setTimeout(() => {
+    window.injectHideHelpToggleV62();
+    window.upgradeToThreeWayTumblerV62();
+    window.syncMasterPlaybackEngineV59(false);
+}, 550);
+
+
+// 📊 ПАТЧ V62 (ЭТАП 3): ОКНО АНАЛИЗАТОРА СПЕКТРА (FFT) + ОСЦИЛЛОГРАФА И ЛАБОРАТОРИИ ШВОВ
+
+window._jennySpecStateV62 = {
+    analyserPost: null,
+    analyserPre: null,
+    sourceMode: 'post', // 'post' (после всех DSP) или 'pre' (чистый вход inputMixer)
+    frozen: false,
+    peakHold: new Float32Array(64),
+    peakDecay: 0.45,
+    rafId: null
+};
+
+window.ensureSpectrumAnalysersV62 = function() {
+    if (!window.audioCtx) return null;
+    const st = window._jennySpecStateV62;
+    try {
+        if (!st.analyserPost || st.analyserPost.context !== window.audioCtx) {
+            st.analyserPost = window.audioCtx.createAnalyser();
+            st.analyserPost.fftSize = 2048;
+            st.analyserPost.smoothingTimeConstant = 0.78;
+            st.analyserPost.minDecibels = -90;
+            st.analyserPost.maxDecibels = -6;
+            if (window.masterAntiClickGain) {
+                window.masterAntiClickGain.connect(st.analyserPost);
+            }
+        }
+        if (!st.analyserPre || st.analyserPre.context !== window.audioCtx) {
+            st.analyserPre = window.audioCtx.createAnalyser();
+            st.analyserPre.fftSize = 2048;
+            st.analyserPre.smoothingTimeConstant = 0.78;
+            st.analyserPre.minDecibels = -90;
+            st.analyserPre.maxDecibels = -6;
+            if (window.preAmpNode) {
+                window.preAmpNode.connect(st.analyserPre);
+            }
+        }
+    } catch (e) {}
+    return st.sourceMode === 'pre' ? st.analyserPre : st.analyserPost;
+};
+
+// Переподключаем pre-анализатор при перестройке графа DSP
+(function() {
+    const origBuildCore = window._buildAudioGraphCore;
+    if (typeof origBuildCore === 'function' && !window._specGraphHookedV62) {
+        window._specGraphHookedV62 = true;
+        window._buildAudioGraphCore = function() {
+            const r = origBuildCore.apply(this, arguments);
+            try {
+                const st = window._jennySpecStateV62;
+                if (st.analyserPre && window.preAmpNode) window.preAmpNode.connect(st.analyserPre);
+                if (st.analyserPost && window.masterAntiClickGain) window.masterAntiClickGain.connect(st.analyserPost);
+            } catch (e) {}
+            return r;
+        };
+    }
+})();
+
+window.ensureSpectrumModalDOMV62 = function() {
+    let sm = document.getElementById('specModal');
+    if (!sm) {
+        sm = document.createElement('div');
+        sm.id = 'specModal';
+        sm.className = 'modal-overlay';
+        sm.innerHTML = `
+            <div class="container" id="specModalContainerV62">
+                <div class="jenny-uniform-card" style="background:var(--bg-setting-box);border:1px solid var(--border-uniform);border-radius:10px;padding:10px;margin-bottom:10px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+                        <span style="font-size:12.5px;font-weight:bold;color:#58a6ff;">📊 ${window.tr('FFT Анализатор Спектра (20 Гц – 20 кГц)', 'FFT Spectrum Analyzer (20 Hz – 20 kHz)')}</span>
+                        <div style="display:flex;gap:4px;align-items:center;">
+                            <button type="button" id="btnSpecSourceV62" onclick="window.toggleSpecSourceModeV62()" style="font-size:10px;padding:3px 7px;border-radius:5px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">Пост-DSP (Мастер)</button>
+                            <button type="button" onclick="window.resetSpecPeaksV62()" style="font-size:10px;padding:3px 7px;border-radius:5px;border:1px solid #30363d;background:#161b22;color:#e3b341;">Сброс пиков</button>
+                            <button type="button" id="btnSpecFreezeV62" onclick="window.toggleSpecFreezeV62(this)" style="font-size:10px;padding:3px 7px;border-radius:5px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;">❄️ Стоп</button>
+                        </div>
+                    </div>
+                    <canvas id="jennyFftCanvasV62" width="360" height="145" style="width:100%;height:145px;display:block;background:#05070a;border:1px solid #21262d;border-radius:6px;"></canvas>
+                    <div id="jennyFftBandsTelemetryV62" style="display:flex;justify-content:space-between;font-size:10.5px;font-family:monospace;color:#8b949e;margin-top:6px;padding:0 2px;">
+                        <span id="fftSubTextV62" style="color:#a371f7;">🔊 Бас (20-200Гц): -∞ dB</span>
+                        <span id="fftMidTextV62" style="color:#3fb950;">🎤 СЧ (200-4кГц): -∞ dB</span>
+                        <span id="fftHighTextV62" style="color:#58a6ff;">✨ ВЧ (4-20кГц): -∞ dB</span>
+                    </div>
+                </div>
+                <div id="specWaveLabSlotV62"></div>
+            </div>
+        `;
+        const refModal = document.getElementById('eqModal') || document.getElementById('settingsModal');
+        if (refModal && refModal.parentNode) {
+            refModal.parentNode.insertBefore(sm, refModal.nextSibling);
+        } else {
+            document.body.appendChild(sm);
+        }
+    }
+
+    // Переносим блок осциллографа и лаборатории швов внутрь окна Анализатора спектра
+    const waveCanvas = document.getElementById('hoseWaveScopeCanvasV49');
+    const slot = document.getElementById('specWaveLabSlotV62');
+    if (waveCanvas && slot && !slot.contains(waveCanvas)) {
+        const waveCard = waveCanvas.parentElement;
+        if (waveCard) {
+            waveCard.style.marginTop = '0';
+            waveCard.style.padding = '10px';
+            slot.appendChild(waveCard);
+
+            // Упаковываем отладчик швов и сэмпл-резак в аккуратный спойлер внутри этого же окна
+            const ta = document.getElementById('hoseDebugTextAreaV52');
+            const sliceBox = document.getElementById('hoseSliceBoxV59') || document.getElementById('hoseSliceBoxV58');
+            if (ta && !document.getElementById('seamLabCollapsibleV62')) {
+                const dbgBlock = ta.parentElement;
+                const det = document.createElement('details');
+                det.id = 'seamLabCollapsibleV62';
+                det.style.cssText = 'margin-top:8px;border-top:1px solid #21262d;padding-top:6px;';
+                det.innerHTML = `<summary style="font-size:11px;color:#f0883e;font-weight:bold;cursor:pointer;outline:none;">🔬 Инженерная лаборатория 90° швов и Сэмпл-Резак</summary><div id="seamLabInnerV62" style="margin-top:6px;"></div>`;
+                waveCard.appendChild(det);
+                const inner = det.querySelector('#seamLabInnerV62');
+                if (dbgBlock && dbgBlock !== waveCard) inner.appendChild(dbgBlock);
+                if (sliceBox) inner.appendChild(sliceBox);
+            }
+        }
+
+        // В настройках под ползунком упругости ставим кнопку быстрого открытия Анализатора и Осциллографа
+        const hoseBox = document.getElementById('hoseControlBoxV44');
+        if (hoseBox && !document.getElementById('openSpecShortcutBtnV62')) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.id = 'openSpecShortcutBtnV62';
+            btn.onclick = () => window.openSpectrumModalV62();
+            btn.style.cssText = 'width:100%;margin-top:8px;padding:8px;background:#0d1117;border:1px solid var(--border-uniform);color:#58a6ff;border-radius:7px;font-size:11.5px;';
+            btn.innerHTML = '📊 ' + window.tr('Открыть Анализатор спектра и Осциллограф волны', 'Open Spectrum Analyzer & Wave Scope');
+            hoseBox.appendChild(btn);
+        }
+    }
+};
+
+window.toggleSpecSourceModeV62 = function() {
+    const st = window._jennySpecStateV62;
+    st.sourceMode = (st.sourceMode === 'post') ? 'pre' : 'post';
+    const btn = document.getElementById('btnSpecSourceV62');
+    if (btn) {
+        if (st.sourceMode === 'post') {
+            btn.innerText = window.tr('Пост-DSP (Мастер)', 'Post-DSP (Master)');
+            btn.style.borderColor = '#3fb950';
+            btn.style.color = '#3fb950';
+        } else {
+            btn.innerText = window.tr('До-DSP (Вход)', 'Pre-DSP (Raw In)');
+            btn.style.borderColor = '#58a6ff';
+            btn.style.color = '#58a6ff';
+        }
+    }
+};
+
+window.resetSpecPeaksV62 = function() {
+    window._jennySpecStateV62.peakHold.fill(0);
+};
+
+window.toggleSpecFreezeV62 = function(btn) {
+    const st = window._jennySpecStateV62;
+    st.frozen = !st.frozen;
+    if (btn) {
+        btn.innerText = st.frozen ? '▶️ Пуск' : '❄️ Стоп';
+        btn.style.borderColor = st.frozen ? '#f0883e' : '#30363d';
+        btn.style.color = st.frozen ? '#f0883e' : '#c9d1d9';
+    }
+};
+
+window.startSpectrumLoopV62 = function() {
+    const st = window._jennySpecStateV62;
+    if (st.rafId) cancelAnimationFrame(st.rafId);
+
+    const freqData = new Uint8Array(1024);
+    const numBars = 64;
+
+    const draw = () => {
+        const sm = document.getElementById('specModal');
+        const cv = document.getElementById('jennyFftCanvasV62');
+        if (sm && sm.classList.contains('open') && cv && !st.frozen) {
+            const ctx = cv.getContext('2d');
+            const W = cv.width;
+            const H = cv.height;
+            const plotH = H - 18;
+            const plotX = 28;
+            const plotW = W - plotX - 4;
+
+            ctx.fillStyle = '#05070a';
+            ctx.fillRect(0, 0, W, H);
+
+            // Горизонтальная сетка децибел
+            ctx.strokeStyle = 'rgba(139,148,158,0.14)';
+            ctx.fillStyle = '#6e7681';
+            ctx.font = '9px monospace';
+            ctx.lineWidth = 1;
+            [
+                { db: ' 0dB', y: 8 },
+                { db: '-20',  y: Math.round(plotH * 0.33) },
+                { db: '-45',  y: Math.round(plotH * 0.66) },
+                { db: '-80',  y: plotH }
+            ].forEach(g => {
+                ctx.beginPath();
+                ctx.moveTo(plotX, g.y);
+                ctx.lineTo(W - 2, g.y);
+                ctx.stroke();
+                ctx.fillText(g.db, 2, g.y + 3);
+            });
+
+            // Подписи частот снизу (60 Гц, 230 Гц, 910 Гц, 3.6 кГц, 14 кГц)
+            const marks = [
+                { lbl: '60',   f: 60 },
+                { lbl: '230',  f: 230 },
+                { lbl: '910',  f: 910 },
+                { lbl: '3.6k', f: 3600 },
+                { lbl: '14k',  f: 14000 }
+            ];
+            marks.forEach(m => {
+                const normX = Math.log10(m.f / 20) / Math.log10(20000 / 20);
+                const x = plotX + Math.round(normX * plotW);
+                ctx.strokeStyle = 'rgba(88,166,255,0.12)';
+                ctx.beginPath();
+                ctx.moveTo(x, 4);
+                ctx.lineTo(x, plotH);
+                ctx.stroke();
+                ctx.fillStyle = '#8b949e';
+                ctx.fillText(m.lbl, x - 10, H - 4);
+            });
+
+            const an = window.ensureSpectrumAnalysersV62();
+            if (an) {
+                an.getByteFrequencyData(freqData);
+                const sr = (window.audioCtx && window.audioCtx.sampleRate) ? window.audioCtx.sampleRate : 48000;
+                const binCount = an.frequencyBinCount;
+
+                let subSum = 0, subCnt = 0;
+                let midSum = 0, midCnt = 0;
+                let highSum = 0, highCnt = 0;
+
+                const barW = Math.max(2, (plotW / numBars) - 1.2);
+
+                for (let i = 0; i < numBars; i++) {
+                    const fLow = 20 * Math.pow(1000, i / numBars);
+                    const fHigh = 20 * Math.pow(1000, (i + 1) / numBars);
+                    let b0 = Math.max(1, Math.floor((fLow * binCount * 2) / sr));
+                    let b1 = Math.min(binCount - 1, Math.ceil((fHigh * binCount * 2) / sr));
+                    if (b1 < b0) b1 = b0;
+
+                    let maxVal = 0;
+                    for (let b = b0; b <= b1; b++) {
+                        if (freqData[b] > maxVal) maxVal = freqData[b];
+                    }
+
+                    const fCenter = 0.5 * (fLow + fHigh);
+                    if (fCenter <= 200) { subSum += maxVal; subCnt++; }
+                    else if (fCenter <= 4000) { midSum += maxVal; midCnt++; }
+                    else { highSum += maxVal; highCnt++; }
+
+                    if (maxVal >= st.peakHold[i]) {
+                        st.peakHold[i] = maxVal;
+                    } else {
+                        st.peakHold[i] = Math.max(0, st.peakHold[i] - st.peakDecay);
+                    }
+
+                    const hBar = Math.round((maxVal / 255) * (plotH - 6));
+                    const hPeak = Math.round((st.peakHold[i] / 255) * (plotH - 6));
+                    const x = plotX + i * (plotW / numBars);
+
+                    // Градиент столбика: фиолетовый бас -> изумрудная середина -> голубой воздух
+                    if (fCenter <= 220) ctx.fillStyle = '#a371f7';
+                    else if (fCenter <= 3800) ctx.fillStyle = '#3fb950';
+                    else ctx.fillStyle = '#58a6ff';
+
+                    if (hBar > 0) {
+                        ctx.fillRect(x, plotH - hBar, barW, hBar);
+                    }
+                    if (hPeak > 1) {
+                        ctx.fillStyle = '#e3b341';
+                        ctx.fillRect(x, plotH - hPeak - 2, barW, 2);
+                    }
+                }
+
+                const toDbStr = (avg) => avg < 1 ? '-∞ dB' : (-84 + (avg / 255) * 80).toFixed(1) + ' dB';
+                const subEl = document.getElementById('fftSubTextV62');
+                const midEl = document.getElementById('fftMidTextV62');
+                const highEl = document.getElementById('fftHighTextV62');
+                if (subEl) subEl.innerText = `🔊 Бас: ${toDbStr(subSum / Math.max(1, subCnt))}`;
+                if (midEl) midEl.innerText = `🎤 СЧ: ${toDbStr(midSum / Math.max(1, midCnt))}`;
+                if (highEl) highEl.innerText = `✨ ВЧ: ${toDbStr(highSum / Math.max(1, highCnt))}`;
+            }
+        }
+        st.rafId = requestAnimationFrame(draw);
+    };
+    st.rafId = requestAnimationFrame(draw);
+};
+
+// Интегрируем specModal в общий переключатель модальных окон toggleModal
+(function() {
+    window.toggleModal = function(id) {
+        window.ensureSpectrumModalDOMV62();
+        const tm = document.getElementById('themeModal');
+        if (tm && tm.classList.contains('open') && id === 'settingsModal') {
+            tm.classList.remove('open');
+            return;
+        }
+        if (tm) tm.classList.remove('open');
+
+        const modals = ['settingsModal', 'favModal', 'eqModal', 'specModal'];
+        const target = document.getElementById(id);
+        const btnTarget = document.getElementById('btn-' + id);
+        if (!target) return;
+        const wasOpen = target.classList.contains('open');
+
+        modals.forEach(m => {
+            const el = document.getElementById(m);
+            const btn = document.getElementById('btn-' + m);
+            if (el) el.classList.remove('open');
+            if (btn) btn.style.color = '';
+        });
+
+        if (!wasOpen) {
+            target.classList.add('open');
+            if (btnTarget) btnTarget.style.color = '#3fb950';
+        }
+        if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
+        if (typeof window.updateModalGpuLockV41 === 'function') window.updateModalGpuLockV41();
+    };
+})();
+
+window.openSpectrumModalV62 = function() {
+    if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+    window.ensureSpectrumModalDOMV62();
+    window.ensureSpectrumAnalysersV62();
+    window.toggleModal('specModal');
+};
+
+setTimeout(() => {
+    window.ensureSpectrumModalDOMV62();
+    window.startSpectrumLoopV62();
+}, 680);

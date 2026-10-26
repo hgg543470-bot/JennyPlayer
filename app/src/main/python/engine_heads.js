@@ -229,10 +229,10 @@ window.changeVolume = function() {
     
     if (val > 10) { 
         volIconTxt.innerHTML = '🔥 ' + pct + '%'; volIconTxt.style.color = '#da3633'; 
-        volTrigger.innerHTML = '🔥';
+        volTrigger.style.borderColor = '#da3633'; volTrigger.style.color = '#da3633';
     } else { 
         volIconTxt.innerHTML = pct + '%'; volIconTxt.style.color = '#8b949e'; 
-        volTrigger.innerHTML = '🔊';
+        volTrigger.style.borderColor = ''; volTrigger.style.color = '';
     }
     
     window.appConfig.defaultVolume = val;
