@@ -3184,291 +3184,294 @@ window.deleteSavedThemeFileV41 = async function(filename, ev) {
 
 
 
-// 🐍 ПАТЧ V45: ЧИСТЫЙ ДВИЖОК "УПРУГИЙ ШЛАНГ" (WASM/C99 + NATIVE GAIN/ANALYSER, 0% ТРЕСКА)
 
-window._hoseStateV45 = {
-    enabled: false,
-    tensionPct: 100,
-    envAmp: 0.0,
-    smoothRate: 1.0,
-    smoothGain: 1.0,
-    lastAppliedRate: 1.0,
-    lastRateApplyTime: 0,
-    analyser: null,
-    hoseGainNode: null,
-    hookedCtx: null,
-    pcmBuf: new Float32Array(256),
-    timerId: null
+
+// 🐍 ПАТЧ V46: 90° МИКРО-РЕЗАК ВОЛНЫ (ШАГ 10 МС + СТЯГИВАНИЕ ВДОЛЬ СКЛОНА + СКРУГЛЕНИЕ КОНЦОВ ЭРМИТА)
+
+window._hoseSplicerCacheV46 = {
+    srcBuffer: null,
+    speed: 1.0,
+    tension: 1.0,
+    splicedBuffer: null,
+    lastBuildMs: 0,
+    cutMsPer10ms: 0
 };
 
-// Перехват создания MediaElementSource и BufferSource ТОЛЬКО для чтения реальной ссылки на плеер (НЕ ломая граф!)
-(function() {
-    if (!window._hoseSourceTrackerInstalledV45 && window.AudioContext) {
-        window._hoseSourceTrackerInstalledV45 = true;
-        const origMES = AudioContext.prototype.createMediaElementSource;
-        if (origMES) {
-            AudioContext.prototype.createMediaElementSource = function(mediaEl) {
-                window._trackedAudioCtxV45 = this;
-                window._trackedMediaElV45 = mediaEl;
-                return origMES.call(this, mediaEl);
-            };
-        }
-        const origBS = AudioContext.prototype.createBufferSource;
-        if (origBS) {
-            AudioContext.prototype.createBufferSource = function() {
-                window._trackedAudioCtxV45 = this;
-                const node = origBS.call(this);
-                window._trackedBufferSourceV45 = node;
-                return node;
-            };
-        }
-        const origGain = AudioContext.prototype.createGain;
-        if (origGain) {
-            AudioContext.prototype.createGain = function() {
-                window._trackedAudioCtxV45 = this;
-                return origGain.call(this);
-            };
-        }
-    }
-})();
+// Стерео-синхронный 90° микро-сплайсер по алгоритму hose_splicer.cpp (работает напрямую с Float32Array в RAM)
+window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
+    if (!srcBuffer || !window.audioCtx) return srcBuffer;
+    const spd = Math.max(0.25, Math.min(3.0, parseFloat(speed) || 1.0));
+    const tension = Math.max(0.2, Math.min(2.0, (parseFloat(tensionPct) || 100) / 100));
 
-// Читает РЕАЛЬНУЮ выбранную скорость из интерфейса и движка (база 0.97 * дуга 1.1 / 1.5 / 0.95)
-window.readRealTargetSpeedV45 = function() {
-    let base = 1.0;
-    let arc = 1.0;
-
-    // 1. Читаем "Кастомная скорость (Base)" и "Дефолтная скорость дуги" прямо из плашек настроек
-    const allBadges = document.querySelectorAll('.val-badge, input[type="number"], button');
-    const bodyText = document.body ? document.body.innerText : '';
-
-    // Проверяем плашку ⚡x1.5 / ⚡x0.95 в капсуле названия трека
-    const zapMatch = bodyText.match(/⚡\s*x([0-9]+[.,]?[0-9]*)/i);
-    if (zapMatch && zapMatch[1]) {
-        arc = parseFloat(zapMatch[1].replace(',', '.')) || 1.0;
-    } else {
-        const arcEl = document.getElementById('val_scrubDefaultArc') || document.getElementById('cfg_scrubDefaultArc');
-        if (arcEl) {
-            const v = parseFloat((arcEl.innerText || arcEl.value || '1').replace(',', '.'));
-            if (!isNaN(v) && v > 0.1) arc = v;
-        }
+    if (Math.abs(spd - 1.0) < 0.003) {
+        window._hoseSplicerCacheV46.cutMsPer10ms = 0;
+        window._hoseSplicerCacheV46.lastBuildMs = 0;
+        return srcBuffer;
     }
 
-    const baseEl = document.getElementById('val_scrubBaseSpeed') || document.getElementById('cfg_scrubBaseSpeed');
-    if (baseEl) {
-        const b = parseFloat((baseEl.innerText || baseEl.value || '1').replace(',', '.'));
-        if (!isNaN(b) && b > 0.1) base = b;
+    const cache = window._hoseSplicerCacheV46;
+    if (cache.srcBuffer === srcBuffer && Math.abs(cache.speed - spd) < 0.002 && Math.abs(cache.tension - tension) < 0.02 && cache.splicedBuffer) {
+        return cache.splicedBuffer;
     }
 
-    let total = base * arc;
-    if (isNaN(total) || total < 0.25 || total > 4.0) total = 1.0;
-    return total;
-};
+    const t0 = performance.now();
+    const sr = srcBuffer.sampleRate;
+    const numCh = srcBuffer.numberOfChannels;
+    const inLen = srcBuffer.length;
 
-// Подключаем бесконтактный датчик амплитуды (AnalyserNode) и аппаратный регулятор высоты петли (GainNode)
-// Никаких ScriptProcessorNode(512) — 0% треска и 0% нагрузки на поток экрана!
-window.attachCleanHoseTapV45 = function() {
-    const refs = (typeof window._getJennyEngineRefsV45 === 'function') ? window._getJennyEngineRefsV45() : {};
-    const ctx = refs.ctx || window._trackedAudioCtxV45 || window.audioCtx;
-    if (!ctx) return refs;
+    // Строгий период 10 мс (480 сэмплов при 48 кГц)
+    const G_in = Math.max(120, Math.round(0.010 * sr));
+    const G_out = Math.max(60, Math.round(G_in / spd));
+    const delta = G_in - G_out; // сколько сэмплов вырезаем (>0) или раздвигаем (<0) каждые 10 мс
+    const abs_d = Math.abs(delta);
+    const fillet_r = 8; // радиус скругления торцов (сплайн Эрмита)
 
-    const st = window._hoseStateV45;
-    if (!st.analyser || st.hookedCtx !== ctx) {
-        try {
-            st.analyser = ctx.createAnalyser();
-            st.analyser.fftSize = 256;
-            st.analyser.smoothingTimeConstant = 0.2;
-            st.hookedCtx = ctx;
-        } catch (e) {}
+    const numGrains = Math.floor((inLen - G_in - 16) / G_in);
+    const outLen = Math.max(G_out, numGrains * G_out);
+    const outBuffer = window.audioCtx.createBuffer(numCh, outLen, sr);
+
+    const chIn = [];
+    const chOut = [];
+    for (let c = 0; c < numCh; c++) {
+        chIn.push(srcBuffer.getChannelData(c));
+        chOut.push(outBuffer.getChannelData(c));
     }
 
-    // Если в движке уже есть штатный analyser — используем его напрямую!
-    if (refs.analyser) {
-        st.analyser = refs.analyser;
-    } else if (st.analyser && refs.masterGain && !st.masterTapped) {
-        try {
-            refs.masterGain.connect(st.analyser);
-            st.masterTapped = true;
-        } catch (e) {}
-    }
-    return refs;
-};
+    const searchStart = Math.min(Math.floor(G_in / 4), 64);
+    const searchEnd = Math.max(searchStart + 2, G_in - abs_d - 64);
 
-// Точная сишная функция hose_compute_step (из hose_dsp.c)
-window.hoseComputeStepC99_V45 = function(instAmp, targetSpeed, tension) {
-    const st = window._hoseStateV45;
-    if (instAmp > st.envAmp) {
-        st.envAmp = st.envAmp * 0.80 + instAmp * 0.20;
-    } else {
-        st.envAmp = st.envAmp * 0.93 + instAmp * 0.07;
-    }
+    // 1. Для каждого 10-мс окна находим единую точку разреза под 90° к склону (чтобы стереофаза L/R стояла мёртво!)
+    const in0 = chIn[0];
+    const in1 = numCh > 1 ? chIn[1] : in0;
 
-    let normAmp = Math.min(1.0, Math.max(0.0, st.envAmp * 1.55));
+    for (let g = 0; g < numGrains; g++) {
+        const inPos = g * G_in;
+        const outPos = g * G_out;
 
-    // Если скорость стоит около 1.0, натяжение шланга всё равно работает пропорционально ползунку (20%..200%)
-    let effectiveDelta = targetSpeed - 1.0;
-    if (Math.abs(effectiveDelta) < 0.04) {
-        effectiveDelta = 0.16 * (tension - 0.2);
-    }
+        let bestOff = searchStart;
+        let bestCost = 1e9;
 
-    // 1. ВЕРТИКАЛЬНОЕ СТЯГИВАНИЕ ПЕТЛИ (Высокая амплитуда -> режется громкость, при замедлении -> растёт)
-    let targetGain = 1.0;
-    if (effectiveDelta >= 0) {
-        // Стягивание змейки: чем выше амплитуда удара, тем сильнее прижимается верхушка петли по громкости
-        targetGain = 1.0 - (normAmp * tension * (0.42 + Math.abs(effectiveDelta) * 0.45));
-    } else {
-        // Растяжение змейки (замедление): высокие петли вырастают громче
-        targetGain = 1.0 + (normAmp * tension * (0.32 + Math.abs(effectiveDelta) * 0.40));
-    }
-    targetGain = Math.max(0.20, Math.min(1.60, targetGain));
+        for (let off = searchStart; off < searchEnd; off += 3) {
+            const p1 = inPos + off;
+            const p2 = (delta >= 0) ? (p1 + abs_d) : (p1 - Math.min(off - 2, abs_d));
 
-    // 2. ГОРИЗОНТАЛЬНОЕ СТЯГИВАНИЕ (Низкая амплитуда -> режется время / растёт скорость)
-    // На тихих участках (flatRatio -> 1) скорость разгоняется, на громких ударах (normAmp -> 1) скорость возвращается к базе
-    const flatRatio = 1.0 - normAmp;
-    const speedSwing = effectiveDelta * tension * (flatRatio * 1.65 - normAmp * 0.50);
-    let desiredRate = targetSpeed + speedSwing;
-    desiredRate = Math.max(0.35, Math.min(3.0, desiredRate));
+            const s1L = in0[p1] - in0[p1 - 1];
+            const s2L = in0[p2 + 1] - in0[p2];
+            const s1R = in1[p1] - in1[p1 - 1];
+            const s2R = in1[p2 + 1] - in1[p2];
 
-    st.smoothRate = st.smoothRate * 0.70 + desiredRate * 0.30;
-    st.smoothGain = st.smoothGain * 0.72 + targetGain * 0.28;
+            // Ищем место, где углы наклона волны совпадают (разрезы под 90° параллельны) и нет острой атаки бочки
+            const slopeDiff = Math.abs(s1L - s2L) + Math.abs(s1R - s2R);
+            const heightDiff = Math.abs(in0[p2] - in0[p1]) + Math.abs(in1[p2] - in1[p1]);
+            const transientPenalty = (Math.abs(s1L) > 0.22 || Math.abs(s2L) > 0.22) ? 1.5 : 0.0;
+            const cost = slopeDiff * 5.0 + heightDiff * 1.1 + transientPenalty;
 
-    return { rate: st.smoothRate, gain: st.smoothGain, normAmp };
-};
-
-window.startCleanHoseLoopV45 = function() {
-    const st = window._hoseStateV45;
-    if (st.timerId) clearInterval(st.timerId);
-
-    // 25 раз в секунду (каждые 40 мс) — оптимальный шаг для плавной модуляции скорости без сброса буфера декодера
-    st.timerId = setInterval(() => {
-        if (!st.enabled) return;
-
-        const refs = window.attachCleanHoseTapV45();
-        const mediaEl = refs.audioEl || window._trackedMediaElV45 || document.querySelector('audio');
-        const ramSrc = refs.ramSource || window._trackedBufferSourceV45;
-        const ctx = refs.ctx || window._trackedAudioCtxV45;
-
-        // Измеряем реальную мгновенную высоту волны (амплитуду)
-        let instAmp = 0.0;
-        const an = refs.analyser || st.analyser;
-        if (an) {
-            try {
-                if (!st.pcmBuf || st.pcmBuf.length !== an.fftSize) {
-                    st.pcmBuf = new Float32Array(an.fftSize);
-                }
-                an.getFloatTimeDomainData(st.pcmBuf);
-                let sumSq = 0;
-                let peak = 0;
-                for (let i = 0; i < st.pcmBuf.length; i++) {
-                    const v = Math.abs(st.pcmBuf[i]);
-                    if (v > peak) peak = v;
-                    sumSq += v * v;
-                }
-                const rms = Math.sqrt(sumSq / st.pcmBuf.length);
-                instAmp = peak * 0.65 + rms * 0.85;
-            } catch (e) {}
-        } else if (mediaEl && !mediaEl.paused) {
-            // Если трек играет без анализатора — снимаем динамическую пульсацию по времени волны
-            const t = performance.now() * 0.008;
-            instAmp = 0.45 + 0.40 * Math.abs(Math.sin(t) * Math.cos(t * 0.37));
-        }
-
-        const targetSpeed = window.readRealTargetSpeedV45();
-        const tension = Math.max(0.2, Math.min(2.0, (st.tensionPct || 100) / 100));
-        const res = window.hoseComputeStepC99_V45(instAmp, targetSpeed, tension);
-
-        // 1. Применяем вертикальное стягивание (громкость петли) через аппаратный AudioParam (0% треска!)
-        if (refs.masterGain && refs.masterGain.gain && ctx) {
-            try {
-                refs.masterGain.gain.setTargetAtTime(res.gain, ctx.currentTime, 0.025);
-            } catch (e) {}
-        } else if (mediaEl) {
-            mediaEl.volume = Math.max(0.05, Math.min(1.0, res.gain));
-        }
-
-        // 2. Применяем горизонтальное стягивание (скорость на тихих участках) с отключением 25мс резака WebAPI
-        if (ramSrc && ramSrc.playbackRate && ctx) {
-            try {
-                ramSrc.playbackRate.setTargetAtTime(res.rate, ctx.currentTime, 0.030);
-            } catch (e) {}
-        }
-        if (mediaEl && !mediaEl.paused) {
-            if (mediaEl.preservesPitch !== false) mediaEl.preservesPitch = false;
-            if (mediaEl.mozPreservesPitch !== false) mediaEl.mozPreservesPitch = false;
-            if (mediaEl.webkitPreservesPitch !== false) mediaEl.webkitPreservesPitch = false;
-
-            const now = performance.now();
-            // Обновляем playbackRate на HTMLAudioElement не чаще 10 раз в сек при изменении > 1.5%, чтобы декодер не щёлкал!
-            if (now - st.lastRateApplyTime > 95 && Math.abs(mediaEl.playbackRate - res.rate) > 0.015) {
-                mediaEl.playbackRate = res.rate;
-                st.lastRateApplyTime = now;
+            if (cost < bestCost) {
+                bestCost = cost;
+                bestOff = off;
             }
         }
 
-        // 3. Живая телеметрия на экране: показывает сколько дБ срезано на петле и какая сейчас мгновенная скорость
-        const badge = document.getElementById('hoseLiveTelemetryV44');
-        if (badge) {
-            const db = 20 * Math.log10(Math.max(0.1, res.gain));
-            const sign = db >= 0 ? '+' : '';
-            badge.innerText = `🐍 V: ${sign}${db.toFixed(1)} dB | T: x${res.rate.toFixed(2)}`;
+        const rem = G_out - bestOff;
+        const pLeft = inPos + bestOff - 1;
+        const pRight = (delta >= 0) ? (inPos + bestOff + abs_d) : Math.max(1, inPos + bestOff - abs_d);
+
+        // 2. Стягиваем концы вдоль направления волны и скругляем торцы в каждом канале
+        for (let c = 0; c < numCh; c++) {
+            const inp = chIn[c];
+            const out = chOut[c];
+
+            for (let i = 0; i < bestOff; i++) {
+                out[outPos + i] = inp[inPos + i];
+            }
+
+            const yL = inp[pLeft];
+            const sL = yL - inp[pLeft - 1];
+            const yR = inp[pRight];
+            // Выравнивание по вектору склона: убирает вертикальную ступеньку и прижимает высоту крутых петель
+            const dy = (yR - (yL + sL)) * Math.min(1.30, tension);
+
+            for (let m = 0; m < rem; m++) {
+                const r = 1.0 - (m / rem);
+                const decay = r * r;
+                let v = inp[pRight + m] - dy * decay;
+
+                // На высокой амплитуде стягивание шланга плавно прижимает высоту петли (громкость)
+                const av = Math.abs(v);
+                if (delta > 0 && av > 0.35) {
+                    v *= (1.0 - 0.14 * tension * (av - 0.35));
+                } else if (delta < 0 && av > 0.35) {
+                    v *= (1.0 + 0.10 * tension * (av - 0.35));
+                }
+                if (Math.abs(v) > 0.96) v = Math.tanh(v);
+                out[outPos + bestOff + m] = v;
+            }
+
+            // 3. Кубическое скругление концов (Эрмит) на +/- 8 сэмплов вокруг шва
+            const seam = outPos + bestOff;
+            if (seam > fillet_r && seam + fillet_r < outPos + G_out) {
+                const idxA = seam - fillet_r;
+                const idxB = seam + fillet_r;
+                const pA = out[idxA];
+                const pB = out[idxB];
+                const mA = (out[idxA] - out[idxA - 1]) * (2.0 * fillet_r);
+                const mB = (out[idxB + 1] - out[idxB]) * (2.0 * fillet_r);
+
+                for (let k = 1; k < 2 * fillet_r; k++) {
+                    const t = k / (2 * fillet_r);
+                    const t2 = t * t;
+                    const t3 = t2 * t;
+                    out[idxA + k] =
+                        (2 * t3 - 3 * t2 + 1) * pA +
+                        (t3 - 2 * t2 + t) * mA +
+                        (-2 * t3 + 3 * t2) * pB +
+                        (t3 - t2) * mB;
+                }
+            }
         }
-    }, 40);
+    }
+
+    cache.srcBuffer = srcBuffer;
+    cache.speed = spd;
+    cache.tension = tension;
+    cache.splicedBuffer = outBuffer;
+    cache.lastBuildMs = Math.round(performance.now() - t0);
+    cache.cutMsPer10ms = -(delta / sr) * 1000;
+    return outBuffer;
+};
+
+// Горячая замена буфера в window.studioSourceNode на лету (при смене дуги скорости x0.95 / x1.1 / x1.5 или ползунка натяжения)
+window.applyElasticHoseBufferLiveV46 = function() {
+    const player = document.getElementById('audioPlayer');
+    const isHose = Boolean(window.appConfig && window.appConfig.elasticHoseMode);
+    const badge = document.getElementById('hoseLiveTelemetryV44');
+
+    if (!isHose) {
+        if (badge) badge.innerText = window.tr('Выкл (Штатный WebAPI)', 'OFF (Standard WebAPI)');
+        return;
+    }
+
+    // Гарантируем, что включён Студийный движок (RAM), где лежит массив волны window.studioBuffer
+    if (window.appConfig && !window.appConfig.studioMode) {
+        window.appConfig.studioMode = true;
+        const stChk = document.getElementById('cfg_studioMode');
+        if (stChk) stChk.checked = true;
+    }
+
+    if (!window.studioBuffer || !window.audioCtx || !player) {
+        if (badge) badge.innerText = '⏳ Ожидание RAM-буфера...';
+        return;
+    }
+
+    const targetSpd = (typeof window.getTargetPlaybackSpeed === 'function')
+        ? window.getTargetPlaybackSpeed()
+        : (player.playbackRate || 1.0);
+    const tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined)
+        ? window.appConfig.hoseTensionPct
+        : 100;
+
+    const isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+    const baseBuf = isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer;
+
+    // Собираем физически стянутую/растянутую волну со скруглением швов
+    const activeBuf = window.buildElasticHoseBufferV46(baseBuf, targetSpd, tensionPct);
+
+    // Глушим HTML <audio> (он служит только беззвучным таймером прогресс-бара), весь звук идёт из чистого RAM-буфера!
+    if (window.htmlGain && window.htmlGain.gain) {
+        window.htmlGain.gain.value = 0;
+    }
+    player.preservesPitch = false;
+
+    if (!player.paused) {
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+        }
+        window.studioSourceNode = window.audioCtx.createBufferSource();
+        window.studioSourceNode.buffer = activeBuf;
+        // ВАЖНО: сам буфер уже физически стянут под нужную скорость, поэтому пускаем его на чистой частоте 1.0!
+        window.studioSourceNode.playbackRate.value = 1.0;
+        window.studioSourceNode.connect(window.inputMixer);
+
+        let scaledOffset = (player.currentTime || 0) / targetSpd;
+        if (!isFinite(scaledOffset) || scaledOffset < 0) scaledOffset = 0;
+        if (scaledOffset >= activeBuf.duration) scaledOffset = Math.max(0, activeBuf.duration - 0.05);
+
+        window.studioSourceNode.start(0, scaledOffset);
+        window.isStudioPlaying = true;
+    }
+
+    if (badge) {
+        const c = window._hoseSplicerCacheV46;
+        const sign = c.cutMsPer10ms >= 0 ? '+' : '';
+        badge.innerText = `🐍 90° Шов: ${sign}${c.cutMsPer10ms.toFixed(2)}мс/10мс | x${targetSpd.toFixed(2)} (${c.lastBuildMs}мс)`;
+    }
+};
+
+// Перехватываем события play / seek / ratechange плеера, чтобы при активном Шланге всегда играл наш 90° буфер со скоростью 1.0
+window.installHosePlayerHooksV46 = function() {
+    const player = document.getElementById('audioPlayer');
+    if (!player || player._hoseHookedV46) return;
+    player._hoseHookedV46 = true;
+
+    const wrapEvent = (prop) => {
+        const orig = player[prop];
+        player[prop] = function(ev) {
+            const r = (typeof orig === 'function') ? orig.call(this, ev) : undefined;
+            if (window.appConfig && window.appConfig.elasticHoseMode && window.studioBuffer && this.playbackRate !== 10.0) {
+                window.applyElasticHoseBufferLiveV46();
+            }
+            return r;
+        };
+    };
+
+    wrapEvent('onplay');
+    wrapEvent('onseeked');
+    wrapEvent('onratechange');
 };
 
 window.onToggleElasticHoseV44 = function(chk, ev) {
-    const st = window._hoseStateV45;
-    st.enabled = Boolean(chk && chk.checked);
+    const enabled = Boolean(chk && chk.checked);
     window.appConfig = window.appConfig || {};
-    window.appConfig.elasticHoseMode = st.enabled;
+    window.appConfig.elasticHoseMode = enabled;
+    window.installHosePlayerHooksV46();
 
-    const refs = window.attachCleanHoseTapV45();
-    const mediaEl = refs.audioEl || window._trackedMediaElV45 || document.querySelector('audio');
-    const ramSrc = refs.ramSource || window._trackedBufferSourceV45;
-    const ctx = refs.ctx || window._trackedAudioCtxV45;
-
-    if (st.enabled) {
-        window.startCleanHoseLoopV45();
+    if (enabled) {
+        window.applyElasticHoseBufferLiveV46();
         if (typeof window.showToast === 'function' && ev) {
-            window.showToast(window.tr('🐍 Ядро C99 «Упругий Шланг» ВКЛ (0% треска)', '🐍 C99 Elastic Hose ON (0% crackle)'), ev);
+            window.showToast(window.tr('🐍 90° Резак Волны ВКЛ (шаг 10 мс + скругление концов)', '🐍 90° Wave Splicer ON (10ms step + Hermite rounding)'), ev);
         }
     } else {
-        if (st.timerId) {
-            clearInterval(st.timerId);
-            st.timerId = null;
-        }
-        const normalSpeed = window.readRealTargetSpeedV45();
-        const pitchChk = document.getElementById('cfg_pitchLock');
-        const restorePitch = pitchChk ? Boolean(pitchChk.checked) : true;
-
-        if (refs.masterGain && refs.masterGain.gain && ctx) {
-            try { refs.masterGain.gain.setTargetAtTime(1.0, ctx.currentTime, 0.03); } catch (e) {}
-        }
-        if (ramSrc && ramSrc.playbackRate && ctx) {
-            try { ramSrc.playbackRate.setTargetAtTime(normalSpeed, ctx.currentTime, 0.03); } catch (e) {}
-        }
-        if (mediaEl) {
-            mediaEl.volume = 1.0;
-            mediaEl.preservesPitch = restorePitch;
-            mediaEl.mozPreservesPitch = restorePitch;
-            mediaEl.webkitPreservesPitch = restorePitch;
-            mediaEl.playbackRate = normalSpeed;
+        // Возвращаем штатное поведение плеера
+        const player = document.getElementById('audioPlayer');
+        if (player && typeof window.updateSettings === 'function') {
+            window.updateSettings();
         }
         const badge = document.getElementById('hoseLiveTelemetryV44');
         if (badge) badge.innerText = window.tr('Выкл (Штатный WebAPI)', 'OFF (Standard WebAPI)');
         if (typeof window.showToast === 'function' && ev) {
-            window.showToast(window.tr('🎵 Штатный режим скорости восстановлен', '🎵 Standard speed mode restored'), ev);
+            window.showToast(window.tr('🎵 Возвращён штатный режим скорости', '🎵 Standard speed mode restored'), ev);
         }
     }
     if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
 };
 
+window._hoseSliderDebounceV46 = null;
 window.onHoseTensionInputV44 = function(val) {
     const num = parseInt(val, 10) || 100;
-    window._hoseStateV45.tensionPct = num;
     window.appConfig = window.appConfig || {};
     window.appConfig.hoseTensionPct = num;
     const lbl = document.getElementById('val_hoseTensionV44');
     if (lbl) lbl.innerText = num;
-    if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
+
+    if (window._hoseSliderDebounceV46) clearTimeout(window._hoseSliderDebounceV46);
+    window._hoseSliderDebounceV46 = setTimeout(() => {
+        if (window.appConfig.elasticHoseMode) {
+            window.applyElasticHoseBufferLiveV46();
+        }
+        if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
+    }, 120);
 };
 
 window.injectElasticHoseControlsV44 = function() {
@@ -3481,8 +3484,6 @@ window.injectElasticHoseControlsV44 = function() {
     const cfg = window.appConfig || {};
     const isEn = Boolean(cfg.elasticHoseMode);
     const tens = cfg.hoseTensionPct !== undefined ? parseInt(cfg.hoseTensionPct, 10) : 100;
-    window._hoseStateV45.enabled = isEn;
-    window._hoseStateV45.tensionPct = tens;
 
     const box = document.createElement('div');
     box.id = 'hoseControlBoxV44';
@@ -3491,14 +3492,14 @@ window.injectElasticHoseControlsV44 = function() {
         <div class="setting-row" style="padding:4px 0;border:none;">
             <label class="toggle-label" style="color:#3fb950;font-weight:bold;">
                 <input type="checkbox" id="cfg_elasticHoseV44" ${isEn ? 'checked' : ''} onchange="window.onToggleElasticHoseV44(this, event)">
-                🐍 ${window.tr('Упругий Шланг C99 (Змейка: Амплитуда ↔ Скорость)', 'Elastic Hose C99 (Wave: Amplitude ↔ Speed)')}
+                🐍 ${window.tr('Упругий Шланг 90° (Шаг 10 мс + Скругление)', 'Elastic Hose 90° (10ms Step + Fillet)')}
             </label>
             <span id="hoseLiveTelemetryV44" style="font-size:11px;font-family:monospace;color:#58a6ff;background:#0d1117;padding:3px 7px;border-radius:6px;border:1px solid #262c36;">
-                ${isEn ? '🐍 C99 Активен' : window.tr('Выкл', 'OFF')}
+                ${isEn ? '🐍 90° Активен' : window.tr('Выкл', 'OFF')}
             </span>
         </div>
         <div class="setting-row" style="padding:4px 0;border:none;">
-            <span style="font-size:12px;color:#8b949e;">🧲 ${window.tr('Сила стягивания петель (%):', 'Loop Contraction Tension (%):')}</span>
+            <span style="font-size:12px;color:#8b949e;">🧲 ${window.tr('Стягивание вдоль склона (%):', 'Slope Pull Tension (%):')}</span>
             <div class="val-group">
                 <span class="val-badge" id="val_hoseTensionV44">${tens}</span>
             </div>
@@ -3506,16 +3507,17 @@ window.injectElasticHoseControlsV44 = function() {
         <input type="range" id="rng_hoseTensionV44" class="hz-slider" min="20" max="200" step="5" value="${tens}" oninput="window.onHoseTensionInputV44(this.value)">
         <div style="font-size:11px;color:#8b949e;margin-top:4px;line-height:1.35;">
             ${window.tr(
-                'Ядро C99 (hose_dsp.c): без треска! На пиках амплитуды прижимает громкость петли, на спадах — стягивает время.',
-                'C99 Core (hose_dsp.c): zero crackle! Compresses loop volume on peaks, contracts time on low amplitude.'
+                'Каждые 10 мс ищет разрез под 90° к волне, стягивает торцы вдоль склона и скругляет концы сплайном Эрмита (в обход WebAPI).',
+                'Every 10ms finds a 90°-to-slope cut, pulls ends along the wave vector, and rounds corners via Hermite spline.'
             )}
         </div>
     `;
     pitchRow.insertAdjacentElement('afterend', box);
-    if (isEn) window.startCleanHoseLoopV45();
+    window.installHosePlayerHooksV46();
 };
 
 setTimeout(() => {
     window.injectElasticHoseControlsV44();
+    window.installHosePlayerHooksV46();
     if (typeof window.tagUniformResetButtonsV38 === 'function') window.tagUniformResetButtonsV38();
-}, 320);
+}, 350);

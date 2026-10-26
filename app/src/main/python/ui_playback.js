@@ -205,7 +205,7 @@ window.playTrack = async function(filename, listContext = 'main') {
                         window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
                     }, 50);
 
-                    if (isPitchLocked && currentTargetSpd !== 1.0) {
+                    if (isPitchLocked && currentTargetSpd !== 1.0 && !(window.appConfig && window.appConfig.elasticHoseMode)) {
                         if (window.htmlGain) window.htmlGain.gain.value = 1;
                         window.isStudioPlaying = false;
                         if (player) {
