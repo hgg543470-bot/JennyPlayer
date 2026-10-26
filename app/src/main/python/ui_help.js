@@ -2818,3 +2818,232 @@ setTimeout(() => {
     window.injectThemeFileOptionsUIV41();
     window.applyVisualThemeImmediateV41();
 }, 260);
+
+
+// 🎨 ПАТЧ V42: ОТДЕЛЬНЫЙ ЦВЕТ ЗАГОЛОВКОВ (headerColor) И ОСНОВНОГО ТЕКСТА (textColor)
+
+Object.assign(window.DEFAULT_THEME_CONFIG_V38, {
+    headerColor: '#58a6ff',
+    textColor: '#e6edf3'
+});
+
+if (window.FULL_THEME_PACKS_V38) {
+    Object.assign(window.FULL_THEME_PACKS_V38.amethyst_amoled, { headerColor: '#a371f7', textColor: '#e6edf3' });
+    Object.assign(window.FULL_THEME_PACKS_V38.cyber_matrix,    { headerColor: '#3fb950', textColor: '#e6edf3' });
+    Object.assign(window.FULL_THEME_PACKS_V38.synth_sunset,    { headerColor: '#e3b341', textColor: '#e6edf3' });
+    Object.assign(window.FULL_THEME_PACKS_V38.ruby_stealth,    { headerColor: '#f85149', textColor: '#c9d1d9' });
+}
+
+// Расширяем стандартную палитру светлыми тонами специально для текста и заголовков
+window.STANDARD_PALETTE_V39 = [
+    { hex: '#e6edf3', nameRu: 'Кристальный Белый', nameEn: 'Crystal White' },
+    { hex: '#c9d1d9', nameRu: 'Серебристый Иней',  nameEn: 'Silver Frost' },
+    { hex: '#58a6ff', nameRu: 'Кибер-Циан',        nameEn: 'Cyber Cyan' },
+    { hex: '#a371f7', nameRu: 'Неоновый Пурпур',    nameEn: 'Neon Purple' },
+    { hex: '#7341be', nameRu: 'Тёмный Аметист',    nameEn: 'Subtle Amethyst' },
+    { hex: '#3fb950', nameRu: 'Изумруд',           nameEn: 'Matrix Emerald' },
+    { hex: '#e3b341', nameRu: 'Золотой Винил',     nameEn: 'Vinyl Gold' },
+    { hex: '#f85149', nameRu: 'Рубиновый Лазер',   nameEn: 'Ruby Laser' },
+    { hex: '#da3633', nameRu: 'Алый Драйв',        nameEn: 'Crimson Drive' },
+    { hex: '#6e7681', nameRu: 'Стелс-Графит',      nameEn: 'Stealth Graphite' },
+    { hex: '#000000', nameRu: 'Чистый AMOLED',     nameEn: 'Pure AMOLED' },
+    { hex: '#0d1117', nameRu: 'Тёмная Полночь',    nameEn: 'Dark Midnight' }
+];
+
+Object.assign(window.FIELD_LABELS_V39, {
+    headerColor: { ru: 'Цвет заголовков', en: 'Headers Color' },
+    textColor:   { ru: 'Основной текст',  en: 'Main Text Color' }
+});
+
+window.getCurrentThemeObjectV38 = function() {
+    const cfg = window.appConfig || {};
+    const d = window.DEFAULT_THEME_CONFIG_V38;
+    return {
+        jenny_theme_v: "1.1",
+        amoledMode: cfg.amoledMode !== undefined ? Boolean(cfg.amoledMode) : d.amoledMode,
+        volSlider: cfg.volSlider !== undefined ? Boolean(cfg.volSlider) : d.volSlider,
+        themeBorderKey: cfg.themeBorderKey || d.themeBorderKey,
+        themeBorderAlpha: cfg.themeBorderAlpha !== undefined ? parseInt(cfg.themeBorderAlpha, 10) : d.themeBorderAlpha,
+        headerColor: cfg.headerColor || d.headerColor,
+        textColor: cfg.textColor || d.textColor,
+        resetBtnColor: cfg.resetBtnColor || d.resetBtnColor,
+        ioBtnColor: cfg.ioBtnColor || d.ioBtnColor,
+        checkboxColor: cfg.checkboxColor || d.checkboxColor,
+        sliderColor: cfg.sliderColor || d.sliderColor,
+        transportColor: cfg.transportColor || d.transportColor,
+        bgColor: cfg.bgColor || d.bgColor
+    };
+};
+
+// Применяем цвета групп: теперь ползунки (sliderColor) и заголовки (headerColor) полностью независимы!
+window.applyGroupColorsV38 = function() {
+    const t = window.getCurrentThemeObjectV38();
+    const root = document.documentElement;
+
+    root.style.setProperty('--header-fg', t.headerColor);
+    root.style.setProperty('--accent-cyan', t.headerColor);
+    root.style.setProperty('--text-main-fg', t.textColor);
+    root.style.setProperty('--text-main', t.textColor);
+
+    root.style.setProperty('--reset-btn-fg', t.resetBtnColor);
+    root.style.setProperty('--reset-btn-border', window.hexToRgbaV38(t.resetBtnColor, 0.48));
+    root.style.setProperty('--reset-btn-bg', window.hexToRgbaV38(t.resetBtnColor, 0.08));
+    root.style.setProperty('--io-btn-border', window.hexToRgbaV38(t.ioBtnColor, 0.55));
+    root.style.setProperty('--accent-green', t.checkboxColor);
+    root.style.setProperty('--slider-thumb-fg', t.sliderColor);
+    root.style.setProperty('--help-badge-fg', t.sliderColor);
+    root.style.setProperty('--transport-accent', t.transportColor);
+
+    if (!t.amoledMode && t.bgColor && t.bgColor !== '#000000') {
+        document.body.setAttribute('data-bg-preset', 'custom');
+        root.style.setProperty('--custom-bg-color', t.bgColor);
+    } else {
+        document.body.removeAttribute('data-bg-preset');
+    }
+
+    const jsonBox = document.getElementById('themeJsonTextarea');
+    if (jsonBox && document.activeElement !== jsonBox) {
+        jsonBox.value = JSON.stringify(t);
+    }
+};
+
+// Встраиваем строки "Заголовки секций" и "Основной текст" в карточку групп Редактора тем
+window.injectTextAndHeaderColorRowsV42 = function() {
+    const resetEl = document.getElementById('clr_theme_reset');
+    if (!resetEl) return;
+    const groupContent = resetEl.closest('.group-content');
+    if (!groupContent || document.getElementById('clr_theme_header')) return;
+
+    const t = window.getCurrentThemeObjectV38();
+
+    const rowHeader = document.createElement('div');
+    rowHeader.className = 'setting-row';
+    rowHeader.style.padding = '7px 0';
+    rowHeader.innerHTML = `
+        <span style="font-size:12.5px;">${window.tr('📑 Заголовки секций и шапок:', '📑 Section Headers & Titles:')}</span>
+        <button type="button" id="clr_theme_header" class="jenny-color-btn" style="background:${t.headerColor};" onclick="window.openCustomColorSwatchesV39('headerColor', this)"></button>
+    `;
+
+    const rowText = document.createElement('div');
+    rowText.className = 'setting-row';
+    rowText.style.padding = '7px 0';
+    rowText.innerHTML = `
+        <span style="font-size:12.5px;">${window.tr('🔤 Основной текст и названия:', '🔤 Main Text & Track Titles:')}</span>
+        <button type="button" id="clr_theme_text" class="jenny-color-btn" style="background:${t.textColor};" onclick="window.openCustomColorSwatchesV39('textColor', this)"></button>
+    `;
+
+    groupContent.insertBefore(rowText, groupContent.firstChild);
+    groupContent.insertBefore(rowHeader, groupContent.firstChild);
+};
+
+// Обновляем синхронизацию кнопок цвета в UI
+const _origUpgradeV42 = window.upgradeThemeModalControlsV39;
+window.upgradeThemeModalControlsV39 = function() {
+    window.injectTextAndHeaderColorRowsV42();
+    if (typeof _origUpgradeV42 === 'function') _origUpgradeV42();
+    const t = window.getCurrentThemeObjectV38();
+    const hBtn = document.getElementById('clr_theme_header');
+    if (hBtn) hBtn.style.background = t.headerColor;
+    const tBtn = document.getElementById('clr_theme_text');
+    if (tBtn) tBtn.style.background = t.textColor;
+};
+
+// Обновляем умный парсер неполного JSON с поддержкой headerColor и textColor
+const _origApplySmartV42 = window.applySmartPartialThemeV39;
+window.applySmartPartialThemeV39 = function(rawObj, ev) {
+    if (!rawObj || typeof rawObj !== 'object') return false;
+
+    const defaults = window.DEFAULT_THEME_CONFIG_V38;
+    const colorKeys = ['headerColor', 'textColor', 'resetBtnColor', 'ioBtnColor', 'checkboxColor', 'sliderColor', 'transportColor', 'bgColor'];
+    const allKeys = ['amoledMode', 'volSlider', 'themeBorderKey', 'themeBorderAlpha', ...colorKeys];
+
+    let referenceHex = null;
+    for (const ck of colorKeys) {
+        if (ck !== 'bgColor' && ck !== 'textColor' && rawObj[ck] && window.parseHexToRgbV39(rawObj[ck])) {
+            referenceHex = rawObj[ck];
+            break;
+        }
+    }
+
+    const missingRu = [];
+    const missingEn = [];
+    const finalTheme = { jenny_theme_v: "1.1" };
+    let usedNearestNameRu = null;
+    let usedNearestNameEn = null;
+
+    allKeys.forEach(k => {
+        const isProvided = (rawObj[k] !== undefined && rawObj[k] !== null && rawObj[k] !== '');
+        if (isProvided) {
+            if (colorKeys.includes(k)) {
+                if (window.parseHexToRgbV39(rawObj[k])) {
+                    finalTheme[k] = rawObj[k];
+                } else {
+                    const near = window.findNearestStandardColorV39(referenceHex, defaults[k]);
+                    finalTheme[k] = near.hex;
+                }
+            } else {
+                finalTheme[k] = rawObj[k];
+            }
+        } else {
+            const lbl = window.FIELD_LABELS_V39[k] || { ru: k, en: k };
+            missingRu.push(lbl.ru);
+            missingEn.push(lbl.en);
+
+            if (k === 'textColor') {
+                // Если не указан цвет текста — ставим читаемый Кристальный Белый, чтобы текст всегда оставался контрастным
+                finalTheme[k] = defaults.textColor;
+            } else if (colorKeys.includes(k)) {
+                const near = window.findNearestStandardColorV39(referenceHex, defaults[k]);
+                finalTheme[k] = near.hex;
+                if (!usedNearestNameRu) {
+                    usedNearestNameRu = near.nameRu + ' (' + near.hex + ')';
+                    usedNearestNameEn = near.nameEn + ' (' + near.hex + ')';
+                }
+            } else {
+                finalTheme[k] = defaults[k];
+            }
+        }
+    });
+
+    window.appConfig = window.appConfig || {};
+    Object.assign(window.appConfig, finalTheme);
+
+    const origAm = document.getElementById('cfg_amoledMode');
+    if (origAm) origAm.checked = Boolean(finalTheme.amoledMode);
+    const origVol = document.getElementById('cfg_volSlider');
+    if (origVol) origVol.checked = Boolean(finalTheme.volSlider);
+
+    window.applyVisualThemeImmediateV41();
+    window.syncThemeStudioUIV38();
+    window.saveThemeOnlyQuietlyV40();
+
+    const reportBox = document.getElementById('themeJsonReportBox');
+    if (missingRu.length === 0) {
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#3fb950';
+            reportBox.innerHTML = window.tr('✅ Все параметры JSON распознаны и применены в полном объёме!', '✅ All JSON parameters recognized and applied!');
+        }
+        if (typeof window.showToast === 'function' && ev) {
+            window.showToast(window.tr('✅ Полный JSON темы применён!', '✅ Full Theme JSON applied!'), ev);
+        }
+    } else {
+        const msgRu = `⚠️ В JSON не дописаны: <b>${missingRu.join(', ')}</b>.<br>🎨 Применено то, что есть + подставлен ближайший стандартный цвет: <b style="color:#3fb950;">${usedNearestNameRu || 'Кристальный Белый'}</b>`;
+        const msgEn = `⚠️ Missing in JSON: <b>${missingEn.join(', ')}</b>.<br>🎨 Applied provided fields + nearest standard color: <b style="color:#3fb950;">${usedNearestNameEn || 'Crystal White'}</b>`;
+        if (reportBox) {
+            reportBox.style.display = 'block';
+            reportBox.style.borderColor = '#e3b341';
+            reportBox.innerHTML = window.tr(msgRu, msgEn);
+        }
+        if (typeof window.showToast === 'function' && ev) {
+            window.showToast(window.tr(`⚠️ Не указано (${missingRu.length}): подставлен ближайший стандартный цвет!`, `⚠️ Missing (${missingEn.length}): nearest standard color applied!`), ev);
+        }
+    }
+    return finalTheme;
+};
+
+setTimeout(() => {
+    window.injectTextAndHeaderColorRowsV42();
+    window.upgradeThemeModalControlsV39();
+    window.applyVisualThemeImmediateV41();
+}, 280);

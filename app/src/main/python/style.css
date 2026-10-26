@@ -452,3 +452,25 @@ body.modal-open-gpu-lock #playlistContainer {
     content-visibility: hidden !important;
     contain: strict !important;
 }
+
+
+/* === JENNY V42 TEXT & HEADERS === */
+:root {
+    --header-fg: #58a6ff;
+    --text-main-fg: #e6edf3;
+}
+
+/* Все заголовки раскрывающихся секций и шапок */
+details.setting-group > summary {
+    color: var(--header-fg) !important;
+}
+
+/* Основной текст: названия треков, подписи строк настроек и переключателей */
+body,
+.capsule,
+.track-title,
+.track-name,
+.setting-row > label.toggle-label,
+.setting-row > span:first-child {
+    color: var(--text-main-fg) !important;
+}
