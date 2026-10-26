@@ -333,3 +333,85 @@ input[type="text"],
     flex-shrink: 0;
     border: 1px solid rgba(255,255,255,0.25);
 }
+
+
+/* === JENNY THEME STUDIO V38 === */
+:root {
+    --reset-btn-fg: #e3b341;
+    --reset-btn-border: rgba(227, 179, 65, 0.45);
+    --reset-btn-bg: rgba(227, 179, 65, 0.08);
+    --io-btn-fg: #8b949e;
+    --io-btn-border: var(--border-uniform);
+    --slider-thumb-fg: #58a6ff;
+    --help-badge-fg: #58a6ff;
+    --transport-accent: #a371f7;
+    --custom-bg-color: #000000;
+}
+
+body[data-bg-preset="custom"] {
+    --bg-main: var(--custom-bg-color) !important;
+    --bg-panel: var(--custom-bg-color) !important;
+    --bg-modal: var(--custom-bg-color) !important;
+    --bg-setting-box: var(--custom-bg-color) !important;
+    --bg-input: var(--custom-bg-color) !important;
+}
+
+/* Единый стиль для ВСЕХ кнопок "🔄 Сброс / Reset" */
+button.jenny-reset-btn {
+    background: var(--reset-btn-bg) !important;
+    color: var(--reset-btn-fg) !important;
+    border: 1px solid var(--reset-btn-border) !important;
+    border-radius: 6px !important;
+    font-size: 11.5px !important;
+    padding: 4px 9px !important;
+    box-shadow: none !important;
+    transition: all 0.15s ease !important;
+}
+button.jenny-reset-btn:active {
+    transform: scale(0.95) !important;
+    filter: brightness(1.3) !important;
+}
+
+/* Единый стиль для всех мелких кнопок 📥 и 💾 */
+button.io-btn {
+    color: var(--io-btn-fg) !important;
+    border: 1px solid var(--io-btn-border) !important;
+    background: var(--bg-input) !important;
+}
+button.io-btn:active {
+    border-color: var(--accent-green) !important;
+    color: #fff !important;
+}
+
+/* Единый стиль для ползунков и значков справки ❓ */
+input[type="range"].hz-slider::-webkit-slider-thumb {
+    background: var(--slider-thumb-fg) !important;
+    box-shadow: 0 0 10px var(--slider-thumb-fg) !important;
+}
+.jenny-help-badge {
+    color: var(--help-badge-fg) !important;
+    border-color: var(--help-badge-fg) !important;
+}
+
+/* Единый стиль для транспорта (Play и Треугольники) */
+.play-pause-btn {
+    color: var(--transport-accent) !important;
+    border-color: var(--border-uniform) !important;
+}
+.volumetric-triangle {
+    background: linear-gradient(145deg, var(--transport-accent), #090514) !important;
+}
+
+.theme-color-picker {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 34px;
+    height: 28px;
+    border: 1px solid var(--border-uniform);
+    border-radius: 6px;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+}
+.theme-color-picker::-webkit-color-swatch-wrapper { padding: 2px; }
+.theme-color-picker::-webkit-color-swatch { border: none; border-radius: 4px; }

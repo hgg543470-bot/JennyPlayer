@@ -1328,3 +1328,345 @@ if (document.readyState === 'loading') {
 } else {
     setTimeout(window.mountThemeStudioButtonV37, 120);
 }
+
+
+// 🎨 ПАТЧ V38: THEME STUDIO 1.1 (ГРУППИРОВКА ДЕТАЛЕЙ + JSON ИМПОРТ/ЭКСПОРТ)
+
+window.DEFAULT_THEME_CONFIG_V38 = {
+    amoledMode: true,
+    volSlider: true,
+    themeBorderKey: 'solid_purple',
+    themeBorderAlpha: 38,
+    bgColor: '#000000',
+    resetBtnColor: '#e3b341',
+    ioBtnColor: '#7341be',
+    checkboxColor: '#3fb950',
+    sliderColor: '#58a6ff',
+    transportColor: '#a371f7'
+};
+
+window.FULL_THEME_PACKS_V38 = {
+    amethyst_amoled: {
+        ru: '🟣 Тёмный Аметист (Эталон AMOLED)', en: '🟣 Subtle Amethyst (Default AMOLED)',
+        amoledMode: true, themeBorderKey: 'solid_purple', themeBorderAlpha: 38, bgColor: '#000000',
+        resetBtnColor: '#e3b341', ioBtnColor: '#7341be', checkboxColor: '#3fb950', sliderColor: '#58a6ff', transportColor: '#a371f7'
+    },
+    cyber_matrix: {
+        ru: '🟢 Неоновая Матрица (Изумруд + Циан)', en: '🟢 Neon Matrix (Emerald + Cyan)',
+        amoledMode: true, themeBorderKey: 'grad_matrix', themeBorderAlpha: 52, bgColor: '#000000',
+        resetBtnColor: '#3fb950', ioBtnColor: '#3fb950', checkboxColor: '#58a6ff', sliderColor: '#3fb950', transportColor: '#3fb950'
+    },
+    synth_sunset: {
+        ru: '🌅 Кибер-Закат (Золото + Пурпур)', en: '🌅 Cyber Sunset (Gold + Purple)',
+        amoledMode: true, themeBorderKey: 'grad_sunset', themeBorderAlpha: 55, bgColor: '#000000',
+        resetBtnColor: '#f85149', ioBtnColor: '#e3b341', checkboxColor: '#e3b341', sliderColor: '#a371f7', transportColor: '#e3b341'
+    },
+    ruby_stealth: {
+        ru: '🔴 Хищный Рубин (Стелс-Контур)', en: '🔴 Predator Ruby (Stealth Contour)',
+        amoledMode: true, themeBorderKey: 'solid_ruby', themeBorderAlpha: 42, bgColor: '#000000',
+        resetBtnColor: '#f85149', ioBtnColor: '#f85149', checkboxColor: '#f85149', sliderColor: '#f85149', transportColor: '#da3633'
+    }
+};
+
+window.hexToRgbaV38 = function(hex, alpha) {
+    let c = String(hex || '#7341be').replace('#', '').trim();
+    if (c.length === 3) c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+    const num = parseInt(c, 16);
+    if (isNaN(num)) return `rgba(115, 65, 190, ${alpha})`;
+    return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
+};
+
+// Автоматически помечает все кнопки "Сброс / Reset" единым классом .jenny-reset-btn
+window.tagUniformResetButtonsV38 = function() {
+    document.querySelectorAll('button').forEach(btn => {
+        const txt = (btn.innerText || '').trim();
+        if (txt.includes('Сброс') || txt.includes('Reset')) {
+            btn.classList.add('jenny-reset-btn');
+        }
+    });
+};
+
+window.getCurrentThemeObjectV38 = function() {
+    const cfg = window.appConfig || {};
+    const d = window.DEFAULT_THEME_CONFIG_V38;
+    return {
+        jenny_theme_v: "1.1",
+        amoledMode: cfg.amoledMode !== undefined ? Boolean(cfg.amoledMode) : d.amoledMode,
+        volSlider: cfg.volSlider !== undefined ? Boolean(cfg.volSlider) : d.volSlider,
+        themeBorderKey: cfg.themeBorderKey || d.themeBorderKey,
+        themeBorderAlpha: cfg.themeBorderAlpha !== undefined ? parseInt(cfg.themeBorderAlpha, 10) : d.themeBorderAlpha,
+        bgColor: cfg.bgColor || d.bgColor,
+        resetBtnColor: cfg.resetBtnColor || d.resetBtnColor,
+        ioBtnColor: cfg.ioBtnColor || d.ioBtnColor,
+        checkboxColor: cfg.checkboxColor || d.checkboxColor,
+        sliderColor: cfg.sliderColor || d.sliderColor,
+        transportColor: cfg.transportColor || d.transportColor
+    };
+};
+
+window.applyGroupColorsV38 = function() {
+    window.tagUniformResetButtonsV38();
+    const t = window.getCurrentThemeObjectV38();
+    const root = document.documentElement;
+
+    // 1. Группа кнопок "🔄 Сброс"
+    root.style.setProperty('--reset-btn-fg', t.resetBtnColor);
+    root.style.setProperty('--reset-btn-border', window.hexToRgbaV38(t.resetBtnColor, 0.48));
+    root.style.setProperty('--reset-btn-bg', window.hexToRgbaV38(t.resetBtnColor, 0.08));
+
+    // 2. Группа кнопок "📥 / 💾"
+    root.style.setProperty('--io-btn-border', window.hexToRgbaV38(t.ioBtnColor, 0.55));
+
+    // 3. Группа чекбоксов и активных индикаторов
+    root.style.setProperty('--accent-green', t.checkboxColor);
+
+    // 4. Группа ползунков и значков ❓
+    root.style.setProperty('--slider-thumb-fg', t.sliderColor);
+    root.style.setProperty('--help-badge-fg', t.sliderColor);
+    root.style.setProperty('--accent-cyan', t.sliderColor);
+
+    // 5. Группа главных кнопок транспорта (Play / Треугольники)
+    root.style.setProperty('--transport-accent', t.transportColor);
+
+    // 6. Фон (Чистый AMOLED #000000 или кастомный оттенок)
+    if (!t.amoledMode && t.bgColor && t.bgColor !== '#000000') {
+        document.body.setAttribute('data-bg-preset', 'custom');
+        root.style.setProperty('--custom-bg-color', t.bgColor);
+    } else {
+        document.body.removeAttribute('data-bg-preset');
+    }
+
+    // Обновляем JSON-строку в поле экспорта, если окно открыто
+    const jsonBox = document.getElementById('themeJsonTextarea');
+    if (jsonBox && document.activeElement !== jsonBox) {
+        jsonBox.value = JSON.stringify(t);
+    }
+};
+
+// Перехватываем applyVisualThemeV37, чтобы он всегда применял и групповые цвета V38
+const _origApplyThemeV37 = window.applyVisualThemeV37;
+window.applyVisualThemeV37 = function() {
+    if (typeof _origApplyThemeV37 === 'function') _origApplyThemeV37();
+    window.applyGroupColorsV38();
+};
+
+window.onGroupColorInputV38 = function(propKey, hexVal) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig[propKey] = hexVal;
+    if (propKey === 'bgColor' && hexVal !== '#000000') {
+        window.appConfig.amoledMode = false;
+        const amChk = document.getElementById('chk_theme_amoled');
+        if (amChk) amChk.checked = false;
+    }
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.applyVisualThemeV37();
+    if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
+};
+
+window.applyFullThemePackV38 = function(packKey, ev) {
+    const pack = window.FULL_THEME_PACKS_V38[packKey];
+    if (!pack) return;
+    window.appConfig = window.appConfig || {};
+    Object.keys(window.DEFAULT_THEME_CONFIG_V38).forEach(k => {
+        if (pack[k] !== undefined) window.appConfig[k] = pack[k];
+    });
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.applyVisualThemeV37();
+    window.syncThemeStudioUIV38();
+    if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
+    if (typeof window.showToast === 'function') {
+        window.showToast(window.tr('✅ Пакет темы применён!', '✅ Theme pack applied!'), ev);
+    }
+};
+
+window.applyThemeFromJsonObjV38 = function(obj, ev) {
+    if (!obj || typeof obj !== 'object') return false;
+    window.appConfig = window.appConfig || {};
+    Object.keys(window.DEFAULT_THEME_CONFIG_V38).forEach(k => {
+        if (obj[k] !== undefined) window.appConfig[k] = obj[k];
+    });
+    const origAm = document.getElementById('cfg_amoledMode');
+    if (origAm && obj.amoledMode !== undefined) origAm.checked = Boolean(obj.amoledMode);
+    const origVol = document.getElementById('cfg_volSlider');
+    if (origVol && obj.volSlider !== undefined) origVol.checked = Boolean(obj.volSlider);
+
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.applyTheme === 'function') window.applyTheme();
+    window.applyVisualThemeV37();
+    window.syncThemeStudioUIV38();
+    if (typeof window.saveConfigToDisk === 'function') window.saveConfigToDisk();
+    if (typeof window.showToast === 'function') {
+        window.showToast(window.tr('🎨 Тема из JSON успешно загружена!', '🎨 JSON Theme successfully loaded!'), ev);
+    }
+    return true;
+};
+
+window.copyThemeJsonToClipboardV38 = async function(ev) {
+    const jsonStr = JSON.stringify(window.getCurrentThemeObjectV38(), null, 2);
+    const box = document.getElementById('themeJsonTextarea');
+    if (box) box.value = jsonStr;
+    try {
+        await navigator.clipboard.writeText(jsonStr);
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('📋 JSON темы скопирован в буфер!', '📋 Theme JSON copied to clipboard!'), ev);
+        }
+    } catch (e) {
+        if (box) { box.select(); document.execCommand('copy'); }
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('📋 JSON выделен и скопирован!', '📋 JSON selected & copied!'), ev);
+        }
+    }
+};
+
+window.applyThemeFromTextareaV38 = function(ev) {
+    const box = document.getElementById('themeJsonTextarea');
+    if (!box || !box.value.trim()) return;
+    try {
+        const parsed = JSON.parse(box.value.trim());
+        window.applyThemeFromJsonObjV38(parsed, ev);
+    } catch (e) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('❌ Ошибка: неверный формат JSON!', '❌ Error: Invalid JSON format!'), ev);
+        }
+    }
+};
+
+window.downloadThemeJsonFileV38 = function(ev) {
+    const jsonStr = JSON.stringify(window.getCurrentThemeObjectV38(), null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `jenny_theme_${window.appConfig.themeBorderKey || 'custom'}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 500);
+    if (typeof window.showToast === 'function') {
+        window.showToast(window.tr('💾 Файл темы .json сохранён!', '💾 Theme .json file saved!'), ev);
+    }
+};
+
+window.onThemeJsonFilePickedV38 = function(inputEl, ev) {
+    const file = inputEl && inputEl.files && inputEl.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const parsed = JSON.parse(String(e.target.result || ''));
+            const box = document.getElementById('themeJsonTextarea');
+            if (box) box.value = JSON.stringify(parsed);
+            window.applyThemeFromJsonObjV38(parsed, ev);
+        } catch (err) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(window.tr('❌ Файл повреждён или не является JSON!', '❌ Corrupted or invalid JSON file!'), ev);
+            }
+        }
+    };
+    reader.readAsText(file);
+};
+
+window.syncThemeStudioUIV38 = function() {
+    if (typeof window.syncThemeStudioUIV37 === 'function') window.syncThemeStudioUIV37();
+    const t = window.getCurrentThemeObjectV38();
+    const map = {
+        'clr_theme_reset': t.resetBtnColor,
+        'clr_theme_io': t.ioBtnColor,
+        'clr_theme_chk': t.checkboxColor,
+        'clr_theme_slider': t.sliderColor,
+        'clr_theme_transport': t.transportColor,
+        'clr_theme_bg': t.bgColor
+    };
+    for (const [id, val] of Object.entries(map)) {
+        const el = document.getElementById(id);
+        if (el) el.value = val;
+    }
+    const box = document.getElementById('themeJsonTextarea');
+    if (box) box.value = JSON.stringify(t);
+};
+
+const _origResetThemeV37 = window.resetVisualThemeV37;
+window.resetVisualThemeV37 = function(ev) {
+    window.appConfig = window.appConfig || {};
+    Object.assign(window.appConfig, window.DEFAULT_THEME_CONFIG_V38);
+    if (typeof _origResetThemeV37 === 'function') _origResetThemeV37(ev);
+    window.syncThemeStudioUIV38();
+};
+
+const _origEnsureModalV37 = window.ensureThemeStudioModalV37;
+window.ensureThemeStudioModalV37 = function() {
+    _origEnsureModalV37();
+    const tm = document.getElementById('themeModal');
+    if (!tm) return;
+    const container = tm.querySelector('.container') || tm;
+    if (document.getElementById('themeGroupsSectionV38')) return;
+
+    const extraHTML = document.createElement('div');
+    extraHTML.id = 'themeGroupsSectionV38';
+    extraHTML.innerHTML = `
+        <details class="setting-group" open>
+            <summary>${window.tr('🎛️ Единые группы деталей (Синхронный окрас)', '🎛️ Unified Component Groups (Sync Color)')}</summary>
+            <div class="group-content">
+                <div class="setting-row" style="padding:7px 0;">
+                    <span style="font-size:12.5px;color:#e6edf3;">${window.tr('🔄 Все кнопки «Сброс»:', '🔄 All "Reset" Buttons:')}</span>
+                    <input type="color" id="clr_theme_reset" class="theme-color-picker" value="#e3b341" oninput="window.onGroupColorInputV38('resetBtnColor', this.value)">
+                </div>
+                <div class="setting-row" style="padding:7px 0;">
+                    <span style="font-size:12.5px;color:#e6edf3;">${window.tr('📥/💾 Кнопки памяти строк:', '📥/💾 Row Memory Buttons:')}</span>
+                    <input type="color" id="clr_theme_io" class="theme-color-picker" value="#7341be" oninput="window.onGroupColorInputV38('ioBtnColor', this.value)">
+                </div>
+                <div class="setting-row" style="padding:7px 0;">
+                    <span style="font-size:12.5px;color:#e6edf3;">${window.tr('☑️ Галочки и активные статусы:', '☑️ Checkboxes & Active Badges:')}</span>
+                    <input type="color" id="clr_theme_chk" class="theme-color-picker" value="#3fb950" oninput="window.onGroupColorInputV38('checkboxColor', this.value)">
+                </div>
+                <div class="setting-row" style="padding:7px 0;">
+                    <span style="font-size:12.5px;color:#e6edf3;">${window.tr('🎚️ Ползунки и кружки справки ❓:', '🎚️ Sliders & Help Badges ❓:')}</span>
+                    <input type="color" id="clr_theme_slider" class="theme-color-picker" value="#58a6ff" oninput="window.onGroupColorInputV38('sliderColor', this.value)">
+                </div>
+                <div class="setting-row" style="padding:7px 0;">
+                    <span style="font-size:12.5px;color:#e6edf3;">${window.tr('▶️ Кнопки Play и Перемотка:', '▶️ Play & Seek Triangles:')}</span>
+                    <input type="color" id="clr_theme_transport" class="theme-color-picker" value="#a371f7" oninput="window.onGroupColorInputV38('transportColor', this.value)">
+                </div>
+                <div class="setting-row" style="padding:7px 0;border:none;">
+                    <span style="font-size:12.5px;color:#e6edf3;">${window.tr('🌑 Оттенок фона (если выкл. AMOLED):', '🌑 Custom Background (if AMOLED off):')}</span>
+                    <input type="color" id="clr_theme_bg" class="theme-color-picker" value="#000000" oninput="window.onGroupColorInputV38('bgColor', this.value)">
+                </div>
+            </div>
+        </details>
+
+        <details class="setting-group" open>
+            <summary>${window.tr('⚡ Готовые сборки тем в 1 клик', '⚡ One-Click Full Theme Packs')}</summary>
+            <div class="group-content" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                <button type="button" onclick="window.applyFullThemePackV38('amethyst_amoled', event)" style="padding:8px;">🟣 Amethyst</button>
+                <button type="button" onclick="window.applyFullThemePackV38('cyber_matrix', event)" style="padding:8px;">🟢 Matrix</button>
+                <button type="button" onclick="window.applyFullThemePackV38('synth_sunset', event)" style="padding:8px;">🌅 Sunset</button>
+                <button type="button" onclick="window.applyFullThemePackV38('ruby_stealth', event)" style="padding:8px;">🔴 Ruby</button>
+            </div>
+        </details>
+
+        <details class="setting-group" open>
+            <summary>${window.tr('📦 Импорт и Экспорт темы (JSON)', '📦 Theme Import & Export (JSON)')}</summary>
+            <div class="group-content">
+                <div style="font-size:11.5px;color:#8b949e;margin-bottom:6px;">
+                    ${window.tr('Скопируй JSON-код, чтобы поделиться темой, или вставь чужой код сюда:', 'Copy JSON code to share your theme, or paste a JSON string below:')}
+                </div>
+                <textarea id="themeJsonTextarea" rows="3" style="width:100%;box-sizing:border-box;background:#000;color:#3fb950;border:1px solid var(--border-uniform);border-radius:6px;padding:8px;font-family:monospace;font-size:11px;margin-bottom:8px;resize:vertical;"></textarea>
+                <div style="display:flex;gap:6px;margin-bottom:8px;">
+                    <button type="button" onclick="window.copyThemeJsonToClipboardV38(event)" style="flex:1;padding:8px;">${window.tr('📋 Копировать JSON', '📋 Copy JSON')}</button>
+                    <button type="button" onclick="window.applyThemeFromTextareaV38(event)" style="flex:1;padding:8px;color:#3fb950;">${window.tr('✅ Применить JSON', '✅ Apply JSON')}</button>
+                </div>
+                <div style="display:flex;gap:6px;">
+                    <button type="button" onclick="window.downloadThemeJsonFileV38(event)" style="flex:1;padding:8px;">${window.tr('💾 Скачать .json', '💾 Save .json')}</button>
+                    <button type="button" onclick="document.getElementById('themeJsonFileInput').click()" style="flex:1;padding:8px;">${window.tr('📂 Открыть .json', '📂 Load .json')}</button>
+                    <input type="file" id="themeJsonFileInput" accept=".json,application/json" style="display:none;" onchange="window.onThemeJsonFilePickedV38(this, event)">
+                </div>
+            </div>
+        </details>
+    `;
+    container.appendChild(extraHTML);
+    window.syncThemeStudioUIV38();
+};
+
+setTimeout(() => {
+    window.ensureThemeStudioModalV37();
+    window.applyVisualThemeV37();
+}, 180);
