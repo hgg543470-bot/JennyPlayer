@@ -205,7 +205,9 @@ window.playTrack = async function(filename, listContext = 'main') {
                         window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
                     }, 50);
 
-                    if (isPitchLocked && currentTargetSpd !== 1.0 && !(window.appConfig && window.appConfig.elasticHoseMode)) {
+                    if (window.appConfig && window.appConfig.elasticHoseMode && typeof window.applyElasticHoseBufferLiveV46 === 'function') {
+                        window.applyElasticHoseBufferLiveV46(false);
+                    } else if (isPitchLocked && currentTargetSpd !== 1.0) {
                         if (window.htmlGain) window.htmlGain.gain.value = 1;
                         window.isStudioPlaying = false;
                         if (player) {
@@ -277,7 +279,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
 
-            if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0) {
+            if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0 && !(window.appConfig && window.appConfig.elasticHoseMode)) {
                 let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
                 window.studioSourceNode = window.audioCtx.createBufferSource();
                 window.studioSourceNode.buffer = isVisualReverse ? window.reversedStudioBuffer : window.studioBuffer;
@@ -309,7 +311,7 @@ document.addEventListener("DOMContentLoaded", () => {
         };
 
         player.onseeked = () => {
-            if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0) {
+            if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0 && !(window.appConfig && window.appConfig.elasticHoseMode)) {
                 if (!player.paused) {
                     if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} }
                     let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);

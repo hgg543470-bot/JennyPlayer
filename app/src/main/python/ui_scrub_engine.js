@@ -39,14 +39,14 @@ window.startScrub = function(side, speed) {
             } else if (isPitchLocked && speed !== 1.0) {
                 if (window.htmlGain) window.htmlGain.gain.value = 1;
                 window.isStudioPlaying = false;
-                if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
+                if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} try { window.studioSourceNode.disconnect(); } catch(e){} window.studioSourceNode = null; }
             } else {
                 if (window.htmlGain) window.htmlGain.gain.value = 0;
 
-                if (!wasAlreadyReversed && window.isStudioPlaying && window.studioSourceNode) {
+                if (!wasAlreadyReversed && window.isStudioPlaying && window.studioSourceNode && !window.studioSourceNode._isHoseSpliced) {
                      window.studioSourceNode.playbackRate.value = speed;
                 } else {
-                     if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
+                     if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} try { window.studioSourceNode.disconnect(); } catch(e){} window.studioSourceNode = null; }
                      window.studioSourceNode = window.audioCtx.createBufferSource();
                      window.studioSourceNode.buffer = window.studioBuffer;
                      window.studioSourceNode.playbackRate.value = speed;
@@ -75,7 +75,7 @@ window.startScrub = function(side, speed) {
             if (wasAlreadyReversed && window.isStudioPlaying && window.studioSourceNode) {
                  window.studioSourceNode.playbackRate.value = speed;
             } else {
-                 if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
+                 if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} try { window.studioSourceNode.disconnect(); } catch(e){} window.studioSourceNode = null; }
                  window.studioSourceNode = window.audioCtx.createBufferSource();
                  window.studioSourceNode.buffer = window.reversedStudioBuffer;
                  window.studioSourceNode.playbackRate.value = speed;
@@ -128,8 +128,10 @@ window.stopScrub = function(keepLockedSpeed = false) {
         player.preservesPitch = isPitchLocked;
 
         if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch(e){}
-            window.studioSourceNode.disconnect();
+            try { window.studioSourceNode.disconnect(); } catch(e){}
+            window.studioSourceNode = null;
         }
 
         if (window.appConfig.studioMode && window.studioBuffer) {

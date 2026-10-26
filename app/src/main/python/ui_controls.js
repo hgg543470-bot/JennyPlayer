@@ -27,6 +27,7 @@ window.toggleReverseMode = function(targetReversed) {
     
     let startPos = player ? player.currentTime : 0; 
     window.studioSourceNode.start(0, startPos);
+    if (window.appConfig && window.appConfig.elasticHoseMode && typeof window.applyElasticHoseBufferLiveV46 === 'function') window.applyElasticHoseBufferLiveV46(false);
 };
 
 window.setupTimeBlockControls = function() {
@@ -83,9 +84,9 @@ window.setupTimeBlockControls = function() {
         clearTimeout(pressTimer);
         if (isLongPress) {
             if (player) {
-                let baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+                let baseSpd = typeof window.getTargetPlaybackSpeed === 'function' ? window.getTargetPlaybackSpeed() : 1.0;
                 player.playbackRate = baseSpd;
-                if (window.studioSourceNode) window.studioSourceNode.playbackRate.value = baseSpd;
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') window.syncMasterPlaybackEngineV59(false);
             }
         } else {
             window.toggleReverseMode(false);

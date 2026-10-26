@@ -56,16 +56,8 @@ window.setupSeekZone = function() {
             
             player.currentTime = perc * player.duration;
             
-            if (window.scrubState.active || window.scrubState.locked || window.isReversed) {
-                if (window.studioSourceNode && window.studioBuffer) {
-                    try { window.studioSourceNode.stop(); } catch(e){}
-                    window.studioSourceNode.disconnect();
-                    window.studioSourceNode = window.audioCtx.createBufferSource();
-                    window.studioSourceNode.buffer = isVisualReverse ? window.reversedStudioBuffer : window.studioBuffer;
-                    window.studioSourceNode.playbackRate.value = window.scrubState.speed || 1.0;
-                    window.studioSourceNode.connect(window.inputMixer);
-                    window.studioSourceNode.start(0, player.currentTime);
-                }
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
             }
         }
     }
@@ -194,7 +186,8 @@ window.setupSeekZone = function() {
                 let baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
                 const player = document.getElementById('audioPlayer');
                 if (player) player.playbackRate = baseSpd;
-                if (window.studioSourceNode) window.studioSourceNode.playbackRate.value = baseSpd;
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') window.syncMasterPlaybackEngineV59(false);
+                else if (window.studioSourceNode) window.studioSourceNode.playbackRate.value = baseSpd;
                 
                 // Показываем визуальное подтверждение на 1 секунду
                 let lockEl = document.getElementById('speedLockIndicator');

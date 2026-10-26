@@ -3820,91 +3820,186 @@ setTimeout(() => {
 }, 500);
 
 
-// 🐍 ПАТЧ V58: ЧЕСТНОЕ ПЕРЕКЛЮЧЕНИЕ (ШЛАНГ V52 / WEBAPI PITCH LOCK / ВИНИЛ) + СЭМПЛ-РЕЗАК В /Music/mp3_test
+// 🐍 ПАТЧ V59: ИСПРАВЛЕНИЕ НЕВИДИМЫХ ГАЛОЧЕК + ЧЕСТНЫЙ ДИСПЕТЧЕР 3 РЕЖИМОВ (ШЛАНГ V52 / WEBAPI PITCHLOCK / ВИНИЛ)
 
-// Синхронизатор режимов, когда Упругий Шланг ВЫКЛЮЧЕН:
-// Если включена верхняя галочка Pitch Lock -> включаем настоящий WebAPI Pitch Lock (через htmlGain + player.preservesPitch = true), а не RAM-винил!
-window.syncNonHoseSpeedModeV58 = function() {
+// Защита от чёрных (невидимых) галочек на чёрном фоне AMOLED
+(function() {
+    const fixDarkCheckboxColor = () => {
+        if (window.appConfig && (window.appConfig.checkboxColor === '#000000' || window.appConfig.checkboxColor === '#0d1117')) {
+            window.appConfig.checkboxColor = '#3fb950';
+            document.documentElement.style.setProperty('--accent-green', '#3fb950');
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+        }
+    };
+    fixDarkCheckboxColor();
+    setTimeout(fixDarkCheckboxColor, 400);
+})();
+
+window.getActiveTargetSpeedV59 = function() {
+    const player = document.getElementById('audioPlayer');
+    if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
+        return parseFloat(window.scrubState.speed) || 1.0;
+    }
+    if (window.persistedPlaybackSpeed && window.persistedPlaybackSpeed !== 10.0) {
+        return parseFloat(window.persistedPlaybackSpeed) || 1.0;
+    }
+    if (typeof window.getTargetPlaybackSpeed === 'function') {
+        return parseFloat(window.getTargetPlaybackSpeed()) || 1.0;
+    }
+    return (player && player.playbackRate && player.playbackRate !== 10.0) ? player.playbackRate : 1.0;
+};
+
+const _pureV52ApplyHose = window.applyElasticHoseBufferLiveV46;
+
+window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
     const player = document.getElementById('audioPlayer');
     if (!player) return;
-    const isHose = Boolean(window.appConfig && window.appConfig.elasticHoseMode);
-    if (isHose) return;
 
+    const hoseChk = document.getElementById('cfg_elasticHoseV44');
     const pitchChk = document.getElementById('cfg_pitchLock');
-    const isWebApiPitch = Boolean(pitchChk ? pitchChk.checked : (window.appConfig && window.appConfig.pitchLock));
     const badge = document.getElementById('hoseLiveTelemetryV44');
 
-    let targetSpd = 1.0;
-    if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
-        targetSpd = parseFloat(window.scrubState.speed) || 1.0;
-    } else if (window.persistedPlaybackSpeed) {
-        targetSpd = parseFloat(window.persistedPlaybackSpeed) || 1.0;
-    } else if (typeof window.getTargetPlaybackSpeed === 'function') {
-        targetSpd = window.getTargetPlaybackSpeed();
+    const isHose = Boolean(hoseChk ? hoseChk.checked : (window.appConfig && window.appConfig.elasticHoseMode));
+    const isWebApiPitch = Boolean(pitchChk ? pitchChk.checked : (window.appConfig && window.appConfig.pitchLock));
+    const targetSpd = window.getActiveTargetSpeedV59();
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+
+    // РЕЖИМ 1: 🐍 НАШ УПРУГИЙ ШЛАНГ V52 (РАБОТАЕТ В RAM И ВПЕРЁД, И В РЕВЕРСЕ)
+    if (isHose) {
+        if (badge) badge.style.color = '#58a6ff';
+        return _pureV52ApplyHose(isDraggingArc);
     }
 
-    if (isWebApiPitch && Math.abs(targetSpd - 1.0) > 0.002) {
-        // Останавливаем беспитчевый studioSourceNode и пускаем звук через HTML5-плеер с настоящим WebAPI preservesPitch = true в тот же inputMixer!
-        if (window.studioSourceNode) {
-            window.studioSourceNode.onended = null;
-            try { window.studioSourceNode.stop(); } catch (e) {}
-            try { window.studioSourceNode.disconnect(); } catch (e) {}
-            window.studioSourceNode = null;
+    // Останавливаем и ОБНУЛЯЕМ studioSourceNode, чтобы никогда не возникало второго потока
+    if (window.studioSourceNode) {
+        window.studioSourceNode.onended = null;
+        try { window.studioSourceNode.stop(); } catch (e) {}
+        try { window.studioSourceNode.disconnect(); } catch (e) {}
+        window.studioSourceNode = null;
+    }
+    window.isStudioPlaying = false;
+
+    // РЕЖИМ 2: 🌐 ШТАТНЫЙ WEBAPI PITCH LOCK (HTML5 <audio> с preservesPitch = true)
+    if (isWebApiPitch && !isRev) {
+        if (window.htmlGain && window.htmlGain.gain) {
+            window.htmlGain.gain.value = 1.0;
         }
-        window.isStudioPlaying = false;
-        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
         player.preservesPitch = true;
         player.mozPreservesPitch = true;
         player.webkitPreservesPitch = true;
-        if (Math.abs(player.playbackRate - targetSpd) > 0.005) player.playbackRate = targetSpd;
-        if (badge) badge.innerText = `🌐 WebAPI PitchLock | x${targetSpd.toFixed(2)}`;
-    } else {
-        player.preservesPitch = false;
-        player.mozPreservesPitch = false;
-        player.webkitPreservesPitch = false;
-        if (badge) badge.innerText = `💿 Винил (Без PitchLock) | x${targetSpd.toFixed(2)}`;
-    }
-};
-
-const _origApplyHoseV52 = window.applyElasticHoseBufferLiveV46;
-window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
-    const isHose = Boolean(window.appConfig && window.appConfig.elasticHoseMode);
-    if (!isHose) {
-        window.syncNonHoseSpeedModeV58();
+        if (Math.abs(player.playbackRate - targetSpd) > 0.002) {
+            player.playbackRate = targetSpd;
+        }
+        if (badge) {
+            badge.style.color = '#e3b341';
+            badge.innerText = `🌐 WebAPI PitchLock | x${targetSpd.toFixed(2)}`;
+        }
         return;
     }
-    return _origApplyHoseV52(isDraggingArc);
+
+    // РЕЖИМ 3: 💿 ЧИСТЫЙ ВИНИЛ (БЕЗ PITCH LOCK — меняется высота тона вместе со скоростью)
+    player.preservesPitch = false;
+    player.mozPreservesPitch = false;
+    player.webkitPreservesPitch = false;
+    if (Math.abs(player.playbackRate - targetSpd) > 0.002) {
+        player.playbackRate = targetSpd;
+    }
+
+    if (window.appConfig && window.appConfig.studioMode && window.studioBuffer && window.audioCtx) {
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+        if (!player.paused) {
+            const rawBuf = isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer;
+            window.studioSourceNode = window.audioCtx.createBufferSource();
+            window.studioSourceNode._isHoseSpliced = false;
+            window.studioSourceNode.buffer = rawBuf;
+            window.studioSourceNode.playbackRate.value = targetSpd;
+            window.studioSourceNode.connect(window.inputMixer);
+            let pos = player.currentTime || 0;
+            if (!isFinite(pos) || pos < 0 || pos >= rawBuf.duration) pos = 0;
+            window.studioSourceNode.start(0, pos);
+            window.isStudioPlaying = true;
+        }
+    } else {
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+    }
+
+    if (badge) {
+        badge.style.color = '#8b949e';
+        badge.innerText = `💿 Винил (Без PitchLock) | x${targetSpd.toFixed(2)}`;
+    }
 };
 
-// Перехватываем переключение верхней галочки cfg_pitchLock и смену скорости
+window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
+    return window.syncMasterPlaybackEngineV59(isDraggingArc);
+};
+
+// Делаем две галочки взаимоисключающими, чтобы всегда было на 100% наглядно, какой из 3 режимов играет
+window.onToggleElasticHoseV44 = function(chk, ev) {
+    const enabled = Boolean(chk && chk.checked);
+    window.appConfig = window.appConfig || {};
+    window.appConfig.elasticHoseMode = enabled;
+
+    const pitchChk = document.getElementById('cfg_pitchLock');
+    if (enabled && pitchChk && pitchChk.checked) {
+        pitchChk.checked = false;
+        window.appConfig.pitchLock = false;
+    }
+
+    window.installHosePlayerHooksV46();
+    window.syncMasterPlaybackEngineV59(false);
+
+    if (typeof window.showToast === 'function' && ev) {
+        if (enabled) {
+            window.showToast('🐍 Включён наш 90° Профильный Резак V52!', ev);
+        } else {
+            const isWeb = Boolean(pitchChk && pitchChk.checked);
+            window.showToast(isWeb ? '🌐 Включён штатный WebAPI PitchLock!' : '💿 Включён Винил (без PitchLock)!', ev);
+        }
+    }
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
+};
+
 setTimeout(() => {
     const pitchChk = document.getElementById('cfg_pitchLock');
-    if (pitchChk && !pitchChk._hookedV58) {
-        pitchChk._hookedV58 = true;
-        pitchChk.addEventListener('change', () => {
-            if (window.appConfig) window.appConfig.pitchLock = pitchChk.checked;
-            if (!window.appConfig || !window.appConfig.elasticHoseMode) {
-                setTimeout(() => window.syncNonHoseSpeedModeV58(), 20);
+    const hoseChk = document.getElementById('cfg_elasticHoseV44');
+    if (pitchChk && !pitchChk._hookedV59) {
+        pitchChk._hookedV59 = true;
+        if (window.appConfig && window.appConfig.elasticHoseMode && pitchChk.checked) {
+            pitchChk.checked = false;
+            window.appConfig.pitchLock = false;
+        }
+        pitchChk.onchange = function(ev) {
+            window.appConfig = window.appConfig || {};
+            window.appConfig.pitchLock = pitchChk.checked;
+            const hChk = document.getElementById('cfg_elasticHoseV44');
+            if (pitchChk.checked && hChk && hChk.checked) {
+                hChk.checked = false;
+                window.appConfig.elasticHoseMode = false;
             }
-        });
+            if (typeof window.updateSettings === 'function') window.updateSettings();
+            window.syncMasterPlaybackEngineV59(false);
+            if (typeof window.showToast === 'function') {
+                window.showToast(pitchChk.checked ? '🌐 Включён штатный WebAPI PitchLock!' : '💿 Включён Винил (без PitchLock)!', ev);
+            }
+        };
     }
-    const origUpd = window.updateSettings;
-    if (typeof origUpd === 'function' && ! origUpd._hookedV58) {
-        window.updateSettings = function() {
-            const r = origUpd.apply(this, arguments);
-            if (!window.appConfig || !window.appConfig.elasticHoseMode) {
-                window.syncNonHoseSpeedModeV58();
-            } else {
-                window.applyElasticHoseBufferLiveV46(false);
-            }
+
+    const origStopScrub = window.stopScrub;
+    if (typeof origStopScrub === 'function' && !origStopScrub._hookedV59) {
+        window.stopScrub = function(keepLockedSpeed = false) {
+            const r = origStopScrub.apply(this, arguments);
+            window.syncMasterPlaybackEngineV59(false);
             return r;
         };
-        window.updateSettings._hookedV58 = true;
+        window.stopScrub._hookedV59 = true;
     }
-}, 450);
 
-// ✂️ СЭМПЛ-РЕЗАК ДЛЯ ЧИСТОГО ДВИЖКА V52 (ПО ТАБЛИЦЕ seamLogs, БЕЗ ВМЕШАТЕЛЬСТВА В ЯДРО V52)
-window.encodeAudioBufferToWavB64V58 = function(audioBuf) {
+    window.syncMasterPlaybackEngineV59(false);
+}, 500);
+
+// ✂️ СЭМПЛ-РЕЗАК В /storage/emulated/0/Music/mp3_test
+window.encodeAudioBufferToWavB64V59 = function(audioBuf) {
     const numCh = audioBuf.numberOfChannels, sr = audioBuf.sampleRate, len = audioBuf.length;
     const blockAlign = numCh * 4, dataSize = len * blockAlign;
     const buf = new ArrayBuffer(44 + dataSize), view = new DataView(buf);
@@ -3926,7 +4021,7 @@ window.encodeAudioBufferToWavB64V58 = function(audioBuf) {
     return btoa(binary);
 };
 
-window.mapModSampleToOrigV58 = function(modSample, logs, spd, origLen) {
+window.mapModSampleToOrigV59 = function(modSample, logs, spd, origLen) {
     if (!logs || !logs.length) return Math.min(origLen - 1, Math.max(0, Math.round(modSample * spd)));
     let lastSeam = null;
     for (let i = 0; i < logs.length; i++) {
@@ -3937,23 +4032,16 @@ window.mapModSampleToOrigV58 = function(modSample, logs, spd, origLen) {
     return Math.min(origLen - 1, Math.max(0, lastSeam.p2 + (modSample - lastSeam.outPos)));
 };
 
-window._hoseTestSliceV58 = { origBuf: null, modBuf: null, activeNode: null };
+window._hoseTestSliceV59 = { origBuf: null, modBuf: null, activeNode: null };
 
-window.cutAndSaveV52SliceV58 = function(grabTime, saveToDisk) {
+window.cutAndSaveV52SliceV59 = function(grabTime, saveToDisk) {
     if (!window.studioBuffer || !window.audioCtx) return;
     const player = document.getElementById('audioPlayer');
-    const startInp = document.getElementById('v58SliceStartSec');
-    const durInp = document.getElementById('v58SliceDurMs');
+    const startInp = document.getElementById('v59SliceStartSec');
+    const durInp = document.getElementById('v59SliceDurMs');
     if (grabTime && player && startInp) startInp.value = (player.currentTime || 0).toFixed(3);
 
-    let targetSpd = 1.0;
-    if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
-        targetSpd = parseFloat(window.scrubState.speed) || 1.0;
-    } else if (window.persistedPlaybackSpeed) {
-        targetSpd = parseFloat(window.persistedPlaybackSpeed) || 1.0;
-    } else if (typeof window.getTargetPlaybackSpeed === 'function') {
-        targetSpd = window.getTargetPlaybackSpeed();
-    }
+    const targetSpd = window.getActiveTargetSpeedV59();
     const tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined) ? window.appConfig.hoseTensionPct : 100;
     const activeModBuf = window.buildElasticHoseBufferV46(window.studioBuffer, targetSpd, tensionPct);
 
@@ -3968,8 +4056,8 @@ window.cutAndSaveV52SliceV58 = function(grabTime, saveToDisk) {
     const modLen = Math.max(64, Math.min(modTotal - modStart, Math.round((durMs / 1000) * sr)));
     const modEnd = modStart + modLen - 1;
 
-    const origStart = window.mapModSampleToOrigV58(modStart, cache.seamLogs, targetSpd, origTotal);
-    let origEnd = window.mapModSampleToOrigV58(modEnd, cache.seamLogs, targetSpd, origTotal);
+    const origStart = window.mapModSampleToOrigV59(modStart, cache.seamLogs, targetSpd, origTotal);
+    let origEnd = window.mapModSampleToOrigV59(modEnd, cache.seamLogs, targetSpd, origTotal);
     if (origEnd <= origStart) origEnd = Math.min(origTotal - 1, origStart + modLen);
     const origLen = origEnd - origStart + 1;
 
@@ -3992,13 +4080,13 @@ window.cutAndSaveV52SliceV58 = function(grabTime, saveToDisk) {
         mSl[modLen - 1] = oSl[origLen - 1];
     }
 
-    window._hoseTestSliceV58.origBuf = origBuf;
-    window._hoseTestSliceV58.modBuf = modBuf;
+    window._hoseTestSliceV59.origBuf = origBuf;
+    window._hoseTestSliceV59.modBuf = modBuf;
 
     const o0 = origBuf.getChannelData(0), m0 = modBuf.getChannelData(0);
     const seams = (cache.seamLogs || []).filter(s => s.outPos >= modStart && s.outPos <= modEnd);
     const rep = [
-        `=== ✂️ V58 (ЧИСТОЕ ЯДРО V52 8a82c5b) СРЕЗ x${targetSpd.toFixed(2)} ===`,
+        `=== ✂️ V59 (ЧИСТОЕ ЯДРО V52) СРЕЗ x${targetSpd.toFixed(2)} ===`,
         `Трек: ${window.currentPlayingTrack || 'Track'} | Avg_dy по треку: ${((cache.avgSeamErrMv||0)*100).toFixed(2)}%`,
         `Кусок ШЛАНГА (x${targetSpd.toFixed(2)}): modSample #${modStart}..#${modEnd} (${modLen} сэмплов / ${(modLen/sr*1000).toFixed(1)} мс)`,
         `Кусок ОРИГИНАЛА (x1.00): origSample #${origStart}..#${origEnd} (${origLen} сэмплов / ${(origLen/sr*1000).toFixed(1)} мс)`,
@@ -4021,8 +4109,8 @@ window.cutAndSaveV52SliceV58 = function(grabTime, saveToDisk) {
                 speed_str: `x${targetSpd.toFixed(2)}`,
                 orig_start: origStart,
                 orig_end: origEnd,
-                orig_wav_b64: window.encodeAudioBufferToWavB64V58(origBuf),
-                hose_wav_b64: window.encodeAudioBufferToWavB64V58(modBuf),
+                orig_wav_b64: window.encodeAudioBufferToWavB64V59(origBuf),
+                hose_wav_b64: window.encodeAudioBufferToWavB64V59(modBuf),
                 report_txt: rep
             })
         }).then(r => r.json()).then(res => {
@@ -4033,9 +4121,9 @@ window.cutAndSaveV52SliceV58 = function(grabTime, saveToDisk) {
     }
 };
 
-window.playTestSliceV58 = function(mode) {
-    const st = window._hoseTestSliceV58;
-    if (!st.origBuf || !st.modBuf) window.cutAndSaveV52SliceV58(false, false);
+window.playTestSliceV59 = function(mode) {
+    const st = window._hoseTestSliceV59;
+    if (!st.origBuf || !st.modBuf) window.cutAndSaveV52SliceV59(false, false);
     if (!st.origBuf || !window.audioCtx) return;
     const player = document.getElementById('audioPlayer');
     if (player && !player.paused) player.pause();
@@ -4055,24 +4143,24 @@ window.playTestSliceV58 = function(mode) {
 
 setTimeout(() => {
     const ta = document.getElementById('hoseDebugTextAreaV52');
-    if (ta && !document.getElementById('hoseSliceBoxV58')) {
+    if (ta && !document.getElementById('hoseSliceBoxV59')) {
         const box = document.createElement('div');
-        box.id = 'hoseSliceBoxV58';
+        box.id = 'hoseSliceBoxV59';
         box.style.cssText = 'margin-top:6px;border-top:1px solid #21262d;padding-top:6px;';
         box.innerHTML = `
-            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V58 (Чистое ядро V52 + /Music/mp3_test):</div>
+            <div style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:4px;">✂️ Сэмпл-Резак V59 (Чистое ядро V52 + /Music/mp3_test):</div>
             <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">
                 <span style="font-size:10px;color:#8b949e;">Поз(с):</span>
-                <input type="number" id="v58SliceStartSec" value="15.000" step="0.1" style="width:58px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
-                <button type="button" onclick="window.cutAndSaveV52SliceV58(true, true)" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">📍 С плеера + В mp3_test</button>
+                <input type="number" id="v59SliceStartSec" value="15.000" step="0.1" style="width:58px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
+                <button type="button" onclick="window.cutAndSaveV52SliceV59(true, true)" style="font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">📍 С плеера + В mp3_test</button>
                 <span style="font-size:10px;color:#8b949e;">Мс:</span>
-                <input type="number" id="v58SliceDurMs" value="500" step="50" style="width:48px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
-                <button type="button" onclick="window.cutAndSaveV52SliceV58(false, true)" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #58a6ff;background:#161b22;color:#58a6ff;">💾 Вырезать в mp3_test</button>
+                <input type="number" id="v59SliceDurMs" value="500" step="50" style="width:48px;font-size:10px;background:#0d1117;color:#fff;border:1px solid #30363d;border-radius:4px;padding:2px 4px;">
+                <button type="button" onclick="window.cutAndSaveV52SliceV59(false, true)" style="font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid #58a6ff;background:#161b22;color:#58a6ff;">💾 Вырезать в mp3_test</button>
             </div>
             <div style="display:flex;gap:4px;flex-wrap:wrap;">
-                <button type="button" onclick="window.playTestSliceV58('mod')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">▶️ Кусок Шланга</button>
-                <button type="button" onclick="window.playTestSliceV58('orig')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #8b949e;background:#161b22;color:#c9d1d9;">▶️ Кусок Ориг</button>
-                <button type="button" onclick="window.playTestSliceV58('ab')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #f0883e;background:#161b22;color:#f0883e;">🔁 Сравнить Шланг➔Ориг</button>
+                <button type="button" onclick="window.playTestSliceV59('mod')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #3fb950;background:#161b22;color:#3fb950;">▶️ Кусок Шланга</button>
+                <button type="button" onclick="window.playTestSliceV59('orig')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #8b949e;background:#161b22;color:#c9d1d9;">▶️ Кусок Ориг</button>
+                <button type="button" onclick="window.playTestSliceV59('ab')" style="flex:1;font-size:10px;padding:3px 6px;border-radius:4px;border:1px solid #f0883e;background:#161b22;color:#f0883e;">🔁 Сравнить Шланг➔Ориг</button>
             </div>
         `;
         ta.parentElement.appendChild(box);

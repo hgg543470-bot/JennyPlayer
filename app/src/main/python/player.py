@@ -447,7 +447,7 @@ def save_test_slices():
         s_start = req.get('orig_start', 0)
         s_end = req.get('orig_end', 0)
         stamp = datetime.datetime.now().strftime('%H%M%S')
-        prefix = f"V52_{stamp}_{track}_s{s_start}_to_s{s_end}"
+        prefix = f"V59_{stamp}_{track}_s{s_start}_to_s{s_end}"
 
         orig_wav = os.path.join(out_dir, f"{prefix}_1_ORIG.wav")
         hose_wav = os.path.join(out_dir, f"{prefix}_2_HOSE_{spd_str}.wav")
