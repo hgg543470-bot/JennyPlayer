@@ -5050,6 +5050,9 @@ window.setGearboxStateV66 = function(gearKey, ev) {
 })();
 
 window.upgradeToThreeWayTumblerV62 = function() {
+    if (typeof window.injectElasticHoseControlsV44 === 'function' && !document.getElementById('hoseControlBoxV44')) {
+        window.injectElasticHoseControlsV44();
+    }
     const pitchChk = document.getElementById('cfg_pitchLock');
     const hoseChk = document.getElementById('cfg_elasticHoseV44');
     const hoseBox = document.getElementById('hoseControlBoxV44');
@@ -5303,6 +5306,5 @@ window.initGearboxInteractivityV66 = function() {
     document.addEventListener('touchend', onEnd, { passive: true });
 };
 
-setTimeout(() => {
-    window.upgradeToThreeWayTumblerV62();
-}, 120);
+setTimeout(() => { window.upgradeToThreeWayTumblerV62(); }, 400);
+setTimeout(() => { window.upgradeToThreeWayTumblerV62(); }, 800);
