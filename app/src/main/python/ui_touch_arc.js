@@ -109,8 +109,15 @@ window.setupSeekZone = function() {
 
         let isLeftHanded = window.appConfig.leftHandedMode || false;
         
-        currentAnchor.y = window.innerHeight * 0.40; 
-        currentAnchor.x = isLeftHanded ? 0 : window.innerWidth;
+        const eqBtn = document.getElementById('btn-eqModal');
+        if (eqBtn) {
+            const eqRect = eqBtn.getBoundingClientRect();
+            currentAnchor.x = eqRect.left + eqRect.width / 2;
+            currentAnchor.y = eqRect.top + eqRect.height / 2;
+        } else {
+            currentAnchor.y = window.innerHeight - 135;
+            currentAnchor.x = isLeftHanded ? 31 : (window.innerWidth - 31);
+        }
 
         let positionsRH = [
             { x: window.innerWidth * 0.75, y: 35 },  
