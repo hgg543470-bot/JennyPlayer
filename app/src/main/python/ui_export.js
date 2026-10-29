@@ -5,6 +5,7 @@ window.exportCurrentTrack = async function() {
     }
 
     const btn = document.getElementById('btnExport');
+    const oldBtnHtml = btn ? btn.innerHTML : "";
     if (btn) btn.innerText = "⏳";
     if (typeof window.showToast === 'function') window.showToast("⏳ Рендеринг в OPUS...");
 
@@ -12,16 +13,23 @@ window.exportCurrentTrack = async function() {
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
 
         const player = document.getElementById('audioPlayer');
-        let speed = (window.scrubState && (window.scrubState.active || window.scrubState.locked))
-            ? window.scrubState.speed
-            : (player && player.playbackRate ? player.playbackRate : 1.0);
-        let isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+        const cfg = window.appConfig || {};
 
-        let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
-        let pitchLock = pitchLockCheckbox ? pitchLockCheckbox.checked : false;
+        let speed = (typeof window.getActiveTargetSpeedV59 === 'function')
+            ? window.getActiveTargetSpeedV59()
+            : ((window.scrubState && (window.scrubState.active || window.scrubState.locked))
+                ? window.scrubState.speed
+                : (player && player.playbackRate ? player.playbackRate : 1.0));
+
+        let isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+
+        // Определяем активный режим из 3-позиционного тумблера: 'jbuf' | 'vinyl' | 'webapi'
+        let engineMode = cfg.engineModeV62 || (cfg.elasticHoseMode ? 'jbuf' : (cfg.pitchLock ? 'webapi' : 'vinyl'));
+        let isJbuf = (engineMode === 'jbuf');
+        let isWebApiPitch = (engineMode === 'webapi');
+        let pitchLock = (isJbuf || isWebApiPitch);
 
         let sourceBuffer = window.studioBuffer;
-
         if (!sourceBuffer) {
             let res = await fetch('/api/media/' + encodeURIComponent(window.currentPlayingTrack));
             if (!res.ok) throw new Error("Не удалось загрузить исходник трека");
@@ -29,13 +37,25 @@ window.exportCurrentTrack = async function() {
             sourceBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
         }
 
-        if (isRev && !window.reversedStudioBuffer) {
-            sourceBuffer = await window.cloneAndReverseBuffer(sourceBuffer);
-        } else if (isRev) {
-            sourceBuffer = window.reversedStudioBuffer;
+        if (isRev) {
+            if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+                window.reversedStudioBuffer = await window.cloneAndReverseBuffer(sourceBuffer);
+            }
+            if (window.reversedStudioBuffer) {
+                sourceBuffer = window.reversedStudioBuffer;
+            }
         }
 
-        if (pitchLock && speed !== 1.0 && !isRev) {
+        let renderSpeed = speed;
+
+        // РЕЖИМ 1: Наш движок ⚡ JBUF 90° (нарезаем буфер в 32-bit Float RAM с сохранением тона и в прямом, и в реверсе!)
+        if (isJbuf && Math.abs(speed - 1.0) > 0.002 && typeof window.buildElasticHoseBufferV46 === 'function') {
+            let tensionPct = (cfg.hoseTensionPct !== undefined) ? cfg.hoseTensionPct : 100;
+            sourceBuffer = window.buildElasticHoseBufferV46(sourceBuffer, speed, tensionPct);
+            renderSpeed = 1.0;
+        }
+        // РЕЖИМ 2: 🌐 Web API Google (тайм-стретч через FFmpeg atempo)
+        else if (isWebApiPitch && Math.abs(speed - 1.0) > 0.002 && !isRev) {
             let stretchFormData = new FormData();
             stretchFormData.append('filename', window.currentPlayingTrack);
             stretchFormData.append('speed', speed);
@@ -45,52 +65,40 @@ window.exportCurrentTrack = async function() {
                 let errJson = await stretchRes.json().catch(() => ({}));
                 throw new Error(errJson.error || "Ошибка FFmpeg stretch");
             }
-
             let stretchedArrayBuffer = await stretchRes.arrayBuffer();
             sourceBuffer = await window.audioCtx.decodeAudioData(stretchedArrayBuffer);
+            renderSpeed = 1.0;
         }
+        // РЕЖИМ 3: 💿 VINYL — оставляем renderSpeed = speed (меняет темп вместе с высотой тона)
 
-        let renderSpeed = (pitchLock && !isRev) ? 1.0 : speed;
         let duration = sourceBuffer.duration / renderSpeed;
         let totalFrames = Math.max(1, Math.ceil(duration * sourceBuffer.sampleRate));
 
         let offlineCtx = new OfflineAudioContext(sourceBuffer.numberOfChannels, totalFrames, sourceBuffer.sampleRate);
+        let offlineBucket = [];
+
         let sourceNode = offlineCtx.createBufferSource();
         sourceNode.buffer = sourceBuffer;
         sourceNode.playbackRate.value = renderSpeed;
 
         let currentNode = sourceNode;
-        let cfg = window.appConfig || {};
 
         let preAmp = offlineCtx.createGain();
-        preAmp.gain.value = (cfg.opt_autoRms && typeof window.computeBufferAutoGain === 'function') ? (0.6 * window.computeBufferAutoGain(sourceBuffer, cfg.val_autoRms)) : 0.6;
+        preAmp.gain.value = 0.6;
         currentNode.connect(preAmp);
         currentNode = preAmp;
 
-        if (cfg.firEnabled && cfg.firSettings) {
+        if (cfg.firEnabled && cfg.firSettings && typeof window.createFIRImpulse === 'function') {
             let preFirPad = offlineCtx.createGain();
             preFirPad.gain.value = 0.8;
-            currentNode.connect(preFirPad);
-            currentNode = preFirPad;
-
             let firNode = offlineCtx.createConvolver();
             firNode.normalize = false;
-
-            let decay = cfg.firSettings.decay || 15;
-            let length = Math.max(1, Math.floor(offlineCtx.sampleRate * (decay / 1000)));
-            let impulse = offlineCtx.createBuffer(2, length, offlineCtx.sampleRate);
-            for (let c = 0; c < 2; c++) {
-                let data = impulse.getChannelData(c);
-                for (let i = 0; i < length; i++) {
-                    data[i] = (i === 0) ? 1.0 : (cfg.phaseFixEnabled ? (Math.exp(-i / (length / 2.5)) * 0.035 * Math.cos(i * 0.65) * (c === 0 ? 1 : -1)) : (cfg.opt_cleanFir ? ((Math.exp(-i / (length / 6)) - 0.45 * Math.exp(-i / (length / 2.2))) * (isNaN(parseFloat(cfg.val_cleanFir)) ? 0.03 : parseFloat(cfg.val_cleanFir))) : (Math.exp(-i / (length / 3)) * 0.05)));
-                }
-            }
-            firNode.buffer = impulse;
-
+            firNode.buffer = window.createFIRImpulse(offlineCtx, cfg.firSettings.decay);
             let firGain = offlineCtx.createGain();
-            firGain.gain.value = cfg.firSettings.gain || 2.5;
+            firGain.gain.value = cfg.firSettings.gain || 1.5;
 
-            currentNode.connect(firNode);
+            currentNode.connect(preFirPad);
+            preFirPad.connect(firNode);
             firNode.connect(firGain);
             currentNode = firGain;
         }
@@ -113,9 +121,10 @@ window.exportCurrentTrack = async function() {
             });
         }
 
-        if (typeof window.insertProStudioChain === 'function') {
-            currentNode = window.insertProStudioChain(offlineCtx, currentNode, cfg);
+        if (typeof window.insertProStudioPreChain === 'function') {
+            currentNode = window.insertProStudioPreChain(offlineCtx, currentNode, cfg, offlineBucket, sourceBuffer);
         }
+
         let gainNode = offlineCtx.createGain();
         let activeVol = (window.gainNode && window.gainNode.gain) ? window.gainNode.gain.value : ((parseInt(cfg.defaultVolume, 10) || 10) / 10);
         gainNode.gain.value = activeVol;
@@ -126,14 +135,13 @@ window.exportCurrentTrack = async function() {
             let thresh = cfg.limiterSettings.threshold;
             let knee = cfg.limiterSettings.knee;
             let ratio = cfg.limiterSettings.ratio;
-            let atk = cfg.limiterSettings.attack / 1000;
-            let rel = cfg.limiterSettings.release / 1000;
 
             if (cfg.multiBandEnabled && cfg.multiBandSettings) {
-                let lowFreq = Math.max(20, cfg.multiBandSettings.low || 200);
-                let highFreq = Math.max(lowFreq + 100, cfg.multiBandSettings.high || 2500);
-                let midCenter = Math.sqrt(lowFreq * highFreq);
-                let midQ = midCenter / (highFreq - lowFreq);
+                let lowFreq = Math.max(20, cfg.multiBandSettings.low || 160);
+                let highFreq = Math.max(lowFreq + 200, cfg.multiBandSettings.high || 2528);
+                let vocalLowAnchor = Math.max(lowFreq, 320);
+                let midCenter = Math.sqrt(vocalLowAnchor * highFreq);
+                let midQ = Math.max(0.85, midCenter / (highFreq - vocalLowAnchor));
 
                 let splitLow = offlineCtx.createBiquadFilter(); splitLow.type = 'lowpass'; splitLow.frequency.value = lowFreq;
                 let splitMid = offlineCtx.createBiquadFilter(); splitMid.type = 'bandpass'; splitMid.frequency.value = midCenter; splitMid.Q.value = midQ;
@@ -141,76 +149,72 @@ window.exportCurrentTrack = async function() {
 
                 let compLow = offlineCtx.createDynamicsCompressor();
                 compLow.threshold.value = thresh; compLow.knee.value = knee; compLow.ratio.value = ratio;
-                compLow.attack.value = atk; compLow.release.value = rel;
+                compLow.attack.value = Math.max(0.015, (cfg.limiterSettings.attack || 26) / 1000);
+                compLow.release.value = Math.max(0.04, (cfg.limiterSettings.release || 60) / 1000);
 
                 let compMid = offlineCtx.createDynamicsCompressor();
-                compMid.threshold.value = thresh + 2; compMid.knee.value = knee; compMid.ratio.value = ratio;
-                compMid.attack.value = 0.002; compMid.release.value = 0.1;
+                compMid.threshold.value = Math.min(-6, thresh + 7);
+                compMid.knee.value = Math.max(12, knee);
+                compMid.ratio.value = Math.min(3.5, Math.max(1.5, ratio * 0.25));
+                compMid.attack.value = Math.max(0.025, (cfg.limiterSettings.attack || 26) / 1000);
+                compMid.release.value = 0.16;
 
                 let compHigh = offlineCtx.createDynamicsCompressor();
-                compHigh.threshold.value = thresh + 4; compHigh.knee.value = knee; compHigh.ratio.value = ratio;
-                compHigh.attack.value = 0.001; compHigh.release.value = 0.05;
+                compHigh.threshold.value = thresh + 4; compHigh.knee.value = knee; compHigh.ratio.value = Math.min(6.0, ratio);
+                compHigh.attack.value = 0.008; compHigh.release.value = 0.08;
 
                 currentNode.connect(splitLow); currentNode.connect(splitMid); currentNode.connect(splitHigh);
                 splitLow.connect(compLow); splitMid.connect(compMid); splitHigh.connect(compHigh);
 
+                let postBus = offlineCtx.createGain();
+                let midPhaseNode = offlineCtx.createGain();
+                let deEssGain = offlineCtx.createGain();
+
                 if (cfg.phaseFixEnabled) {
-                    splitMid.Q.value = Math.max(0.35, midQ * 0.65);
-                    let midPhase = offlineCtx.createGain();
-                    midPhase.gain.value = -1.22;
-                    let masterSafe = offlineCtx.createDynamicsCompressor();
-                    masterSafe.threshold.value = -1.0; masterSafe.knee.value = 4.0; masterSafe.ratio.value = 18.0;
-                    masterSafe.attack.value = 0.001; masterSafe.release.value = 0.04;
-                    compLow.connect(masterSafe);
-                    compMid.connect(midPhase); midPhase.connect(masterSafe);
-                    compHigh.connect(masterSafe);
-                    masterSafe.connect(offlineCtx.destination);
+                    splitMid.Q.value = Math.max(0.25, midQ * 0.65);
+                    midPhaseNode.gain.value = -1.22;
+                    compLow.connect(postBus);
+                    compMid.connect(midPhaseNode); midPhaseNode.connect(postBus);
+                    compHigh.connect(postBus);
                 } else {
-                    let qMult = isNaN(parseFloat(cfg.val_midQ)) ? 0.65 : parseFloat(cfg.val_midQ);
-                    let phGain = isNaN(parseFloat(cfg.val_midPhase)) ? 1.15 : parseFloat(cfg.val_midPhase);
-                    let deEssVal = isNaN(parseFloat(cfg.val_deEsser)) ? 0.66 : parseFloat(cfg.val_deEsser);
-                    let ceilDb = isNaN(parseFloat(cfg.val_masterCeil)) ? -1.0 : parseFloat(cfg.val_masterCeil);
+                    let widthPct = parseFloat(cfg.val_midQ); if (isNaN(widthPct) || widthPct < 25) widthPct = 150;
+                    let targetQ = cfg.opt_midQ ? Math.max(0.65, Math.min(2.5, midQ / (widthPct / 100.0))) : midQ;
+                    splitMid.Q.value = targetQ;
 
-                    if (cfg.opt_midQ) splitMid.Q.value = Math.max(0.2, midQ * qMult);
-                    let midPhase = offlineCtx.createGain();
-                    midPhase.gain.value = cfg.opt_midPhase ? -Math.abs(phGain) : 1.0;
+                    let midDb = parseFloat(cfg.val_midPhase); if (isNaN(midDb)) midDb = 1.5;
+                    midPhaseNode.gain.value = cfg.opt_midPhase ? window.dbToLinear(Math.max(-15, Math.min(15, midDb))) : 1.0;
 
-                    let deEss = offlineCtx.createGain();
+                    let deEssDb = parseFloat(cfg.val_deEsser); if (isNaN(deEssDb)) deEssDb = -6.0;
                     if (cfg.opt_deEsser) {
                         compHigh.threshold.value = Math.min(-6, thresh + 10);
                         compHigh.ratio.value = Math.min(4.0, ratio);
                         compHigh.attack.value = 0.0005;
                         compHigh.release.value = 0.09;
-                        deEss.gain.value = Math.max(0.1, Math.min(1.5, deEssVal));
+                        deEssGain.gain.value = window.dbToLinear(Math.min(12, deEssDb));
                     } else {
-                        deEss.gain.value = 1.0;
+                        deEssGain.gain.value = 1.0;
                     }
 
-                    let outTarget = offlineCtx.destination;
-                    if (cfg.opt_masterCeil) {
-                        let masterSafe = offlineCtx.createDynamicsCompressor();
-                        masterSafe.threshold.value = Math.max(-24.0, Math.min(0.0, ceilDb));
-                        masterSafe.knee.value = 4.0; masterSafe.ratio.value = 18.0;
-                        masterSafe.attack.value = 0.001; masterSafe.release.value = 0.04;
-                        masterSafe.connect(offlineCtx.destination);
-                        outTarget = masterSafe;
-                    }
-
-                    compLow.connect(outTarget);
-                    compMid.connect(midPhase); midPhase.connect(outTarget);
-                    compHigh.connect(deEss); deEss.connect(outTarget);
+                    compLow.connect(postBus);
+                    compMid.connect(midPhaseNode); midPhaseNode.connect(postBus);
+                    compHigh.connect(deEssGain); deEssGain.connect(postBus);
                 }
+                currentNode = postBus;
             } else {
                 let comp = offlineCtx.createDynamicsCompressor();
                 comp.threshold.value = thresh; comp.knee.value = knee; comp.ratio.value = ratio;
-                comp.attack.value = atk; comp.release.value = rel;
+                comp.attack.value = (cfg.limiterSettings.attack || 26) / 1000;
+                comp.release.value = (cfg.limiterSettings.release || 60) / 1000;
                 currentNode.connect(comp);
-                comp.connect(offlineCtx.destination);
+                currentNode = comp;
             }
-        } else {
-            currentNode.connect(offlineCtx.destination);
         }
 
+        if (typeof window.insertProStudioPostChain === 'function') {
+            currentNode = window.insertProStudioPostChain(offlineCtx, currentNode, cfg, offlineBucket, sourceBuffer);
+        }
+
+        currentNode.connect(offlineCtx.destination);
         sourceNode.start(0);
 
         let renderedBuffer = await offlineCtx.startRendering();
@@ -222,6 +226,7 @@ window.exportCurrentTrack = async function() {
         formData.append('speed', speed);
         formData.append('is_reversed', isRev ? 'true' : 'false');
         formData.append('pitch_lock', pitchLock ? 'true' : 'false');
+        formData.append('engine_mode', engineMode);
 
         let res = await fetch('/api/export', { method: 'POST', body: formData });
         let json = await res.json();
@@ -240,7 +245,7 @@ window.exportCurrentTrack = async function() {
         }
     }
 
-    if (btn) btn.innerText = "💾";
+    if (btn) btn.innerHTML = oldBtnHtml || "💾";
 };
 
 function bufferToWav(abuffer, len) {

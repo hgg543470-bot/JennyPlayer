@@ -295,7 +295,13 @@ def export_track():
         speed_float = float(speed)
         speed_suffix = f"_x{speed}" if speed_float != 1.0 else ""
         rev_suffix = "_rev" if is_reversed else ""
-        pitch_suffix = "_pitchLock" if pitch_lock else "_vinyl"
+        engine_mode = request.forms.get('engine_mode', '')
+        if engine_mode == 'jbuf':
+            pitch_suffix = "_jbuf90"
+        elif engine_mode == 'webapi' or pitch_lock:
+            pitch_suffix = "_pitchLock"
+        else:
+            pitch_suffix = "_vinyl" 
         slow_fast = "_slow" if speed_float < 1.0 else ("_fast" if speed_float > 1.0 else "")
 
         new_filename = f"{base_name}{speed_suffix}{rev_suffix}{slow_fast}{pitch_suffix}.opus"
