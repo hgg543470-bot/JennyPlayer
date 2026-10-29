@@ -25,8 +25,9 @@ window.exportCurrentTrack = async function() {
 
         // Определяем активный режим из 3-позиционного тумблера: 'jbuf' | 'vinyl' | 'webapi'
         let engineMode = cfg.engineModeV62 || (cfg.elasticHoseMode ? 'jbuf' : (cfg.pitchLock ? 'webapi' : 'vinyl'));
-        let isJbuf = (engineMode === 'jbuf');
-        let isWebApiPitch = (engineMode === 'webapi');
+        let gearKey = cfg.gearKeyV66 || 'jbuf-lock';
+        let isJbuf = (gearKey === 'jbuf-lock');
+        let isWebApiPitch = (gearKey === 'web-lock');
         let pitchLock = (isJbuf || isWebApiPitch);
 
         let sourceBuffer = window.studioBuffer;

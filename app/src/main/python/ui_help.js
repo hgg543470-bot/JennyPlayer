@@ -4528,7 +4528,7 @@ window.syncEngineTumblerUIV62 = function() {
     if (bWeb) bWeb.className = 'jbuf-tumbler-btn' + (mode === 'webapi' ? ' active-webapi' : '');
 };
 
-window.upgradeToThreeWayTumblerV62 = function() {
+window.upgradeToThreeWayTumblerV62_OBSOLETE = function() {
     const pitchChk = document.getElementById('cfg_pitchLock');
     const hoseChk = document.getElementById('cfg_elasticHoseV44');
     const hoseBox = document.getElementById('hoseControlBoxV44');
@@ -4914,3 +4914,395 @@ setTimeout(() => {
     window.ensureSpectrumModalDOMV62();
     window.startSpectrumLoopV62();
 }, 680);
+
+
+// ⚙️ ПАТЧ V66: 5-СТУПЕНЧАТАЯ МЕХАНИЧЕСКАЯ КПП (PITCH LOCK ▲ / PITCH SHIFT ▼ / НЕЙТРАЛЬ N)
+
+window.GEAR_SPECS_V66 = {
+    'jbuf-lock':   { x: 35,  y: 44,  col: 'left',  pos: 'up',   mode: 'jbuf',    pitchLock: true,  knob: 'J▲', labelRu: '1-я: ⚡ JBUF 90° [PITCH LOCK]',       labelEn: '1st: ⚡ JBUF 90° [PITCH LOCK]' },
+    'jbuf-shift':  { x: 35,  y: 178, col: 'left',  pos: 'down', mode: 'jbuf',    pitchLock: false, knob: 'J▼', labelRu: '2-я: ⚡ JBUF RAM [PITCH SHIFT]',       labelEn: '2nd: ⚡ JBUF RAM [PITCH SHIFT]' },
+    'web-lock':    { x: 101, y: 44,  col: 'mid',   pos: 'up',   mode: 'webapi',  pitchLock: true,  knob: 'W▲', labelRu: '3-я: 🌐 Web API [PITCH LOCK]',        labelEn: '3rd: 🌐 Web API [PITCH LOCK]' },
+    'web-shift':   { x: 101, y: 178, col: 'mid',   pos: 'down', mode: 'webapi',  pitchLock: false, knob: 'W▼', labelRu: '4-я: 🌐 Web API [PITCH SHIFT]',       labelEn: '4th: 🌐 Web API [PITCH SHIFT]' },
+    'vinyl-shift': { x: 167, y: 178, col: 'right', pos: 'down', mode: 'vinyl',   pitchLock: false, knob: 'R💿', labelRu: 'Задняя R: 💿 ВИНИЛ [PITCH SHIFT]',   labelEn: 'Rev R: 💿 VINYL [PITCH SHIFT]' },
+    'neutral':     { x: 101, y: 111, col: 'mid',   pos: 'mid',  mode: 'neutral', pitchLock: true,  knob: 'N',  labelRu: 'Нейтраль (N): Холостой ход x1.00',   labelEn: 'Neutral (N): Idle 1.00x Bypass' }
+};
+
+window.setGearboxStateV66 = function(gearKey, ev) {
+    const spec = window.GEAR_SPECS_V66[gearKey] || window.GEAR_SPECS_V66['jbuf-lock'];
+    window.appConfig = window.appConfig || {};
+    window.appConfig.gearKeyV66 = gearKey;
+    window.appConfig.engineModeV62 = spec.mode;
+    window.appConfig.gearPitchLockV66 = spec.pitchLock;
+
+    const pitchChk = document.getElementById('cfg_pitchLock');
+    const hoseChk = document.getElementById('cfg_elasticHoseV44');
+    const studioChk = document.getElementById('cfg_studioMode');
+
+    if (gearKey === 'jbuf-lock') {
+        window.appConfig.elasticHoseMode = true;
+        window.appConfig.pitchLock = false;
+        window.appConfig.studioMode = true;
+        if (hoseChk) hoseChk.checked = true;
+        if (pitchChk) pitchChk.checked = false;
+        if (studioChk) studioChk.checked = true;
+    } else if (gearKey === 'jbuf-shift') {
+        window.appConfig.elasticHoseMode = false;
+        window.appConfig.pitchLock = false;
+        window.appConfig.studioMode = true;
+        if (hoseChk) hoseChk.checked = false;
+        if (pitchChk) pitchChk.checked = false;
+        if (studioChk) studioChk.checked = true;
+    } else if (gearKey === 'web-lock') {
+        window.appConfig.elasticHoseMode = false;
+        window.appConfig.pitchLock = true;
+        if (hoseChk) hoseChk.checked = false;
+        if (pitchChk) pitchChk.checked = true;
+    } else if (gearKey === 'web-shift') {
+        window.appConfig.elasticHoseMode = false;
+        window.appConfig.pitchLock = false;
+        window.appConfig.studioMode = false;
+        if (hoseChk) hoseChk.checked = false;
+        if (pitchChk) pitchChk.checked = false;
+        if (studioChk) studioChk.checked = false;
+    } else if (gearKey === 'vinyl-shift') {
+        window.appConfig.elasticHoseMode = false;
+        window.appConfig.pitchLock = false;
+        window.appConfig.studioMode = true;
+        if (hoseChk) hoseChk.checked = false;
+        if (pitchChk) pitchChk.checked = false;
+        if (studioChk) studioChk.checked = true;
+    } else if (gearKey === 'neutral') {
+        window.appConfig.elasticHoseMode = false;
+        window.appConfig.pitchLock = true;
+        if (window.scrubState && !window.scrubState.active) {
+            window.scrubState.locked = false;
+            window.scrubState.speed = 1.0;
+            const lockInd = document.getElementById('speedLockIndicator');
+            if (lockInd) lockInd.style.display = 'none';
+            const player = document.getElementById('audioPlayer');
+            if (player) player.playbackRate = 1.0;
+        }
+    }
+
+    window.syncEngineTumblerUIV62();
+    if (typeof window.installHosePlayerHooksV46 === 'function') window.installHosePlayerHooksV46();
+    if (typeof window.syncMasterPlaybackEngineV59 === 'function') window.syncMasterPlaybackEngineV59(false);
+
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
+
+    if (typeof window.showToast === 'function' && ev) {
+        window.showToast('🕹️ ' + window.tr(spec.labelRu, spec.labelEn), ev);
+    }
+};
+
+(function() {
+    const origGetSpeed = window.getActiveTargetSpeedV59;
+    window.getActiveTargetSpeedV59 = function() {
+        const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+        if (gKey === 'neutral' && !(window.scrubState && window.scrubState.active)) {
+            return 1.0;
+        }
+        return typeof origGetSpeed === 'function' ? origGetSpeed() : 1.0;
+    };
+
+    const origSyncMaster = window.syncMasterPlaybackEngineV59;
+    window.syncMasterPlaybackEngineV59 = function(forceRebuild) {
+        const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+        const player = document.getElementById('audioPlayer');
+
+        if (gKey === 'web-shift' && player && !window.isReversed && !(window.scrubState && window.scrubState.isPhysicallyReversed)) {
+            if (window.studioSourceNode) {
+                window.studioSourceNode.onended = null;
+                try { window.studioSourceNode.stop(); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+                window.studioSourceNode = null;
+            }
+            window.isStudioPlaying = false;
+            if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+            player.preservesPitch = false;
+            player.mozPreservesPitch = false;
+            player.webkitPreservesPitch = false;
+
+            const targetSpd = window.getActiveTargetSpeedV59();
+            if (Math.abs(player.playbackRate - targetSpd) > 0.005) {
+                try { player.playbackRate = targetSpd; } catch (e) {}
+            }
+            const badge = document.getElementById('hoseLiveTelemetryV44');
+            if (badge) {
+                badge.style.color = '#58a6ff';
+                badge.innerText = `🌐 WebAPI PitchShift | x${targetSpd.toFixed(2)}`;
+            }
+            return;
+        }
+
+        const res = typeof origSyncMaster === 'function' ? origSyncMaster(forceRebuild) : undefined;
+
+        if (gKey === 'vinyl-shift' && window.studioSourceNode && window.studioSourceNode.playbackRate && window.audioCtx) {
+            const targetSpd = window.getActiveTargetSpeedV59();
+            try {
+                const now = window.audioCtx.currentTime;
+                window.studioSourceNode.playbackRate.setTargetAtTime(targetSpd, now, 0.065);
+            } catch (e) {}
+        }
+        return res;
+    };
+})();
+
+window.upgradeToThreeWayTumblerV62 = function() {
+    const pitchChk = document.getElementById('cfg_pitchLock');
+    const hoseChk = document.getElementById('cfg_elasticHoseV44');
+    const hoseBox = document.getElementById('hoseControlBoxV44');
+    if (!hoseBox) return;
+
+    if (pitchChk) {
+        const oldRow = pitchChk.closest('.setting-row');
+        if (oldRow) oldRow.style.display = 'none';
+    }
+
+    ['jbufThreeWayBarV62', 'jbufInteractiveGearboxV65'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    });
+
+    if (hoseChk) {
+        const oldHoseRow = hoseChk.closest('.setting-row');
+        if (oldHoseRow && !document.getElementById('jbufMechanicalGearboxV66')) {
+            const wrap = document.createElement('div');
+            wrap.id = 'jbufMechanicalGearboxV66';
+            wrap.className = 'gearbox-container';
+            wrap.innerHTML = `
+                <div class="gearbox-knob-plate" id="gearPlateV66">
+                    <svg class="gearbox-svg-overlay" viewBox="0 0 264 264">
+                        <defs>
+                            <linearGradient id="plGradV66" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#3fb950"/>
+                                <stop offset="100%" stop-color="#58a6ff"/>
+                            </linearGradient>
+                            <linearGradient id="psGradV66" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#a371f7"/>
+                                <stop offset="100%" stop-color="#e3b341"/>
+                            </linearGradient>
+                        </defs>
+                        <rect x="64" y="13" width="136" height="20" rx="10" fill="#070a10" stroke="url(#plGradV66)" stroke-width="1.5"/>
+                        <text x="132" y="27" fill="#e6edf3" font-family="monospace" font-weight="900" font-size="11.5" text-anchor="middle" letter-spacing="1.8">▲ PITCH LOCK</text>
+
+                        <rect x="60" y="231" width="144" height="20" rx="10" fill="#070a10" stroke="url(#psGradV66)" stroke-width="1.5"/>
+                        <text x="132" y="245" fill="#e6edf3" font-family="monospace" font-weight="900" font-size="11.5" text-anchor="middle" letter-spacing="1.5">▼ PITCH SHIFT</text>
+                    </svg>
+
+                    <div id="enc-jbuf" class="gearbox-gate-enclosure" style="left:41px; top:40px; width:46px; height:184px;"></div>
+                    <div id="enc-web" class="gearbox-gate-enclosure" style="left:107px; top:40px; width:46px; height:184px;"></div>
+                    <div id="enc-vinyl" class="gearbox-gate-enclosure" style="left:173px; top:116px; width:46px; height:108px;"></div>
+
+                    <div class="gearbox-h-line" style="left:52px; top:129px; width:136px; height:6px;"></div>
+                    <div class="gearbox-h-line" style="left:52px; top:50px; width:6px; height:164px;"></div>
+                    <div class="gearbox-h-line" style="left:118px; top:50px; width:6px; height:164px;"></div>
+                    <div class="gearbox-h-line" style="left:184px; top:129px; width:6px; height:85px;"></div>
+
+                    <div class="gearbox-stopper-dot" style="left:51px; top:48px;"></div>
+                    <div class="gearbox-stopper-dot" style="left:51px; top:208px;"></div>
+                    <div class="gearbox-stopper-dot" style="left:117px; top:48px;"></div>
+                    <div class="gearbox-stopper-dot" style="left:117px; top:208px;"></div>
+                    <div class="gearbox-stopper-dot" style="left:183px; top:208px;"></div>
+
+                    <div class="gearbox-letter jbuf-mode-color" id="let-J" style="left:65px; top:56px;">J</div>
+                    <div class="gearbox-letter jbuf-mode-color" id="let-b" style="left:65px; top:88px;">b</div>
+                    <div class="gearbox-letter jbuf-mode-color" id="let-u" style="left:65px; top:154px;">u</div>
+                    <div class="gearbox-letter jbuf-mode-color" id="let-f" style="left:65px; top:186px;">f</div>
+
+                    <div class="gearbox-letter" id="let-W" style="left:131px; top:52px;">W</div>
+                    <div class="gearbox-letter" id="let-e" style="left:131px; top:74px;">e</div>
+                    <div class="gearbox-letter" id="let-web-b" style="left:131px; top:96px;">b</div>
+                    <div class="gearbox-letter" id="let-a" style="left:131px; top:148px;">a</div>
+                    <div class="gearbox-letter" id="let-p" style="left:131px; top:170px;">p</div>
+                    <div class="gearbox-letter" id="let-i" style="left:131px; top:192px;">i</div>
+
+                    <div class="gearbox-letter vinyl-mode-color" id="let-v" style="left:197px; top:128px;">в</div>
+                    <div class="gearbox-letter vinyl-mode-color" id="let-i-vin" style="left:197px; top:145px;">и</div>
+                    <div class="gearbox-letter vinyl-mode-color" id="let-n" style="left:197px; top:162px;">н</div>
+                    <div class="gearbox-letter vinyl-mode-color" id="let-i-vin2" style="left:197px; top:179px;">и</div>
+                    <div class="gearbox-letter vinyl-mode-color" id="let-l" style="left:197px; top:196px;">л</div>
+
+                    <div class="gearbox-knob-lever" id="gearKnobV66">
+                        <span class="gearbox-knob-inner-text" id="gearKnobTextV66">J▲</span>
+                    </div>
+                </div>
+                <div class="gearbox-status-readout" id="gearStatusTextV66">🕹️ 1-я: ⚡ JBUF 90° [PITCH LOCK]</div>
+            `;
+            oldHoseRow.insertAdjacentElement('beforebegin', wrap);
+
+            const lbl = oldHoseRow.querySelector('label');
+            if (lbl) lbl.style.display = 'none';
+            oldHoseRow.style.justifyContent = 'flex-end';
+
+            window.initGearboxInteractivityV66();
+        }
+    }
+    window.syncEngineTumblerUIV62();
+};
+
+window.initGearboxInteractivityV66 = function() {
+    const plate = document.getElementById('gearPlateV66');
+    const knob = document.getElementById('gearKnobV66');
+    if (!plate || !knob) return;
+
+    window.appConfig = window.appConfig || {};
+    if (!window.appConfig.gearKeyV66) {
+        window.appConfig.gearKeyV66 = 'jbuf-lock';
+    }
+
+    let isDragging = false;
+    let dragOffsetX = 0, dragOffsetY = 0;
+    let currentX = 35, currentY = 44;
+
+    const COL_X = { left: 35, mid: 101, right: 167 };
+    const NEUTRAL_Y = 111;
+    const TOP_Y = 44;
+    const BOT_Y = 178;
+    const END_STOP_TOLERANCE = 11;
+
+    window.syncEngineTumblerUIV62 = function() {
+        const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+        const spec = window.GEAR_SPECS_V66[gKey] || window.GEAR_SPECS_V66['jbuf-lock'];
+
+        currentX = spec.x;
+        currentY = spec.y;
+        knob.style.left = currentX + 'px';
+        knob.style.top = currentY + 'px';
+
+        const txt = document.getElementById('gearKnobTextV66');
+        if (txt) txt.innerText = spec.knob;
+
+        const stTxt = document.getElementById('gearStatusTextV66');
+        if (stTxt) {
+            stTxt.innerText = '🕹️ ' + window.tr(spec.labelRu, spec.labelEn);
+            stTxt.style.color = (gKey === 'neutral') ? '#e3b341' : (spec.mode === 'jbuf' ? '#3fb950' : (spec.mode === 'webapi' ? '#58a6ff' : '#d2a8ff'));
+        }
+
+        document.querySelectorAll('#gearPlateV66 .gearbox-letter').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('#gearPlateV66 .gearbox-gate-enclosure').forEach(el => {
+            el.classList.remove('active-jbuf', 'active-webapi', 'active-vinyl');
+        });
+
+        if (gKey === 'jbuf-lock') {
+            document.getElementById('enc-jbuf')?.classList.add('active-jbuf');
+            document.getElementById('let-J')?.classList.add('active');
+            document.getElementById('let-b')?.classList.add('active');
+        } else if (gKey === 'jbuf-shift') {
+            document.getElementById('enc-jbuf')?.classList.add('active-jbuf');
+            document.getElementById('let-u')?.classList.add('active');
+            document.getElementById('let-f')?.classList.add('active');
+        } else if (gKey === 'web-lock') {
+            document.getElementById('enc-web')?.classList.add('active-webapi');
+            document.getElementById('let-W')?.classList.add('active');
+            document.getElementById('let-e')?.classList.add('active');
+            document.getElementById('let-web-b')?.classList.add('active');
+        } else if (gKey === 'web-shift') {
+            document.getElementById('enc-web')?.classList.add('active-webapi');
+            document.getElementById('let-a')?.classList.add('active');
+            document.getElementById('let-p')?.classList.add('active');
+            document.getElementById('let-i')?.classList.add('active');
+        } else if (gKey === 'vinyl-shift') {
+            document.getElementById('enc-vinyl')?.classList.add('active-vinyl');
+            ['let-v', 'let-i-vin', 'let-n', 'let-i-vin2', 'let-l'].forEach(id => {
+                document.getElementById(id)?.classList.add('active');
+            });
+        }
+    };
+
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+    const onStart = (e) => {
+        if (e.cancelable) e.preventDefault();
+        isDragging = true;
+        knob.classList.add('dragging');
+        const pt = e.touches ? e.touches[0] : e;
+        dragOffsetX = pt.clientX - currentX;
+        dragOffsetY = pt.clientY - currentY;
+    };
+
+    const onMove = (e) => {
+        if (!isDragging) return;
+        if (e.cancelable) e.preventDefault();
+        const pt = e.touches ? e.touches[0] : e;
+        let wantX = pt.clientX - dragOffsetX;
+        let wantY = pt.clientY - dragOffsetY;
+
+        const inNeutralCorridor = Math.abs(currentY - NEUTRAL_Y) <= 15 && Math.abs(wantY - NEUTRAL_Y) <= 18;
+
+        if (inNeutralCorridor) {
+            currentX = clamp(wantX, COL_X.left, COL_X.right);
+            if (Math.abs(currentX - COL_X.left) > 9 && Math.abs(currentX - COL_X.mid) > 9 && Math.abs(currentX - COL_X.right) > 9) {
+                currentY = NEUTRAL_Y;
+            } else {
+                if (Math.abs(currentX - COL_X.right) <= 9) {
+                    currentY = clamp(wantY, NEUTRAL_Y, BOT_Y);
+                } else {
+                    currentY = clamp(wantY, TOP_Y, BOT_Y);
+                }
+            }
+        } else {
+            let lockedColX = COL_X.mid;
+            if (Math.abs(currentX - COL_X.left) < 20) lockedColX = COL_X.left;
+            else if (Math.abs(currentX - COL_X.right) < 20) lockedColX = COL_X.right;
+
+            currentX = lockedColX;
+            if (lockedColX === COL_X.right) {
+                currentY = clamp(wantY, NEUTRAL_Y, BOT_Y);
+            } else {
+                currentY = clamp(wantY, TOP_Y, BOT_Y);
+            }
+        }
+
+        knob.style.left = currentX + 'px';
+        knob.style.top = currentY + 'px';
+    };
+
+    const onEnd = (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+        knob.classList.remove('dragging');
+
+        let lockedGearKey = 'neutral';
+
+        const atLeftCol  = Math.abs(currentX - COL_X.left) <= 12;
+        const atMidCol   = Math.abs(currentX - COL_X.mid) <= 12;
+        const atRightCol = Math.abs(currentX - COL_X.right) <= 12;
+
+        const atTopEnd = (currentY <= TOP_Y + END_STOP_TOLERANCE);
+        const atBotEnd = (currentY >= BOT_Y - END_STOP_TOLERANCE);
+
+        if (atLeftCol && atTopEnd) {
+            lockedGearKey = 'jbuf-lock';
+        } else if (atLeftCol && atBotEnd) {
+            lockedGearKey = 'jbuf-shift';
+        } else if (atMidCol && atTopEnd) {
+            lockedGearKey = 'web-lock';
+        } else if (atMidCol && atBotEnd) {
+            lockedGearKey = 'web-shift';
+        } else if (atRightCol && atBotEnd) {
+            lockedGearKey = 'vinyl-shift';
+        } else {
+            lockedGearKey = 'neutral';
+        }
+
+        if (typeof navigator.vibrate === 'function') {
+            navigator.vibrate(lockedGearKey === 'neutral' ? [12, 30, 12] : 28);
+        }
+
+        window.setGearboxStateV66(lockedGearKey, e);
+    };
+
+    knob.addEventListener('mousedown', onStart);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onEnd);
+
+    knob.addEventListener('touchstart', onStart, { passive: false });
+    knob.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd, { passive: true });
+};
+
+setTimeout(() => {
+    window.upgradeToThreeWayTumblerV62();
+}, 120);
