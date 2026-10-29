@@ -3,10 +3,6 @@ name: Build Jenny Player APK
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -60,15 +56,8 @@ jobs:
     - name: Сборка APK
       run: gradle assembleDebug
 
-    - name: Выдача готового файла в Artifacts
+    - name: Выдача готового файла
       uses: actions/upload-artifact@v4
       with:
         name: JennyPlayer-APK
         path: app/build/outputs/apk/debug/app-debug.apk
-
-    - name: Прикрепление свежего APK к релизу v1.1.0
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        cp app/build/outputs/apk/debug/app-debug.apk ./JennyPlayer-v1.1.apk
-        gh release upload v1.1.0 ./JennyPlayer-v1.1.apk --clobber || true
