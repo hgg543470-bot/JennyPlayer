@@ -62,104 +62,155 @@ window.setupSeekZone = function() {
         }
     }
 
+    function angleDiffSigned(a, b) {
+        return ((a - b) % 360 + 540) % 360 - 180;
+    }
+
     function drawDebugWheel(anchorX, anchorY, angles) {
         debugCanvas.width = window.innerWidth;
         debugCanvas.height = window.innerHeight;
         let ctx = debugCanvas.getContext('2d');
         ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-        
+
+        // Стильное неоновое ядро в опорной точке
+        let coreGrad = ctx.createRadialGradient(anchorX, anchorY, 2, anchorX, anchorY, 24);
+        coreGrad.addColorStop(0, 'rgba(227, 179, 65, 0.95)');
+        coreGrad.addColorStop(0.5, 'rgba(163, 113, 247, 0.45)');
+        coreGrad.addColorStop(1, 'rgba(115, 65, 190, 0)');
         ctx.beginPath();
-        ctx.arc(anchorX, anchorY, 20, 0, 2 * Math.PI);
-        ctx.fillStyle = 'rgba(227, 179, 65, 0.7)';
+        ctx.arc(anchorX, anchorY, 24, 0, 2 * Math.PI);
+        ctx.fillStyle = coreGrad;
         ctx.fill();
 
-        let radius = Math.max(window.innerWidth, window.innerHeight);
-        ctx.lineWidth = 2;
-        ctx.setLineDash([10, 10]);
-        ctx.strokeStyle = 'rgba(227, 179, 65, 0.5)'; 
+        ctx.beginPath();
+        ctx.arc(anchorX, anchorY, 6, 0, 2 * Math.PI);
+        ctx.fillStyle = '#e3b341';
+        ctx.fill();
+
+        let radius = Math.max(window.innerWidth, window.innerHeight) * 0.95;
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([7, 8]);
 
         for (let i = 0; i < angles.length - 1; i++) {
-            let midAngle = (angles[i] + angles[i+1]) / 2;
+            let delta = angleDiffSigned(angles[i + 1], angles[i]);
+            let midAngle = angles[i] + delta / 2;
             let rad = midAngle * Math.PI / 180;
-            
+
             let endX = anchorX + radius * Math.cos(rad);
             let endY = anchorY + radius * Math.sin(rad);
-            
+
+            let lineGrad = ctx.createLinearGradient(anchorX, anchorY, endX, endY);
+            lineGrad.addColorStop(0, 'rgba(227, 179, 65, 0.65)');
+            lineGrad.addColorStop(0.55, 'rgba(163, 113, 247, 0.35)');
+            lineGrad.addColorStop(1, 'rgba(88, 166, 255, 0.0)');
+
+            ctx.strokeStyle = lineGrad;
             ctx.beginPath();
             ctx.moveTo(anchorX, anchorY);
             ctx.lineTo(endX, endY);
             ctx.stroke();
         }
+        ctx.setLineDash([]);
     }
 
     function generateArc() {
         arcContainer.innerHTML = '';
         arcItems = [];
         circleAngles = [];
-        
+
         let activeZones = [];
-        for(let i=1; i<=6; i++) {
+        for (let i = 1; i <= 6; i++) {
             let en = document.getElementById('cfg_z' + i + '_en');
             let val = document.getElementById('cfg_z' + i + '_val');
             if (en && en.checked && val) {
                 activeZones.push(parseFloat(val.value) || 1.0);
             }
         }
-        if(activeZones.length === 0) activeZones = [1.0]; 
+        if (activeZones.length === 0) activeZones = [1.0];
 
-        let isLeftHanded = window.appConfig.leftHandedMode || false;
-        
+        let isLeftHanded = Boolean(window.appConfig && window.appConfig.leftHandedMode);
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+
         const eqBtn = document.getElementById('btn-eqModal');
         if (eqBtn) {
             const eqRect = eqBtn.getBoundingClientRect();
             currentAnchor.x = eqRect.left + eqRect.width / 2;
             currentAnchor.y = eqRect.top + eqRect.height / 2;
         } else {
-            currentAnchor.y = window.innerHeight - 135;
-            currentAnchor.x = isLeftHanded ? 31 : (window.innerWidth - 31);
+            currentAnchor.y = H - 135;
+            currentAnchor.x = isLeftHanded ? 31 : (W - 31);
         }
 
-        let positionsRH = [
-            { x: window.innerWidth * 0.75, y: 35 },  
-            { x: window.innerWidth * 0.50, y: 35 },  
-            { x: window.innerWidth * 0.25, y: 35 },  
-            { x: window.innerWidth * 0.08, y: 90 },  
-            { x: window.innerWidth * 0.08, y: 150 }, 
-            { x: window.innerWidth * 0.08, y: 220 }  
-        ];
+        // Строим плавную дугу вокруг опорной точки (от середины экрана через край вниз к доку)
+        // и параметризуем её по длине дуги, чтобы расстояние между кружками было идеально равным!
+        const startDeg = -108; // Верхний кружок (ниже поиска, правее центра)
+        const endDeg   = -204; // Нижний кружок (внизу у панели навигации)
+        const rTop     = Math.min(W * 0.76, H * 0.35);
+        const rMid     = Math.min(W * 0.78, H * 0.36);
+        const rBot     = Math.min(W * 0.58, H * 0.26);
 
-        let positionsLH = [
-            { x: window.innerWidth * 0.25, y: 35 },
-            { x: window.innerWidth * 0.50, y: 35 },
-            { x: window.innerWidth * 0.75, y: 35 },
-            { x: window.innerWidth * 0.92, y: 90 },
-            { x: window.innerWidth * 0.92, y: 150 },
-            { x: window.innerWidth * 0.92, y: 220 }
-        ];
+        function sampleCurvePoint(u) {
+            const deg = startDeg + u * (endDeg - startDeg);
+            const rad = deg * Math.PI / 180;
+            // Плавный профиль радиуса: широкий изгиб посередине и аккуратный заход вниз
+            const r = (1 - u) * (1 - u) * rTop + 2 * (1 - u) * u * rMid + u * u * rBot;
+            const dxRH = r * Math.cos(rad);
+            const dy = r * Math.sin(rad);
+            const x = currentAnchor.x + (isLeftHanded ? -dxRH : dxRH);
+            const y = currentAnchor.y + dy;
+            return {
+                x: Math.max(30, Math.min(W - 30, x)),
+                y: Math.max(150, Math.min(H - 32, y))
+            };
+        }
 
-        let positions = isLeftHanded ? positionsLH : positionsRH;
-        
+        const STEPS = 240;
+        const samples = [];
+        let totalLen = 0;
+        for (let k = 0; k <= STEPS; k++) {
+            const pt = sampleCurvePoint(k / STEPS);
+            if (k > 0) {
+                totalLen += Math.hypot(pt.x - samples[k - 1].x, pt.y - samples[k - 1].y);
+            }
+            samples.push({ x: pt.x, y: pt.y, s: totalLen });
+        }
+
+        const count = activeZones.length;
+        const positions = [];
+        for (let i = 0; i < count; i++) {
+            const targetS = count === 1 ? (totalLen * 0.5) : (totalLen * (i / (count - 1)));
+            let best = samples[0];
+            for (let k = 0; k < samples.length; k++) {
+                if (samples[k].s >= targetS) {
+                    best = samples[k];
+                    break;
+                }
+            }
+            positions.push(best);
+        }
+
         activeZones.forEach((val, index) => {
-            if (index >= positions.length) return; 
+            if (index >= positions.length) return;
 
             let el = document.createElement('div');
             el.className = 'arc-item';
             el.innerText = 'x' + (val % 1 === 0 ? val.toFixed(1) : val.toString());
             el.dataset.val = val;
-            
-            el.style.left = `${positions[index].x - 22}px`;
-            el.style.top = `${positions[index].y - 22}px`;
-            
+
+            el.style.left = `${positions[index].x - 24}px`;
+            el.style.top = `${positions[index].y - 24}px`;
+
             let angle = Math.atan2(positions[index].y - currentAnchor.y, positions[index].x - currentAnchor.x) * 180 / Math.PI;
             circleAngles.push(angle);
-            
+
             arcContainer.appendChild(el);
             arcItems.push(el);
         });
 
         arcContainer.style.display = 'block';
         setTimeout(() => { arcContainer.style.opacity = '1'; }, 10);
-        
+
         drawDebugWheel(currentAnchor.x, currentAnchor.y, circleAngles);
     }
 
@@ -266,7 +317,7 @@ window.setupSeekZone = function() {
             let idx = 0;
             
             circleAngles.forEach((ang, i) => {
-                let diff = Math.abs(fingerAngle - ang);
+                let diff = Math.abs(angleDiffSigned(fingerAngle, ang));
                 if (diff < minDiff) {
                     minDiff = diff;
                     idx = i;
