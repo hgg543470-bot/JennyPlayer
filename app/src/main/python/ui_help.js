@@ -5962,7 +5962,7 @@ window.showWebApiReverseConflictModalV70 = function(requestedWebGear) {
 })();
 
 
-// ⚙️ ПАТЧ V70.1: РКПП БЕЗ КРУГА + СВАЙП СТРАНИЦЫ ВЕЗДЕ, КРОМЕ (ПОЛЗУНОК + 3% ШИРИНЫ ЭКРАНА)
+// ⚙️ ПАТЧ V70.2: ФИКС ОТДАЧИ ПРУЖИНЫ РКПП + ШАХТЫ (J / Buf, Web / API, ВИНИЛ <-> VINYL)
 
 window.findGearboxElementsV70 = function() {
     let container = document.querySelector('[id*="gearbox" i], [class*="gearbox" i], [id*="shifter" i], [class*="shifter" i], [id*="rkpp" i], [class*="rkpp" i]');
@@ -5979,7 +5979,6 @@ window.findGearboxElementsV70 = function() {
 
     if (!container) return { container: null, knob: null };
 
-    // Поднимаемся до внешнего кругового контейнера РКПП, если нашли внутренний узел
     let cur = container;
     for (let i = 0; i < 4 && cur && cur.parentElement; i++) {
         const cs = window.getComputedStyle(cur);
@@ -5991,7 +5990,6 @@ window.findGearboxElementsV70 = function() {
         cur = cur.parentElement;
     }
 
-    // Находим шарик ползунка (рычага) внутри контейнера
     let knob = container.querySelector('[id*="knob" i], [class*="knob" i], [id*="lever" i], [class*="lever" i], [id*="puck" i], [class*="puck" i], [id*="thumb" i], [class*="thumb" i]');
 
     if (!knob) {
@@ -6011,13 +6009,75 @@ window.findGearboxElementsV70 = function() {
     return { container, knob };
 };
 
+window.updateGearboxShaftLabelsV70 = function() {
+    const { container } = window.findGearboxElementsV70();
+    if (!container) return;
+
+    const isEn = (typeof window.isTrackUiEnglish === 'function') && window.isTrackUiEnglish();
+    const vinylWord = isEn ? 'VINYL' : 'ВИНИЛ';
+
+    const replaceShaftFormat = (el, newWord) => {
+        const chars = newWord.split('');
+        if (el.children.length === 0) {
+            if (el.innerHTML.includes('<br')) {
+                el.innerHTML = chars.join('<br>');
+            } else if ((el.textContent || '').includes('\n')) {
+                el.textContent = chars.join('\n');
+            } else {
+                el.innerHTML = chars.join('<br>');
+            }
+            return;
+        }
+        const allSingleCharChildren = Array.from(el.children).every(ch => (ch.textContent || '').trim().length <= 2);
+        if (allSingleCharChildren && el.children.length >= 1) {
+            const template = el.children[0].cloneNode(false);
+            el.innerHTML = '';
+            chars.forEach(c => {
+                const node = template.cloneNode(false);
+                node.textContent = c;
+                el.appendChild(node);
+            });
+        }
+    };
+
+    const nodes = Array.from(container.querySelectorAll('div, span, text, tspan'));
+    for (const el of nodes) {
+        if (el.querySelector('div, svg')) continue;
+        const clean = (el.textContent || '').replace(/\s+/g, '');
+        if (!clean || clean.length > 8) continue;
+
+        if (clean === 'Jb' || clean === 'jb') {
+            replaceShaftFormat(el, 'J');
+        } else if (clean === 'uf' || clean === 'UF') {
+            replaceShaftFormat(el, 'Buf');
+        } else if (clean === 'Web' || clean === 'web' || clean === 'WEB') {
+            replaceShaftFormat(el, 'Web');
+        } else if (clean === 'api' || clean === 'Api' || clean === 'API') {
+            replaceShaftFormat(el, 'API');
+        } else if (clean === 'ВИНИЛ' || clean === 'Винил' || clean === 'VINYL' || clean === 'Vinyl') {
+            replaceShaftFormat(el, vinylWord);
+        }
+    }
+
+    // Обновляем также подпись передачи под кулисой, если включён Винил
+    const parentBox = container.parentElement || document;
+    parentBox.querySelectorAll('div, span').forEach(el => {
+        if (el.children.length === 0 && el.textContent) {
+            if (isEn && el.textContent.includes('ВИНИЛ')) {
+                el.textContent = el.textContent.replace(/ВИНИЛ/g, 'VINYL');
+            } else if (!isEn && el.textContent.includes('VINYL')) {
+                el.textContent = el.textContent.replace(/VINYL/g, 'ВИНИЛ');
+            }
+        }
+    });
+};
+
 window.stripGearboxOuterCircleV70 = function() {
     const { container } = window.findGearboxElementsV70();
     if (!container) return;
 
     container.classList.add('gearbox-nocircle-v70', 'gearbox-swipe-zone-v70');
 
-    // Убираем круглые рамки у обёрток > 130px внутри/вокруг кулисы, не трогая сам шарик ползунка и слоты
     const checkNodes = [container, ...Array.from(container.querySelectorAll('div, svg, circle'))];
     for (const node of checkNodes) {
         const tag = node.tagName.toLowerCase();
@@ -6035,10 +6095,13 @@ window.stripGearboxOuterCircleV70 = function() {
             node.classList.add('gearbox-nocircle-v70');
         }
     }
+
+    window.updateGearboxShaftLabelsV70();
 };
 
 (function initGearboxKnobHitboxV70() {
     window._isDraggingGearKnobV70 = false;
+    let releaseTimerV70 = null;
 
     const isTouchInsideKnobMargin = (clientX, clientY, knobEl) => {
         if (!knobEl) return false;
@@ -6061,45 +6124,48 @@ window.stripGearboxOuterCircleV70 = function() {
         window.stripGearboxOuterCircleV70();
         const { container, knob } = window.findGearboxElementsV70();
         if (!container || !e.target || !container.contains(e.target)) {
-            window._isDraggingGearKnobV70 = false;
+            return;
+        }
+
+        // Если захват рычага уже начат парным событием (pointerdown -> touchstart), пропускаем его без повторной проверки
+        if (window._isDraggingGearKnobV70) {
+            if (releaseTimerV70) { clearTimeout(releaseTimerV70); releaseTimerV70 = null; }
             return;
         }
 
         const pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
         if (pt && typeof pt.clientX === 'number' && isTouchInsideKnobMargin(pt.clientX, pt.clientY, knob)) {
+            if (releaseTimerV70) { clearTimeout(releaseTimerV70); releaseTimerV70 = null; }
             window._isDraggingGearKnobV70 = true;
             container.classList.add('gearbox-dragging-active-v70');
         } else {
-            // Палец вне зоны (ползунок + 3% ширины экрана): отсекаем рычаг, отдаём касание скроллу страницы!
-            window._isDraggingGearKnobV70 = false;
+            // Касание мимо шарика (+3%): блокируем только старт перетаскивания, чтобы работал скролл страницы
             container.classList.remove('gearbox-dragging-active-v70');
             e.stopImmediatePropagation();
         }
     };
 
     const onMoveCapture = (e) => {
-        const { container } = window.findGearboxElementsV70();
-        if (!container) return;
-
         if (window._isDraggingGearKnobV70) {
             if (e.cancelable) e.preventDefault();
             return;
         }
-
-        if (e.target && container.contains(e.target)) {
-            // Не даём внутренним обработчикам коробки блокировать свайп страницы
+        const { container } = window.findGearboxElementsV70();
+        if (container && e.target && container.contains(e.target)) {
             e.stopImmediatePropagation();
         }
     };
 
-    const onEndCapture = (e) => {
+    // ВАЖНО: Никогда не блокируем события отпускания (touchend / pointerup / mouseup),
+    // чтобы рычаг ВСЕГДА возвращался на пружине в центр или защёлкивался в передачу!
+    const onEndCapture = () => {
         const { container } = window.findGearboxElementsV70();
         if (container) container.classList.remove('gearbox-dragging-active-v70');
-
-        if (!window._isDraggingGearKnobV70 && container && e.target && container.contains(e.target)) {
-            e.stopImmediatePropagation();
-        }
-        window._isDraggingGearKnobV70 = false;
+        if (releaseTimerV70) clearTimeout(releaseTimerV70);
+        releaseTimerV70 = setTimeout(() => {
+            window._isDraggingGearKnobV70 = false;
+            window.updateGearboxShaftLabelsV70();
+        }, 80);
     };
 
     document.addEventListener('touchstart', onStartCapture, { capture: true, passive: false });
@@ -6110,14 +6176,21 @@ window.stripGearboxOuterCircleV70 = function() {
     document.addEventListener('pointerdown', onStartCapture, { capture: true, passive: false });
     document.addEventListener('pointermove', onMoveCapture, { capture: true, passive: false });
     document.addEventListener('pointerup', onEndCapture, { capture: true, passive: true });
+    document.addEventListener('pointercancel', onEndCapture, { capture: true, passive: true });
+
     document.addEventListener('mousedown', onStartCapture, { capture: true, passive: false });
+    document.addEventListener('mouseup', onEndCapture, { capture: true, passive: true });
+
+    // Блокируем одиночный клик по пустым шахтам мимо шарика, чтобы передача менялась только перетягиванием рычага
     document.addEventListener('click', (e) => {
+        if (window._isDraggingGearKnobV70) return;
         const { container, knob } = window.findGearboxElementsV70();
         if (container && e.target && container.contains(e.target)) {
             if (!isTouchInsideKnobMargin(e.clientX, e.clientY, knob)) {
                 e.stopImmediatePropagation();
             }
         }
+        setTimeout(window.updateGearboxShaftLabelsV70, 20);
     }, true);
 
     setTimeout(window.stripGearboxOuterCircleV70, 120);
