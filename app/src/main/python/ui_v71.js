@@ -3452,3 +3452,95 @@ window.attachStripLongPressV73 = function(stripEl, onLongPress) {
     }, { capture: true, passive: false });
 })();
 
+
+// === V74.6 STRICT TAG CHIP FILTERING (!IMPORTANT OVERRIDE & TAG-ONLY MATCH IN TAGS TAB) ===
+
+window.filterTracks = function(query) {
+    const sInp = document.getElementById('trackSearchInput');
+    const rawQ = (query !== undefined && query !== null) ? String(query) : (sInp ? sInp.value : '');
+    const lowerQuery = rawQ.trim().toLowerCase();
+    const normQuery = window.normSearchV74 ? window.normSearchV74(rawQ) : lowerQuery;
+
+    const clrBtn = document.getElementById('btnClearTrackSearchV73');
+    if (clrBtn) clrBtn.style.display = rawQ.length > 0 ? 'inline-flex' : 'none';
+
+    const tabId = window.activePlaylistTabV71 || 'all';
+    const prop = tabId === 'artists' ? 'selectedArtistV71' : (tabId === 'albums' ? 'selectedAlbumV71' : (tabId === 'tags' ? 'selectedTagV74' : null));
+    const hasFocusedSubChip = Boolean(prop && window[prop]);
+
+    // 1. Фильтруем горизонтальную ленту капсул (По тегам / По артистам / По альбомам) через !important
+    const subBar = document.getElementById('jennySubFilterBarActiveV73');
+    if (subBar && (tabId === 'tags' || tabId === 'artists' || tabId === 'albums')) {
+        subBar.querySelectorAll('.jenny-pl-chip-v71').forEach(chip => {
+            if (hasFocusedSubChip || !lowerQuery) {
+                chip.style.setProperty('display', 'inline-flex', 'important');
+                return;
+            }
+            const subName = (chip.getAttribute('data-subname') || chip.textContent || '').toLowerCase();
+            const matchChip = subName.includes(lowerQuery) || (normQuery && window.normSearchV74(subName).includes(normQuery));
+            chip.style.setProperty('display', matchChip ? 'inline-flex' : 'none', 'important');
+        });
+    }
+
+    // 2. Фильтруем список треков внизу
+    const uList = document.getElementById('unifiedList');
+    if (!uList) return;
+
+    let visibleCount = 0;
+    let totalRows = 0;
+
+    uList.querySelectorAll('.track-row-capsule').forEach(cap => {
+        const wrapper = cap.parentElement;
+        if (!wrapper) return;
+        const trackName = cap.getAttribute('data-track') || '';
+        if (!trackName) return;
+
+        if (window.isTrackAllowedByFormatSlots && !window.isTrackAllowedByFormatSlots(trackName)) {
+            wrapper.style.display = 'none';
+            return;
+        }
+
+        totalRows++;
+        if (!lowerQuery) {
+            wrapper.style.display = 'block';
+            visibleCount++;
+            return;
+        }
+
+        const ctags = window.getTrackCustomTagsV74 ? window.getTrackCustomTagsV74(trackName) : {};
+        const ctagsPairs = Object.entries(ctags).map(([k, v]) => `${k}: ${v} ${k} ${v}`).join(' ').toLowerCase();
+
+        let isMatch = false;
+        if (tabId === 'tags' && !hasFocusedSubChip) {
+            // Во вкладке «По тегам» (без зажатой капсулы) ищем строго по имени или значению кастомного тега!
+            isMatch = ctagsPairs.includes(lowerQuery) || (normQuery && window.normSearchV74(ctagsPairs).includes(normQuery));
+        } else {
+            const meta = window.getTrackMetaV71 ? window.getTrackMetaV71(trackName) : { artist: '', album: '' };
+            const haystack = (trackName + ' ' + (meta.artist || '') + ' ' + (meta.album || '') + ' ' + ctagsPairs).toLowerCase();
+            isMatch = haystack.includes(lowerQuery) || (normQuery && window.normSearchV74(haystack).includes(normQuery));
+        }
+
+        wrapper.style.display = isMatch ? 'block' : 'none';
+        if (isMatch) visibleCount++;
+    });
+
+    const cntEl = document.getElementById('tracksCount');
+    if (cntEl) cntEl.innerText = lowerQuery ? `${visibleCount}/${totalRows}` : `${totalRows}`;
+
+    let emptySearchMsg = document.getElementById('jennyEmptySearchMsgV73');
+    if (lowerQuery && totalRows > 0 && visibleCount === 0) {
+        if (!emptySearchMsg) {
+            emptySearchMsg = document.createElement('div');
+            emptySearchMsg.id = 'jennyEmptySearchMsgV73';
+            emptySearchMsg.style.cssText = 'padding:18px 10px;color:#8b949e;text-align:center;font-size:12.5px;';
+            uList.appendChild(emptySearchMsg);
+        }
+        emptySearchMsg.innerText = (tabId === 'tags' && !hasFocusedSubChip)
+            ? `Тег или значение «${rawQ.trim()}» не найдены`
+            : `По запросу «${rawQ.trim()}» в текущем разделе ничего не найдено`;
+        emptySearchMsg.style.display = 'block';
+    } else if (emptySearchMsg) {
+        emptySearchMsg.style.display = 'none';
+    }
+};
+
