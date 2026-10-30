@@ -355,7 +355,7 @@ window.getGearboxSummaryV69 = function() {
         'jbuf-shift': '2-я: 📐 JBUF [PITCH SHIFT]',
         'web-lock':   '3-я: 🌐 Web API [PITCH LOCK]',
         'web-shift':  '4-я: 🌐 Web API [PITCH SHIFT]',
-        'vinyl':      'R: 💿 ВИНИЛ [DIRECT PITCH]'
+        'vinyl-shift': 'R: 💿 ВИНИЛ [PITCH SHIFT]'
     };
     const spd = (typeof window.getActiveTargetSpeedV59 === 'function')
         ? window.getActiveTargetSpeedV59()

@@ -4935,17 +4935,27 @@ setTimeout(() => {
 // ⚙️ ПАТЧ V66: 5-СТУПЕНЧАТАЯ МЕХАНИЧЕСКАЯ КПП (PITCH LOCK ▲ / PITCH SHIFT ▼ / НЕЙТРАЛЬ N)
 
 window.GEAR_SPECS_V66 = {
-    'jbuf-lock':   { x: 35,  y: 44,  col: 'left',  pos: 'up',   mode: 'jbuf',    pitchLock: true,  knob: 'J▲', labelRu: '1-я: ⚡ JBUF 90° [PITCH LOCK]',       labelEn: '1st: ⚡ JBUF 90° [PITCH LOCK]' },
-    'jbuf-shift':  { x: 35,  y: 178, col: 'left',  pos: 'down', mode: 'jbuf',    pitchLock: false, knob: 'J▼', labelRu: '2-я: ⚡ JBUF RAM [PITCH SHIFT]',       labelEn: '2nd: ⚡ JBUF RAM [PITCH SHIFT]' },
-    'web-lock':    { x: 101, y: 44,  col: 'mid',   pos: 'up',   mode: 'webapi',  pitchLock: true,  knob: 'W▲', labelRu: '3-я: 🌐 Web API [PITCH LOCK]',        labelEn: '3rd: 🌐 Web API [PITCH LOCK]' },
-    'web-shift':   { x: 101, y: 178, col: 'mid',   pos: 'down', mode: 'webapi',  pitchLock: false, knob: 'W▼', labelRu: '4-я: 🌐 Web API [PITCH SHIFT]',       labelEn: '4th: 🌐 Web API [PITCH SHIFT]' },
-    'vinyl-shift': { x: 167, y: 178, col: 'right', pos: 'down', mode: 'vinyl',   pitchLock: false, knob: 'R💿', labelRu: 'Задняя R: 💿 ВИНИЛ [PITCH SHIFT]',   labelEn: 'Rev R: 💿 VINYL [PITCH SHIFT]' },
-    'neutral':     { x: 101, y: 111, col: 'mid',   pos: 'mid',  mode: 'neutral', pitchLock: true,  knob: 'N',  labelRu: 'Нейтраль (N): Холостой ход x1.00',   labelEn: 'Neutral (N): Idle 1.00x Bypass' }
+    'jbuf-lock':   { x: 35,  y: 44,  col: 'left',  pos: 'up',   mode: 'jbuf',    pitchLock: true,  knob: 'J▲', labelRu: '1-я: ⚡ J Buf 90° [PITCH LOCK]',       labelEn: '1st: ⚡ J Buf 90° [PITCH LOCK]' },
+    'jbuf-shift':  { x: 35,  y: 178, col: 'left',  pos: 'down', mode: 'jbuf',    pitchLock: false, knob: 'J▼', labelRu: '2-я: ⚡ J Buf RAM [PITCH SHIFT]',       labelEn: '2nd: ⚡ J Buf RAM [PITCH SHIFT]' },
+    'web-lock':    { x: 101, y: 44,  col: 'mid',   pos: 'up',   mode: 'webapi',  pitchLock: true,  knob: 'W▲', labelRu: '3-я: 🌐 Web API [PITCH LOCK]',          labelEn: '3rd: 🌐 Web API [PITCH LOCK]' },
+    'web-shift':   { x: 101, y: 178, col: 'mid',   pos: 'down', mode: 'webapi',  pitchLock: false, knob: 'W▼', labelRu: '4-я: 🌐 Web API [PITCH SHIFT]',         labelEn: '4th: 🌐 Web API [PITCH SHIFT]' },
+    'vinyl-shift': { x: 167, y: 178, col: 'right', pos: 'down', mode: 'vinyl',   pitchLock: false, knob: 'R💿', labelRu: 'Задняя R: 💿 ВИНИЛ [PITCH SHIFT]',     labelEn: 'Rev R: 💿 VINYL [PITCH SHIFT]' },
+    'neutral':     { x: 101, y: 111, col: 'mid',   pos: 'mid',  mode: 'neutral', pitchLock: true,  knob: 'N',  labelRu: 'Нейтраль (N): Холостой ход x1.00',     labelEn: 'Neutral (N): Idle 1.00x Bypass' }
 };
 
 window.setGearboxStateV66 = function(gearKey, ev) {
     const spec = window.GEAR_SPECS_V66[gearKey] || window.GEAR_SPECS_V66['jbuf-lock'];
     window.appConfig = window.appConfig || {};
+
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    if ((gearKey === 'web-lock' || gearKey === 'web-shift') && isRev && !window._bypassGearConflictCheckV70) {
+        window.syncEngineTumblerUIV62();
+        if (typeof window.showWebApiReverseConflictModalV70 === 'function') {
+            window.showWebApiReverseConflictModalV70(gearKey);
+        }
+        return;
+    }
+
     window.appConfig.gearKeyV66 = gearKey;
     window.appConfig.engineModeV62 = spec.mode;
     window.appConfig.gearPitchLockV66 = spec.pitchLock;
@@ -4971,8 +4981,10 @@ window.setGearboxStateV66 = function(gearKey, ev) {
     } else if (gearKey === 'web-lock') {
         window.appConfig.elasticHoseMode = false;
         window.appConfig.pitchLock = true;
+        window.appConfig.studioMode = false;
         if (hoseChk) hoseChk.checked = false;
         if (pitchChk) pitchChk.checked = true;
+        if (studioChk) studioChk.checked = false;
     } else if (gearKey === 'web-shift') {
         window.appConfig.elasticHoseMode = false;
         window.appConfig.pitchLock = false;
@@ -4990,14 +5002,10 @@ window.setGearboxStateV66 = function(gearKey, ev) {
     } else if (gearKey === 'neutral') {
         window.appConfig.elasticHoseMode = false;
         window.appConfig.pitchLock = true;
-        if (window.scrubState && !window.scrubState.active) {
-            window.scrubState.locked = false;
-            window.scrubState.speed = 1.0;
-            const lockInd = document.getElementById('speedLockIndicator');
-            if (lockInd) lockInd.style.display = 'none';
-            const player = document.getElementById('audioPlayer');
-            if (player) player.playbackRate = 1.0;
-        }
+        window.appConfig.studioMode = false;
+        if (hoseChk) hoseChk.checked = false;
+        if (pitchChk) pitchChk.checked = true;
+        if (studioChk) studioChk.checked = false;
     }
 
     window.syncEngineTumblerUIV62();
@@ -5012,11 +5020,108 @@ window.setGearboxStateV66 = function(gearKey, ev) {
     }
 };
 
+window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
+    const player = document.getElementById('audioPlayer');
+    if (!player || !window.audioCtx) return false;
+
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    const hasRev67 = Boolean(
+        window.reconstructedMasterBufferV67 &&
+        window.currentTrackRevMapV67 &&
+        window.currentTrackRevNameV67 === window.currentPlayingTrack
+    );
+
+    let rawBuf = null;
+    if (hasRev67) {
+        rawBuf = isRev
+            ? (window.reconstructedReversedBufferV67 || window.reconstructedMasterBufferV67)
+            : window.reconstructedMasterBufferV67;
+    } else {
+        rawBuf = isRev
+            ? (window.reversedStudioBuffer || window.currentStudioBuffer)
+            : window.currentStudioBuffer;
+    }
+
+    // Если RAM-буфер ещё декодируется, временно крутим HTML5 поток со сдвигом тона
+    if (!rawBuf) {
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+        player.preservesPitch = false;
+        player.mozPreservesPitch = false;
+        player.webkitPreservesPitch = false;
+        if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+            try { player.playbackRate = targetSpd; } catch (e) {}
+        }
+        return false;
+    }
+
+    if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0;
+    player.preservesPitch = false;
+    if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+        try { player.playbackRate = targetSpd; } catch (e) {}
+    }
+
+    const isVinyl = (gearKey === 'vinyl-shift');
+    const effSpd = hasRev67
+        ? Math.max(0.25, Math.min(3.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
+        : targetSpd;
+
+    if (!player.paused) {
+        const needNewNode = !window.studioSourceNode || !window.isStudioPlaying || window.studioSourceNode.buffer !== rawBuf || window.studioSourceNode._isHoseSpliced;
+        if (needNewNode) {
+            if (window.studioSourceNode) {
+                window.studioSourceNode.onended = null;
+                try { window.studioSourceNode.stop(); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+            }
+            window.studioSourceNode = window.audioCtx.createBufferSource();
+            window.studioSourceNode._isHoseSpliced = false;
+            window.studioSourceNode.buffer = rawBuf;
+            window.studioSourceNode.playbackRate.value = effSpd;
+            window.studioSourceNode.connect(window.inputMixer);
+
+            let offset = player.currentTime || 0;
+            if (isRev && rawBuf.duration) {
+                offset = Math.max(0, rawBuf.duration - offset);
+            }
+            if (!isFinite(offset) || offset < 0) offset = 0;
+            if (offset >= rawBuf.duration) offset = Math.max(0, rawBuf.duration - 0.05);
+
+            window.studioSourceNode.start(0, offset);
+            window.isStudioPlaying = true;
+        } else if (window.studioSourceNode && window.studioSourceNode.playbackRate) {
+            const now = window.audioCtx.currentTime;
+            if (isVinyl) {
+                window.studioSourceNode.playbackRate.setTargetAtTime(effSpd, now, 0.085);
+            } else {
+                window.studioSourceNode.playbackRate.setValueAtTime(effSpd, now);
+            }
+        }
+    } else if (window.studioSourceNode) {
+        window.studioSourceNode.onended = null;
+        try { window.studioSourceNode.stop(); } catch (e) {}
+        try { window.studioSourceNode.disconnect(); } catch (e) {}
+        window.studioSourceNode = null;
+        window.isStudioPlaying = false;
+    }
+
+    const badge = document.getElementById('hoseLiveTelemetryV44');
+    if (badge) {
+        if (isVinyl) {
+            badge.style.color = '#d2a8ff';
+            badge.innerText = `💿 ВИНИЛ [RAM Platter]: x${effSpd.toFixed(2)} (Инерция 85мс)`;
+        } else {
+            badge.style.color = '#3fb950';
+            badge.innerText = `⚡ J Buf RAM [PITCH SHIFT]: x${effSpd.toFixed(2)} (Прямой 32-bit буфер)`;
+        }
+    }
+    return true;
+};
+
 (function() {
     const origGetSpeed = window.getActiveTargetSpeedV59;
     window.getActiveTargetSpeedV59 = function() {
         const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
-        if (gKey === 'neutral' && !(window.scrubState && window.scrubState.active)) {
+        if (gKey === 'neutral') {
             return 1.0;
         }
         return typeof origGetSpeed === 'function' ? origGetSpeed() : 1.0;
@@ -5026,8 +5131,17 @@ window.setGearboxStateV66 = function(gearKey, ev) {
     window.syncMasterPlaybackEngineV59 = function(forceRebuild) {
         const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
         const player = document.getElementById('audioPlayer');
+        const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
-        if (gKey === 'web-shift' && player && !window.isReversed && !(window.scrubState && window.scrubState.isPhysicallyReversed)) {
+        // 2-я передача (J Buf Pitch Shift) и Задняя R (Винил): крутим 32-bit RAM буфер напрямую со сдвигом тона
+        if ((gKey === 'jbuf-shift' || gKey === 'vinyl-shift') && player) {
+            const targetSpd = window.getActiveTargetSpeedV59();
+            window.engageDirectRamPitchShiftV70(gKey, targetSpd);
+            return;
+        }
+
+        // 3-я и 4-я передачи (Web API): только чистый HTML5 поток без захвата JBUF
+        if ((gKey === 'web-lock' || gKey === 'web-shift') && player && !isRev) {
             if (window.studioSourceNode) {
                 window.studioSourceNode.onended = null;
                 try { window.studioSourceNode.stop(); } catch (e) {}
@@ -5036,9 +5150,10 @@ window.setGearboxStateV66 = function(gearKey, ev) {
             }
             window.isStudioPlaying = false;
             if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
-            player.preservesPitch = false;
-            player.mozPreservesPitch = false;
-            player.webkitPreservesPitch = false;
+            const lockPitch = (gKey === 'web-lock');
+            player.preservesPitch = lockPitch;
+            player.mozPreservesPitch = lockPitch;
+            player.webkitPreservesPitch = lockPitch;
 
             const targetSpd = window.getActiveTargetSpeedV59();
             if (Math.abs(player.playbackRate - targetSpd) > 0.005) {
@@ -5047,21 +5162,14 @@ window.setGearboxStateV66 = function(gearKey, ev) {
             const badge = document.getElementById('hoseLiveTelemetryV44');
             if (badge) {
                 badge.style.color = '#58a6ff';
-                badge.innerText = `🌐 WebAPI PitchShift | x${targetSpd.toFixed(2)}`;
+                badge.innerText = lockPitch
+                    ? `🌐 Web API [PITCH LOCK] | x${targetSpd.toFixed(2)}`
+                    : `🌐 Web API [PITCH SHIFT] | x${targetSpd.toFixed(2)}`;
             }
             return;
         }
 
-        const res = typeof origSyncMaster === 'function' ? origSyncMaster(forceRebuild) : undefined;
-
-        if (gKey === 'vinyl-shift' && window.studioSourceNode && window.studioSourceNode.playbackRate && window.audioCtx) {
-            const targetSpd = window.getActiveTargetSpeedV59();
-            try {
-                const now = window.audioCtx.currentTime;
-                window.studioSourceNode.playbackRate.setTargetAtTime(targetSpd, now, 0.065);
-            } catch (e) {}
-        }
-        return res;
+        return typeof origSyncMaster === 'function' ? origSyncMaster(forceRebuild) : undefined;
     };
 })();
 
@@ -5125,35 +5233,38 @@ window.upgradeToThreeWayTumblerV62 = function() {
                     <div class="gearbox-stopper-dot" style="left:117px; top:208px;"></div>
                     <div class="gearbox-stopper-dot" style="left:183px; top:208px;"></div>
 
-                    <div class="gearbox-letter jbuf-mode-color" id="let-J" style="left:65px; top:56px;">J</div>
-                    <div class="gearbox-letter jbuf-mode-color" id="let-b" style="left:65px; top:88px;">b</div>
-                    <div class="gearbox-letter jbuf-mode-color" id="let-u" style="left:65px; top:154px;">u</div>
-                    <div class="gearbox-letter jbuf-mode-color" id="let-f" style="left:65px; top:186px;">f</div>
+                    <!-- Левая шахта: J наверху, Buf внизу -->
+                    <div class="gearbox-letter jbuf-mode-color" id="let-J" style="left:65px; top:72px;">J</div>
+                    <div class="gearbox-letter jbuf-mode-color" id="let-b" style="left:65px; top:148px;">B</div>
+                    <div class="gearbox-letter jbuf-mode-color" id="let-u" style="left:65px; top:170px;">u</div>
+                    <div class="gearbox-letter jbuf-mode-color" id="let-f" style="left:65px; top:192px;">f</div>
 
+                    <!-- Средняя шахта: Web наверху, API внизу -->
                     <div class="gearbox-letter" id="let-W" style="left:131px; top:52px;">W</div>
                     <div class="gearbox-letter" id="let-e" style="left:131px; top:74px;">e</div>
                     <div class="gearbox-letter" id="let-web-b" style="left:131px; top:96px;">b</div>
-                    <div class="gearbox-letter" id="let-a" style="left:131px; top:148px;">a</div>
-                    <div class="gearbox-letter" id="let-p" style="left:131px; top:170px;">p</div>
-                    <div class="gearbox-letter" id="let-i" style="left:131px; top:192px;">i</div>
+                    <div class="gearbox-letter" id="let-a" style="left:131px; top:148px;">A</div>
+                    <div class="gearbox-letter" id="let-p" style="left:131px; top:170px;">P</div>
+                    <div class="gearbox-letter" id="let-i" style="left:131px; top:192px;">I</div>
 
-                    <div class="gearbox-letter vinyl-mode-color" id="let-v" style="left:197px; top:128px;">в</div>
-                    <div class="gearbox-letter vinyl-mode-color" id="let-i-vin" style="left:197px; top:145px;">и</div>
-                    <div class="gearbox-letter vinyl-mode-color" id="let-n" style="left:197px; top:162px;">н</div>
-                    <div class="gearbox-letter vinyl-mode-color" id="let-i-vin2" style="left:197px; top:179px;">и</div>
-                    <div class="gearbox-letter vinyl-mode-color" id="let-l" style="left:197px; top:196px;">л</div>
+                    <!-- Правая шахта: ВИНИЛ (RU) / VINYL (EN) -->
+                    <div class="gearbox-letter vinyl-mode-color" id="let-v" style="left:197px; top:128px;">В</div>
+                    <div class="gearbox-letter vinyl-mode-color" id="let-i-vin" style="left:197px; top:145px;">И</div>
+                    <div class="gearbox-letter vinyl-mode-color" id="let-n" style="left:197px; top:162px;">Н</div>
+                    <div class="gearbox-letter vinyl-mode-color" id="let-i-vin2" style="left:197px; top:179px;">И</div>
+                    <div class="gearbox-letter vinyl-mode-color" id="let-l" style="left:197px; top:196px;">Л</div>
 
                     <div class="gearbox-knob-lever" id="gearKnobV66">
                         <span class="gearbox-knob-inner-text" id="gearKnobTextV66">J▲</span>
                     </div>
                 </div>
-                <div class="gearbox-status-readout" id="gearStatusTextV66">🕹️ 1-я: ⚡ JBUF 90° [PITCH LOCK]</div>
+                <div class="gearbox-status-readout" id="gearStatusTextV66">🕹️ 1-я: ⚡ J Buf 90° [PITCH LOCK]</div>
             `;
             oldHoseRow.insertAdjacentElement('beforebegin', wrap);
 
             const lbl = oldHoseRow.querySelector('label');
             if (lbl) lbl.style.display = 'none';
-            oldHoseRow.style.justifyContent = 'flex-end';
+            oldHoseRow.style.display = 'none';
 
             window.initGearboxInteractivityV66();
         }
@@ -5179,7 +5290,7 @@ window.initGearboxInteractivityV66 = function() {
     const NEUTRAL_Y = 111;
     const TOP_Y = 44;
     const BOT_Y = 178;
-    const END_STOP_TOLERANCE = 11;
+    const END_STOP_TOLERANCE = 14;
 
     window.syncEngineTumblerUIV62 = function() {
         const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
@@ -5192,6 +5303,15 @@ window.initGearboxInteractivityV66 = function() {
 
         const txt = document.getElementById('gearKnobTextV66');
         if (txt) txt.innerText = spec.knob;
+
+        // Переключаем буквы ВИНИЛ <-> VINYL по языку интерфейса
+        const isEn = Boolean((typeof window.isTrackUiEnglish === 'function' && window.isTrackUiEnglish()) || (window.appConfig && window.appConfig.lang === 'en'));
+        const vChars = isEn ? ['V', 'I', 'N', 'Y', 'L'] : ['В', 'И', 'Н', 'И', 'Л'];
+        const vIds = ['let-v', 'let-i-vin', 'let-n', 'let-i-vin2', 'let-l'];
+        vIds.forEach((id, idx) => {
+            const el = document.getElementById(id);
+            if (el) el.innerText = vChars[idx];
+        });
 
         const stTxt = document.getElementById('gearStatusTextV66');
         if (stTxt) {
@@ -5207,9 +5327,9 @@ window.initGearboxInteractivityV66 = function() {
         if (gKey === 'jbuf-lock') {
             document.getElementById('enc-jbuf')?.classList.add('active-jbuf');
             document.getElementById('let-J')?.classList.add('active');
-            document.getElementById('let-b')?.classList.add('active');
         } else if (gKey === 'jbuf-shift') {
             document.getElementById('enc-jbuf')?.classList.add('active-jbuf');
+            document.getElementById('let-b')?.classList.add('active');
             document.getElementById('let-u')?.classList.add('active');
             document.getElementById('let-f')?.classList.add('active');
         } else if (gKey === 'web-lock') {
@@ -5232,11 +5352,27 @@ window.initGearboxInteractivityV66 = function() {
 
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+    // Проверка попадания пальца в шарик ползунка + окантовка 3% ширины экрана
+    const isPointNearKnob = (clientX, clientY) => {
+        const rect = knob.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        const cx = rect.left + rect.width * 0.5;
+        const cy = rect.top + rect.height * 0.5;
+        const knobRad = Math.max(rect.width, rect.height) * 0.5;
+        const marginPx = (window.innerWidth || document.documentElement.clientWidth || 360) * 0.03;
+        return Math.hypot(clientX - cx, clientY - cy) <= (knobRad + marginPx);
+    };
+
     const onStart = (e) => {
+        const pt = e.touches ? e.touches[0] : e;
+        if (!pt || !isPointNearKnob(pt.clientX, pt.clientY)) {
+            isDragging = false;
+            return;
+        }
         if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
         isDragging = true;
         knob.classList.add('dragging');
-        const pt = e.touches ? e.touches[0] : e;
         dragOffsetX = pt.clientX - currentX;
         dragOffsetY = pt.clientY - currentY;
     };
@@ -5248,14 +5384,14 @@ window.initGearboxInteractivityV66 = function() {
         let wantX = pt.clientX - dragOffsetX;
         let wantY = pt.clientY - dragOffsetY;
 
-        const inNeutralCorridor = Math.abs(currentY - NEUTRAL_Y) <= 15 && Math.abs(wantY - NEUTRAL_Y) <= 18;
+        const inNeutralCorridor = Math.abs(currentY - NEUTRAL_Y) <= 18 && Math.abs(wantY - NEUTRAL_Y) <= 22;
 
         if (inNeutralCorridor) {
             currentX = clamp(wantX, COL_X.left, COL_X.right);
-            if (Math.abs(currentX - COL_X.left) > 9 && Math.abs(currentX - COL_X.mid) > 9 && Math.abs(currentX - COL_X.right) > 9) {
+            if (Math.abs(currentX - COL_X.left) > 10 && Math.abs(currentX - COL_X.mid) > 10 && Math.abs(currentX - COL_X.right) > 10) {
                 currentY = NEUTRAL_Y;
             } else {
-                if (Math.abs(currentX - COL_X.right) <= 9) {
+                if (Math.abs(currentX - COL_X.right) <= 10) {
                     currentY = clamp(wantY, NEUTRAL_Y, BOT_Y);
                 } else {
                     currentY = clamp(wantY, TOP_Y, BOT_Y);
@@ -5263,8 +5399,8 @@ window.initGearboxInteractivityV66 = function() {
             }
         } else {
             let lockedColX = COL_X.mid;
-            if (Math.abs(currentX - COL_X.left) < 20) lockedColX = COL_X.left;
-            else if (Math.abs(currentX - COL_X.right) < 20) lockedColX = COL_X.right;
+            if (Math.abs(currentX - COL_X.left) < 22) lockedColX = COL_X.left;
+            else if (Math.abs(currentX - COL_X.right) < 22) lockedColX = COL_X.right;
 
             currentX = lockedColX;
             if (lockedColX === COL_X.right) {
@@ -5285,9 +5421,9 @@ window.initGearboxInteractivityV66 = function() {
 
         let lockedGearKey = 'neutral';
 
-        const atLeftCol  = Math.abs(currentX - COL_X.left) <= 12;
-        const atMidCol   = Math.abs(currentX - COL_X.mid) <= 12;
-        const atRightCol = Math.abs(currentX - COL_X.right) <= 12;
+        const atLeftCol  = Math.abs(currentX - COL_X.left) <= 14;
+        const atMidCol   = Math.abs(currentX - COL_X.mid) <= 14;
+        const atRightCol = Math.abs(currentX - COL_X.right) <= 14;
 
         const atTopEnd = (currentY <= TOP_Y + END_STOP_TOLERANCE);
         const atBotEnd = (currentY >= BOT_Y - END_STOP_TOLERANCE);
@@ -5313,13 +5449,14 @@ window.initGearboxInteractivityV66 = function() {
         window.setGearboxStateV66(lockedGearKey, e);
     };
 
-    knob.addEventListener('mousedown', onStart);
+    plate.addEventListener('mousedown', onStart);
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onEnd);
 
-    knob.addEventListener('touchstart', onStart, { passive: false });
-    knob.addEventListener('touchmove', onMove, { passive: false });
+    plate.addEventListener('touchstart', onStart, { passive: false });
+    document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd, { passive: true });
+    document.addEventListener('touchcancel', onEnd, { passive: true });
 };
 
 setTimeout(() => { window.upgradeToThreeWayTumblerV62(); }, 400);
@@ -5788,7 +5925,10 @@ window.applyGearCleanV70 = function(targetGearKey) {
     if (!window.appConfig) window.appConfig = {};
     window.appConfig.gearKeyV66 = targetGearKey;
 
-    if (typeof window.selectGearboxSlotV66 === 'function') {
+    if (typeof window.setGearboxStateV66 === 'function') {
+        window._bypassGearConflictCheckV70 = true;
+        try { window.setGearboxStateV66(targetGearKey); } finally { window._bypassGearConflictCheckV70 = false; }
+    } else if (typeof window.selectGearboxSlotV66 === 'function') {
         window._bypassGearConflictCheckV70 = true;
         try {
             window.selectGearboxSlotV66(targetGearKey);
@@ -5959,241 +6099,4 @@ window.showWebApiReverseConflictModalV70 = function(requestedWebGear) {
 
         return typeof prevSync === 'function' ? prevSync(isDraggingArc) : undefined;
     };
-})();
-
-
-// ⚙️ ПАТЧ V70.2: ФИКС ОТДАЧИ ПРУЖИНЫ РКПП + ШАХТЫ (J / Buf, Web / API, ВИНИЛ <-> VINYL)
-
-window.findGearboxElementsV70 = function() {
-    let container = document.querySelector('[id*="gearbox" i], [class*="gearbox" i], [id*="shifter" i], [class*="shifter" i], [id*="rkpp" i], [class*="rkpp" i]');
-
-    if (!container) {
-        const allEls = Array.from(document.querySelectorAll('div, svg'));
-        for (const el of allEls) {
-            const txt = (el.textContent || '');
-            if (txt.includes('PITCH LOCK') && txt.includes('PITCH SHIFT') && el.offsetWidth >= 140 && el.offsetWidth <= 380 && el.offsetHeight >= 140 && el.offsetHeight <= 380) {
-                container = el;
-            }
-        }
-    }
-
-    if (!container) return { container: null, knob: null };
-
-    let cur = container;
-    for (let i = 0; i < 4 && cur && cur.parentElement; i++) {
-        const cs = window.getComputedStyle(cur);
-        const br = cs ? (cs.borderRadius || '') : '';
-        if ((br.includes('50%') || parseFloat(br) >= 90) && cur.offsetWidth >= 150 && cur.offsetWidth <= 360) {
-            container = cur;
-            break;
-        }
-        cur = cur.parentElement;
-    }
-
-    let knob = container.querySelector('[id*="knob" i], [class*="knob" i], [id*="lever" i], [class*="lever" i], [id*="puck" i], [class*="puck" i], [id*="thumb" i], [class*="thumb" i]');
-
-    if (!knob) {
-        const candidates = Array.from(container.querySelectorAll('div, span, circle'));
-        for (const c of candidates) {
-            const r = c.getBoundingClientRect();
-            if (r.width >= 26 && r.width <= 84 && Math.abs(r.width - r.height) <= 8) {
-                const cs = window.getComputedStyle(c);
-                if (c.tagName.toLowerCase() === 'circle' || (cs.borderRadius && (cs.borderRadius.includes('50%') || parseFloat(cs.borderRadius) >= 12))) {
-                    knob = c;
-                    break;
-                }
-            }
-        }
-    }
-
-    return { container, knob };
-};
-
-window.updateGearboxShaftLabelsV70 = function() {
-    const { container } = window.findGearboxElementsV70();
-    if (!container) return;
-
-    const isEn = (typeof window.isTrackUiEnglish === 'function') && window.isTrackUiEnglish();
-    const vinylWord = isEn ? 'VINYL' : 'ВИНИЛ';
-
-    const replaceShaftFormat = (el, newWord) => {
-        const chars = newWord.split('');
-        if (el.children.length === 0) {
-            if (el.innerHTML.includes('<br')) {
-                el.innerHTML = chars.join('<br>');
-            } else if ((el.textContent || '').includes('\n')) {
-                el.textContent = chars.join('\n');
-            } else {
-                el.innerHTML = chars.join('<br>');
-            }
-            return;
-        }
-        const allSingleCharChildren = Array.from(el.children).every(ch => (ch.textContent || '').trim().length <= 2);
-        if (allSingleCharChildren && el.children.length >= 1) {
-            const template = el.children[0].cloneNode(false);
-            el.innerHTML = '';
-            chars.forEach(c => {
-                const node = template.cloneNode(false);
-                node.textContent = c;
-                el.appendChild(node);
-            });
-        }
-    };
-
-    const nodes = Array.from(container.querySelectorAll('div, span, text, tspan'));
-    for (const el of nodes) {
-        if (el.querySelector('div, svg')) continue;
-        const clean = (el.textContent || '').replace(/\s+/g, '');
-        if (!clean || clean.length > 8) continue;
-
-        if (clean === 'Jb' || clean === 'jb') {
-            replaceShaftFormat(el, 'J');
-        } else if (clean === 'uf' || clean === 'UF') {
-            replaceShaftFormat(el, 'Buf');
-        } else if (clean === 'Web' || clean === 'web' || clean === 'WEB') {
-            replaceShaftFormat(el, 'Web');
-        } else if (clean === 'api' || clean === 'Api' || clean === 'API') {
-            replaceShaftFormat(el, 'API');
-        } else if (clean === 'ВИНИЛ' || clean === 'Винил' || clean === 'VINYL' || clean === 'Vinyl') {
-            replaceShaftFormat(el, vinylWord);
-        }
-    }
-
-    // Обновляем также подпись передачи под кулисой, если включён Винил
-    const parentBox = container.parentElement || document;
-    parentBox.querySelectorAll('div, span').forEach(el => {
-        if (el.children.length === 0 && el.textContent) {
-            if (isEn && el.textContent.includes('ВИНИЛ')) {
-                el.textContent = el.textContent.replace(/ВИНИЛ/g, 'VINYL');
-            } else if (!isEn && el.textContent.includes('VINYL')) {
-                el.textContent = el.textContent.replace(/VINYL/g, 'ВИНИЛ');
-            }
-        }
-    });
-};
-
-window.stripGearboxOuterCircleV70 = function() {
-    const { container } = window.findGearboxElementsV70();
-    if (!container) return;
-
-    container.classList.add('gearbox-nocircle-v70', 'gearbox-swipe-zone-v70');
-
-    const checkNodes = [container, ...Array.from(container.querySelectorAll('div, svg, circle'))];
-    for (const node of checkNodes) {
-        const tag = node.tagName.toLowerCase();
-        if (tag === 'circle') {
-            const rad = parseFloat(node.getAttribute('r') || '0');
-            if (rad > 55) {
-                node.style.setProperty('display', 'none', 'important');
-                node.style.setProperty('stroke', 'none', 'important');
-                node.style.setProperty('fill', 'none', 'important');
-            }
-            continue;
-        }
-        const rect = node.getBoundingClientRect();
-        if (rect.width >= 135 && rect.height >= 135 && Math.abs(rect.width - rect.height) <= 40) {
-            node.classList.add('gearbox-nocircle-v70');
-        }
-    }
-
-    window.updateGearboxShaftLabelsV70();
-};
-
-(function initGearboxKnobHitboxV70() {
-    window._isDraggingGearKnobV70 = false;
-    let releaseTimerV70 = null;
-
-    const isTouchInsideKnobMargin = (clientX, clientY, knobEl) => {
-        if (!knobEl) return false;
-        const rect = knobEl.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return false;
-
-        const cx = rect.left + rect.width * 0.5;
-        const cy = rect.top + rect.height * 0.5;
-        const knobRadius = Math.max(rect.width, rect.height) * 0.5;
-
-        // Окантовка 3% от ширины экрана вокруг ползунка
-        const borderMarginPx = (window.innerWidth || document.documentElement.clientWidth || 360) * 0.03;
-        const allowedRadius = knobRadius + borderMarginPx;
-
-        const dist = Math.hypot(clientX - cx, clientY - cy);
-        return dist <= allowedRadius;
-    };
-
-    const onStartCapture = (e) => {
-        window.stripGearboxOuterCircleV70();
-        const { container, knob } = window.findGearboxElementsV70();
-        if (!container || !e.target || !container.contains(e.target)) {
-            return;
-        }
-
-        // Если захват рычага уже начат парным событием (pointerdown -> touchstart), пропускаем его без повторной проверки
-        if (window._isDraggingGearKnobV70) {
-            if (releaseTimerV70) { clearTimeout(releaseTimerV70); releaseTimerV70 = null; }
-            return;
-        }
-
-        const pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
-        if (pt && typeof pt.clientX === 'number' && isTouchInsideKnobMargin(pt.clientX, pt.clientY, knob)) {
-            if (releaseTimerV70) { clearTimeout(releaseTimerV70); releaseTimerV70 = null; }
-            window._isDraggingGearKnobV70 = true;
-            container.classList.add('gearbox-dragging-active-v70');
-        } else {
-            // Касание мимо шарика (+3%): блокируем только старт перетаскивания, чтобы работал скролл страницы
-            container.classList.remove('gearbox-dragging-active-v70');
-            e.stopImmediatePropagation();
-        }
-    };
-
-    const onMoveCapture = (e) => {
-        if (window._isDraggingGearKnobV70) {
-            if (e.cancelable) e.preventDefault();
-            return;
-        }
-        const { container } = window.findGearboxElementsV70();
-        if (container && e.target && container.contains(e.target)) {
-            e.stopImmediatePropagation();
-        }
-    };
-
-    // ВАЖНО: Никогда не блокируем события отпускания (touchend / pointerup / mouseup),
-    // чтобы рычаг ВСЕГДА возвращался на пружине в центр или защёлкивался в передачу!
-    const onEndCapture = () => {
-        const { container } = window.findGearboxElementsV70();
-        if (container) container.classList.remove('gearbox-dragging-active-v70');
-        if (releaseTimerV70) clearTimeout(releaseTimerV70);
-        releaseTimerV70 = setTimeout(() => {
-            window._isDraggingGearKnobV70 = false;
-            window.updateGearboxShaftLabelsV70();
-        }, 80);
-    };
-
-    document.addEventListener('touchstart', onStartCapture, { capture: true, passive: false });
-    document.addEventListener('touchmove', onMoveCapture, { capture: true, passive: false });
-    document.addEventListener('touchend', onEndCapture, { capture: true, passive: true });
-    document.addEventListener('touchcancel', onEndCapture, { capture: true, passive: true });
-
-    document.addEventListener('pointerdown', onStartCapture, { capture: true, passive: false });
-    document.addEventListener('pointermove', onMoveCapture, { capture: true, passive: false });
-    document.addEventListener('pointerup', onEndCapture, { capture: true, passive: true });
-    document.addEventListener('pointercancel', onEndCapture, { capture: true, passive: true });
-
-    document.addEventListener('mousedown', onStartCapture, { capture: true, passive: false });
-    document.addEventListener('mouseup', onEndCapture, { capture: true, passive: true });
-
-    // Блокируем одиночный клик по пустым шахтам мимо шарика, чтобы передача менялась только перетягиванием рычага
-    document.addEventListener('click', (e) => {
-        if (window._isDraggingGearKnobV70) return;
-        const { container, knob } = window.findGearboxElementsV70();
-        if (container && e.target && container.contains(e.target)) {
-            if (!isTouchInsideKnobMargin(e.clientX, e.clientY, knob)) {
-                e.stopImmediatePropagation();
-            }
-        }
-        setTimeout(window.updateGearboxShaftLabelsV70, 20);
-    }, true);
-
-    setTimeout(window.stripGearboxOuterCircleV70, 120);
-    setTimeout(window.stripGearboxOuterCircleV70, 600);
-    setTimeout(window.stripGearboxOuterCircleV70, 1500);
 })();
