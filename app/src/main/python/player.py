@@ -77,13 +77,6 @@ def build_atempo_filter(speed):
 
 
 
-@hook('after_request')
-def disable_webview_cache():
-    response.set_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-    response.set_header('Pragma', 'no-cache')
-    response.set_header('Expires', '0')
-
-
 @route('/')
 def index():
     try:

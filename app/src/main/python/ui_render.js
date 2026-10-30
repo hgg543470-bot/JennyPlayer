@@ -36,6 +36,151 @@ window.updateTrackListPlayIcons = function() {
     });
 };
 
+window.parseDerivedTrackInfo = function(filename) {
+    if (!filename || typeof filename !== 'string') return { isDerived: false, baseStem: '', origStem: '' };
+    const cleanName = filename.trim();
+    const lastDot = cleanName.lastIndexOf('.');
+    const origStem = lastDot > 0 ? cleanName.substring(0, lastDot) : cleanName;
+    let stem = origStem;
+    const suffixRe = /(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf|vinyl|webapi)|_rev(?:ersed)?|_fx|_eq|_dsp|_master)+$/i;
+    let prev = null;
+    while (stem && stem !== prev) {
+        prev = stem;
+        stem = stem.replace(suffixRe, '');
+    }
+    return {
+        isDerived: (stem.length > 0 && stem !== origStem),
+        baseStem: stem,
+        origStem: origStem
+    };
+};
+
+window.copyTextToClipboard = async function(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (e) {}
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    return true;
+};
+
+window.scrollToOriginalTrack = async function(derivedFilename, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const info = window.parseDerivedTrackInfo(derivedFilename);
+    if (!info.baseStem) return;
+    const targetLower = info.baseStem.toLowerCase();
+
+    const findMatchingRow = () => {
+        const rows = Array.from(document.querySelectorAll('.track-row-capsule'));
+        let exactOrig = null, fallbackOrig = null, prefixOrig = null;
+        for (const r of rows) {
+            const fname = r.getAttribute('data-track') || '';
+            if (!fname || fname === derivedFilename) continue;
+            const parsed = window.parseDerivedTrackInfo(fname);
+            const stemLower = parsed.origStem.toLowerCase();
+            if (stemLower === targetLower && !parsed.isDerived) { exactOrig = r; break; }
+            if (parsed.baseStem.toLowerCase() === targetLower && !parsed.isDerived && !fallbackOrig) fallbackOrig = r;
+            if (!parsed.isDerived && (stemLower.startsWith(targetLower) || targetLower.startsWith(stemLower)) && !prefixOrig) prefixOrig = r;
+        }
+        return exactOrig || fallbackOrig || prefixOrig;
+    };
+
+    let targetRow = findMatchingRow();
+    if (!targetRow && !window.isShowingAllTracks && typeof window.fetchData === 'function') {
+        window.isShowingAllTracks = true;
+        await window.fetchData();
+        targetRow = findMatchingRow();
+    }
+
+    if (targetRow) {
+        const searchInp = document.getElementById('searchInput');
+        if (searchInp && searchInp.value !== '' && (targetRow.offsetParent === null)) {
+            searchInp.value = '';
+            searchInp.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        const origName = targetRow.getAttribute('data-track') || info.baseStem;
+        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetRow.classList.remove('orig-highlight-pulse-v68');
+        void targetRow.offsetWidth;
+        targetRow.classList.add('orig-highlight-pulse-v68');
+        setTimeout(() => targetRow.classList.remove('orig-highlight-pulse-v68'), 2500);
+        if (typeof window.showToast === 'function') window.showToast('🎯 Оригинал: ' + origName, ev);
+    } else {
+        if (typeof window.showToast === 'function') window.showToast('⚠️ Оригинал «' + info.baseStem + '» не найден', ev);
+    }
+};
+
+window.copyTrackFullPath = async function(filename, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    let fullPath = filename;
+    try {
+        const res = await fetch('/api/full_path/' + encodeURIComponent(filename));
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.full_path) fullPath = data.full_path;
+        }
+    } catch (e) {}
+    await window.copyTextToClipboard(fullPath);
+    if (typeof window.showToast === 'function') window.showToast('📋 PATH: ' + fullPath, ev);
+};
+
+window.syncRowActionButtons = function(row, filename, isExp) {
+    if (!row) return;
+    let bar = row.querySelector('.track-expand-actions-v68');
+    if (!isExp) {
+        if (bar) bar.remove();
+        return;
+    }
+    if (bar) return;
+
+    bar = document.createElement('div');
+    bar.className = 'track-expand-actions-v68';
+    bar.onclick = (e) => e.stopPropagation();
+
+    const info = window.parseDerivedTrackInfo(filename);
+    if (info.isDerived) {
+        const bOrig = document.createElement('button');
+        bOrig.type = 'button';
+        bOrig.className = 'track-act-btn-v68 btn-orig-v68';
+        bOrig.innerText = 'ORIG';
+        bOrig.onclick = (e) => window.scrollToOriginalTrack(filename, e);
+        bar.appendChild(bOrig);
+    }
+
+    const bPath = document.createElement('button');
+    bPath.type = 'button';
+    bPath.className = 'track-act-btn-v68 btn-path-v68';
+    bPath.innerText = 'PATH';
+    bPath.onclick = (e) => window.copyTrackFullPath(filename, e);
+    bar.appendChild(bPath);
+
+    for (let i = 1; i <= 3; i++) {
+        const bStub = document.createElement('button');
+        bStub.type = 'button';
+        bStub.className = 'track-act-btn-v68 btn-stub-v68';
+        bStub.innerText = 'СЛОТ ' + i;
+        bStub.onclick = (e) => {
+            e.stopPropagation();
+            if (typeof window.showToast === 'function') {
+                window.showToast('🔧 Заглушка #' + i + ' (' + filename + ')', e);
+            }
+        };
+        bar.appendChild(bStub);
+    }
+
+    row.appendChild(bar);
+};
+
 window.toggleExpandTrackTitle = function(filename) {
     if (window.expandedTracks.has(filename)) {
         window.expandedTracks.delete(filename);
@@ -54,6 +199,7 @@ window.toggleExpandTrackTitle = function(filename) {
                 row.classList.remove('expanded-capsule');
                 if (textEl) textEl.classList.remove('expanded-title-text');
             }
+            window.syncRowActionButtons(row, filename, isExp);
         }
     });
 };
@@ -232,7 +378,7 @@ function buildTrackRowHTML(file, listType, heartIcon) {
     const isExpanded = window.expandedTracks.has(file);
 
     const safeId = encodeURIComponent(file).replace(/[^a-zA-Z0-9]/g, '');
-    const safeFileJS = file.replace(/\/g, "\\").replace(/'/g, "\'").replace(/"/g, '&quot;');
+    const safeFileJS = file.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '&quot;');
     const safeAttr = file.replace(/"/g, '&quot;');
 
     const activeStyle = isPlayingTrack
@@ -242,14 +388,6 @@ function buildTrackRowHTML(file, listType, heartIcon) {
     const btnIcon = isActuallyPlaying ? PAUSE_SVG_ICON : PLAY_SVG_ICON;
     const expCapsuleClass = isExpanded ? "expanded-capsule" : "";
     const expTextClass = isExpanded ? "expanded-title-text" : "";
-
-    const derivedInfo = (typeof window.parseDerivedTrackInfoV68 === 'function')
-        ? window.parseDerivedTrackInfoV68(file)
-        : { isDerived: false };
-
-    const origBtnHtml = derivedInfo.isDerived
-        ? `<button type="button" class="track-act-btn-v68 btn-orig-v68" onclick="window.scrollToOriginalTrackV68('${safeFileJS}', '${listType}', event)">ORIG</button>`
-        : '';
 
     return `
         <div style="position: relative;">
@@ -271,13 +409,6 @@ function buildTrackRowHTML(file, listType, heartIcon) {
                     <button class="play-pause-btn track-row-play-btn" style="width: 44px; height: 44px; flex-shrink: 0; pointer-events: none;">
                         ${btnIcon}
                     </button>
-                </div>
-                <div class="track-expand-actions-v68" onclick="event.stopPropagation()">
-                    ${origBtnHtml}
-                    <button type="button" class="track-act-btn-v68 btn-path-v68" onclick="window.copyTrackFullPathV68('${safeFileJS}', event)">PATH</button>
-                    <button type="button" class="track-act-btn-v68 btn-stub-v68" onclick="window.onTrackStubClickV68(1, '${safeFileJS}', event)">СЛОТ 1</button>
-                    <button type="button" class="track-act-btn-v68 btn-stub-v68" onclick="window.onTrackStubClickV68(2, '${safeFileJS}', event)">СЛОТ 2</button>
-                    <button type="button" class="track-act-btn-v68 btn-stub-v68" onclick="window.onTrackStubClickV68(3, '${safeFileJS}', event)">СЛОТ 3</button>
                 </div>
             </div>
         </div>`;
@@ -323,151 +454,12 @@ window.fetchData = async function() {
             });
         }
         unifiedBox.innerHTML = tHtml;
+
+        if (window.expandedTracks && window.expandedTracks.size > 0) {
+            document.querySelectorAll('.track-row-capsule.expanded-capsule').forEach(row => {
+                const fn = row.getAttribute('data-track');
+                if (fn) window.syncRowActionButtons(row, fn, true);
+            });
+        }
     } catch(e) { }
-};
-
-
-// 🛠️ ПАТЧ V68: ОБРАБОТЧИКИ КНОПОК РАСКРЫТОЙ КАРТОЧКИ ТРЕКА (ORIG / PATH / 3 СЛОТА)
-
-window.parseDerivedTrackInfoV68 = function(filename) {
-    if (!filename || typeof filename !== 'string') return { isDerived: false, baseStem: '', origStem: '' };
-    const cleanName = filename.trim();
-    const lastDot = cleanName.lastIndexOf('.');
-    const origStem = lastDot > 0 ? cleanName.substring(0, lastDot) : cleanName;
-    let stem = origStem;
-
-    const suffixRe = /(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf|vinyl|webapi)|_rev(?:ersed)?|_fx|_eq|_dsp|_master)+$/i;
-
-    let prev = null;
-    while (stem && stem !== prev) {
-        prev = stem;
-        stem = stem.replace(suffixRe, '');
-    }
-
-    const isDerived = (stem.length > 0 && stem !== origStem);
-    return {
-        isDerived: isDerived,
-        baseStem: stem,
-        origStem: origStem,
-        cleanName: cleanName
-    };
-};
-
-window.copyTextToClipboardV68 = async function(text) {
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        try {
-            await navigator.clipboard.writeText(text);
-            return true;
-        } catch (e) {}
-    }
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    ta.style.top = '0';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch (e) {}
-    document.body.removeChild(ta);
-    return ok;
-};
-
-window.scrollToOriginalTrackV68 = async function(derivedFilename, listType, ev) {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    const info = window.parseDerivedTrackInfoV68(derivedFilename);
-    if (!info.baseStem) return;
-    const targetLower = info.baseStem.toLowerCase();
-
-    const findMatchingCapsule = (containerSel) => {
-        const rows = Array.from(document.querySelectorAll(containerSel + ' .track-row-capsule'));
-        let exactOrig = null;
-        let fallbackOrig = null;
-        let prefixOrig = null;
-
-        for (const r of rows) {
-            const fname = r.getAttribute('data-track') || '';
-            if (!fname || fname === derivedFilename) continue;
-            const parsed = window.parseDerivedTrackInfoV68(fname);
-            const stemLower = parsed.origStem.toLowerCase();
-
-            if (stemLower === targetLower && !parsed.isDerived) {
-                exactOrig = r;
-                break;
-            }
-            if (parsed.baseStem.toLowerCase() === targetLower && !parsed.isDerived) {
-                if (!fallbackOrig) fallbackOrig = r;
-            }
-            if (!parsed.isDerived && (stemLower.startsWith(targetLower) || targetLower.startsWith(stemLower))) {
-                if (!prefixOrig) prefixOrig = r;
-            }
-        }
-        return exactOrig || fallbackOrig || prefixOrig;
-    };
-
-    const primaryContainer = (listType === 'fav') ? '#favList' : '#unifiedList';
-    let targetRow = findMatchingCapsule(primaryContainer) || findMatchingCapsule('#unifiedList');
-
-    // Если сейчас включён режим только сессионных треков, а оригинал в общем списке — переключаем на все треки
-    if (!targetRow && !window.isShowingAllTracks && typeof window.fetchData === 'function') {
-        window.isShowingAllTracks = true;
-        await window.fetchData();
-        targetRow = findMatchingCapsule('#unifiedList');
-    }
-
-    if (targetRow) {
-        // Если строка или её обёртка скрыта поисковым фильтром — снимаем фильтр
-        const wrapper = targetRow.parentElement;
-        if (targetRow.style.display === 'none' || (wrapper && wrapper.style.display === 'none')) {
-            const searchInp = document.getElementById('searchInput') || document.querySelector('input[placeholder*="Поиск"]');
-            if (searchInp && searchInp.value !== '') {
-                searchInp.value = '';
-                searchInp.dispatchEvent(new Event('input', { bubbles: true }));
-                searchInp.dispatchEvent(new Event('keyup', { bubbles: true }));
-            }
-            if (wrapper) wrapper.style.display = '';
-            targetRow.style.display = '';
-        }
-
-        const origName = targetRow.getAttribute('data-track') || info.baseStem;
-        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        targetRow.classList.remove('orig-highlight-pulse-v68');
-        void targetRow.offsetWidth;
-        targetRow.classList.add('orig-highlight-pulse-v68');
-        setTimeout(() => targetRow.classList.remove('orig-highlight-pulse-v68'), 2500);
-
-        if (typeof window.showToast === 'function') {
-            window.showToast('🎯 Оригинал: ' + origName, ev);
-        }
-    } else {
-        if (typeof window.showToast === 'function') {
-            window.showToast('⚠️ Оригинал «' + info.baseStem + '» не найден в папке', ev);
-        }
-    }
-};
-
-window.copyTrackFullPathV68 = async function(filename, ev) {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    if (!filename) return;
-    let fullPath = filename;
-    try {
-        const res = await fetch('/api/full_path/' + encodeURIComponent(filename));
-        if (res.ok) {
-            const data = await res.json();
-            if (data && data.full_path) fullPath = data.full_path;
-        }
-    } catch (e) {}
-
-    await window.copyTextToClipboardV68(fullPath);
-    if (typeof window.showToast === 'function') {
-        window.showToast('📋 PATH: ' + fullPath, ev);
-    }
-};
-
-window.onTrackStubClickV68 = function(slotNum, filename, ev) {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    if (typeof window.showToast === 'function') {
-        window.showToast(`🔧 Слот #${slotNum} (${filename}) — свободная заглушка`, ev);
-    }
 };
