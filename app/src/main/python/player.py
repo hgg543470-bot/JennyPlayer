@@ -368,6 +368,42 @@ def save_track_meta_v71():
             if p and os.path.exists(p):
                 try: os.remove(p)
                 except Exception: pass
+# === JENNY V71.3 BIG RAM PCM START ===
+@route('/api/pcm_meta_v71/<filename:path>', method='GET')
+def api_pcm_meta_v71(filename):
+    import re
+    fp = resolve_track_full_path_v71(filename)
+    if not os.path.isfile(fp):
+        response.status = 404
+        return {"status": "error", "error": "File not found"}
+    ff = find_ffmpeg_binary()
+    pr = subprocess.run([ff, '-hide_banner', '-i', fp], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    raw = (pr.stderr or "") + (pr.stdout or "")
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", raw)
+    dur = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
+    response.content_type = 'application/json'
+    return json.dumps({"status": "ok", "duration": dur, "sr": 44100, "channels": 2})
+
+@route('/api/pcm_chunk_v71/<filename:path>', method='GET')
+def api_pcm_chunk_v71(filename):
+    fp = resolve_track_full_path_v71(filename)
+    if not os.path.isfile(fp):
+        response.status = 404
+        return b""
+    start_sec = float(request.query.get('start', '0'))
+    dur_sec = float(request.query.get('dur', '1200'))
+    sr = int(request.query.get('sr', '44100'))
+    ff = find_ffmpeg_binary()
+    cmd = [
+        ff, '-hide_banner', '-loglevel', 'error',
+        '-ss', f"{start_sec:.3f}", '-t', f"{dur_sec:.3f}",
+        '-i', fp,
+        '-f', 'f32le', '-acodec', 'pcm_f32le', '-ac', '2', '-ar', str(sr), 'pipe:1'
+    ]
+    pr = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    response.content_type = 'application/octet-stream'
+    return pr.stdout
+# === JENNY V71.3 BIG RAM PCM END ===
 # === JENNY V71 BACKEND END ===
 
 @route('/api/full_path/<filename:path>', method='GET')

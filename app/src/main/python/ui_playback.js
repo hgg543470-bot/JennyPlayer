@@ -1,3 +1,49 @@
+window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player) {
+    let dur = (player && isFinite(player.duration) && player.duration > 0) ? player.duration : 0;
+    let sr = 44100;
+    if (!dur) {
+        const mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
+        const md = await mr.json();
+        dur = parseFloat(md.duration) || 0;
+        sr = parseInt(md.sr, 10) || 44100;
+    }
+    if (dur <= 0) return null;
+
+    // Если трек > 90 минут, используем 44100 Гц стерео (3.8 ГБ на 3.3 часа), чтобы уложиться в 32-битный индекс TypedArray
+    if (dur * sr > 520000000) {
+        sr = 32000;
+    }
+    const totalFrames = Math.floor(dur * sr);
+    const audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
+    const chL = audioBuf.getChannelData(0);
+    const chR = audioBuf.getChannelData(1);
+
+    const chunkSec = 900; // По 15 минут за 1 блок
+    let writtenFrames = 0;
+
+    for (let st = 0; st < dur; st += chunkSec) {
+        if (window.currentPlayingTrack !== filename) return null;
+        const pct = Math.min(99, Math.round((st / dur) * 100));
+        if (titleEl) titleEl.innerText = `⏳ RAM 16GB [${pct}%]: ` + filename;
+
+        const url = `/api/pcm_chunk_v71/${encodeURIComponent(filename)}?start=${st}&dur=${chunkSec}&sr=${sr}`;
+        const res = await fetch(url);
+        if (!res.ok) break;
+        const ab = await res.arrayBuffer();
+        const floats = new Float32Array(ab);
+        const framesInChunk = Math.floor(floats.length / 2);
+        const maxCopy = Math.min(framesInChunk, totalFrames - writtenFrames);
+
+        for (let i = 0; i < maxCopy; i++) {
+            chL[writtenFrames + i] = floats[i * 2];
+            chR[writtenFrames + i] = floats[i * 2 + 1];
+        }
+        writtenFrames += maxCopy;
+        await new Promise(r => setTimeout(r, 15));
+    }
+    return audioBuf;
+};
+
 
 window.smoothStudioFadeIn = function() {
     if (window.audioCtx && window.inputMixer) {
@@ -179,14 +225,16 @@ window.playTrack = async function(filename, listContext = 'main') {
         }
 
         // Всегда декодируем PCM-буфер в фоне: это даёт живой осциллограф в любом режиме и 0 мс ожидание при включении RAM/Шланга!
-        let arrayBuffer = await blob.arrayBuffer();
         let decodedBuffer = null;
         try {
-            if (blob.size <= 65 * 1024 * 1024) {
-                decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
-            }
+            let arrayBuffer = await blob.arrayBuffer();
+            decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
         } catch (decErr) {
-            decodedBuffer = null;
+            try {
+                decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player);
+            } catch (hugeErr) {
+                decodedBuffer = null;
+            }
         }
         if (!decodedBuffer) {
             if (window.currentPlayingTrack === filename) {
