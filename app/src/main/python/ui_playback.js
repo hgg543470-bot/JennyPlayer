@@ -327,6 +327,15 @@ window.playTrack = async function(filename, listContext = 'main') {
         let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig.pitchLock === true);
         let decodedBuffer = null;
 
+        // Синхронный старт <audio> ДО первого await, чтобы часы никогда не замирали на 0:00 в фоне!
+        if (player) {
+            player.src = '/api/media/' + encodeURIComponent(filename);
+            player.currentTime = 0;
+            player.playbackRate = targetSpeed;
+            player.preservesPitch = true;
+            player.play().catch(e => {});
+        }
+
         // Мгновенный возврат из RAM-кэша при перещёлкивании треков Вперёд <-> Назад (0 мс ожидания!)
         window._ramTrackHistoryV71 = window._ramTrackHistoryV71 || [];
         let cachedEntry = window._ramTrackHistoryV71.find(x => x.name === filename && x.buf);
@@ -334,8 +343,7 @@ window.playTrack = async function(filename, listContext = 'main') {
         if (cachedEntry) {
             decodedBuffer = cachedEntry.buf;
             if (player) {
-                player.src = cachedEntry.blobUrl || ('/api/media/' + encodeURIComponent(filename));
-                player.playbackRate = targetSpeed;
+                                player.playbackRate = targetSpeed;
                 player.preservesPitch = true;
                 player.play().catch(e => {});
             }
@@ -353,8 +361,7 @@ window.playTrack = async function(filename, listContext = 'main') {
                 const blobUrl = URL.createObjectURL(blob);
                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
                 if (player) {
-                    player.src = blobUrl;
-                    player.playbackRate = targetSpeed;
+                                        player.playbackRate = targetSpeed;
                     player.preservesPitch = true;
                     player.play().catch(e => {});
                 }

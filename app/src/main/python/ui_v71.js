@@ -2660,3 +2660,145 @@ window._studioClockV74_1 = {
     }, 300);
 })();
 
+
+// === V74.2 GEARBOX HARDWARE CLOCK LOCK (NO SILENCE ON 2ND/VINYL & NO 0:00 RESET) ===
+
+// Возвращает точную секунду воспроизведения (даже если фоновый <audio> заснул на 0:00)
+window.getTruePlaybackTimeV74_2 = function() {
+    const player = document.getElementById('audioPlayer');
+    const pTime = (player && isFinite(player.currentTime)) ? player.currentTime : 0;
+    const clk = window._studioClockV74_1;
+    if (window.isStudioPlaying && clk && clk.active && window.audioCtx) {
+        const spd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
+        const est = clk.startTrackSec + Math.max(0, window.audioCtx.currentTime - clk.startCtxTime) * spd;
+        const maxDur = (window.studioBuffer && window.studioBuffer.duration) ? window.studioBuffer.duration : (player && isFinite(player.duration) ? player.duration : 999999);
+        const clampedEst = Math.max(0, Math.min(maxDur - 0.05, est));
+        // Если <audio> застрял на 0:00, а WebAudio уже ушёл вперёд — возвращаем аппаратное время WebAudio и синхронизируем <audio>
+        if (Math.abs(pTime - clampedEst) > 0.6) {
+            if (player) {
+                try { player.currentTime = clampedEst; } catch (e) {}
+            }
+            return clampedEst;
+        }
+    }
+    return pTime;
+};
+
+// Переопределяем 2-ю передачу (J Buf Pitch Shift) и Заднюю R (Винил), чтобы они НИКОГДА не глушили звук, если <audio> был на паузе при играющем RAM!
+window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
+    const player = document.getElementById('audioPlayer');
+    if (!player || !window.audioCtx) return false;
+
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    if (isRev && window.studioBuffer && window.studioBuffer.duration > 900 && !window.reversedStudioBuffer) {
+        return window.engageHorizonRamEngineV71_5(gearKey, false);
+    }
+
+    const hasRev67 = Boolean(
+        window.reconstructedMasterBufferV67 &&
+        window.currentTrackRevMapV67 &&
+        window.currentTrackRevNameV67 === window.currentPlayingTrack
+    );
+
+    let rawBuf = hasRev67
+        ? (isRev ? (window.reconstructedReversedBufferV67 || window.reconstructedMasterBufferV67) : window.reconstructedMasterBufferV67)
+        : (isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer);
+
+    const isActivelyPlaying = (!player.paused) || Boolean(window.isStudioPlaying);
+
+    if (!rawBuf) {
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+        player.preservesPitch = false;
+        player.mozPreservesPitch = false;
+        player.webkitPreservesPitch = false;
+        if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+            try { player.playbackRate = targetSpd; } catch (e) {}
+        }
+        if (isActivelyPlaying && player.paused) {
+            player.play().catch(() => {});
+        }
+        return false;
+    }
+
+    const trueSec = window.getTruePlaybackTimeV74_2();
+    if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+    player.preservesPitch = false;
+    if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+        try { player.playbackRate = targetSpd; } catch (e) {}
+    }
+
+    const isVinyl = (gearKey === 'vinyl-shift');
+    const effSpd = hasRev67
+        ? Math.max(0.25, Math.min(3.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
+        : targetSpd;
+
+    if (isActivelyPlaying) {
+        if (player.paused) {
+            try { player.currentTime = trueSec; } catch (e) {}
+            player.play().catch(() => {});
+        }
+        const needNewNode = !window.studioSourceNode ||
+                            !window.isStudioPlaying ||
+                            window.studioSourceNode.buffer !== rawBuf ||
+                            Boolean(window.studioSourceNode._isHoseSpliced);
+        if (needNewNode) {
+            if (window.studioSourceNode) {
+                window.studioSourceNode.onended = null;
+                try { window.studioSourceNode.stop(); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+            }
+            window.studioSourceNode = window.audioCtx.createBufferSource();
+            window.studioSourceNode._isHoseSpliced = false;
+            window.studioSourceNode.buffer = rawBuf;
+            window.studioSourceNode.playbackRate.value = effSpd;
+            window.studioSourceNode.connect(window.inputMixer);
+
+            let offset = trueSec;
+            if (!isFinite(offset) || offset < 0) offset = 0;
+            if (offset >= rawBuf.duration) offset = Math.max(0, rawBuf.duration - 0.05);
+
+            window.studioSourceNode.start(0, offset);
+            window.isStudioPlaying = true;
+            if (window._studioClockV74_1) {
+                window._studioClockV74_1.active = true;
+                window._studioClockV74_1.startCtxTime = window.audioCtx.currentTime;
+                window._studioClockV74_1.startTrackSec = offset;
+            }
+        } else if (window.studioSourceNode && window.studioSourceNode.playbackRate) {
+            const now = window.audioCtx.currentTime;
+            if (isVinyl) {
+                window.studioSourceNode.playbackRate.setTargetAtTime(effSpd, now, 0.085);
+            } else {
+                window.studioSourceNode.playbackRate.setValueAtTime(effSpd, now);
+            }
+        }
+    }
+
+    const badge = document.getElementById('hoseLiveTelemetryV44');
+    if (badge) {
+        badge.style.color = isVinyl ? '#d2a8ff' : '#3fb950';
+        badge.innerText = isVinyl
+            ? `💿 ВИНИЛ [RAM Platter]: x${effSpd.toFixed(2)} (Инерция 85мс)`
+            : `⚡ J Buf RAM [PITCH SHIFT]: x${effSpd.toFixed(2)} (Прямой 32-bit буфер)`;
+    }
+    return true;
+};
+
+// Перед вызовом любого переключения передач в syncMasterPlaybackEngineV59 синхронизируем player.currentTime с аппаратными часами WebAudio
+(function syncPlayerBeforeGearShiftV74_2() {
+    const prevMasterSync = window.syncMasterPlaybackEngineV59;
+    window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
+        const player = document.getElementById('audioPlayer');
+        if (player && window.isStudioPlaying) {
+            const trueSec = window.getTruePlaybackTimeV74_2();
+            if (Math.abs((player.currentTime || 0) - trueSec) > 0.4) {
+                try { player.currentTime = trueSec; } catch (e) {}
+            }
+            if (player.paused) {
+                player.play().catch(() => {});
+            }
+        }
+        return prevMasterSync.apply(this, arguments);
+    };
+})();
+
