@@ -5960,3 +5960,167 @@ window.showWebApiReverseConflictModalV70 = function(requestedWebGear) {
         return typeof prevSync === 'function' ? prevSync(isDraggingArc) : undefined;
     };
 })();
+
+
+// ⚙️ ПАТЧ V70.1: РКПП БЕЗ КРУГА + СВАЙП СТРАНИЦЫ ВЕЗДЕ, КРОМЕ (ПОЛЗУНОК + 3% ШИРИНЫ ЭКРАНА)
+
+window.findGearboxElementsV70 = function() {
+    let container = document.querySelector('[id*="gearbox" i], [class*="gearbox" i], [id*="shifter" i], [class*="shifter" i], [id*="rkpp" i], [class*="rkpp" i]');
+
+    if (!container) {
+        const allEls = Array.from(document.querySelectorAll('div, svg'));
+        for (const el of allEls) {
+            const txt = (el.textContent || '');
+            if (txt.includes('PITCH LOCK') && txt.includes('PITCH SHIFT') && el.offsetWidth >= 140 && el.offsetWidth <= 380 && el.offsetHeight >= 140 && el.offsetHeight <= 380) {
+                container = el;
+            }
+        }
+    }
+
+    if (!container) return { container: null, knob: null };
+
+    // Поднимаемся до внешнего кругового контейнера РКПП, если нашли внутренний узел
+    let cur = container;
+    for (let i = 0; i < 4 && cur && cur.parentElement; i++) {
+        const cs = window.getComputedStyle(cur);
+        const br = cs ? (cs.borderRadius || '') : '';
+        if ((br.includes('50%') || parseFloat(br) >= 90) && cur.offsetWidth >= 150 && cur.offsetWidth <= 360) {
+            container = cur;
+            break;
+        }
+        cur = cur.parentElement;
+    }
+
+    // Находим шарик ползунка (рычага) внутри контейнера
+    let knob = container.querySelector('[id*="knob" i], [class*="knob" i], [id*="lever" i], [class*="lever" i], [id*="puck" i], [class*="puck" i], [id*="thumb" i], [class*="thumb" i]');
+
+    if (!knob) {
+        const candidates = Array.from(container.querySelectorAll('div, span, circle'));
+        for (const c of candidates) {
+            const r = c.getBoundingClientRect();
+            if (r.width >= 26 && r.width <= 84 && Math.abs(r.width - r.height) <= 8) {
+                const cs = window.getComputedStyle(c);
+                if (c.tagName.toLowerCase() === 'circle' || (cs.borderRadius && (cs.borderRadius.includes('50%') || parseFloat(cs.borderRadius) >= 12))) {
+                    knob = c;
+                    break;
+                }
+            }
+        }
+    }
+
+    return { container, knob };
+};
+
+window.stripGearboxOuterCircleV70 = function() {
+    const { container } = window.findGearboxElementsV70();
+    if (!container) return;
+
+    container.classList.add('gearbox-nocircle-v70', 'gearbox-swipe-zone-v70');
+
+    // Убираем круглые рамки у обёрток > 130px внутри/вокруг кулисы, не трогая сам шарик ползунка и слоты
+    const checkNodes = [container, ...Array.from(container.querySelectorAll('div, svg, circle'))];
+    for (const node of checkNodes) {
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'circle') {
+            const rad = parseFloat(node.getAttribute('r') || '0');
+            if (rad > 55) {
+                node.style.setProperty('display', 'none', 'important');
+                node.style.setProperty('stroke', 'none', 'important');
+                node.style.setProperty('fill', 'none', 'important');
+            }
+            continue;
+        }
+        const rect = node.getBoundingClientRect();
+        if (rect.width >= 135 && rect.height >= 135 && Math.abs(rect.width - rect.height) <= 40) {
+            node.classList.add('gearbox-nocircle-v70');
+        }
+    }
+};
+
+(function initGearboxKnobHitboxV70() {
+    window._isDraggingGearKnobV70 = false;
+
+    const isTouchInsideKnobMargin = (clientX, clientY, knobEl) => {
+        if (!knobEl) return false;
+        const rect = knobEl.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+
+        const cx = rect.left + rect.width * 0.5;
+        const cy = rect.top + rect.height * 0.5;
+        const knobRadius = Math.max(rect.width, rect.height) * 0.5;
+
+        // Окантовка 3% от ширины экрана вокруг ползунка
+        const borderMarginPx = (window.innerWidth || document.documentElement.clientWidth || 360) * 0.03;
+        const allowedRadius = knobRadius + borderMarginPx;
+
+        const dist = Math.hypot(clientX - cx, clientY - cy);
+        return dist <= allowedRadius;
+    };
+
+    const onStartCapture = (e) => {
+        window.stripGearboxOuterCircleV70();
+        const { container, knob } = window.findGearboxElementsV70();
+        if (!container || !e.target || !container.contains(e.target)) {
+            window._isDraggingGearKnobV70 = false;
+            return;
+        }
+
+        const pt = (e.touches && e.touches[0]) ? e.touches[0] : e;
+        if (pt && typeof pt.clientX === 'number' && isTouchInsideKnobMargin(pt.clientX, pt.clientY, knob)) {
+            window._isDraggingGearKnobV70 = true;
+            container.classList.add('gearbox-dragging-active-v70');
+        } else {
+            // Палец вне зоны (ползунок + 3% ширины экрана): отсекаем рычаг, отдаём касание скроллу страницы!
+            window._isDraggingGearKnobV70 = false;
+            container.classList.remove('gearbox-dragging-active-v70');
+            e.stopImmediatePropagation();
+        }
+    };
+
+    const onMoveCapture = (e) => {
+        const { container } = window.findGearboxElementsV70();
+        if (!container) return;
+
+        if (window._isDraggingGearKnobV70) {
+            if (e.cancelable) e.preventDefault();
+            return;
+        }
+
+        if (e.target && container.contains(e.target)) {
+            // Не даём внутренним обработчикам коробки блокировать свайп страницы
+            e.stopImmediatePropagation();
+        }
+    };
+
+    const onEndCapture = (e) => {
+        const { container } = window.findGearboxElementsV70();
+        if (container) container.classList.remove('gearbox-dragging-active-v70');
+
+        if (!window._isDraggingGearKnobV70 && container && e.target && container.contains(e.target)) {
+            e.stopImmediatePropagation();
+        }
+        window._isDraggingGearKnobV70 = false;
+    };
+
+    document.addEventListener('touchstart', onStartCapture, { capture: true, passive: false });
+    document.addEventListener('touchmove', onMoveCapture, { capture: true, passive: false });
+    document.addEventListener('touchend', onEndCapture, { capture: true, passive: true });
+    document.addEventListener('touchcancel', onEndCapture, { capture: true, passive: true });
+
+    document.addEventListener('pointerdown', onStartCapture, { capture: true, passive: false });
+    document.addEventListener('pointermove', onMoveCapture, { capture: true, passive: false });
+    document.addEventListener('pointerup', onEndCapture, { capture: true, passive: true });
+    document.addEventListener('mousedown', onStartCapture, { capture: true, passive: false });
+    document.addEventListener('click', (e) => {
+        const { container, knob } = window.findGearboxElementsV70();
+        if (container && e.target && container.contains(e.target)) {
+            if (!isTouchInsideKnobMargin(e.clientX, e.clientY, knob)) {
+                e.stopImmediatePropagation();
+            }
+        }
+    }, true);
+
+    setTimeout(window.stripGearboxOuterCircleV70, 120);
+    setTimeout(window.stripGearboxOuterCircleV70, 600);
+    setTimeout(window.stripGearboxOuterCircleV70, 1500);
+})();

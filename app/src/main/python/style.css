@@ -1091,3 +1091,23 @@ body.hide-help-badges #jennyFullGuideBtn {
     border-color: #58a6ff;
     color: #79c0ff;
 }
+
+
+/* === JENNY V70.1: GEARBOX NO-CIRCLE & PAGE SWIPE PASSTHROUGH === */
+.gearbox-nocircle-v70,
+.gearbox-nocircle-v70::before,
+.gearbox-nocircle-v70::after {
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+.gearbox-swipe-zone-v70,
+.gearbox-swipe-zone-v70 * {
+    touch-action: pan-y !important;
+}
+.gearbox-dragging-active-v70,
+.gearbox-dragging-active-v70 * {
+    touch-action: none !important;
+}
