@@ -110,6 +110,9 @@ window.playTrack = async function(filename, listContext = 'main') {
     window.isStudioPlaying = false;
     window.studioBuffer = null;
     window.reversedStudioBuffer = null;
+    window.reconstructedMasterBufferV67 = null;
+    window.reconstructedReversedBufferV67 = null;
+    window.currentTrackRevMapV67 = null;
 
     if (keepLocked) {
         window.scrubState.locked = true;
@@ -181,6 +184,9 @@ window.playTrack = async function(filename, listContext = 'main') {
 
         if (window.currentPlayingTrack === filename) {
             window.studioBuffer = decodedBuffer;
+            if (typeof window.loadTrackReversibleDataV67 === 'function') {
+                window.loadTrackReversibleDataV67(filename, decodedBuffer);
+            }
             if (window.appConfig && window.appConfig.opt_autoRms && window.preAmpNode && typeof window.computeBufferAutoGain === 'function') {
                 window.preAmpNode.gain.value = 0.6 * window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
             }

@@ -1,5 +1,7 @@
 import os
 import json
+import zlib
+import struct
 import shutil
 import subprocess
 import traceback
@@ -92,9 +94,94 @@ def serve_static(filename):
     return res
 
 
+
+JENNY_REV_FOOTER_FMT = '<4sIII8s'
+JENNY_REV_FOOTER_SIZE = 24  # struct.calcsize('<4sIII8s')
+
+
+def read_jenny_rev_trailer(file_path):
+    """Проверяет наличие капсулы восстановления JENNYV67 в конце .opus файла."""
+    try:
+        if not os.path.isfile(file_path):
+            return None
+        fsize = os.path.getsize(file_path)
+        if fsize <= JENNY_REV_FOOTER_SIZE + 64:
+            return None
+        with open(file_path, 'rb') as f:
+            f.seek(fsize - JENNY_REV_FOOTER_SIZE)
+            footer = f.read(JENNY_REV_FOOTER_SIZE)
+            head_magic, ver, map_len, pocket_len, tail_magic = struct.unpack(JENNY_REV_FOOTER_FMT, footer)
+            if head_magic != b'JREV' or tail_magic != b'JENNYV67':
+                return None
+            total_trailer = map_len + pocket_len + JENNY_REV_FOOTER_SIZE
+            if total_trailer >= fsize:
+                return None
+            audio_end = fsize - total_trailer
+            return {
+                "version": ver,
+                "file_size": fsize,
+                "audio_end": audio_end,
+                "map_offset": audio_end,
+                "map_len": map_len,
+                "pocket_offset": audio_end + map_len,
+                "pocket_len": pocket_len
+            }
+    except Exception:
+        return None
+
+
 @route('/api/media/<filename:path>')
 def serve_media(filename):
+    full_p = os.path.join(MUSIC_DIR, filename)
+    trailer = read_jenny_rev_trailer(full_p)
+    if trailer:
+        with open(full_p, 'rb') as f:
+            clean_audio = f.read(trailer["audio_end"])
+        response.content_type = 'audio/ogg'
+        response.set_header('Content-Length', str(len(clean_audio)))
+        return clean_audio
     return static_file(filename, root=MUSIC_DIR)
+
+
+@route('/api/rev_info/<filename:path>', method='GET')
+def get_rev_info(filename):
+    full_p = os.path.join(MUSIC_DIR, filename)
+    trailer = read_jenny_rev_trailer(full_p)
+    response.content_type = 'application/json'
+    if not trailer:
+        return json.dumps({"status": "ok", "has_rev": False})
+    try:
+        with open(full_p, 'rb') as f:
+            f.seek(trailer["map_offset"])
+            map_zlib = f.read(trailer["map_len"])
+        map_json_str = zlib.decompress(map_zlib).decode('utf-8')
+        return json.dumps({
+            "status": "ok",
+            "has_rev": True,
+            "map_bytes": trailer["map_len"],
+            "pocket_bytes": trailer["pocket_len"],
+            "audio_bytes": trailer["audio_end"],
+            "seam_map": json.loads(map_json_str)
+        })
+    except Exception as e:
+        return json.dumps({"status": "error", "has_rev": False, "error": str(e)})
+
+
+@route('/api/rev_pocket/<filename:path>', method='GET')
+def get_rev_pocket(filename):
+    full_p = os.path.join(MUSIC_DIR, filename)
+    trailer = read_jenny_rev_trailer(full_p)
+    if not trailer or trailer["pocket_len"] <= 0:
+        response.status = 404
+        return "No pocket stream"
+    with open(full_p, 'rb') as f:
+        f.seek(trailer["pocket_offset"])
+        masked = f.read(trailer["pocket_len"])
+    # Снимаем XOR-маску 0xA5, возвращая валидный .opus поток для decodeAudioData
+    unmasked = bytes(b ^ 0xA5 for b in masked)
+    response.content_type = 'audio/ogg'
+    response.set_header('Content-Length', str(len(unmasked)))
+    return unmasked
 
 
 DEFAULT_FORMAT_SLOTS = [
@@ -317,15 +404,51 @@ def export_track():
         cmd1 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'libopus', '-b:a', '128k', final_opus]
         r1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-        if r1.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100:
-            return {"status": "ok", "new_file": new_filename}
+        encoded_ok = (r1.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
+        if not encoded_ok:
+            cmd2 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', '128k', final_opus]
+            r2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            encoded_ok = (r2.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
 
-        # 2. Если сборка FFmpeg использует встроенный нативный кодек opus вместо внешнего libopus
-        cmd2 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', '128k', final_opus]
-        r2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if encoded_ok:
+            rev_badge = ""
+            seam_map_str = request.forms.get('seam_map_json', '').strip()
+            pocket_upload = request.files.get('pocket_audio')
+            if seam_map_str:
+                try:
+                    map_zlib = zlib.compress(seam_map_str.encode('utf-8'), level=9)
+                    pocket_masked = b""
+                    if pocket_upload:
+                        temp_pck_wav = os.path.join(MUSIC_DIR, f"temp_final_pck_{os.getpid()}.wav")
+                        temp_pck_opus = os.path.join(MUSIC_DIR, f"temp_final_pck_{os.getpid()}.opus")
+                        try:
+                            with open(temp_pck_wav, 'wb') as pf:
+                                shutil.copyfileobj(pocket_upload.file, pf)
+                            pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', '128k', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            if pr.returncode != 0 or not os.path.exists(temp_pck_opus):
+                                subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', '128k', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            if os.path.exists(temp_pck_opus) and os.path.getsize(temp_pck_opus) > 32:
+                                with open(temp_pck_opus, 'rb') as pof:
+                                    raw_pck = pof.read()
+                                pocket_masked = bytes(b ^ 0xA5 for b in raw_pck)
+                        finally:
+                            for tp in (temp_pck_wav, temp_pck_opus):
+                                if os.path.exists(tp):
+                                    try: os.remove(tp)
+                                    except Exception: pass
 
-        if r2.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100:
-            return {"status": "ok", "new_file": new_filename}
+                    footer = struct.pack(JENNY_REV_FOOTER_FMT, b'JREV', 67, len(map_zlib), len(pocket_masked), b'JENNYV67')
+                    with open(final_opus, 'ab') as af:
+                        af.write(map_zlib)
+                        if pocket_masked:
+                            af.write(pocket_masked)
+                        af.write(footer)
+
+                    total_kb = (len(map_zlib) + len(pocket_masked)) / 1024.0
+                    rev_badge = f"[🧬 REV: {total_kb:.1f} KB]"
+                except Exception:
+                    pass
+            return {"status": "ok", "new_file": new_filename, "rev_badge": rev_badge}
 
         err_msg = (r1.stderr or r2.stderr or f"Код возврата {r1.returncode}")[-200:]
         response.status = 500
@@ -417,8 +540,24 @@ def get_track_info():
         total_samples = f"{int(dur_seconds * sr_num):,}".replace(",", " ") if dur_seconds > 0 else "—"
 
         response.content_type = 'application/json'
+        rev_capsule_str = "None (Standard stream)"
+        trailer = read_jenny_rev_trailer(full_path)
+        if trailer:
+            try:
+                with open(full_path, 'rb') as rf:
+                    rf.seek(trailer["map_offset"])
+                    smap = json.loads(zlib.decompress(rf.read(trailer["map_len"])).decode('utf-8'))
+                seams_cnt = len(smap.get("seams", []))
+                spd_val = smap.get("spd", 1.0)
+                kb_total = (trailer["map_len"] + trailer["pocket_len"]) / 1024.0
+                pck_kb = trailer["pocket_len"] / 1024.0
+                rev_capsule_str = f"🧬 JENNYV67 (x{spd_val} | {seams_cnt} швов | {kb_total:.1f} KB, карман {pck_kb:.1f} KB)"
+            except Exception:
+                rev_capsule_str = "🧬 JENNYV67 Capsule"
+
         return json.dumps({
             "status": "ok",
+            "rev_capsule": rev_capsule_str,
             "filename": filename,
             "full_path": full_path,
             "folder": MUSIC_DIR,

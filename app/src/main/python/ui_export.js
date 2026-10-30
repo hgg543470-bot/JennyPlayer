@@ -15,7 +15,7 @@ window.exportCurrentTrack = async function() {
         const player = document.getElementById('audioPlayer');
         const cfg = window.appConfig || {};
 
-        let speed = (typeof window.getActiveTargetSpeedV59 === 'function')
+        let userSpeed = (typeof window.getActiveTargetSpeedV59 === 'function')
             ? window.getActiveTargetSpeedV59()
             : ((window.scrubState && (window.scrubState.active || window.scrubState.locked))
                 ? window.scrubState.speed
@@ -23,14 +23,25 @@ window.exportCurrentTrack = async function() {
 
         let isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
-        // Определяем активный режим из 3-позиционного тумблера: 'jbuf' | 'vinyl' | 'webapi'
         let engineMode = cfg.engineModeV62 || (cfg.elasticHoseMode ? 'jbuf' : (cfg.pitchLock ? 'webapi' : 'vinyl'));
         let gearKey = cfg.gearKeyV66 || 'jbuf-lock';
         let isJbuf = (gearKey === 'jbuf-lock');
         let isWebApiPitch = (gearKey === 'web-lock');
         let pitchLock = (isJbuf || isWebApiPitch);
 
-        let sourceBuffer = window.studioBuffer;
+        // Если текущий трек уже содержит восстановленный 1.0x оригинал в RAM и скорость изменена — берём чистый 1.0x исходник!
+        let hasRevMaster = Boolean(
+            window.reconstructedMasterBufferV67 &&
+            window.currentTrackRevMapV67 &&
+            window.currentTrackRevNameV67 === window.currentPlayingTrack &&
+            Math.abs(userSpeed - 1.0) > 0.002
+        );
+
+        let speed = hasRevMaster
+            ? Math.max(0.25, Math.min(3.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * userSpeed))
+            : userSpeed;
+
+        let sourceBuffer = hasRevMaster ? window.reconstructedMasterBufferV67 : window.studioBuffer;
         if (!sourceBuffer) {
             let res = await fetch('/api/media/' + encodeURIComponent(window.currentPlayingTrack));
             if (!res.ok) throw new Error("Не удалось загрузить исходник трека");
@@ -39,24 +50,26 @@ window.exportCurrentTrack = async function() {
         }
 
         if (isRev) {
-            if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
-                window.reversedStudioBuffer = await window.cloneAndReverseBuffer(sourceBuffer);
-            }
-            if (window.reversedStudioBuffer) {
-                sourceBuffer = window.reversedStudioBuffer;
+            if (hasRevMaster) {
+                if (!window.reconstructedReversedBufferV67 && typeof window.cloneAndReverseBuffer === 'function') {
+                    window.reconstructedReversedBufferV67 = await window.cloneAndReverseBuffer(sourceBuffer);
+                }
+                if (window.reconstructedReversedBufferV67) sourceBuffer = window.reconstructedReversedBufferV67;
+            } else {
+                if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+                    window.reversedStudioBuffer = await window.cloneAndReverseBuffer(sourceBuffer);
+                }
+                if (window.reversedStudioBuffer) sourceBuffer = window.reversedStudioBuffer;
             }
         }
 
         let renderSpeed = speed;
 
-        // РЕЖИМ 1: Наш движок ⚡ JBUF 90° (нарезаем буфер в 32-bit Float RAM с сохранением тона и в прямом, и в реверсе!)
-        if (isJbuf && Math.abs(speed - 1.0) > 0.002 && typeof window.buildElasticHoseBufferV46 === 'function') {
-            let tensionPct = (cfg.hoseTensionPct !== undefined) ? cfg.hoseTensionPct : 100;
-            sourceBuffer = window.buildElasticHoseBufferV46(sourceBuffer, speed, tensionPct);
+        // Для JBUF 90° сначала прогоняем чистый 1.0x буфер через OfflineAudioContext (DSP),
+        // а затем нарезаем его и собираем карман обрезков — так громкость и EQ кармана совпадают на 100%!
+        if (isJbuf) {
             renderSpeed = 1.0;
-        }
-        // РЕЖИМ 2: 🌐 Web API Google (тайм-стретч через FFmpeg atempo)
-        else if (isWebApiPitch && Math.abs(speed - 1.0) > 0.002 && !isRev) {
+        } else if (isWebApiPitch && Math.abs(speed - 1.0) > 0.002 && !isRev) {
             let stretchFormData = new FormData();
             stretchFormData.append('filename', window.currentPlayingTrack);
             stretchFormData.append('speed', speed);
@@ -70,7 +83,6 @@ window.exportCurrentTrack = async function() {
             sourceBuffer = await window.audioCtx.decodeAudioData(stretchedArrayBuffer);
             renderSpeed = 1.0;
         }
-        // РЕЖИМ 3: 💿 VINYL — оставляем renderSpeed = speed (меняет темп вместе с высотой тона)
 
         let duration = sourceBuffer.duration / renderSpeed;
         let totalFrames = Math.max(1, Math.ceil(duration * sourceBuffer.sampleRate));
@@ -96,6 +108,7 @@ window.exportCurrentTrack = async function() {
             firNode.normalize = false;
             firNode.buffer = window.createFIRImpulse(offlineCtx, cfg.firSettings.decay);
             let firGain = offlineCtx.createGain();
+            firGain.value = cfg.firSettings.gain || 1.5;
             firGain.gain.value = cfg.firSettings.gain || 1.5;
 
             currentNode.connect(preFirPad);
@@ -219,6 +232,18 @@ window.exportCurrentTrack = async function() {
         sourceNode.start(0);
 
         let renderedBuffer = await offlineCtx.startRendering();
+        let revExportPkg = null;
+
+        if (isJbuf && Math.abs(speed - 1.0) > 0.002 && typeof window.buildElasticHoseBufferV46 === 'function') {
+            let tensionPct = (cfg.hoseTensionPct !== undefined) ? cfg.hoseTensionPct : 100;
+            if (typeof window.buildReversibleExportDataV67 === 'function') {
+                revExportPkg = window.buildReversibleExportDataV67(renderedBuffer, speed, tensionPct, gearKey, isRev);
+            }
+            renderedBuffer = window.buildElasticHoseBufferV46(renderedBuffer, speed, tensionPct);
+        } else if (typeof window.buildReversibleExportDataV67 === 'function' && Math.abs(speed - 1.0) > 0.002) {
+            revExportPkg = window.buildReversibleExportDataV67(sourceBuffer, speed, 100, gearKey, isRev);
+        }
+
         let wavBlob = bufferToWav(renderedBuffer, renderedBuffer.length);
 
         let formData = new FormData();
@@ -228,6 +253,12 @@ window.exportCurrentTrack = async function() {
         formData.append('is_reversed', isRev ? 'true' : 'false');
         formData.append('pitch_lock', pitchLock ? 'true' : 'false');
         formData.append('engine_mode', engineMode);
+        if (revExportPkg && revExportPkg.seamMapJson) {
+            formData.append('seam_map_json', revExportPkg.seamMapJson);
+        }
+        if (revExportPkg && revExportPkg.pocketWavBlob) {
+            formData.append('pocket_audio', revExportPkg.pocketWavBlob, 'pocket.wav');
+        }
 
         let res = await fetch('/api/export', { method: 'POST', body: formData });
         let json = await res.json();
@@ -235,7 +266,7 @@ window.exportCurrentTrack = async function() {
         if (res.ok && json.status === 'ok') {
             if (typeof window.fetchData === 'function') window.fetchData();
             if (typeof window.showToast === 'function') {
-                window.showToast("✅ Сохранено: " + json.new_file);
+                window.showToast("✅ Сохранено: " + json.new_file + (json.rev_badge ? " " + json.rev_badge : ""));
             }
         } else {
             throw new Error(json.error || "Ошибка кодирования в OPUS");

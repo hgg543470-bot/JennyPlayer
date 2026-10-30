@@ -181,6 +181,7 @@ window.openTrackInfoModal = async function(filename) {
                 <div class="cp-row"><span class="cp-key">Sample Format</span><span class="cp-val">${info.sample_fmt}</span></div>
                 <div class="cp-row"><span class="cp-key">Duration</span><span class="cp-val">${info.duration}</span></div>
                 <div class="cp-row"><span class="cp-key">Total Samples</span><span class="cp-val">${info.total_samples} PCM frames</span></div>
+                <div class="cp-row"><span class="cp-key">Reversible DNA</span><span class="cp-val cp-accent-green">${info.rev_capsule || "—"}</span></div>
             </div>
 
             <div class="cp-section-title">⚡ JENNY DSP PIPELINE STATE</div>
