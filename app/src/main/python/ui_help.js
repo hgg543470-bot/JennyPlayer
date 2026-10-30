@@ -6100,3 +6100,32 @@ window.showWebApiReverseConflictModalV70 = function(requestedWebGear) {
         return typeof prevSync === 'function' ? prevSync(isDraggingArc) : undefined;
     };
 })();
+
+
+// ⏱️ ПАТЧ V70.4: СИНХРОНИЗАЦИЯ ШТАТНОГО ТАПА ПЕРЕМОТКИ С RAM-БУФЕРОМ (БЕЗ ПЕРЕХВАТА ЖЕСТОВ ТАЙМЛАЙНА)
+(function initRamSeekSyncV70() {
+    const bindSeekHook = () => {
+        const player = document.getElementById('audioPlayer');
+        if (!player || player._hasRamSeekHookV70) return;
+        player._hasRamSeekHookV70 = true;
+
+        player.addEventListener('seeked', () => {
+            const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+            if (window.studioSourceNode || gKey === 'jbuf-shift' || gKey === 'vinyl-shift' || gKey === 'jbuf-lock') {
+                if (window.studioSourceNode) {
+                    window.studioSourceNode.onended = null;
+                    try { window.studioSourceNode.stop(); } catch (e) {}
+                    try { window.studioSourceNode.disconnect(); } catch (e) {}
+                    window.studioSourceNode = null;
+                    window.isStudioPlaying = false;
+                }
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+            }
+        });
+    };
+
+    setTimeout(bindSeekHook, 200);
+    setTimeout(bindSeekHook, 1000);
+})();
