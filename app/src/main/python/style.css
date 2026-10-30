@@ -1387,7 +1387,7 @@ input[type="checkbox"]:checked::before { background: var(--accent-green) !import
 }
 .sticky-top { height: 140px !important; padding: 7px 12px 5px 12px !important; overflow: hidden !important; }
 .middle-list-container { top: 140px !important; }
-.modal-overlay { top: 102px !important; }
+.modal-overlay { top: 140px !important; }
 .jenny-pl-bar-wrap-v71 {
     display: flex !important; flex-direction: row !important; align-items: center !important;
     gap: 6px !important; margin-top: 5px !important; width: 100% !important;

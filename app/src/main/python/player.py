@@ -519,10 +519,16 @@ def save_config_all():
             try:
                 with open(PRESET_FILE, 'r', encoding='utf-8') as old_f:
                     old_data = json.load(old_f)
-                if "customMusicDir" in old_data and "customMusicDir" not in data:
-                    data["customMusicDir"] = old_data["customMusicDir"]
+                for k in ("customMusicDir", "savedFolders", "activeFolders"):
+                    if k in old_data and k not in data:
+                        data[k] = old_data[k]
             except Exception:
                 pass
+        if ACTIVE_MUSIC_DIRS:
+            data["activeFolders"] = ACTIVE_MUSIC_DIRS
+            data["customMusicDir"] = ACTIVE_MUSIC_DIRS[0]
+        if SAVED_MUSIC_DIRS:
+            data["savedFolders"] = SAVED_MUSIC_DIRS
         os.makedirs(os.path.dirname(PRESET_FILE), exist_ok=True)
         with open(PRESET_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=4)

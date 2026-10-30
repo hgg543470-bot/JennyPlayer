@@ -311,7 +311,7 @@ window.updateTopSearchOrMonitorBar = function() {
     } else {
         searchInput.style.display = 'none';
         if (ceilOn) {
-            barWrap.style.display = ''; barWrap.style.paddingTop = '12px'; monEl.style.display = 'block';
+            barWrap.style.display = ''; barWrap.style.paddingTop = '2px'; monEl.style.display = 'block';
             monEl.innerHTML = `<span style="color:#3fb950;font-weight:bold;">🛡️ ${window.tr('Авто-Потолок', 'Auto-Ceiling')}: ${totalTxt} dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">${detailsTxt}</span>`;
         } else { monEl.style.display = 'none'; barWrap.style.display = 'none'; }
     }
@@ -5042,8 +5042,8 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
             : window.reconstructedMasterBufferV67;
     } else {
         rawBuf = isRev
-            ? (window.reversedStudioBuffer || window.currentStudioBuffer)
-            : window.currentStudioBuffer;
+            ? (window.reversedStudioBuffer || window.studioBuffer)
+            : window.studioBuffer;
     }
 
     // Если RAM-буфер ещё декодируется, временно крутим HTML5 поток со сдвигом тона

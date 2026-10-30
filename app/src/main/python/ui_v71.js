@@ -722,3 +722,157 @@ setTimeout(() => {
     window.mountPlaylistStripDOMV71();
     if (typeof window.fetchData === 'function') window.fetchData();
 }, 200);
+
+
+// === V71.2 SINGLE AUDIO GUARD & MULTI-FOLDER PERSISTENCE ===
+window._activeBufferSourcesV71 = new Set();
+
+(function installSingleAudioSourceGuardV71() {
+    const patchCtx = () => {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC || AC.prototype._jennyGuardedV71) return;
+        AC.prototype._jennyGuardedV71 = true;
+        const origCreate = AC.prototype.createBufferSource;
+        AC.prototype.createBufferSource = function() {
+            const node = origCreate.apply(this, arguments);
+            const origStart = node.start;
+            node.start = function() {
+                // Перед запуском любого нового RAM-буфера глушим все предыдущие запущенные буферы!
+                window._activeBufferSourcesV71.forEach(oldNode => {
+                    if (oldNode !== node) {
+                        oldNode.onended = null;
+                        try { oldNode.stop(); } catch (e) {}
+                        try { oldNode.disconnect(); } catch (e) {}
+                    }
+                });
+                window._activeBufferSourcesV71.clear();
+                window._activeBufferSourcesV71.add(node);
+                if (window.htmlGain && window.htmlGain.gain) {
+                    window.htmlGain.gain.value = 0.0;
+                }
+                return origStart.apply(this, arguments);
+            };
+            return node;
+        };
+    };
+    patchCtx();
+    setTimeout(patchCtx, 100);
+})();
+
+// Переопределяем engageDirectRamPitchShiftV70 для идеально чистой работы 2-й передачи и Винила
+window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
+    const player = document.getElementById('audioPlayer');
+    if (!player || !window.audioCtx) return false;
+
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    const hasRev67 = Boolean(
+        window.reconstructedMasterBufferV67 &&
+        window.currentTrackRevMapV67 &&
+        window.currentTrackRevNameV67 === window.currentPlayingTrack
+    );
+
+    let rawBuf = hasRev67
+        ? (isRev ? (window.reconstructedReversedBufferV67 || window.reconstructedMasterBufferV67) : window.reconstructedMasterBufferV67)
+        : (isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer);
+
+    if (!rawBuf) {
+        window._activeBufferSourcesV71.forEach(n => {
+            n.onended = null;
+            try { n.stop(); } catch (e) {}
+            try { n.disconnect(); } catch (e) {}
+        });
+        window._activeBufferSourcesV71.clear();
+        window.studioSourceNode = null;
+        window.isStudioPlaying = false;
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+        player.preservesPitch = false;
+        player.mozPreservesPitch = false;
+        player.webkitPreservesPitch = false;
+        if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+            try { player.playbackRate = targetSpd; } catch (e) {}
+        }
+        return false;
+    }
+
+    if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+    player.preservesPitch = false;
+    if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+        try { player.playbackRate = targetSpd; } catch (e) {}
+    }
+
+    const isVinyl = (gearKey === 'vinyl-shift');
+    const effSpd = hasRev67
+        ? Math.max(0.25, Math.min(3.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
+        : targetSpd;
+
+    if (!player.paused) {
+        const needNewNode = !window.studioSourceNode ||
+                            !window.isStudioPlaying ||
+                            window.studioSourceNode.buffer !== rawBuf ||
+                            Boolean(window.studioSourceNode._isHoseSpliced);
+        if (needNewNode) {
+            if (window.studioSourceNode) {
+                window.studioSourceNode.onended = null;
+                try { window.studioSourceNode.stop(); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+            }
+            window.studioSourceNode = window.audioCtx.createBufferSource();
+            window.studioSourceNode._isHoseSpliced = false;
+            window.studioSourceNode.buffer = rawBuf;
+            window.studioSourceNode.playbackRate.value = effSpd;
+            window.studioSourceNode.connect(window.inputMixer);
+
+            let offset = player.currentTime || 0;
+            if (!isFinite(offset) || offset < 0) offset = 0;
+            if (offset >= rawBuf.duration) offset = Math.max(0, rawBuf.duration - 0.05);
+
+            window.studioSourceNode.start(0, offset);
+            window.isStudioPlaying = true;
+        } else if (window.studioSourceNode && window.studioSourceNode.playbackRate) {
+            const now = window.audioCtx.currentTime;
+            if (isVinyl) {
+                window.studioSourceNode.playbackRate.setTargetAtTime(effSpd, now, 0.085);
+            } else {
+                window.studioSourceNode.playbackRate.setValueAtTime(effSpd, now);
+            }
+        }
+    } else {
+        window._activeBufferSourcesV71.forEach(n => {
+            n.onended = null;
+            try { n.stop(); } catch (e) {}
+            try { n.disconnect(); } catch (e) {}
+        });
+        window._activeBufferSourcesV71.clear();
+        window.studioSourceNode = null;
+        window.isStudioPlaying = false;
+    }
+
+    const badge = document.getElementById('hoseLiveTelemetryV44');
+    if (badge) {
+        badge.style.color = isVinyl ? '#d2a8ff' : '#3fb950';
+        badge.innerText = isVinyl
+            ? `💿 ВИНИЛ [RAM Platter]: x${effSpd.toFixed(2)} (Инерция 85мс)`
+            : `⚡ J Buf RAM [PITCH SHIFT]: x${effSpd.toFixed(2)} (Прямой 32-bit буфер)`;
+    }
+    return true;
+};
+
+// Синхронизируем activeFolders в window.appConfig при каждом fetchData, чтобы 246 треков никогда не сбрасывались
+const _prevFetchV71 = window.fetchData;
+window.fetchData = async function() {
+    await _prevFetchV71.apply(this, arguments);
+    if (window.lastData) {
+        window.appConfig = window.appConfig || {};
+        if (Array.isArray(window.lastData.active_folders)) {
+            window.appConfig.activeFolders = window.lastData.active_folders;
+        }
+        if (Array.isArray(window.lastData.saved_folders)) {
+            window.appConfig.savedFolders = window.lastData.saved_folders;
+        }
+        localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    }
+    if (typeof window.updateTrackListPlayIcons === 'function') {
+        window.updateTrackListPlayIcons();
+    }
+};
+

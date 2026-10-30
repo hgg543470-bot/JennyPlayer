@@ -94,7 +94,7 @@ window.playTrack = async function(filename, listContext = 'main') {
 
     window.currentPlayingTrack = filename;
     window.currentListContext = listContext;
-    if(typeof window.fetchData === 'function') window.fetchData();
+    if(typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
 
     if (listContext === 'fav') {
         window.currentTrackList = window.favorites;
@@ -180,7 +180,23 @@ window.playTrack = async function(filename, listContext = 'main') {
 
         // Всегда декодируем PCM-буфер в фоне: это даёт живой осциллограф в любом режиме и 0 мс ожидание при включении RAM/Шланга!
         let arrayBuffer = await blob.arrayBuffer();
-        let decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
+        let decodedBuffer = null;
+        try {
+            if (blob.size <= 65 * 1024 * 1024) {
+                decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
+            }
+        } catch (decErr) {
+            decodedBuffer = null;
+        }
+        if (!decodedBuffer) {
+            if (window.currentPlayingTrack === filename) {
+                if (window.htmlGain) window.htmlGain.gain.value = 1.0;
+                if (player && player.paused) player.play().catch(e => {});
+                if (titleEl) titleEl.innerText = filename;
+                if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+            }
+            return;
+        }
 
         if (window.currentPlayingTrack === filename) {
             window.studioBuffer = decodedBuffer;
@@ -210,7 +226,7 @@ window.playTrack = async function(filename, listContext = 'main') {
         }
         if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
     } catch(error) {
-        if(titleEl) titleEl.innerText = "❌ Ошибка загрузки";
+        if(window.currentPlayingTrack === filename && titleEl) titleEl.innerText = "❌ Ошибка загрузки";
     }
 };
 
