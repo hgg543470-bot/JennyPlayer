@@ -315,13 +315,14 @@ window.fetchData = async function() {
 // 🛠️ ПАТЧ V68: ПАНЕЛЬ БЫСТРЫХ КНОПОК ПРИ РАСКРЫТИИ ИМЕНИ ТРЕКА (ORIG / PATH / 3 СЛОТА)
 
 window.parseDerivedTrackInfoV68 = function(filename) {
-    if (!filename || typeof filename !== 'string') return { isDerived: false, baseStem: '' };
-    const lastDot = filename.lastIndexOf('.');
-    const origStem = lastDot > 0 ? filename.substring(0, lastDot) : filename;
+    if (!filename || typeof filename !== 'string') return { isDerived: false, baseStem: '', origStem: '' };
+    const cleanName = filename.replace(/^[♪♫🎵🎶\s]+/, '').trim();
+    const lastDot = cleanName.lastIndexOf('.');
+    const origStem = lastDot > 0 ? cleanName.substring(0, lastDot) : cleanName;
     let stem = origStem;
 
-    // Регулярка для снятия всех суффиксов экспорта скорости, движков и эффектов
-    const suffixRe = /(?:_x\d+(?:[.,]\d+)?(?:_(?:slow|fast))?(?:_(?:jbuf90|jbuf|vinyl|webapi|pitch|shift|lock|rev))*|_(?:slow|fast)(?:_(?:jbuf90|jbuf|vinyl|webapi|pitch|rev))*|_(?:jbuf90|vinyl|webapi)|_rev(?:ersed)?|_fx|_eq|_dsp|_master)+$/i;
+    // Снимаем любые суффиксы экспортов (_x0.5_slow_jbuf90, _x1.07_fast_vinyl, _rev и т.д.)
+    const suffixRe = /(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf|vinyl|webapi)|_rev(?:ersed)?|_fx|_eq|_dsp|_master)+$/i;
 
     let prev = null;
     while (stem && stem !== prev) {
@@ -333,7 +334,8 @@ window.parseDerivedTrackInfoV68 = function(filename) {
     return {
         isDerived: isDerived,
         baseStem: stem,
-        origStem: origStem
+        origStem: origStem,
+        cleanName: cleanName
     };
 };
 
@@ -358,15 +360,42 @@ window.copyTextToClipboardV68 = async function(text) {
     return ok;
 };
 
-window.extractRowFilenameV68 = function(trackItem) {
-    if (!trackItem) return '';
-    if (trackItem.dataset && trackItem.dataset.filename) return trackItem.dataset.filename;
-    const titleEl = trackItem.querySelector('.track-title, .track-name');
-    if (!titleEl) return '';
-    let raw = (titleEl.textContent || '').trim();
-    // Убираем декоративную нотку в начале, если она внутри того же узла
-    raw = raw.replace(/^[♪♫🎵🎶\s]+/, '').trim();
-    return raw;
+window.getTrackRowPartsV68 = function(rowEl) {
+    if (!rowEl) return { titleEl: null, filename: '' };
+    let titleEl = rowEl.querySelector('.track-title, .track-name, [class*="title"], [class*="name"]');
+    if (!titleEl) {
+        for (const ch of rowEl.children) {
+            if (ch.classList && ch.classList.contains('track-expand-actions-v68')) continue;
+            if (ch.tagName === 'DIV' || ch.tagName === 'SPAN') {
+                const txt = (ch.textContent || '').trim();
+                if (txt.length > 3) {
+                    titleEl = ch;
+                    break;
+                }
+            }
+        }
+    }
+    let filename = (rowEl.dataset && rowEl.dataset.filename) ? rowEl.dataset.filename : '';
+    if (!filename && titleEl) {
+        filename = (titleEl.getAttribute('data-filename') || titleEl.getAttribute('title') || titleEl.textContent || '').trim();
+    }
+    filename = filename.replace(/^[♪♫🎵🎶\s]+/, '').trim();
+    return { titleEl, filename };
+};
+
+window.isTrackRowExpandedV68 = function(rowEl, titleEl) {
+    if (!rowEl || !titleEl) return false;
+    if (titleEl.classList.contains('expanded') || rowEl.classList.contains('expanded')) return true;
+    if (titleEl.style && (titleEl.style.whiteSpace === 'normal' || titleEl.style.whiteSpace === 'pre-wrap' || titleEl.style.whiteSpace === 'break-spaces')) return true;
+    const cs = window.getComputedStyle(titleEl);
+    if (cs && cs.whiteSpace && cs.whiteSpace !== 'nowrap') return true;
+    if (titleEl.offsetHeight > 30) return true;
+    return false;
+};
+
+window.getAllTrackRowsV68 = function() {
+    const selectors = '#trackList .track-item, #playlist .track-item, .track-list .track-item, .track-item, .track-row';
+    return Array.from(document.querySelectorAll(selectors));
 };
 
 window.scrollToOriginalTrackV68 = function(derivedFilename, ev) {
@@ -376,15 +405,15 @@ window.scrollToOriginalTrackV68 = function(derivedFilename, ev) {
     const targetLower = info.baseStem.toLowerCase();
 
     const findMatchingRow = () => {
-        const rows = Array.from(document.querySelectorAll('#trackList .track-item'));
+        const rows = window.getAllTrackRowsV68();
         let exactOrigRow = null;
         let prefixOrigRow = null;
         let fallbackRow = null;
 
         for (const r of rows) {
             if (r.style.display === 'none') continue;
-            const fname = window.extractRowFilenameV68(r);
-            if (!fname || fname === derivedFilename) continue;
+            const { filename: fname } = window.getTrackRowPartsV68(r);
+            if (!fname || fname === info.cleanName) continue;
             const parsed = window.parseDerivedTrackInfoV68(fname);
             const stemLower = parsed.origStem.toLowerCase();
 
@@ -392,7 +421,7 @@ window.scrollToOriginalTrackV68 = function(derivedFilename, ev) {
                 exactOrigRow = r;
                 break;
             }
-            if (!parsed.isDerived && stemLower.startsWith(targetLower)) {
+            if (!parsed.isDerived && (stemLower.startsWith(targetLower) || targetLower.startsWith(stemLower))) {
                 if (!prefixOrigRow) prefixOrigRow = r;
             }
             if (parsed.baseStem.toLowerCase() === targetLower && !parsed.isDerived) {
@@ -404,19 +433,19 @@ window.scrollToOriginalTrackV68 = function(derivedFilename, ev) {
 
     let targetRow = findMatchingRow();
 
-    // Если оригинал скрыт текущим фильтром в строке поиска — сбрасываем фильтр и ищем снова
     if (!targetRow) {
-        const searchInp = document.getElementById('searchInput');
+        const searchInp = document.getElementById('searchInput') || document.querySelector('input[type="text"], input[type="search"]');
         if (searchInp && searchInp.value.trim() !== '') {
             searchInp.value = '';
             searchInp.dispatchEvent(new Event('input', { bubbles: true }));
+            if (typeof window.renderTracks === 'function') window.renderTracks();
             if (typeof window.renderPlaylist === 'function') window.renderPlaylist();
             targetRow = findMatchingRow();
         }
     }
 
     if (targetRow) {
-        const origName = window.extractRowFilenameV68(targetRow);
+        const { filename: origName } = window.getTrackRowPartsV68(targetRow);
         targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
         targetRow.classList.remove('orig-highlight-pulse-v68');
         void targetRow.offsetWidth;
@@ -435,10 +464,11 @@ window.scrollToOriginalTrackV68 = function(derivedFilename, ev) {
 
 window.copyTrackFullPathV68 = async function(filename, ev) {
     if (ev) ev.stopPropagation();
-    if (!filename) return;
-    let fullPath = filename;
+    const cleanName = (filename || '').replace(/^[♪♫🎵🎶\s]+/, '').trim();
+    if (!cleanName) return;
+    let fullPath = cleanName;
     try {
-        const res = await fetch('/api/full_path/' + encodeURIComponent(filename));
+        const res = await fetch('/api/full_path/' + encodeURIComponent(cleanName));
         if (res.ok) {
             const data = await res.json();
             if (data && data.full_path) fullPath = data.full_path;
@@ -451,23 +481,19 @@ window.copyTrackFullPathV68 = async function(filename, ev) {
     }
 };
 
-window.ensureTrackExpandBarV68 = function(trackItem) {
-    if (!trackItem) return;
-    const titleEl = trackItem.querySelector('.track-title, .track-name');
-    const isExpanded = Boolean(
-        (titleEl && titleEl.classList.contains('expanded')) ||
-        trackItem.classList.contains('expanded')
-    );
+window.ensureTrackExpandBarV68 = function(rowEl) {
+    if (!rowEl) return;
+    const { titleEl, filename } = window.getTrackRowPartsV68(rowEl);
+    if (!titleEl || !filename) return;
 
-    if (!isExpanded) {
-        trackItem.classList.remove('expanded-row-v68');
+    const expanded = window.isTrackRowExpandedV68(rowEl, titleEl);
+    if (!expanded) {
+        rowEl.classList.remove('expanded-row-v68');
         return;
     }
 
-    const filename = window.extractRowFilenameV68(trackItem);
     const info = window.parseDerivedTrackInfoV68(filename);
-
-    let bar = trackItem.querySelector('.track-expand-actions-v68');
+    let bar = rowEl.querySelector('.track-expand-actions-v68');
     if (!bar) {
         bar = document.createElement('div');
         bar.className = 'track-expand-actions-v68';
@@ -479,8 +505,7 @@ window.ensureTrackExpandBarV68 = function(trackItem) {
             btnOrig.type = 'button';
             btnOrig.className = 'track-act-btn-v68 btn-orig-v68';
             btnOrig.innerText = 'ORIG';
-            btnOrig.title = 'Промотать к оригиналу';
-            btnOrig.addEventListener('click', (e) => window.scrollToOriginalTrackV68(filename, e));
+            btnOrig.addEventListener('click', (e) => window.scrollToOriginalTrackV68(info.cleanName, e));
             bar.appendChild(btnOrig);
         }
 
@@ -488,8 +513,7 @@ window.ensureTrackExpandBarV68 = function(trackItem) {
         btnPath.type = 'button';
         btnPath.className = 'track-act-btn-v68 btn-path-v68';
         btnPath.innerText = 'PATH';
-        btnPath.title = 'Скопировать полный путь';
-        btnPath.addEventListener('click', (e) => window.copyTrackFullPathV68(filename, e));
+        btnPath.addEventListener('click', (e) => window.copyTrackFullPathV68(info.cleanName, e));
         bar.appendChild(btnPath);
 
         for (let i = 1; i <= 3; i++) {
@@ -506,20 +530,21 @@ window.ensureTrackExpandBarV68 = function(trackItem) {
             bar.appendChild(btnStub);
         }
 
-        trackItem.appendChild(bar);
+        rowEl.appendChild(bar);
     }
 
-    trackItem.classList.add('expanded-row-v68');
+    rowEl.classList.add('expanded-row-v68');
+};
+
+window.syncAllTrackExpandBarsV68 = function() {
+    window.getAllTrackRowsV68().forEach(r => window.ensureTrackExpandBarV68(r));
 };
 
 (function initTrackExpandObserverV68() {
-    document.addEventListener('click', (e) => {
-        const trackItem = e.target && e.target.closest ? e.target.closest('.track-item') : null;
-        if (!trackItem) return;
-        setTimeout(() => {
-            document.querySelectorAll('#trackList .track-item').forEach(row => {
-                window.ensureTrackExpandBarV68(row);
-            });
-        }, 10);
-    }, true);
+    const triggerSync = () => {
+        setTimeout(window.syncAllTrackExpandBarsV68, 15);
+        setTimeout(window.syncAllTrackExpandBarsV68, 80);
+    };
+    document.addEventListener('click', triggerSync, false);
+    document.addEventListener('touchend', triggerSync, { passive: true });
 })();

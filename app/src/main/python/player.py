@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import traceback
 import bottle
-from bottle import route, run, post, response, static_file, request
+from bottle import hook, route, run, post, response, static_file, request
 
 bottle.BaseRequest.MEMFILE_MAX = 150 * 1024 * 1024
 
@@ -74,6 +74,14 @@ def build_atempo_filter(speed):
         speed /= 0.5
     filters.append(f"atempo={speed:.6f}")
     return ",".join(filters)
+
+
+
+@hook('after_request')
+def disable_webview_cache():
+    response.set_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    response.set_header('Pragma', 'no-cache')
+    response.set_header('Expires', '0')
 
 
 @route('/')
