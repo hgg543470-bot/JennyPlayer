@@ -327,23 +327,15 @@ window.playTrack = async function(filename, listContext = 'main') {
         let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig.pitchLock === true);
         let decodedBuffer = null;
 
-        // Синхронный старт <audio> ДО первого await, чтобы часы никогда не замирали на 0:00 в фоне!
-        if (player) {
-            player.src = '/api/media/' + encodeURIComponent(filename);
-            player.currentTime = 0;
-            player.playbackRate = targetSpeed;
-            player.preservesPitch = true;
-            player.play().catch(e => {});
-        }
-
-        // Мгновенный возврат из RAM-кэша при перещёлкивании треков Вперёд <-> Назад (0 мс ожидания!)
         window._ramTrackHistoryV71 = window._ramTrackHistoryV71 || [];
         let cachedEntry = window._ramTrackHistoryV71.find(x => x.name === filename && x.buf);
 
         if (cachedEntry) {
             decodedBuffer = cachedEntry.buf;
             if (player) {
-                                player.playbackRate = targetSpeed;
+                player.src = cachedEntry.blobUrl || ('/api/media/' + encodeURIComponent(filename));
+                player.currentTime = 0;
+                player.playbackRate = targetSpeed;
                 player.preservesPitch = true;
                 player.play().catch(e => {});
             }
@@ -354,14 +346,15 @@ window.playTrack = async function(filename, listContext = 'main') {
                 if (mr.ok) metaCheck = await mr.json();
             } catch (e) {}
 
-            // Файлы до 115 МБ (включая 62-минутные выпуски) декодируем нативным C++ decodeAudioData за 2 секунды!
             if (!metaCheck.size || metaCheck.size <= 115 * 1024 * 1024) {
                 const response = await fetch('/api/media/' + encodeURIComponent(filename));
                 const blob = await response.blob();
                 const blobUrl = URL.createObjectURL(blob);
                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
                 if (player) {
-                                        player.playbackRate = targetSpeed;
+                    player.src = blobUrl;
+                    player.currentTime = 0;
+                    player.playbackRate = targetSpeed;
                     player.preservesPitch = true;
                     player.play().catch(e => {});
                 }
@@ -379,10 +372,10 @@ window.playTrack = async function(filename, listContext = 'main') {
                     decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
                 }
             } else {
-                // Сверхтяжёлые 3-часовые гиганты (>115 МБ) сразу пускаем через быстрый блочный декодер с мгновенным стартом 1-го окна
                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
                 if (player) {
                     player.src = '/api/media/' + encodeURIComponent(filename);
+                    player.currentTime = 0;
                     player.playbackRate = targetSpeed;
                     player.preservesPitch = true;
                     player.play().catch(e => {});

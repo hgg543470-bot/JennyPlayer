@@ -949,7 +949,7 @@ window.engageInstantHorizonJbufLockV71 = function(isDraggingArc) {
         : 100;
     const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
-    const curSec = player.currentTime || 0;
+    const curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : (player.currentTime || 0);
     const WIN_SEC = 45.0; // Нарезаем 45 секунд вперёд — занимает всего ~5 мс!
     const rawWindowBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, WIN_SEC, isRev);
     if (!rawWindowBuf) return false;
@@ -1022,7 +1022,7 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
     if (isRev && window.studioBuffer && window.studioBuffer.duration > 900 && !window.reversedStudioBuffer) {
         const player = document.getElementById('audioPlayer');
         if (player && window.audioCtx) {
-            const curSec = player.currentTime || 0;
+            const curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : (player.currentTime || 0);
             const winBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, 60.0, true);
             if (winBuf) {
                 if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
@@ -1142,7 +1142,7 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
         window._horizonSliceTimerV71 = null;
     }
 
-    const curSec = player.currentTime || 0;
+    const curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : (player.currentTime || 0);
     const WIN_SEC = 45.0;
     const rawWindowBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, WIN_SEC, isRev);
     if (!rawWindowBuf) return false;
@@ -1304,7 +1304,7 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
         ? window.getActiveTargetSpeedV59()
         : (player.playbackRate || 1.0);
     const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
-    const curSec = player.currentTime || 0;
+    const curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : (player.currentTime || 0);
     const refDur = (player && isFinite(player.duration) && player.duration > 0)
         ? player.duration
         : (window.studioBuffer ? window.studioBuffer.duration : 0);
@@ -2565,130 +2565,36 @@ window.locateCurrentPlayingTrackV74_1 = function() {
     });
 })();
 
-// 2. Синхронизация таймера и состояния Play/Pause при фоновом переключении трека (когда поёт studioSourceNode в WebAudio)
+// 2. Перехватчики Play/Pause, кликов по таймлайну и точного разворота Реверса (V75)
 window._studioClockV74_1 = {
     active: false,
     startCtxTime: 0,
-    startTrackSec: 0,
-    lastAdvTime: 0
+    startTrackSec: 0
+};
+window._pendingSeekTargetV75 = null;
+
+// Запоминаем точную целевую секунду при перемотке или развороте Реверса,
+// чтобы даже если <audio> ещё ищет фрейм, RAM-буфер сразу стартовал с правильной секунды!
+window.setExactPlaybackPositionV75 = function(targetSec) {
+    const player = document.getElementById('audioPlayer');
+    const cleanSec = Math.max(0, parseFloat(targetSec) || 0);
+    window._pendingSeekTargetV75 = { sec: cleanSec, ts: performance.now() };
+    if (window._studioClockV74_1) {
+        window._studioClockV74_1.startTrackSec = cleanSec;
+        window._studioClockV74_1.startCtxTime = window.audioCtx ? window.audioCtx.currentTime : 0;
+    }
+    if (player) {
+        try { player.currentTime = cleanSec; } catch (e) {}
+    }
 };
 
-(function installWebAudioClockWatchdogV74_1() {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC && !AC.prototype._clockHookedV74_1) {
-        AC.prototype._clockHookedV74_1 = true;
-        const prevStart = AC.prototype.createBufferSource;
-        AC.prototype.createBufferSource = function() {
-            const node = prevStart.apply(this, arguments);
-            const origNodeStart = node.start;
-            node.start = function(when, offset) {
-                const player = document.getElementById('audioPlayer');
-                window._studioClockV74_1.active = true;
-                window._studioClockV74_1.startCtxTime = (window.audioCtx ? window.audioCtx.currentTime : 0);
-                window._studioClockV74_1.startTrackSec = (player && isFinite(player.currentTime)) ? player.currentTime : (offset || 0);
-                return origNodeStart.apply(this, arguments);
-            };
-            return node;
-        };
-    }
-
-    // Надёжный togglePlay: если studioSourceNode играет, а <audio> заснул в фоне на паузе — ставим на паузу обоих!
-    window.togglePlay = function() {
-        const player = document.getElementById('audioPlayer');
-        if (!player || !player.src) {
-            if (window.topTrack) window.playTrack(window.topTrack, 'main');
-            return;
-        }
-        if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
-
-        const isActuallyPlaying = (!player.paused) || Boolean(window.isStudioPlaying && window.studioSourceNode);
-        if (isActuallyPlaying) {
-            if (window.studioSourceNode) {
-                window.studioSourceNode.onended = null;
-                try { window.studioSourceNode.stop(); } catch (e) {}
-                try { window.studioSourceNode.disconnect(); } catch (e) {}
-                window.studioSourceNode = null;
-            }
-            window.isStudioPlaying = false;
-            window._studioClockV74_1.active = false;
-            player.pause();
-            const btn = document.getElementById('playPauseBtn');
-            if (btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
-        } else {
-            player.play().then(() => {
-                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
-                    window.syncMasterPlaybackEngineV59(false);
-                }
-            }).catch(() => {
-                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
-                    window.syncMasterPlaybackEngineV59(false);
-                }
-            });
-        }
-    };
-
-    // Фоновый сторож таймера: если studioSourceNode поёт, а <audio> в фоне застрял на 0:00 — двигаем время и UI!
-    setInterval(() => {
-        const player = document.getElementById('audioPlayer');
-        if (!player || !window.isStudioPlaying || !window.studioSourceNode || !window.audioCtx) return;
-
-        const dur = (isFinite(player.duration) && player.duration > 0)
-            ? player.duration
-            : (window.studioBuffer ? window.studioBuffer.duration : 0);
-        if (dur <= 0) return;
-
-        // Если <audio> случайно встал на паузу в фоне, пока играет studioSourceNode — будим его или ведём часы сами
-        if (player.paused) {
-            const spd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
-            const elapsedCtx = Math.max(0, window.audioCtx.currentTime - window._studioClockV74_1.startCtxTime);
-            const estCur = Math.min(dur, window._studioClockV74_1.startTrackSec + elapsedCtx * spd);
-            try { player.currentTime = estCur; } catch (e) {}
-            player.play().catch(() => {});
-
-            const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
-            if (typeof window.updateProgressUI === 'function') {
-                window.updateProgressUI(estCur, dur, isRev);
-            }
-            const btn = document.getElementById('playPauseBtn');
-            if (btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
-            if (estCur >= dur - 0.15) {
-                window.isStudioPlaying = false;
-                if (typeof window.playNextTrack === 'function') window.playNextTrack();
-            }
-        }
-    }, 300);
-})();
-
-
-// === V74.2 GEARBOX HARDWARE CLOCK LOCK (SEEK-SAFE VERSION V74.8) ===
-
-// При любом клике по таймлайну (seeking / seeked) сразу обновляем базовую точку часов WebAudio,
-// чтобы сторож НИКОГДА не откатывал перемотку назад!
-(function bindSeekClockResetV74_8() {
-    const player = document.getElementById('audioPlayer');
-    if (!player || player._seekClockResetV74_8) return;
-    player._seekClockResetV74_8 = true;
-
-    const syncClockToPlayer = () => {
-        if (window._studioClockV74_1 && isFinite(player.currentTime)) {
-            window._studioClockV74_1.startTrackSec = player.currentTime;
-            window._studioClockV74_1.startCtxTime = window.audioCtx ? window.audioCtx.currentTime : 0;
-            window._lastUserSeekTsV74_8 = performance.now();
-        }
-    };
-
-    player.addEventListener('seeking', syncClockToPlayer, { passive: true });
-    player.addEventListener('seeked', syncClockToPlayer, { passive: true });
-})();
-
-// Возвращает текущую секунду: всегда доверяет player.currentTime, кроме случая, когда <audio> заснул в фоне на 0:00
 window.getTruePlaybackTimeV74_2 = function() {
     const player = document.getElementById('audioPlayer');
+    if (window._pendingSeekTargetV75 && (performance.now() - window._pendingSeekTargetV75.ts < 300)) {
+        return window._pendingSeekTargetV75.sec;
+    }
     const pTime = (player && isFinite(player.currentTime)) ? player.currentTime : 0;
     const clk = window._studioClockV74_1;
-
-    // Только если <audio> стоит на паузе на 0:00 в фоне, а RAM реально играет — берём время из WebAudio
     if (player && player.paused && pTime < 0.05 && window.isStudioPlaying && clk && clk.active && window.audioCtx) {
         const spd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
         const est = clk.startTrackSec + Math.max(0, window.audioCtx.currentTime - clk.startCtxTime) * spd;
@@ -2700,7 +2606,59 @@ window.getTruePlaybackTimeV74_2 = function() {
     return pTime;
 };
 
-// 2-я передача (J Buf Pitch Shift) и Задняя R (Винил) с поддержкой мгновенного клика по таймлайну
+// Перехватчик toggleReverseMode: гарантирует зеркальный разворот времени (dur - cur) ровно 1 раз!
+(function installExactReverseFlipInterceptorV75() {
+    const baseToggleRev = window.toggleReverseMode;
+    if (typeof baseToggleRev === 'function' && !window._exactRevHookV75) {
+        window._exactRevHookV75 = true;
+        window.toggleReverseMode = function(targetReversed) {
+            const player = document.getElementById('audioPlayer');
+            const oldRev = Boolean(window.isReversed);
+            const newRev = (targetReversed !== undefined) ? Boolean(targetReversed) : !oldRev;
+            if (newRev === oldRev) return;
+
+            const dur = (window.studioBuffer && window.studioBuffer.duration)
+                ? window.studioBuffer.duration
+                : ((player && isFinite(player.duration) && player.duration > 0) ? player.duration : 0);
+            const curBefore = window.getTruePlaybackTimeV74_2();
+            const flippedSec = (dur > 0) ? Math.max(0, Math.min(dur - 0.02, dur - curBefore)) : curBefore;
+
+            // Фиксируем зеркальную точку (например, 3:00 - 1:00 = 2:00 для реверс-буфера, что соответствует 1:00 песни)
+            window.setExactPlaybackPositionV75(flippedSec);
+
+            const res = baseToggleRev.apply(this, arguments);
+
+            // Повторно закрепляем flippedSec, если внутри старого обработчика currentTime не успел сдвинуться
+            window.setExactPlaybackPositionV75(flippedSec);
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+            if (player && dur > 0 && typeof window.updateProgressUI === 'function') {
+                window.updateProgressUI(flippedSec, dur, newRev);
+            }
+            return res;
+        };
+    }
+
+    // Перехватчик клика по таймлайну (seekAudio)
+    const baseSeekAudio = window.seekAudio;
+    if (typeof baseSeekAudio === 'function' && !window._exactSeekHookV75) {
+        window._exactSeekHookV75 = true;
+        window.seekAudio = function(event) {
+            const res = baseSeekAudio.apply(this, arguments);
+            const player = document.getElementById('audioPlayer');
+            if (player && isFinite(player.currentTime)) {
+                window.setExactPlaybackPositionV75(player.currentTime);
+                if (!player.paused && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+            }
+            return res;
+        };
+    }
+})();
+
+// Перехватчик 2-й передачи (J Buf Shift) и Задней R (Винил)
 window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
     const player = document.getElementById('audioPlayer');
     if (!player || !window.audioCtx) return false;
@@ -2749,9 +2707,8 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
         if (player.paused) {
             player.play().catch(() => {});
         }
-        // Перезапускаем узел при любом клике по таймлайну (или смене буфера/режима)
-        const seekJustHappened = window._lastUserSeekTsV74_8 && (performance.now() - window._lastUserSeekTsV74_8 < 350);
-        const needNewNode = seekJustHappened ||
+        const seekRecent = window._pendingSeekTargetV75 && (performance.now() - window._pendingSeekTargetV75.ts < 350);
+        const needNewNode = seekRecent ||
                             !window.studioSourceNode ||
                             !window.isStudioPlaying ||
                             window.studioSourceNode.buffer !== rawBuf ||
@@ -2774,11 +2731,9 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
 
             window.studioSourceNode.start(0, offset);
             window.isStudioPlaying = true;
-            if (window._studioClockV74_1) {
-                window._studioClockV74_1.active = true;
-                window._studioClockV74_1.startCtxTime = window.audioCtx.currentTime;
-                window._studioClockV74_1.startTrackSec = offset;
-            }
+            window._studioClockV74_1.active = true;
+            window._studioClockV74_1.startCtxTime = window.audioCtx.currentTime;
+            window._studioClockV74_1.startTrackSec = offset;
         } else if (window.studioSourceNode && window.studioSourceNode.playbackRate) {
             const now = window.audioCtx.currentTime;
             if (isVinyl) {
