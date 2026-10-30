@@ -67,7 +67,7 @@ window.parseDerivedTrackInfo = function(filename) {
     const lastDot = cleanName.lastIndexOf('.');
     const origStem = lastDot > 0 ? cleanName.substring(0, lastDot) : cleanName;
     let stem = origStem;
-    const suffixRe = /(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf|vinyl|webapi)|_rev(?:ersed)?|_fx|_eq|_dsp|_master)+$/i;
+    const suffixRe = /(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock)|_rev(?:ersed)?|_fx|_eq|_dsp|_master)+$/i;
     let prev = null;
     while (stem && stem !== prev) {
         prev = stem;

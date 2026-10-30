@@ -23,11 +23,25 @@ window.executeTrackExportV69 = async function() {
 
         let isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
-        let engineMode = cfg.engineModeV62 || (cfg.elasticHoseMode ? 'jbuf' : (cfg.pitchLock ? 'webapi' : 'vinyl'));
         let gearKey = cfg.gearKeyV66 || 'jbuf-lock';
+        let isNeutral = (gearKey === 'neutral' || gearKey === 'n');
         let isJbuf = (gearKey === 'jbuf-lock');
+        let isJbufShift = (gearKey === 'jbuf-shift');
         let isWebApiPitch = (gearKey === 'web-lock');
+        let isWebApiShift = (gearKey === 'web-shift');
         let pitchLock = (isJbuf || isWebApiPitch);
+        let engineMode = (isJbuf || isJbufShift) ? 'jbuf' : ((isWebApiPitch || isWebApiShift) ? 'webapi' : 'vinyl');
+
+        if (isNeutral) {
+            userSpeed = 1.0;
+        }
+        if ((isWebApiPitch || isWebApiShift) && isRev) {
+            if (typeof window.showWebApiReverseConflictModalV70 === 'function') {
+                window.showWebApiReverseConflictModalV70(gearKey, 'export');
+            }
+            if (btn) btn.innerHTML = oldBtnHtml || "💾";
+            return;
+        }
 
         // Если текущий трек уже содержит восстановленный 1.0x оригинал в RAM и скорость изменена — берём чистый 1.0x исходник!
         let hasRevMaster = Boolean(
@@ -253,6 +267,7 @@ window.executeTrackExportV69 = async function() {
         formData.append('is_reversed', isRev ? 'true' : 'false');
         formData.append('pitch_lock', pitchLock ? 'true' : 'false');
         formData.append('engine_mode', engineMode);
+        formData.append('gear_key', gearKey);
         if (revExportPkg && revExportPkg.seamMapJson) {
             formData.append('seam_map_json', revExportPkg.seamMapJson);
         }

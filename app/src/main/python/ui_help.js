@@ -5714,3 +5714,249 @@ window.loadTrackReversibleDataV67 = async function(filename, decodedBuffer) {
         return r;
     };
 })();
+
+
+// ⚙️ ПАТЧ V70: ЧЕСТНАЯ РКПП (ЗАПРЕТ WEB API ВОodРОВАТЬ МЕХАНИЗМ JBUF НА РЕВЕРСЕ + ЧИСТАЯ НЕЙТРАЛКА N + СКРЫТИЕ СТАРЫХ ГАЛОЧЕК)
+
+window.hideLegacyGearCheckboxesV70 = function() {
+    const legacyTexts = [
+        'упругий шланг 90',
+        'elastic hose 90',
+        'сохранять темп (pitch lock)',
+        'preserve tempo (pitch lock)'
+    ];
+    document.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+        if (chk.closest('#exportModalV69')) return;
+        const idLower = (chk.id || '').toLowerCase();
+        const row = chk.closest('label, .pro-opt-row, .setting-row, .control-row') || chk.parentElement;
+        const txt = row ? (row.textContent || '').toLowerCase() : '';
+        if (
+            idLower.includes('pitchlock') ||
+            idLower.includes('elastichose') ||
+            idLower.includes('hosemode') ||
+            legacyTexts.some(w => txt.includes(w))
+        ) {
+            if (row) row.classList.add('legacy-hidden-gear-row-v70');
+        }
+    });
+};
+
+window.ensureWebApiReverseModalV70 = function() {
+    let modal = document.getElementById('webApiRevConflictModalV70');
+    if (modal) return modal;
+
+    modal = document.createElement('div');
+    modal.id = 'webApiRevConflictModalV70';
+    modal.className = 'webapi-rev-modal-backdrop-v70';
+    modal.innerHTML = `
+        <div class="webapi-rev-modal-box-v70" onclick="event.stopPropagation()">
+            <div class="webapi-rev-title-v70" id="webApiRevTitleV70">⚠️ КОНФЛИКТ РЕЖИМА</div>
+            <div class="webapi-rev-desc-v70" id="webApiRevDescV70">Web API не умеет проигрывать задом наперёд</div>
+            <div class="webapi-rev-actions-v70">
+                <button type="button" class="webapi-rev-btn-v70 btn-use-jbuf" id="btnWebRevToJbufV70">⚡ Вкл JBUF</button>
+                <button type="button" class="webapi-rev-btn-v70 btn-use-normal" id="btnWebRevToNormV70">▶ Вкл норм проигрывание</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+};
+
+window.setReverseStateCleanV70 = function(wantReverse) {
+    const isNowRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    if (isNowRev === Boolean(wantReverse)) return;
+
+    if (typeof window.toggleReverse === 'function' && !window._inConflictModalV70) {
+        window._inConflictModalV70 = true;
+        try {
+            window.toggleReverse();
+        } finally {
+            window._inConflictModalV70 = false;
+        }
+        return;
+    }
+
+    window.isReversed = Boolean(wantReverse);
+    if (window.scrubState) window.scrubState.isPhysicallyReversed = Boolean(wantReverse);
+    const revBtn = document.getElementById('btnReverse') || document.querySelector('[onclick*="toggleReverse"]');
+    if (revBtn) {
+        revBtn.classList.toggle('active', Boolean(wantReverse));
+    }
+};
+
+window.applyGearCleanV70 = function(targetGearKey) {
+    if (!window.appConfig) window.appConfig = {};
+    window.appConfig.gearKeyV66 = targetGearKey;
+
+    if (typeof window.selectGearboxSlotV66 === 'function') {
+        window._bypassGearConflictCheckV70 = true;
+        try {
+            window.selectGearboxSlotV66(targetGearKey);
+        } finally {
+            window._bypassGearConflictCheckV70 = false;
+        }
+    } else if (typeof window.setGearV66 === 'function') {
+        window._bypassGearConflictCheckV70 = true;
+        try {
+            window.setGearV66(targetGearKey);
+        } finally {
+            window._bypassGearConflictCheckV70 = false;
+        }
+    }
+
+    // Обновляем визуальную кулису РКПП, если есть слоты с data-gear
+    document.querySelectorAll('[data-gear]').forEach(el => {
+        el.classList.toggle('active-gear', el.getAttribute('data-gear') === targetGearKey);
+    });
+};
+
+window.showWebApiReverseConflictModalV70 = function(requestedWebGear) {
+    const modal = window.ensureWebApiReverseModalV70();
+    const isEn = (typeof window.isTrackUiEnglish === 'function') && window.isTrackUiEnglish();
+
+    const titleEl = document.getElementById('webApiRevTitleV70');
+    const descEl = document.getElementById('webApiRevDescV70');
+    const btnJbuf = document.getElementById('btnWebRevToJbufV70');
+    const btnNorm = document.getElementById('btnWebRevToNormV70');
+
+    if (titleEl) titleEl.textContent = isEn ? '⚠️ WEB API LIMITATION' : '⚠️ ОГРАНИЧЕНИЕ WEB API';
+    if (descEl) descEl.textContent = isEn
+        ? 'Web API cannot play audio backwards.'
+        : 'Web API не умеет проигрывать задом наперёд.';
+    if (btnJbuf) btnJbuf.textContent = isEn ? '⚡ Enable JBUF' : '⚡ Вкл JBUF';
+    if (btnNorm) btnNorm.textContent = isEn ? '▶ Enable normal playback' : '▶ Вкл норм проигрывание';
+
+    const webGear = (requestedWebGear === 'web-shift') ? 'web-shift' : 'web-lock';
+    const matchingJbufGear = (webGear === 'web-shift') ? 'jbuf-shift' : 'jbuf-lock';
+
+    btnJbuf.onclick = () => {
+        modal.style.display = 'none';
+        window.applyGearCleanV70(matchingJbufGear);
+        window.setReverseStateCleanV70(true);
+        if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            window.syncMasterPlaybackEngineV59(false);
+        }
+    };
+
+    btnNorm.onclick = () => {
+        modal.style.display = 'none';
+        window.setReverseStateCleanV70(false);
+        window.applyGearCleanV70(webGear);
+        if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            window.syncMasterPlaybackEngineV59(false);
+        }
+    };
+
+    modal.style.display = 'flex';
+};
+
+(function initGearboxIntegrityV70() {
+    setTimeout(window.hideLegacyGearCheckboxesV70, 150);
+    setTimeout(window.hideLegacyGearCheckboxesV70, 800);
+
+    // 1. Перехватываем нажатие кнопки Реверс (toggleReverse)
+    if (typeof window.toggleReverse === 'function' && !window._origToggleReverseV70) {
+        window._origToggleReverseV70 = window.toggleReverse;
+        window.toggleReverse = function() {
+            if (window._inConflictModalV70) {
+                return window._origToggleReverseV70.apply(this, arguments);
+            }
+            const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+            const isWebGear = (gKey === 'web-lock' || gKey === 'web-shift');
+            const isCurrentlyRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+
+            // Если сейчас включён Web API и пользователь пытается включить Реверс — показываем окно выбора!
+            if (isWebGear && !isCurrentlyRev) {
+                window.showWebApiReverseConflictModalV70(gKey);
+                return;
+            }
+            return window._origToggleReverseV70.apply(this, arguments);
+        };
+    }
+
+    // 2. Перехватываем синхронизатор движка syncMasterPlaybackEngineV59
+    const prevSync = window.syncMasterPlaybackEngineV59;
+    window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
+        window.hideLegacyGearCheckboxesV70();
+
+        const player = document.getElementById('audioPlayer');
+        const cfg = window.appConfig || {};
+        const gKey = cfg.gearKeyV66 || 'jbuf-lock';
+        const isWebGear = (gKey === 'web-lock' || gKey === 'web-shift');
+        const isNeutral = (gKey === 'neutral' || gKey === 'n');
+        const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+
+        // Если активен Реверс и выбрана передача Web API — не даём Web API воровать буфер JBUF, вызываем модалку!
+        if (isWebGear && isRev && !window._bypassGearConflictCheckV70) {
+            if (window.studioSourceNode) {
+                window.studioSourceNode.onended = null;
+                try { window.studioSourceNode.stop(); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+                window.studioSourceNode = null;
+            }
+            window.isStudioPlaying = false;
+            window.showWebApiReverseConflictModalV70(gKey);
+            return;
+        }
+
+        // Если включена НЕЙТРАЛКА (N) — сцепление со скоростью разомкнуто, чистый поток 1.00x
+        if (isNeutral && player) {
+            if (window.studioSourceNode && !isRev) {
+                window.studioSourceNode.onended = null;
+                try { window.studioSourceNode.stop(); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+                window.studioSourceNode = null;
+                window.isStudioPlaying = false;
+            }
+            if (!isRev) {
+                if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+                player.preservesPitch = true;
+                if (Math.abs(player.playbackRate - 1.0) > 0.001) {
+                    try { player.playbackRate = 1.0; } catch (e) {}
+                }
+            }
+            const badge = document.getElementById('hoseLiveTelemetryV44');
+            if (badge) {
+                badge.style.color = '#8b949e';
+                badge.innerText = '⚙️ НЕЙТРАЛЬ [N]: x1.00 (Сцепление скорости разомкнуто)';
+            }
+            return;
+        }
+
+        // Если выбрана 3-я или 4-я передача (Web API) — принудительно гасим JBUF studioSourceNode,
+        // чтобы играл исключительно нативный HTML5 <audio> поток!
+        if (isWebGear && player) {
+            if (window.studioSourceNode) {
+                window.studioSourceNode.onended = null;
+                try { window.studioSourceNode.stop(); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+                window.studioSourceNode = null;
+            }
+            window.isStudioPlaying = false;
+            if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+
+            const targetSpd = (typeof window.getActiveTargetSpeedV59 === 'function')
+                ? window.getActiveTargetSpeedV59()
+                : 1.0;
+            const lockPitch = (gKey === 'web-lock');
+            player.preservesPitch = lockPitch;
+            if ('mozPreservesPitch' in player) player.mozPreservesPitch = lockPitch;
+            if ('webkitPreservesPitch' in player) player.webkitPreservesPitch = lockPitch;
+
+            if (Math.abs(player.playbackRate - targetSpd) > 0.002) {
+                try { player.playbackRate = targetSpd; } catch (e) {}
+            }
+
+            const badge = document.getElementById('hoseLiveTelemetryV44');
+            if (badge) {
+                badge.style.color = '#58a6ff';
+                badge.innerText = lockPitch
+                    ? `🌐 Web API [PITCH LOCK]: x${targetSpd.toFixed(2)} (Прямой HTML5 поток)`
+                    : `🌐 Web API [PITCH SHIFT]: x${targetSpd.toFixed(2)} (Прямой HTML5 поток)`;
+            }
+            return;
+        }
+
+        return typeof prevSync === 'function' ? prevSync(isDraggingArc) : undefined;
+    };
+})();

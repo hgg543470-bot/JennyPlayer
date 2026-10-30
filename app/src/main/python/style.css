@@ -1020,3 +1020,74 @@ body.hide-help-badges #jennyFullGuideBtn {
     animation: origSoftHighlightV68 2.2s ease-out !important;
     border: 1px solid #3fb950 !important;
 }
+
+
+/* === JENNY V70: WEB API REVERSE CONFLICT MODAL & LEGACY CHECKBOX HIDE === */
+.legacy-hidden-gear-row-v70 {
+    display: none !important;
+}
+.webapi-rev-modal-backdrop-v70 {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 7, 12, 0.86);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 10005;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    padding: 16px;
+    box-sizing: border-box;
+}
+.webapi-rev-modal-box-v70 {
+    width: 100%;
+    max-width: 360px;
+    background: #0d1117;
+    border: 1px solid #f85149;
+    border-radius: 14px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.9), 0 0 20px rgba(248, 81, 73, 0.28);
+    padding: 16px;
+    text-align: center;
+}
+.webapi-rev-title-v70 {
+    font-size: 14px;
+    font-weight: 900;
+    color: #ff7b72;
+    margin-bottom: 8px;
+    letter-spacing: 0.3px;
+}
+.webapi-rev-desc-v70 {
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: #e6edf3;
+    margin-bottom: 16px;
+}
+.webapi-rev-actions-v70 {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.webapi-rev-btn-v70 {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 12px;
+    font-weight: 800;
+    border-radius: 9px;
+    cursor: pointer;
+    border: 1px solid #30363d;
+    transition: transform 0.1s ease;
+}
+.webapi-rev-btn-v70:active {
+    transform: scale(0.97);
+}
+.webapi-rev-btn-v70.btn-use-jbuf {
+    background: linear-gradient(135deg, #238636, #2ea043);
+    border-color: #3fb950;
+    color: #ffffff;
+    box-shadow: 0 0 12px rgba(46, 160, 67, 0.4);
+}
+.webapi-rev-btn-v70.btn-use-normal {
+    background: rgba(56, 139, 253, 0.16);
+    border-color: #58a6ff;
+    color: #79c0ff;
+}
