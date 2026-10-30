@@ -232,7 +232,7 @@ function buildTrackRowHTML(file, listType, heartIcon) {
     const isExpanded = window.expandedTracks.has(file);
 
     const safeId = encodeURIComponent(file).replace(/[^a-zA-Z0-9]/g, '');
-    const safeFileJS = file.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    const safeFileJS = file.replace(/\/g, "\\").replace(/'/g, "\'").replace(/"/g, '&quot;');
     const safeAttr = file.replace(/"/g, '&quot;');
 
     const activeStyle = isPlayingTrack
@@ -242,6 +242,14 @@ function buildTrackRowHTML(file, listType, heartIcon) {
     const btnIcon = isActuallyPlaying ? PAUSE_SVG_ICON : PLAY_SVG_ICON;
     const expCapsuleClass = isExpanded ? "expanded-capsule" : "";
     const expTextClass = isExpanded ? "expanded-title-text" : "";
+
+    const derivedInfo = (typeof window.parseDerivedTrackInfoV68 === 'function')
+        ? window.parseDerivedTrackInfoV68(file)
+        : { isDerived: false };
+
+    const origBtnHtml = derivedInfo.isDerived
+        ? `<button type="button" class="track-act-btn-v68 btn-orig-v68" onclick="window.scrollToOriginalTrackV68('${safeFileJS}', '${listType}', event)">ORIG</button>`
+        : '';
 
     return `
         <div style="position: relative;">
@@ -263,6 +271,13 @@ function buildTrackRowHTML(file, listType, heartIcon) {
                     <button class="play-pause-btn track-row-play-btn" style="width: 44px; height: 44px; flex-shrink: 0; pointer-events: none;">
                         ${btnIcon}
                     </button>
+                </div>
+                <div class="track-expand-actions-v68" onclick="event.stopPropagation()">
+                    ${origBtnHtml}
+                    <button type="button" class="track-act-btn-v68 btn-path-v68" onclick="window.copyTrackFullPathV68('${safeFileJS}', event)">PATH</button>
+                    <button type="button" class="track-act-btn-v68 btn-stub-v68" onclick="window.onTrackStubClickV68(1, '${safeFileJS}', event)">СЛОТ 1</button>
+                    <button type="button" class="track-act-btn-v68 btn-stub-v68" onclick="window.onTrackStubClickV68(2, '${safeFileJS}', event)">СЛОТ 2</button>
+                    <button type="button" class="track-act-btn-v68 btn-stub-v68" onclick="window.onTrackStubClickV68(3, '${safeFileJS}', event)">СЛОТ 3</button>
                 </div>
             </div>
         </div>`;
@@ -312,16 +327,15 @@ window.fetchData = async function() {
 };
 
 
-// 🛠️ ПАТЧ V68: ПАНЕЛЬ БЫСТРЫХ КНОПОК ПРИ РАСКРЫТИИ ИМЕНИ ТРЕКА (ORIG / PATH / 3 СЛОТА)
+// 🛠️ ПАТЧ V68: ОБРАБОТЧИКИ КНОПОК РАСКРЫТОЙ КАРТОЧКИ ТРЕКА (ORIG / PATH / 3 СЛОТА)
 
 window.parseDerivedTrackInfoV68 = function(filename) {
     if (!filename || typeof filename !== 'string') return { isDerived: false, baseStem: '', origStem: '' };
-    const cleanName = filename.replace(/^[♪♫🎵🎶\s]+/, '').trim();
+    const cleanName = filename.trim();
     const lastDot = cleanName.lastIndexOf('.');
     const origStem = lastDot > 0 ? cleanName.substring(0, lastDot) : cleanName;
     let stem = origStem;
 
-    // Снимаем любые суффиксы экспортов (_x0.5_slow_jbuf90, _x1.07_fast_vinyl, _rev и т.д.)
     const suffixRe = /(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf|vinyl|webapi)|_rev(?:ersed)?|_fx|_eq|_dsp|_master)+$/i;
 
     let prev = null;
@@ -360,92 +374,63 @@ window.copyTextToClipboardV68 = async function(text) {
     return ok;
 };
 
-window.getTrackRowPartsV68 = function(rowEl) {
-    if (!rowEl) return { titleEl: null, filename: '' };
-    let titleEl = rowEl.querySelector('.track-title, .track-name, [class*="title"], [class*="name"]');
-    if (!titleEl) {
-        for (const ch of rowEl.children) {
-            if (ch.classList && ch.classList.contains('track-expand-actions-v68')) continue;
-            if (ch.tagName === 'DIV' || ch.tagName === 'SPAN') {
-                const txt = (ch.textContent || '').trim();
-                if (txt.length > 3) {
-                    titleEl = ch;
-                    break;
-                }
-            }
-        }
-    }
-    let filename = (rowEl.dataset && rowEl.dataset.filename) ? rowEl.dataset.filename : '';
-    if (!filename && titleEl) {
-        filename = (titleEl.getAttribute('data-filename') || titleEl.getAttribute('title') || titleEl.textContent || '').trim();
-    }
-    filename = filename.replace(/^[♪♫🎵🎶\s]+/, '').trim();
-    return { titleEl, filename };
-};
-
-window.isTrackRowExpandedV68 = function(rowEl, titleEl) {
-    if (!rowEl || !titleEl) return false;
-    if (titleEl.classList.contains('expanded') || rowEl.classList.contains('expanded')) return true;
-    if (titleEl.style && (titleEl.style.whiteSpace === 'normal' || titleEl.style.whiteSpace === 'pre-wrap' || titleEl.style.whiteSpace === 'break-spaces')) return true;
-    const cs = window.getComputedStyle(titleEl);
-    if (cs && cs.whiteSpace && cs.whiteSpace !== 'nowrap') return true;
-    if (titleEl.offsetHeight > 30) return true;
-    return false;
-};
-
-window.getAllTrackRowsV68 = function() {
-    const selectors = '#trackList .track-item, #playlist .track-item, .track-list .track-item, .track-item, .track-row';
-    return Array.from(document.querySelectorAll(selectors));
-};
-
-window.scrollToOriginalTrackV68 = function(derivedFilename, ev) {
-    if (ev) ev.stopPropagation();
+window.scrollToOriginalTrackV68 = async function(derivedFilename, listType, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
     const info = window.parseDerivedTrackInfoV68(derivedFilename);
     if (!info.baseStem) return;
     const targetLower = info.baseStem.toLowerCase();
 
-    const findMatchingRow = () => {
-        const rows = window.getAllTrackRowsV68();
-        let exactOrigRow = null;
-        let prefixOrigRow = null;
-        let fallbackRow = null;
+    const findMatchingCapsule = (containerSel) => {
+        const rows = Array.from(document.querySelectorAll(containerSel + ' .track-row-capsule'));
+        let exactOrig = null;
+        let fallbackOrig = null;
+        let prefixOrig = null;
 
         for (const r of rows) {
-            if (r.style.display === 'none') continue;
-            const { filename: fname } = window.getTrackRowPartsV68(r);
-            if (!fname || fname === info.cleanName) continue;
+            const fname = r.getAttribute('data-track') || '';
+            if (!fname || fname === derivedFilename) continue;
             const parsed = window.parseDerivedTrackInfoV68(fname);
             const stemLower = parsed.origStem.toLowerCase();
 
             if (stemLower === targetLower && !parsed.isDerived) {
-                exactOrigRow = r;
+                exactOrig = r;
                 break;
             }
-            if (!parsed.isDerived && (stemLower.startsWith(targetLower) || targetLower.startsWith(stemLower))) {
-                if (!prefixOrigRow) prefixOrigRow = r;
-            }
             if (parsed.baseStem.toLowerCase() === targetLower && !parsed.isDerived) {
-                if (!fallbackRow) fallbackRow = r;
+                if (!fallbackOrig) fallbackOrig = r;
+            }
+            if (!parsed.isDerived && (stemLower.startsWith(targetLower) || targetLower.startsWith(stemLower))) {
+                if (!prefixOrig) prefixOrig = r;
             }
         }
-        return exactOrigRow || fallbackRow || prefixOrigRow;
+        return exactOrig || fallbackOrig || prefixOrig;
     };
 
-    let targetRow = findMatchingRow();
+    const primaryContainer = (listType === 'fav') ? '#favList' : '#unifiedList';
+    let targetRow = findMatchingCapsule(primaryContainer) || findMatchingCapsule('#unifiedList');
 
-    if (!targetRow) {
-        const searchInp = document.getElementById('searchInput') || document.querySelector('input[type="text"], input[type="search"]');
-        if (searchInp && searchInp.value.trim() !== '') {
-            searchInp.value = '';
-            searchInp.dispatchEvent(new Event('input', { bubbles: true }));
-            if (typeof window.renderTracks === 'function') window.renderTracks();
-            if (typeof window.renderPlaylist === 'function') window.renderPlaylist();
-            targetRow = findMatchingRow();
-        }
+    // Если сейчас включён режим только сессионных треков, а оригинал в общем списке — переключаем на все треки
+    if (!targetRow && !window.isShowingAllTracks && typeof window.fetchData === 'function') {
+        window.isShowingAllTracks = true;
+        await window.fetchData();
+        targetRow = findMatchingCapsule('#unifiedList');
     }
 
     if (targetRow) {
-        const { filename: origName } = window.getTrackRowPartsV68(targetRow);
+        // Если строка или её обёртка скрыта поисковым фильтром — снимаем фильтр
+        const wrapper = targetRow.parentElement;
+        if (targetRow.style.display === 'none' || (wrapper && wrapper.style.display === 'none')) {
+            const searchInp = document.getElementById('searchInput') || document.querySelector('input[placeholder*="Поиск"]');
+            if (searchInp && searchInp.value !== '') {
+                searchInp.value = '';
+                searchInp.dispatchEvent(new Event('input', { bubbles: true }));
+                searchInp.dispatchEvent(new Event('keyup', { bubbles: true }));
+            }
+            if (wrapper) wrapper.style.display = '';
+            targetRow.style.display = '';
+        }
+
+        const origName = targetRow.getAttribute('data-track') || info.baseStem;
         targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
         targetRow.classList.remove('orig-highlight-pulse-v68');
         void targetRow.offsetWidth;
@@ -457,18 +442,17 @@ window.scrollToOriginalTrackV68 = function(derivedFilename, ev) {
         }
     } else {
         if (typeof window.showToast === 'function') {
-            window.showToast('⚠️ Оригинал «' + info.baseStem + '» не найден в списке', ev);
+            window.showToast('⚠️ Оригинал «' + info.baseStem + '» не найден в папке', ev);
         }
     }
 };
 
 window.copyTrackFullPathV68 = async function(filename, ev) {
-    if (ev) ev.stopPropagation();
-    const cleanName = (filename || '').replace(/^[♪♫🎵🎶\s]+/, '').trim();
-    if (!cleanName) return;
-    let fullPath = cleanName;
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (!filename) return;
+    let fullPath = filename;
     try {
-        const res = await fetch('/api/full_path/' + encodeURIComponent(cleanName));
+        const res = await fetch('/api/full_path/' + encodeURIComponent(filename));
         if (res.ok) {
             const data = await res.json();
             if (data && data.full_path) fullPath = data.full_path;
@@ -481,70 +465,9 @@ window.copyTrackFullPathV68 = async function(filename, ev) {
     }
 };
 
-window.ensureTrackExpandBarV68 = function(rowEl) {
-    if (!rowEl) return;
-    const { titleEl, filename } = window.getTrackRowPartsV68(rowEl);
-    if (!titleEl || !filename) return;
-
-    const expanded = window.isTrackRowExpandedV68(rowEl, titleEl);
-    if (!expanded) {
-        rowEl.classList.remove('expanded-row-v68');
-        return;
+window.onTrackStubClickV68 = function(slotNum, filename, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (typeof window.showToast === 'function') {
+        window.showToast(`🔧 Слот #${slotNum} (${filename}) — свободная заглушка`, ev);
     }
-
-    const info = window.parseDerivedTrackInfoV68(filename);
-    let bar = rowEl.querySelector('.track-expand-actions-v68');
-    if (!bar) {
-        bar = document.createElement('div');
-        bar.className = 'track-expand-actions-v68';
-        bar.addEventListener('click', (e) => e.stopPropagation());
-        bar.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
-
-        if (info.isDerived) {
-            const btnOrig = document.createElement('button');
-            btnOrig.type = 'button';
-            btnOrig.className = 'track-act-btn-v68 btn-orig-v68';
-            btnOrig.innerText = 'ORIG';
-            btnOrig.addEventListener('click', (e) => window.scrollToOriginalTrackV68(info.cleanName, e));
-            bar.appendChild(btnOrig);
-        }
-
-        const btnPath = document.createElement('button');
-        btnPath.type = 'button';
-        btnPath.className = 'track-act-btn-v68 btn-path-v68';
-        btnPath.innerText = 'PATH';
-        btnPath.addEventListener('click', (e) => window.copyTrackFullPathV68(info.cleanName, e));
-        bar.appendChild(btnPath);
-
-        for (let i = 1; i <= 3; i++) {
-            const btnStub = document.createElement('button');
-            btnStub.type = 'button';
-            btnStub.className = 'track-act-btn-v68 btn-stub-v68';
-            btnStub.innerText = 'СЛОТ ' + i;
-            btnStub.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (typeof window.showToast === 'function') {
-                    window.showToast(`🔧 Заглушка #${i} (свободный слот)`, e);
-                }
-            });
-            bar.appendChild(btnStub);
-        }
-
-        rowEl.appendChild(bar);
-    }
-
-    rowEl.classList.add('expanded-row-v68');
 };
-
-window.syncAllTrackExpandBarsV68 = function() {
-    window.getAllTrackRowsV68().forEach(r => window.ensureTrackExpandBarV68(r));
-};
-
-(function initTrackExpandObserverV68() {
-    const triggerSync = () => {
-        setTimeout(window.syncAllTrackExpandBarsV68, 15);
-        setTimeout(window.syncAllTrackExpandBarsV68, 80);
-    };
-    document.addEventListener('click', triggerSync, false);
-    document.addEventListener('touchend', triggerSync, { passive: true });
-})();
