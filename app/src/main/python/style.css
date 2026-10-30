@@ -754,80 +754,6 @@ body.hide-help-badges #jennyFullGuideBtn {
 }
 
 
-/* === JENNY V68: EXPANDED TRACK ACTION BAR IN .track-row-capsule === */
-.track-row-capsule.expanded-capsule {
-    height: auto !important;
-    min-height: 48px !important;
-    padding: 6px 0 8px 0 !important;
-    flex-wrap: wrap !important;
-}
-.track-expand-actions-v68 {
-    display: none;
-    width: 100%;
-    flex: 0 0 100%;
-    flex-basis: 100%;
-    margin-top: 6px;
-    padding: 7px 10px 2px 10px;
-    border-top: 1px dashed rgba(139, 92, 246, 0.35);
-    gap: 6px;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: nowrap;
-    box-sizing: border-box;
-}
-.track-row-capsule.expanded-capsule .track-expand-actions-v68 {
-    display: flex !important;
-}
-.track-act-btn-v68 {
-    flex: 1 1 0;
-    min-width: 44px;
-    padding: 6px 4px;
-    font-size: 11px;
-    font-weight: 900;
-    letter-spacing: 0.3px;
-    text-align: center;
-    border-radius: 7px;
-    background: #121622;
-    color: #c9d1d9;
-    border: 1px solid rgba(139, 92, 246, 0.45);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 6px rgba(0,0,0,0.6);
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-    transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
-}
-.track-act-btn-v68:active {
-    transform: scale(0.93);
-}
-.track-act-btn-v68.btn-orig-v68 {
-    background: rgba(63, 185, 80, 0.18);
-    border-color: #3fb950;
-    color: #56d364;
-    box-shadow: 0 0 10px rgba(63, 185, 80, 0.28);
-}
-.track-act-btn-v68.btn-path-v68 {
-    background: rgba(88, 166, 255, 0.18);
-    border-color: #58a6ff;
-    color: #79c0ff;
-    box-shadow: 0 0 10px rgba(88, 166, 255, 0.28);
-}
-.track-act-btn-v68.btn-stub-v68 {
-    background: rgba(22, 27, 34, 0.9);
-    border-color: rgba(139, 148, 158, 0.35);
-    color: #8b949e;
-    font-size: 10px;
-}
-@keyframes origPulseGlowV68 {
-    0%   { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.95), inset 0 0 14px rgba(63, 185, 80, 0.55); border-color: #3fb950; }
-    50%  { box-shadow: 0 0 22px 5px rgba(63, 185, 80, 0.75), inset 0 0 18px rgba(63, 185, 80, 0.45); border-color: #56d364; }
-    100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0), inset 0 0 0 rgba(63, 185, 80, 0); }
-}
-.track-row-capsule.orig-highlight-pulse-v68 {
-    animation: origPulseGlowV68 2.4s ease-out !important;
-    border: 1px solid #3fb950 !important;
-}
-
-
 /* === JENNY V69.1: COMPACT 2-COLUMN EXPORT SETTINGS MODAL (FULL TEXT WRAP) === */
 .exp-modal-backdrop-v69 {
     position: fixed;
@@ -984,4 +910,113 @@ body.hide-help-badges #jennyFullGuideBtn {
     border-color: #8b5cf6;
     color: #ffffff;
     box-shadow: 0 0 12px rgba(115, 65, 190, 0.45);
+}
+
+
+/* === JENNY V68.4: EXPANDED TRACK ACTION BAR + PERSISTENT PATH SUBLINE === */
+.track-row-capsule.expanded-capsule {
+    height: auto !important;
+    min-height: 48px !important;
+    padding: 6px 0 8px 0 !important;
+    flex-wrap: wrap !important;
+}
+.track-row-capsule > div {
+    box-sizing: border-box !important;
+}
+.track-row-capsule > .track-title-zone {
+    width: 62% !important;
+}
+.track-expand-actions-v68 {
+    display: none;
+    width: 100%;
+    flex: 0 0 100%;
+    flex-basis: 100%;
+    margin-top: 6px;
+    padding: 7px 10px 2px 10px;
+    border-top: 1px dashed rgba(139, 92, 246, 0.35);
+    gap: 6px;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: nowrap;
+    box-sizing: border-box;
+}
+.track-row-capsule.expanded-capsule .track-expand-actions-v68 {
+    display: flex !important;
+}
+.track-expand-subline-v68 {
+    display: none;
+    width: 100%;
+    flex: 0 0 100%;
+    flex-basis: 100%;
+    padding: 5px 12px 1px 12px;
+    font-size: 10px;
+    font-family: monospace;
+    line-height: 1.3;
+    color: #79c0ff;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    box-sizing: border-box;
+    user-select: text;
+}
+.track-row-capsule.expanded-capsule .track-expand-subline-v68.visible-subline-v68 {
+    display: block !important;
+}
+.track-expand-subline-v68.deleted-subline-v68 {
+    color: #ff7b72;
+    font-family: inherit;
+    font-weight: 700;
+}
+.track-act-btn-v68 {
+    flex: 1 1 0;
+    min-width: 44px;
+    padding: 6px 4px;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.3px;
+    text-align: center;
+    border-radius: 7px;
+    background: #121622;
+    color: #c9d1d9;
+    border: 1px solid rgba(139, 92, 246, 0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 6px rgba(0,0,0,0.6);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.track-act-btn-v68:active {
+    transform: scale(0.93);
+}
+.track-act-btn-v68.btn-orig-v68 {
+    background: rgba(63, 185, 80, 0.18);
+    border-color: #3fb950;
+    color: #56d364;
+    box-shadow: 0 0 8px rgba(63, 185, 80, 0.22);
+}
+.track-act-btn-v68.btn-orig-v68.orig-deleted-v68 {
+    background: rgba(248, 81, 73, 0.16);
+    border-color: #f85149;
+    color: #ff7b72;
+    box-shadow: none;
+}
+.track-act-btn-v68.btn-path-v68 {
+    background: rgba(88, 166, 255, 0.18);
+    border-color: #58a6ff;
+    color: #79c0ff;
+    box-shadow: 0 0 8px rgba(88, 166, 255, 0.22);
+}
+.track-act-btn-v68.btn-stub-v68 {
+    background: rgba(22, 27, 34, 0.9);
+    border-color: rgba(139, 148, 158, 0.35);
+    color: #8b949e;
+    font-size: 10px;
+}
+@keyframes origSoftHighlightV68 {
+    0%   { border-color: #3fb950; box-shadow: 0 0 12px rgba(63, 185, 80, 0.55), inset 0 0 8px rgba(63, 185, 80, 0.25); }
+    70%  { border-color: #3fb950; box-shadow: 0 0 10px rgba(63, 185, 80, 0.4), inset 0 0 6px rgba(63, 185, 80, 0.18); }
+    100% { border-color: #30363d; box-shadow: none; }
+}
+.track-row-capsule.orig-highlight-pulse-v68 {
+    animation: origSoftHighlightV68 2.2s ease-out !important;
+    border: 1px solid #3fb950 !important;
 }

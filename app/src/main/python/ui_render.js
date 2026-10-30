@@ -36,6 +36,31 @@ window.updateTrackListPlayIcons = function() {
     });
 };
 
+window.expandedTrackSublines = window.expandedTrackSublines || new Map();
+
+window.isTrackUiEnglish = function() {
+    const cfg = window.appConfig || {};
+    if (cfg.lang === 'en' || cfg.language === 'en' || cfg.uiLang === 'en' || window.currentLang === 'en' || window.isEn === true) {
+        return true;
+    }
+    try {
+        if (localStorage.getItem('jenny_lang') === 'en' || localStorage.getItem('lang') === 'en') return true;
+    } catch (e) {}
+    const searchInp = document.getElementById('searchInput');
+    if (searchInp && /search/i.test(searchInp.getAttribute('placeholder') || '')) return true;
+    return false;
+};
+
+window.getTrackActionLabels = function() {
+    const en = window.isTrackUiEnglish();
+    return {
+        orig: en ? 'ORIG' : 'ОРИГ',
+        path: en ? 'PATH' : 'ПУТЬ',
+        slot: en ? 'SLOT ' : 'СЛОТ ',
+        deleted: en ? 'Deleted' : 'Удалён'
+    };
+};
+
 window.parseDerivedTrackInfo = function(filename) {
     if (!filename || typeof filename !== 'string') return { isDerived: false, baseStem: '', origStem: '' };
     const cleanName = filename.trim();
@@ -74,7 +99,29 @@ window.copyTextToClipboard = async function(text) {
     return true;
 };
 
-window.scrollToOriginalTrack = async function(derivedFilename, ev) {
+window.setTrackSublineText = function(filename, text, isDeleted) {
+    window.expandedTrackSublines.set(filename, { text: text, isDeleted: Boolean(isDeleted) });
+    document.querySelectorAll('.track-row-capsule').forEach(row => {
+        if (row.getAttribute('data-track') === filename) {
+            let sub = row.querySelector('.track-expand-subline-v68');
+            if (!sub) {
+                sub = document.createElement('div');
+                sub.className = 'track-expand-subline-v68';
+                sub.onclick = (e) => e.stopPropagation();
+                row.appendChild(sub);
+            }
+            sub.textContent = text;
+            sub.classList.add('visible-subline-v68');
+            if (isDeleted) {
+                sub.classList.add('deleted-subline-v68');
+            } else {
+                sub.classList.remove('deleted-subline-v68');
+            }
+        }
+    });
+};
+
+window.scrollToOriginalTrack = async function(derivedFilename, btnEl, ev) {
     if (ev && ev.stopPropagation) ev.stopPropagation();
     const info = window.parseDerivedTrackInfo(derivedFilename);
     if (!info.baseStem) return;
@@ -108,15 +155,18 @@ window.scrollToOriginalTrack = async function(derivedFilename, ev) {
             searchInp.value = '';
             searchInp.dispatchEvent(new Event('input', { bubbles: true }));
         }
-        const origName = targetRow.getAttribute('data-track') || info.baseStem;
         targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
         targetRow.classList.remove('orig-highlight-pulse-v68');
         void targetRow.offsetWidth;
         targetRow.classList.add('orig-highlight-pulse-v68');
-        setTimeout(() => targetRow.classList.remove('orig-highlight-pulse-v68'), 2500);
-        if (typeof window.showToast === 'function') window.showToast('🎯 Оригинал: ' + origName, ev);
+        setTimeout(() => targetRow.classList.remove('orig-highlight-pulse-v68'), 2200);
     } else {
-        if (typeof window.showToast === 'function') window.showToast('⚠️ Оригинал «' + info.baseStem + '» не найден', ev);
+        const lbls = window.getTrackActionLabels();
+        if (btnEl) {
+            btnEl.innerText = lbls.deleted;
+            btnEl.classList.add('orig-deleted-v68');
+        }
+        window.setTrackSublineText(derivedFilename, lbls.deleted, true);
     }
 };
 
@@ -131,59 +181,80 @@ window.copyTrackFullPath = async function(filename, ev) {
         }
     } catch (e) {}
     await window.copyTextToClipboard(fullPath);
-    if (typeof window.showToast === 'function') window.showToast('📋 PATH: ' + fullPath, ev);
+    window.setTrackSublineText(filename, fullPath, false);
 };
 
 window.syncRowActionButtons = function(row, filename, isExp) {
     if (!row) return;
     let bar = row.querySelector('.track-expand-actions-v68');
+    let sub = row.querySelector('.track-expand-subline-v68');
+
     if (!isExp) {
         if (bar) bar.remove();
+        if (sub) sub.remove();
         return;
     }
-    if (bar) return;
 
-    bar = document.createElement('div');
-    bar.className = 'track-expand-actions-v68';
-    bar.onclick = (e) => e.stopPropagation();
+    const lbls = window.getTrackActionLabels();
 
-    const info = window.parseDerivedTrackInfo(filename);
-    if (info.isDerived) {
-        const bOrig = document.createElement('button');
-        bOrig.type = 'button';
-        bOrig.className = 'track-act-btn-v68 btn-orig-v68';
-        bOrig.innerText = 'ORIG';
-        bOrig.onclick = (e) => window.scrollToOriginalTrack(filename, e);
-        bar.appendChild(bOrig);
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'track-expand-actions-v68';
+        bar.onclick = (e) => e.stopPropagation();
+
+        const info = window.parseDerivedTrackInfo(filename);
+        if (info.isDerived) {
+            const bOrig = document.createElement('button');
+            bOrig.type = 'button';
+            bOrig.className = 'track-act-btn-v68 btn-orig-v68';
+            bOrig.innerText = lbls.orig;
+            bOrig.onclick = (e) => window.scrollToOriginalTrack(filename, bOrig, e);
+            bar.appendChild(bOrig);
+        }
+
+        const bPath = document.createElement('button');
+        bPath.type = 'button';
+        bPath.className = 'track-act-btn-v68 btn-path-v68';
+        bPath.innerText = lbls.path;
+        bPath.onclick = (e) => window.copyTrackFullPath(filename, e);
+        bar.appendChild(bPath);
+
+        for (let i = 1; i <= 3; i++) {
+            const bStub = document.createElement('button');
+            bStub.type = 'button';
+            bStub.className = 'track-act-btn-v68 btn-stub-v68';
+            bStub.innerText = lbls.slot + i;
+            bStub.onclick = (e) => {
+                e.stopPropagation();
+            };
+            bar.appendChild(bStub);
+        }
+
+        row.appendChild(bar);
     }
 
-    const bPath = document.createElement('button');
-    bPath.type = 'button';
-    bPath.className = 'track-act-btn-v68 btn-path-v68';
-    bPath.innerText = 'PATH';
-    bPath.onclick = (e) => window.copyTrackFullPath(filename, e);
-    bar.appendChild(bPath);
-
-    for (let i = 1; i <= 3; i++) {
-        const bStub = document.createElement('button');
-        bStub.type = 'button';
-        bStub.className = 'track-act-btn-v68 btn-stub-v68';
-        bStub.innerText = 'СЛОТ ' + i;
-        bStub.onclick = (e) => {
-            e.stopPropagation();
-            if (typeof window.showToast === 'function') {
-                window.showToast('🔧 Заглушка #' + i + ' (' + filename + ')', e);
-            }
-        };
-        bar.appendChild(bStub);
+    const savedSub = window.expandedTrackSublines.get(filename);
+    if (savedSub && savedSub.text) {
+        if (!sub) {
+            sub = document.createElement('div');
+            sub.className = 'track-expand-subline-v68';
+            sub.onclick = (e) => e.stopPropagation();
+            row.appendChild(sub);
+        }
+        sub.textContent = savedSub.text;
+        sub.classList.add('visible-subline-v68');
+        if (savedSub.isDeleted) {
+            sub.classList.add('deleted-subline-v68');
+        } else {
+            sub.classList.remove('deleted-subline-v68');
+        }
     }
-
-    row.appendChild(bar);
 };
 
 window.toggleExpandTrackTitle = function(filename) {
     if (window.expandedTracks.has(filename)) {
         window.expandedTracks.delete(filename);
+        if (window.expandedTrackSublines) window.expandedTrackSublines.delete(filename);
     } else {
         window.expandedTracks.add(filename);
     }
@@ -400,7 +471,7 @@ function buildTrackRowHTML(file, listType, heartIcon) {
                      ontouchmove="window.onTitleTouchMove(event)"
                      ontouchend="window.onTitleTouchEnd(event, '${safeFileJS}')"
                      onclick="if(!('ontouchstart' in window)) window.toggleExpandTrackTitle('${safeFileJS}')"
-                     style="width: 63%; min-height: 48px; display: flex; align-items: center; overflow: hidden; cursor: pointer; user-select: none; -webkit-user-select: none;">
+                     style="width: 62%; min-height: 48px; display: flex; align-items: center; overflow: hidden; cursor: pointer; user-select: none; -webkit-user-select: none;">
                     <span style="color:#58a6ff; font-weight:bold; margin-right:8px; flex-shrink:0;">♪</span>
                     <span class="track-title-text ${expTextClass}">${file}</span>
                 </div>
