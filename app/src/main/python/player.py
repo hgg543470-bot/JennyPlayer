@@ -130,6 +130,19 @@ def read_jenny_rev_trailer(file_path):
         return None
 
 
+
+@route('/api/full_path/<filename:path>', method='GET')
+def get_full_track_path(filename):
+    response.content_type = 'application/json'
+    full_p = os.path.abspath(os.path.join(MUSIC_DIR, filename))
+    return json.dumps({
+        "status": "ok",
+        "filename": filename,
+        "music_dir": os.path.abspath(MUSIC_DIR),
+        "full_path": full_p
+    })
+
+
 @route('/api/media/<filename:path>')
 def serve_media(filename):
     full_p = os.path.join(MUSIC_DIR, filename)

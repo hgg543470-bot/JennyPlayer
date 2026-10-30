@@ -310,3 +310,216 @@ window.fetchData = async function() {
         unifiedBox.innerHTML = tHtml;
     } catch(e) { }
 };
+
+
+// 🛠️ ПАТЧ V68: ПАНЕЛЬ БЫСТРЫХ КНОПОК ПРИ РАСКРЫТИИ ИМЕНИ ТРЕКА (ORIG / PATH / 3 СЛОТА)
+
+window.parseDerivedTrackInfoV68 = function(filename) {
+    if (!filename || typeof filename !== 'string') return { isDerived: false, baseStem: '' };
+    const lastDot = filename.lastIndexOf('.');
+    const origStem = lastDot > 0 ? filename.substring(0, lastDot) : filename;
+    let stem = origStem;
+
+    // Регулярка для снятия всех суффиксов экспорта скорости, движков и эффектов
+    const suffixRe = /(?:_x\d+(?:[.,]\d+)?(?:_(?:slow|fast))?(?:_(?:jbuf90|jbuf|vinyl|webapi|pitch|shift|lock|rev))*|_(?:slow|fast)(?:_(?:jbuf90|jbuf|vinyl|webapi|pitch|rev))*|_(?:jbuf90|vinyl|webapi)|_rev(?:ersed)?|_fx|_eq|_dsp|_master)+$/i;
+
+    let prev = null;
+    while (stem && stem !== prev) {
+        prev = stem;
+        stem = stem.replace(suffixRe, '');
+    }
+
+    const isDerived = (stem.length > 0 && stem !== origStem);
+    return {
+        isDerived: isDerived,
+        baseStem: stem,
+        origStem: origStem
+    };
+};
+
+window.copyTextToClipboardV68 = async function(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (e) {}
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    return ok;
+};
+
+window.extractRowFilenameV68 = function(trackItem) {
+    if (!trackItem) return '';
+    if (trackItem.dataset && trackItem.dataset.filename) return trackItem.dataset.filename;
+    const titleEl = trackItem.querySelector('.track-title, .track-name');
+    if (!titleEl) return '';
+    let raw = (titleEl.textContent || '').trim();
+    // Убираем декоративную нотку в начале, если она внутри того же узла
+    raw = raw.replace(/^[♪♫🎵🎶\s]+/, '').trim();
+    return raw;
+};
+
+window.scrollToOriginalTrackV68 = function(derivedFilename, ev) {
+    if (ev) ev.stopPropagation();
+    const info = window.parseDerivedTrackInfoV68(derivedFilename);
+    if (!info.baseStem) return;
+    const targetLower = info.baseStem.toLowerCase();
+
+    const findMatchingRow = () => {
+        const rows = Array.from(document.querySelectorAll('#trackList .track-item'));
+        let exactOrigRow = null;
+        let prefixOrigRow = null;
+        let fallbackRow = null;
+
+        for (const r of rows) {
+            if (r.style.display === 'none') continue;
+            const fname = window.extractRowFilenameV68(r);
+            if (!fname || fname === derivedFilename) continue;
+            const parsed = window.parseDerivedTrackInfoV68(fname);
+            const stemLower = parsed.origStem.toLowerCase();
+
+            if (stemLower === targetLower && !parsed.isDerived) {
+                exactOrigRow = r;
+                break;
+            }
+            if (!parsed.isDerived && stemLower.startsWith(targetLower)) {
+                if (!prefixOrigRow) prefixOrigRow = r;
+            }
+            if (parsed.baseStem.toLowerCase() === targetLower && !parsed.isDerived) {
+                if (!fallbackRow) fallbackRow = r;
+            }
+        }
+        return exactOrigRow || fallbackRow || prefixOrigRow;
+    };
+
+    let targetRow = findMatchingRow();
+
+    // Если оригинал скрыт текущим фильтром в строке поиска — сбрасываем фильтр и ищем снова
+    if (!targetRow) {
+        const searchInp = document.getElementById('searchInput');
+        if (searchInp && searchInp.value.trim() !== '') {
+            searchInp.value = '';
+            searchInp.dispatchEvent(new Event('input', { bubbles: true }));
+            if (typeof window.renderPlaylist === 'function') window.renderPlaylist();
+            targetRow = findMatchingRow();
+        }
+    }
+
+    if (targetRow) {
+        const origName = window.extractRowFilenameV68(targetRow);
+        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetRow.classList.remove('orig-highlight-pulse-v68');
+        void targetRow.offsetWidth;
+        targetRow.classList.add('orig-highlight-pulse-v68');
+        setTimeout(() => targetRow.classList.remove('orig-highlight-pulse-v68'), 2500);
+
+        if (typeof window.showToast === 'function') {
+            window.showToast('🎯 Оригинал: ' + origName, ev);
+        }
+    } else {
+        if (typeof window.showToast === 'function') {
+            window.showToast('⚠️ Оригинал «' + info.baseStem + '» не найден в списке', ev);
+        }
+    }
+};
+
+window.copyTrackFullPathV68 = async function(filename, ev) {
+    if (ev) ev.stopPropagation();
+    if (!filename) return;
+    let fullPath = filename;
+    try {
+        const res = await fetch('/api/full_path/' + encodeURIComponent(filename));
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.full_path) fullPath = data.full_path;
+        }
+    } catch (e) {}
+
+    await window.copyTextToClipboardV68(fullPath);
+    if (typeof window.showToast === 'function') {
+        window.showToast('📋 PATH: ' + fullPath, ev);
+    }
+};
+
+window.ensureTrackExpandBarV68 = function(trackItem) {
+    if (!trackItem) return;
+    const titleEl = trackItem.querySelector('.track-title, .track-name');
+    const isExpanded = Boolean(
+        (titleEl && titleEl.classList.contains('expanded')) ||
+        trackItem.classList.contains('expanded')
+    );
+
+    if (!isExpanded) {
+        trackItem.classList.remove('expanded-row-v68');
+        return;
+    }
+
+    const filename = window.extractRowFilenameV68(trackItem);
+    const info = window.parseDerivedTrackInfoV68(filename);
+
+    let bar = trackItem.querySelector('.track-expand-actions-v68');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'track-expand-actions-v68';
+        bar.addEventListener('click', (e) => e.stopPropagation());
+        bar.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+
+        if (info.isDerived) {
+            const btnOrig = document.createElement('button');
+            btnOrig.type = 'button';
+            btnOrig.className = 'track-act-btn-v68 btn-orig-v68';
+            btnOrig.innerText = 'ORIG';
+            btnOrig.title = 'Промотать к оригиналу';
+            btnOrig.addEventListener('click', (e) => window.scrollToOriginalTrackV68(filename, e));
+            bar.appendChild(btnOrig);
+        }
+
+        const btnPath = document.createElement('button');
+        btnPath.type = 'button';
+        btnPath.className = 'track-act-btn-v68 btn-path-v68';
+        btnPath.innerText = 'PATH';
+        btnPath.title = 'Скопировать полный путь';
+        btnPath.addEventListener('click', (e) => window.copyTrackFullPathV68(filename, e));
+        bar.appendChild(btnPath);
+
+        for (let i = 1; i <= 3; i++) {
+            const btnStub = document.createElement('button');
+            btnStub.type = 'button';
+            btnStub.className = 'track-act-btn-v68 btn-stub-v68';
+            btnStub.innerText = 'СЛОТ ' + i;
+            btnStub.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (typeof window.showToast === 'function') {
+                    window.showToast(`🔧 Заглушка #${i} (свободный слот)`, e);
+                }
+            });
+            bar.appendChild(btnStub);
+        }
+
+        trackItem.appendChild(bar);
+    }
+
+    trackItem.classList.add('expanded-row-v68');
+};
+
+(function initTrackExpandObserverV68() {
+    document.addEventListener('click', (e) => {
+        const trackItem = e.target && e.target.closest ? e.target.closest('.track-item') : null;
+        if (!trackItem) return;
+        setTimeout(() => {
+            document.querySelectorAll('#trackList .track-item').forEach(row => {
+                window.ensureTrackExpandBarV68(row);
+            });
+        }, 10);
+    }, true);
+})();
