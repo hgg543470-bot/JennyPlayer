@@ -135,6 +135,62 @@ def read_jenny_rev_trailer(file_path):
 
 
 
+# === JENNY V74 CUSTOM TAGS ENGINE START ===
+CUSTOM_TAGS_FILE = os.path.join(DEFAULT_MUSIC_DIR, "jenny_custom_tags.json")
+STANDARD_TAG_KEYS_V74 = {'TITLE', 'ARTIST', 'ALBUM', 'GENRE', 'DATE', 'COMMENT', 'ENCODER'}
+
+def load_custom_tags_db_v74():
+    if os.path.exists(CUSTOM_TAGS_FILE):
+        try:
+            with open(CUSTOM_TAGS_FILE, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+                if isinstance(d, dict):
+                    return d
+        except Exception:
+            pass
+    return {}
+
+def save_custom_tags_db_v74(db):
+    try:
+        os.makedirs(os.path.dirname(CUSTOM_TAGS_FILE), exist_ok=True)
+        with open(CUSTOM_TAGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(db, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def parse_all_ffmpeg_tags_v74(raw_info):
+    tags = {}
+    in_m = False
+    for line in raw_info.splitlines():
+        if re.match(r"^\s*Metadata:\s*$", line):
+            in_m = True
+            continue
+        if in_m:
+            if re.match(r"^\s*(Duration:|Stream #|Chapter #|Output #|Input #)", line):
+                in_m = False
+                continue
+            m = re.match(r"^\s*([^:=\s][^:=]{0,48}?)\s*:\s*(.+)$", line)
+            if m:
+                k = m.group(1).strip().upper()
+                v = m.group(2).strip()
+                if k not in ('DURATION', 'BPS', 'NUMBER_OF_FRAMES', 'NUMBER_OF_BYTES') and not k.startswith('_STATISTICS'):
+                    tags[k] = v
+    return tags
+
+def get_merged_track_tags_v74(filename, raw_info=None):
+    tags = {}
+    if raw_info:
+        tags.update(parse_all_ffmpeg_tags_v74(raw_info))
+    db = load_custom_tags_db_v74()
+    if filename in db and isinstance(db[filename], dict):
+        # Если пользователь сохранял свои теги для этого трека — они имеют высший приоритет
+        saved_dict = db[filename]
+        enc_backup = tags.get('ENCODER')
+        tags = {str(k).strip().upper(): str(v).strip() for k, v in saved_dict.items() if str(k).strip() and str(v).strip()}
+        if enc_backup and 'ENCODER' not in tags:
+            tags['ENCODER'] = enc_backup
+    return tags
+# === JENNY V74 CUSTOM TAGS ENGINE END ===
 # === JENNY V71 BACKEND START ===
 ACTIVE_MUSIC_DIRS = [DEFAULT_MUSIC_DIR]
 SAVED_MUSIC_DIRS = ["/storage/emulated/0/Music", "/storage/emulated/0/Music/mp3_test", "/storage/emulated/0/Download"]
@@ -197,9 +253,11 @@ def quick_parse_artist_album_v71(filename, full_p):
     try:
         st = os.stat(full_p)
         st_mtime, st_size = st.st_mtime, st.st_size
-    except Exception: pass
+    except Exception:
+        pass
+    db_tags = load_custom_tags_db_v74().get(filename, {})
     cached = TRACK_META_CACHE_V71.get(full_p)
-    if cached and cached.get("mtime") == round(st_mtime, 2) and cached.get("size") == st_size:
+    if cached and cached.get("mtime") == round(st_mtime, 2) and cached.get("size") == st_size and cached.get("user_tags") == db_tags:
         return cached
     stem = os.path.splitext(filename)[0]
     clean_stem = re.sub(r'(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock)|_rev(?:ersed)?)+$', '', stem, flags=re.I)
@@ -210,9 +268,28 @@ def quick_parse_artist_album_v71(filename, full_p):
         artist = parts[0].strip()
         if len(parts) >= 3 and parts[1].strip():
             album = parts[1].strip()
+    if isinstance(db_tags, dict):
+        if db_tags.get("ARTIST"):
+            artist = str(db_tags["ARTIST"]).strip()
+        if db_tags.get("ALBUM"):
+            album = str(db_tags["ALBUM"]).strip()
+    custom_only = {}
+    if isinstance(db_tags, dict):
+        for tk, tv in db_tags.items():
+            tku = str(tk).strip().upper()
+            if tku not in STANDARD_TAG_KEYS_V74 and str(tv).strip():
+                custom_only[str(tk).strip()] = str(tv).strip()
     ext = os.path.splitext(filename)[1].lower()
     kbps = 128.0 if ext in ('.opus', '.ogg', '.m4a', '.aac') else (320.0 if ext == '.mp3' else 900.0)
-    meta = {"mtime": round(st_mtime, 2), "size": st_size, "dur": round(max(1.0, (st_size * 8.0) / (kbps * 1000.0)), 1), "artist": artist, "album": album}
+    meta = {
+        "mtime": round(st_mtime, 2),
+        "size": st_size,
+        "dur": round(max(1.0, (st_size * 8.0) / (kbps * 1000.0)), 1),
+        "artist": artist,
+        "album": album,
+        "user_tags": db_tags if isinstance(db_tags, dict) else {},
+        "custom_tags": custom_only
+    }
     TRACK_META_CACHE_V71[full_p] = meta
     return meta
 
@@ -279,14 +356,8 @@ def get_track_meta_v71():
         ff = find_ffmpeg_binary()
         pr = subprocess.run([ff, '-hide_banner', '-i', fp], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         raw = (pr.stderr or "") + (pr.stdout or "")
-        tags, in_m = {}, False
-        for line in raw.splitlines():
-            if re.match(r"^\s*Metadata:\s*$", line): in_m = True; continue
-            if in_m:
-                if re.match(r"^\s*(Duration:|Stream #|Chapter #)", line): in_m = False; continue
-                m = re.match(r"^\s*([A-Za-z0-9_\-\.]+)\s*:\s*(.+)$", line)
-                if m and m.group(1).strip().upper() not in ('ENCODER', 'DURATION'):
-                    tags[m.group(1).strip().upper()] = m.group(2).strip()
+        tags = get_merged_track_tags_v74(fn, raw)
+        tags.pop('ENCODER', None)
         tr = read_jenny_rev_trailer(fp)
         rev = {"has_rev": False}
         if tr:
@@ -295,7 +366,8 @@ def get_track_meta_v71():
                     rf.seek(tr["map_offset"])
                     sm = json.loads(zlib.decompress(rf.read(tr["map_len"])).decode('utf-8'))
                 rev = {"has_rev": True, "map_bytes": tr["map_len"], "pocket_bytes": tr["pocket_len"], "spd": sm.get("spd", 1.0), "tension": sm.get("tension", 100), "origLen": sm.get("origLen", 0)}
-            except Exception: rev = {"has_rev": True}
+            except Exception:
+                rev = {"has_rev": True}
         response.content_type = 'application/json'
         return json.dumps({"status": "ok", "filename": fn, "full_path": fp, "tags": tags, "rev": rev})
     except Exception as e:
@@ -317,23 +389,46 @@ def save_track_meta_v71():
             response.status = 404
             return {"status": "error", "error": "Файл не найден"}
         fdir, ext = os.path.dirname(fp), os.path.splitext(fn)[1]
-        if not os.path.splitext(new_fn)[1]: new_fn += ext
+        if not os.path.splitext(new_fn)[1]:
+            new_fn += ext
+
+        # 1. Сохраняем все теги (включая русские и кастомные, например "член: профсоюза") в базу jenny_custom_tags.json
+        clean_tags = {}
+        if isinstance(tags, dict):
+            for k, v in tags.items():
+                ks, vs = str(k).strip().upper(), str(v).strip()
+                if ks and vs:
+                    clean_tags[ks] = vs
+        db = load_custom_tags_db_v74()
+        if fn in db and fn != new_fn:
+            db.pop(fn, None)
+        db[new_fn] = clean_tags
+        save_custom_tags_db_v74(db)
+
+        # 2. Записываем метаданные и в сам аудиофайл (и в контейнер, и в аудиопоток -metadata:s:a:0)
         tr = read_jenny_rev_trailer(fp)
         m_zlib, p_mask, sm_obj = b"", b"", None
         if tr:
             with open(fp, 'rb') as rf:
                 rf.seek(tr["map_offset"]); m_zlib = rf.read(tr["map_len"])
-                if tr["pocket_len"] > 0: rf.seek(tr["pocket_offset"]); p_mask = rf.read(tr["pocket_len"])
-            try: sm_obj = json.loads(zlib.decompress(m_zlib).decode('utf-8'))
-            except Exception: pass
+                if tr["pocket_len"] > 0:
+                    rf.seek(tr["pocket_offset"]); p_mask = rf.read(tr["pocket_len"])
+            try:
+                sm_obj = json.loads(zlib.decompress(m_zlib).decode('utf-8'))
+            except Exception:
+                pass
         t_in = os.path.join(fdir, f"temp_meta_in_{os.getpid()}{ext}")
         t_out = os.path.join(fdir, f"temp_meta_out_{os.getpid()}{ext}")
         with open(fp, 'rb') as sf, open(t_in, 'wb') as df:
-            if tr: df.write(sf.read(tr["audio_end"]))
-            else: shutil.copyfileobj(sf, df)
-        cmd = [find_ffmpeg_binary(), '-y', '-i', t_in, '-c', 'copy', '-map_metadata', '-1']
-        for k, v in (tags.items() if isinstance(tags, dict) else []):
-            if str(k).strip() and str(v).strip(): cmd.extend(['-metadata', f"{str(k).strip()}={str(v).strip()}"])
+            if tr:
+                df.write(sf.read(tr["audio_end"]))
+            else:
+                shutil.copyfileobj(sf, df)
+        cmd = [find_ffmpeg_binary(), '-y', '-i', t_in, '-c', 'copy', '-map_metadata', '-1', '-map_metadata:s:a', '-1']
+        for k, v in clean_tags.items():
+            # Для стандартных ASCII-ключей пишем напрямую в FFmpeg, а кириллические теги дублируем в ASCII-слот + в базу
+            if re.match(r'^[A-Za-z0-9_\-]+$', k):
+                cmd.extend(['-metadata', f"{k}={v}", '-metadata:s:a:0', f"{k}={v}"])
         cmd.append(t_out)
         r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if r.returncode != 0 or not os.path.exists(t_out) or os.path.getsize(t_out) < 64:
@@ -347,19 +442,23 @@ def save_track_meta_v71():
                 if 'origLen' in rev_upd:
                     try: sm_obj['origLen'] = int(rev_upd['origLen'])
                     except Exception: pass
-                if rev_act == 'strip_pocket': p_mask = b""; sm_obj['pocketFrames'] = 0
+                if rev_act == 'strip_pocket':
+                    p_mask = b""; sm_obj['pocketFrames'] = 0
                 m_zlib = zlib.compress(json.dumps(sm_obj, ensure_ascii=False).encode('utf-8'), level=9)
             ftr = struct.pack(JENNY_REV_FOOTER_FMT, b'JREV', 67, len(m_zlib), len(p_mask), b'JENNYV67')
             with open(t_out, 'ab') as af:
                 af.write(m_zlib)
-                if p_mask: af.write(p_mask)
+                if p_mask:
+                    af.write(p_mask)
                 af.write(ftr)
         dst_fp = os.path.join(fdir, new_fn)
         shutil.move(t_out, dst_fp)
         if dst_fp != fp and os.path.exists(fp):
             try: os.remove(fp)
             except Exception: pass
-        return {"status": "ok", "old_filename": fn, "new_filename": new_fn}
+        TRACK_META_CACHE_V71.pop(fp, None)
+        TRACK_META_CACHE_V71.pop(dst_fp, None)
+        return {"status": "ok", "old_filename": fn, "new_filename": new_fn, "tags": clean_tags}
     except Exception as e:
         response.status = 500
         return {"status": "error", "error": str(e)}
@@ -368,54 +467,6 @@ def save_track_meta_v71():
             if p and os.path.exists(p):
                 try: os.remove(p)
                 except Exception: pass
-# === JENNY V71.3 BIG RAM PCM START ===
-@route('/api/pcm_meta_v71/<filename:path>', method='GET')
-def api_pcm_meta_v71(filename):
-    import re
-    fp = resolve_track_full_path_v71(filename)
-    if not os.path.isfile(fp):
-        response.status = 404
-        return {"status": "error", "error": "File not found"}
-    st_size = os.path.getsize(fp)
-    ff = find_ffmpeg_binary()
-    pr = subprocess.run([ff, '-hide_banner', '-i', fp], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    raw = (pr.stderr or "") + (pr.stdout or "")
-    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", raw)
-    dur = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
-    response.content_type = 'application/json'
-    return json.dumps({"status": "ok", "duration": dur, "size": st_size, "sr": 44100, "channels": 2})
-
-@route('/api/pcm_chunk_v71/<filename:path>', method='GET')
-def api_pcm_chunk_v71(filename):
-    from array import array
-    fp = resolve_track_full_path_v71(filename)
-    if not os.path.isfile(fp):
-        response.status = 404
-        return b""
-    start_sec = float(request.query.get('start', '0'))
-    dur_sec = float(request.query.get('dur', '600'))
-    sr = int(request.query.get('sr', '32000'))
-    ff = find_ffmpeg_binary()
-    cmd = [
-        ff, '-hide_banner', '-loglevel', 'error',
-        '-ss', f"{start_sec:.3f}", '-t', f"{dur_sec:.3f}",
-        '-i', fp,
-        '-f', 'f32le', '-acodec', 'pcm_f32le', '-ac', '2', '-ar', str(sr), 'pipe:1'
-    ]
-    pr = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    raw = pr.stdout
-    rem = len(raw) % 8
-    if rem:
-        raw = raw[:-rem]
-    if not raw:
-        response.content_type = 'application/octet-stream'
-        return b""
-    mv = memoryview(raw).cast('f')
-    ch_l = array('f', mv[0::2]).tobytes()
-    ch_r = array('f', mv[1::2]).tobytes()
-    response.content_type = 'application/octet-stream'
-    return ch_l + ch_r
-# === JENNY V71.3 BIG RAM PCM END ===
 # === JENNY V71 BACKEND END ===
 
 @route('/api/full_path/<filename:path>', method='GET')
@@ -814,11 +865,7 @@ def get_track_info():
                 elif p in ('fltp', 's16', 's16p', 's32', 's32p', 'dblp'):
                     fmt_str = p
 
-        tags = {}
-        for tag_key in ('title', 'artist', 'album', 'encoder', 'date', 'genre'):
-            m = re.search(rf"^\s*{tag_key}\s*:\s*(.+)$", raw_info, re.IGNORECASE | re.MULTILINE)
-            if m:
-                tags[tag_key.upper()] = m.group(1).strip()
+        tags = get_merged_track_tags_v74(filename, raw_info)
 
         sr_num = int(re.sub(r"\D", "", sr_str) or "48000")
         total_samples = f"{int(dur_seconds * sr_num):,}".replace(",", " ") if dur_seconds > 0 else "—"

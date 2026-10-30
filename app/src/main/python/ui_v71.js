@@ -2096,3 +2096,338 @@ window.playPreviousTrack = function() {
     window.playTrack(queue[prevIdx], 'queue');
 };
 
+
+// === V74 CUSTOM TAGS SORTING, BADGES & SPACE-INSENSITIVE SEARCH ===
+
+// Добавляем вкладку «🏷️ По тегам» в базовый список плейлистов, если её ещё нет
+if (!window.PLAYLIST_BUILTIN_TABS_V71.some(t => t.id === 'tags')) {
+    window.PLAYLIST_BUILTIN_TABS_V71.push({ id: 'tags', icon: '🏷️', ru: 'По тегам', en: 'By Tags' });
+}
+
+// Добавляем метод сортировки по своим тегам в окно ⇅
+if (!window.SORT_METHODS_V71.some(s => s.id === 'custom_tag')) {
+    window.SORT_METHODS_V71.push({
+        id: 'custom_tag',
+        defDir: 'asc',
+        ru: '🏷️ По своим тегам (Сначала с тегами)',
+        en: '🏷️ By Custom Tags (Tagged First)'
+    });
+}
+
+// Нормализация строки для умного поиска (убирает пробелы, дефисы и регистр: "поаль" -> "поальбомам")
+window.normSearchV74 = function(str) {
+    return String(str || '').toLowerCase().replace(/[\s\-_.,:;'"«»()\[\]]+/g, '');
+};
+
+// Возвращает словарь всех кастомных тегов трека (например, { "ЧЛЕН": "профсоюза" })
+window.getTrackCustomTagsV74 = function(filename) {
+    const srv = (window.lastData && window.lastData.track_meta && window.lastData.track_meta[filename]) || {};
+    return srv.custom_tags || {};
+};
+
+// Собирает все существующие в медиатеке кастомные теги и их значения
+window.collectAllCustomTagGroupsV74 = function() {
+    const data = window.lastData || {};
+    const allTracks = (data.all_tracks || []).filter(fn =>
+        window.isTrackAllowedByFormatSlots ? window.isTrackAllowedByFormatSlots(fn) : true
+    );
+    const groups = {}; // "КЛЮЧ: ЗНАЧЕНИЕ" -> [tracks]
+    const keysOnly = {}; // "КЛЮЧ" -> [tracks]
+    allTracks.forEach(fn => {
+        const ctags = window.getTrackCustomTagsV74(fn);
+        Object.entries(ctags).forEach(([k, v]) => {
+            const pairLabel = `${k}: ${v}`;
+            if (!groups[pairLabel]) groups[pairLabel] = [];
+            groups[pairLabel].push(fn);
+            if (!keysOnly[k]) keysOnly[k] = [];
+            keysOnly[k].push(fn);
+        });
+    });
+    return { groups, keysOnly };
+};
+
+// Обновляем подсчёт количества для вкладки 'tags'
+const _origGetCntV71 = window.getTrackCountForTabV71;
+window.getTrackCountForTabV71 = function(tabId) {
+    if (tabId === 'tags') {
+        const { groups } = window.collectAllCustomTagGroupsV74();
+        return Object.keys(groups).length;
+    }
+    return _origGetCntV71.apply(this, arguments);
+};
+
+// Расширяем collectActiveSubGroupsV73 для поддержки вкладки 'tags'
+const _origCollectSubV73 = window.collectActiveSubGroupsV73;
+window.collectActiveSubGroupsV73 = function(tabId) {
+    if (tabId === 'tags') {
+        const { groups } = window.collectAllCustomTagGroupsV74();
+        return groups;
+    }
+    return _origCollectSubV73.apply(this, arguments);
+};
+
+// Расширяем сортировку sortTrackArrayForTabV71 поддержкой 'custom_tag' и 'tag_KEY'
+const _origSortTracksV71 = window.sortTrackArrayForTabV71;
+window.sortTrackArrayForTabV71 = function(tracksArr, tabId) {
+    window.ensurePlaylistStateV71();
+    const smap = window.appConfig.playlistSortMapV71 || {};
+    const sc = smap[tabId] || { mode: 'mtime', dir: 'desc' };
+    const mode = sc.mode || 'mtime';
+
+    if (mode === 'custom_tag' || mode.startsWith('tag:')) {
+        const targetKey = mode.startsWith('tag:') ? mode.slice(4) : null;
+        const mul = sc.dir === 'asc' ? 1 : -1;
+        const arr = [...tracksArr];
+        arr.sort((a, b) => {
+            const ta = window.getTrackCustomTagsV74(a);
+            const tb = window.getTrackCustomTagsV74(b);
+            let va = '', vb = '';
+            if (targetKey) {
+                va = ta[targetKey] || '';
+                vb = tb[targetKey] || '';
+            } else {
+                const ka = Object.keys(ta)[0];
+                const kb = Object.keys(tb)[0];
+                va = ka ? `${ka}:${ta[ka]}` : '';
+                vb = kb ? `${kb}:${tb[kb]}` : '';
+            }
+            const hasA = va.length > 0 ? 1 : 0;
+            const hasB = vb.length > 0 ? 1 : 0;
+            // Треки с заполненным тегом ВСЕГДА идут первыми наверху списка!
+            if (hasA !== hasB) return hasB - hasA;
+            if (va !== vb) return va.localeCompare(vb) * mul;
+            return String(a).toLowerCase().localeCompare(String(b).toLowerCase());
+        });
+        return arr;
+    }
+    return _origSortTracksV71.apply(this, arguments);
+};
+
+// Обновляем окно сортировки ⇅ (openPlaylistSortModalV71): выводим также все найденные пользовательские ключи тегов (например, «🏷️ Тег: ЧЛЕН»)
+window.openPlaylistSortModalV71 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    window.closeAllV71Modals();
+    const tabId = window.activePlaylistTabV71 || 'all';
+    const smap = window.appConfig.playlistSortMapV71 || {};
+    const cur = smap[tabId] || { mode: 'mtime', dir: 'desc' };
+    const { keysOnly } = window.collectAllCustomTagGroupsV74();
+    const customKeys = Object.keys(keysOnly).sort((a, b) => a.localeCompare(b));
+
+    const m = document.createElement('div');
+    m.id = 'jennyPlSortModalV71';
+    m.className = 'jenny-modal-backdrop-v71';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    let rows = window.SORT_METHODS_V71.map(sm => {
+        const isSel = (cur.mode === sm.id);
+        const brd = isSel ? '#58a6ff' : '#262c36';
+        const clr = isSel ? '#58a6ff' : '#e6edf3';
+        const arrow = isSel ? (cur.dir === 'asc' ? '▲' : '▼') : '';
+        return `<div onclick="window.applySortForCurrentTabV71('${sm.id}')" style="display:flex;justify-content:space-between;align-items:center;background:#0d1117;border:1px solid ${brd};border-radius:9px;padding:10px 12px;cursor:pointer;"><span style="color:${clr};font-weight:bold;">${window.tr(sm.ru, sm.en)}</span><span style="color:#3fb950;font-size:11.5px;">${arrow}</span></div>`;
+    }).join('');
+
+    if (customKeys.length > 0) {
+        rows += `<div style="font-size:11px;color:#e3b341;font-weight:bold;margin-top:4px;padding-left:2px;">🏷️ ${window.tr('Сортировать по конкретному тегу:', 'Sort by specific custom tag:')}</div>`;
+        rows += customKeys.map(k => {
+            const modeId = 'tag:' + k;
+            const isSel = (cur.mode === modeId);
+            const brd = isSel ? '#e3b341' : '#262c36';
+            const clr = isSel ? '#e3b341' : '#e6edf3';
+            const arrow = isSel ? (cur.dir === 'asc' ? '▲' : '▼') : '';
+            const safeK = modeId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            return `<div onclick="window.applySortForCurrentTabV71('${safeK}')" style="display:flex;justify-content:space-between;align-items:center;background:#0d1117;border:1px solid ${brd};border-radius:9px;padding:9px 12px;cursor:pointer;"><span style="color:${clr};font-weight:bold;">🏷️ Тег «${k}» (${keysOnly[k].length})</span><span style="color:#3fb950;font-size:11.5px;">${arrow}</span></div>`;
+        }).join('');
+    }
+
+    m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()"><div class="jenny-modal-hdr-v71"><span style="color:#58a6ff;font-weight:bold;">⇅ ${window.tr('Сортировка текущего списка', 'Sort Current Playlist')}</span><button type="button" onclick="document.getElementById('jennyPlSortModalV71').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button></div><div class="jenny-modal-body-v71">${rows}</div></div>`;
+    document.body.appendChild(m);
+};
+
+// Отображаем бейджики кастомных тегов (например, [🏷️ ЧЛЕН: профсоюза]) прямо на карточках треков и добавляем поддержку вкладки 'tags'
+window.decorateTrackRowsWithCustomTagsV74 = function() {
+    document.querySelectorAll('#unifiedList .track-row-capsule').forEach(cap => {
+        const fn = cap.getAttribute('data-track');
+        if (!fn) return;
+        const ctags = window.getTrackCustomTagsV74(fn);
+        const entries = Object.entries(ctags);
+        let badgeBox = cap.querySelector('.jenny-custom-tag-badges-v74');
+        if (entries.length === 0) {
+            if (badgeBox) badgeBox.remove();
+            return;
+        }
+        const titleZone = cap.querySelector('.track-title-zone');
+        if (!titleZone) return;
+        titleZone.style.flexWrap = 'wrap';
+        if (!badgeBox) {
+            badgeBox = document.createElement('div');
+            badgeBox.className = 'jenny-custom-tag-badges-v74';
+            badgeBox.style.cssText = 'width:100%;display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;padding-left:18px;';
+            titleZone.appendChild(badgeBox);
+        }
+        badgeBox.innerHTML = entries.map(([k, v]) =>
+            `<span style="font-size:10px;background:rgba(227,179,65,0.16);border:1px solid rgba(227,179,65,0.55);color:#f2cc60;padding:1px 6px;border-radius:6px;font-weight:bold;">🏷️ ${k}: ${v}</span>`
+        ).join('');
+    });
+};
+
+// Дополняем renderActivePlaylistTracksV71 поддержкой вкладки 'tags' и отрисовкой бейджей кастомных тегов
+const _prevRenderV73_1 = window.renderActivePlaylistTracksV71;
+window.renderActivePlaylistTracksV71 = function(scrollSubChipToCenter) {
+    const tabId = window.activePlaylistTabV71 || 'all';
+    if (tabId === 'tags') {
+        const unifiedBox = document.getElementById('unifiedList');
+        if (!unifiedBox || !window.lastData) return;
+        window.mountPlaylistStripDOMV71();
+        const subWrap = document.getElementById('jennySubFilterWrapV71');
+        const oldSubBar = subWrap ? subWrap.querySelector('.jenny-subfilter-bar-v71') : null;
+        const prevSubScroll = oldSubBar ? oldSubBar.scrollLeft : 0;
+
+        const { groups } = window.collectAllCustomTagGroupsV74();
+        const names = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+        if (!window.selectedTagV74 || !groups[window.selectedTagV74]) {
+            window.selectedTagV74 = names[0] || '';
+        }
+
+        let subHtml = '';
+        if (names.length > 0) {
+            const chips = names.map(n => {
+                const isSel = (n === window.selectedTagV74);
+                const safeN = n.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                const cls = 'jenny-pl-chip-v71' + (isSel ? ' active-pl-chip' : '');
+                return `<div class="${cls}" onclick="window.selectedTagV74='${safeN}';window.renderActivePlaylistTracksV71(false);">🏷️ ${n} <span class="jenny-pl-chip-count-v71">${groups[n].length}</span></div>`;
+            }).join('');
+            subHtml = `<div id="jennySubFilterBarActiveV73" class="jenny-subfilter-bar-v71">${chips}</div>`;
+        } else {
+            subHtml = `<div class="jenny-subfilter-bar-v71"><span style="font-size:11.5px;color:#8b949e;">🏷️ ${window.tr('Нет треков со своими тегами (добавь через кнопку МЕТА)', 'No tracks with custom tags yet (add via META)')}</span></div>`;
+        }
+
+        if (subWrap) {
+            subWrap.innerHTML = subHtml;
+            const newSubBar = document.getElementById('jennySubFilterBarActiveV73');
+            if (newSubBar) {
+                newSubBar.scrollLeft = prevSubScroll;
+                window.attachStripLongPressV73(newSubBar, () => window.openSubStripLongPressModalV73());
+            }
+        }
+
+        const baseList = groups[window.selectedTagV74] || [];
+        const sorted = window.sortTrackArrayForTabV71(baseList, 'tags');
+        window.viewedFullTabListV73 = [...sorted];
+        if (!window.playingQueueListV73 || window.playingQueueListV73.length === 0) {
+            window.playingQueueListV73 = [...sorted];
+        }
+        window.currentTrackList = window.playingQueueListV73;
+
+        const sInp = document.getElementById('trackSearchInput');
+        if (sInp) {
+            sInp.placeholder = window.selectedTagV74
+                ? `🔍 Поиск в теге «${window.selectedTagV74}» (${sorted.length})...`
+                : `🔍 Поиск по тегам...`;
+        }
+
+        unifiedBox.innerHTML = sorted.length
+            ? sorted.map(fn => buildTrackRowHTML(fn, 'main', (window.favorites || []).includes(fn) ? '❤️' : '🤍')).join('')
+            : `<div style="padding:20px;color:#8b949e;text-align:center;">Добавь свой тег любому треку через кнопку «МЕТА» ➔ «➕ Поле»</div>`;
+
+        window.decorateTrackRowsWithCustomTagsV74();
+        window.filterTracks(sInp ? sInp.value : '');
+        return;
+    }
+
+    _prevRenderV73_1.apply(this, arguments);
+    window.decorateTrackRowsWithCustomTagsV74();
+};
+
+// Обновляем filterTracks и поиск в модальных окнах: ищем также по всем кастомным тегам и игнорируем пробелы ("поаль" находит "По альбомам")
+window.filterTracks = function(query) {
+    const sInp = document.getElementById('trackSearchInput');
+    const rawQ = (query !== undefined && query !== null) ? String(query) : (sInp ? sInp.value : '');
+    const lowerQuery = rawQ.trim().toLowerCase();
+    const normQuery = window.normSearchV74(rawQ);
+
+    const clrBtn = document.getElementById('btnClearTrackSearchV73');
+    if (clrBtn) clrBtn.style.display = rawQ.length > 0 ? 'inline-flex' : 'none';
+
+    const uList = document.getElementById('unifiedList');
+    if (!uList) return;
+
+    let visibleCount = 0;
+    let totalRows = 0;
+
+    uList.querySelectorAll('.track-row-capsule').forEach(cap => {
+        const wrapper = cap.parentElement;
+        if (!wrapper) return;
+        const trackName = cap.getAttribute('data-track') || '';
+        if (!trackName) return;
+
+        if (window.isTrackAllowedByFormatSlots && !window.isTrackAllowedByFormatSlots(trackName)) {
+            wrapper.style.display = 'none';
+            return;
+        }
+
+        totalRows++;
+        if (!lowerQuery) {
+            wrapper.style.display = 'block';
+            visibleCount++;
+            return;
+        }
+
+        const meta = window.getTrackMetaV71 ? window.getTrackMetaV71(trackName) : { artist: '', album: '' };
+        const ctags = window.getTrackCustomTagsV74(trackName);
+        const ctagsStr = Object.entries(ctags).map(([k, v]) => `${k} ${v}`).join(' ');
+        const srvTags = (window.lastData && window.lastData.track_meta && window.lastData.track_meta[trackName] && window.lastData.track_meta[trackName].user_tags) || {};
+        const srvTagsStr = Object.entries(srvTags).map(([k, v]) => `${k} ${v}`).join(' ');
+
+        const haystack = (trackName + ' ' + (meta.artist || '') + ' ' + (meta.album || '') + ' ' + ctagsStr + ' ' + srvTagsStr).toLowerCase();
+        const isMatch = haystack.includes(lowerQuery) || (normQuery && window.normSearchV74(haystack).includes(normQuery));
+        wrapper.style.display = isMatch ? 'block' : 'none';
+        if (isMatch) visibleCount++;
+    });
+
+    const cntEl = document.getElementById('tracksCount');
+    if (cntEl) cntEl.innerText = lowerQuery ? `${visibleCount}/${totalRows}` : `${totalRows}`;
+
+    let emptySearchMsg = document.getElementById('jennyEmptySearchMsgV73');
+    if (lowerQuery && totalRows > 0 && visibleCount === 0) {
+        if (!emptySearchMsg) {
+            emptySearchMsg = document.createElement('div');
+            emptySearchMsg.id = 'jennyEmptySearchMsgV73';
+            emptySearchMsg.style.cssText = 'padding:18px 10px;color:#8b949e;text-align:center;font-size:12.5px;';
+            uList.appendChild(emptySearchMsg);
+        }
+        emptySearchMsg.innerText = window.tr(
+            `По запросу «${rawQ.trim()}» в текущем разделе ничего не найдено`,
+            `No tracks matching "${rawQ.trim()}" in current view`
+        );
+        emptySearchMsg.style.display = 'block';
+    } else if (emptySearchMsg) {
+        emptySearchMsg.style.display = 'none';
+    }
+};
+
+// Делаем поиск в модалке плейлистов и подгрупп нечувствительным к пробелам ("поаль" -> "По альбомам") и поддерживающим вкладку 'tags'
+const _origOpenAllPlModalV73 = window.openAllPlaylistsLongPressModalV73;
+window.openAllPlaylistsLongPressModalV73 = function() {
+    _origOpenAllPlModalV73.apply(this, arguments);
+    const filterInp = document.getElementById('inpFilterPlaylistsModalV73');
+    const listEl = document.getElementById('bodyPlaylistsModalListV73');
+    if (!filterInp || !listEl) return;
+    const allTabs = window.getAllPlaylistTabsV71();
+    const vis = window.appConfig.visiblePlaylistTabsV71 || {};
+    filterInp.oninput = function() {
+        const nq = window.normSearchV74(this.value);
+        const filtered = allTabs.filter(t => !nq || window.normSearchV74(t.name).includes(nq));
+        listEl.innerHTML = filtered.map(t => {
+            const isAct = (t.id === window.activePlaylistTabV71);
+            const cnt = window.getTrackCountForTabV71(t.id);
+            const isVis = (vis[t.id] !== false);
+            return `<div class="jenny-popup-item-v73 ${isAct ? 'active-popup-item-v73' : ''}" onclick="window.pickPlaylistFromModalV73('${t.id}', event)"><div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;"><input type="checkbox" ${isVis ? 'checked' : ''} onclick="event.stopPropagation();" onchange="window.appConfig.visiblePlaylistTabsV71['${t.id}']=this.checked;window.savePlaylistStateQuietlyV71();window.renderPlaylistStripChipsV71();"><span style="font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.icon} ${t.name}</span></div><span class="jenny-pl-chip-count-v71" style="font-size:11px;padding:2px 8px;">${cnt}</span></div>`;
+        }).join('');
+    };
+};
+
+setTimeout(() => {
+    window.renderPlaylistStripChipsV71();
+    window.renderActivePlaylistTracksV71(false);
+}, 150);
+
