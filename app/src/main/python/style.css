@@ -826,3 +826,152 @@ body.hide-help-badges #jennyFullGuideBtn {
     animation: origPulseGlowV68 2.4s ease-out !important;
     border: 1px solid #3fb950 !important;
 }
+
+
+/* === JENNY V69: COMPACT 2-COLUMN EXPORT SETTINGS MODAL === */
+.exp-modal-backdrop-v69 {
+    position: fixed;
+     inset: 0;
+    background: rgba(5, 7, 12, 0.82);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    z-index: 9999;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    padding: 12px;
+    box-sizing: border-box;
+}
+.exp-modal-window-v69 {
+    width: 100%;
+    max-width: 420px;
+    background: #0d1117;
+    border: 1px solid #7341be;
+    border-radius: 14px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.85), 0 0 18px rgba(115, 65, 190, 0.3);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    max-height: 86vh;
+}
+.exp-modal-header-v69 {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+}
+.exp-modal-title-v69 {
+    font-size: 13px;
+    font-weight: 800;
+    color: #e6edf3;
+    letter-spacing: 0.4px;
+}
+.exp-modal-top-actions-v69 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 9px 10px 6px 10px;
+    background: #0d1117;
+    border-bottom: 1px dashed rgba(139, 92, 246, 0.28);
+}
+.exp-top-btn-v69 {
+    padding: 7px 6px;
+    font-size: 11px;
+    font-weight: 800;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: center;
+    user-select: none;
+    border: 1px solid #30363d;
+    background: #161b22;
+    color: #c9d1d9;
+    transition: transform 0.1s ease, border-color 0.15s ease;
+}
+.exp-top-btn-v69:active {
+    transform: scale(0.96);
+}
+.exp-top-btn-v69.btn-apply-cur {
+    border-color: rgba(88, 166, 255, 0.55);
+    color: #79c0ff;
+    background: rgba(88, 166, 255, 0.12);
+}
+.exp-top-btn-v69.btn-clear-all {
+    border-color: rgba(248, 81, 73, 0.5);
+    color: #ff7b72;
+    background: rgba(248, 81, 73, 0.12);
+}
+.exp-modal-grid-v69 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 8px 10px;
+    overflow-y: auto;
+    max-height: 55vh;
+}
+.exp-chk-card-v69 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 7px;
+    border-radius: 8px;
+    border: 1px solid #262c36;
+    background: #121721;
+    color: #8b949e;
+    font-size: 11px;
+    line-height: 1.15;
+    cursor: pointer;
+    user-select: none;
+    min-height: 34px;
+    box-sizing: border-box;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.exp-chk-card-v69.active-card-v69 {
+    border-color: #8b5cf6;
+    background: rgba(139, 92, 246, 0.16);
+    color: #e6edf3;
+    box-shadow: inset 0 0 8px rgba(139, 92, 246, 0.18);
+}
+.exp-chk-card-v69 input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: #8b5cf6;
+    pointer-events: none;
+}
+.exp-chk-label-v69 {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    font-weight: 600;
+}
+.exp-modal-footer-v69 {
+    display: flex;
+    gap: 8px;
+    padding: 9px 10px;
+    background: #161b22;
+    border-top: 1px solid #30363d;
+}
+.exp-foot-btn-v69 {
+    flex: 1;
+    padding: 9px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    border: 1px solid #30363d;
+    background: #21262d;
+    color: #c9d1d9;
+}
+.exp-foot-btn-v69.primary-v69 {
+    flex: 1.6;
+    background: linear-gradient(135deg, #7341be, #58a6ff);
+    border-color: #8b5cf6;
+    color: #ffffff;
+    box-shadow: 0 0 12px rgba(115, 65, 190, 0.45);
+}
