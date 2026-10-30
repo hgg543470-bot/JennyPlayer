@@ -884,26 +884,28 @@ window._horizonSliceTimerV71 = null;
 // Вырезает окно [startSec .. startSec + winSec] из гигантского буфера в маленький AudioBuffer (при необходимости разворачивая для реверса)
 window.extractWindowBufferV71 = function(srcBuf, startSec, winSec, isRev) {
     if (!srcBuf || !window.audioCtx) return null;
+    const player = document.getElementById('audioPlayer');
     const sr = srcBuf.sampleRate;
     const numCh = srcBuf.numberOfChannels;
     const totalLen = srcBuf.length;
     const dur = srcBuf.duration;
 
-    let cleanStart = Math.max(0, Math.min(dur - 0.05, startSec));
-    let actualWinSec = Math.min(winSec, Math.max(0.1, dur - cleanStart));
-    let frameCount = Math.max(256, Math.floor(actualWinSec * sr));
-
-    let subBuf = window.audioCtx.createBuffer(numCh, frameCount, sr);
     if (!isRev) {
-        let startFrame = Math.min(totalLen - frameCount, Math.max(0, Math.floor(cleanStart * sr)));
+        let cleanStart = Math.max(0, Math.min(dur - 0.05, startSec));
+        let startFrame = Math.min(totalLen - 256, Math.max(0, Math.floor(cleanStart * sr)));
+        let frameCount = Math.max(256, Math.min(Math.floor(winSec * sr), totalLen - startFrame));
+        let subBuf = window.audioCtx.createBuffer(numCh, frameCount, sr);
         for (let c = 0; c < numCh; c++) {
-            const inp = srcBuf.getChannelData(c);
-            const out = subBuf.getChannelData(c);
-            out.set(inp.subarray(startFrame, startFrame + frameCount));
+            subBuf.getChannelData(c).set(srcBuf.getChannelData(c).subarray(startFrame, startFrame + frameCount));
         }
+        return subBuf;
     } else {
-        // Для реверса на длинном треке читаем с конца назад без клонирования всех 3 ГБ!
-        let revEndFrame = Math.min(totalLen, Math.max(frameCount, Math.floor((dur - cleanStart) * sr)));
+        // При реверсе player.currentTime = dur - realForwardSec, поэтому позиция в прямом буфере = dur - startSec
+        const refDur = (player && isFinite(player.duration) && player.duration > 0) ? player.duration : dur;
+        let forwardPosSec = Math.max(0.15, Math.min(dur, refDur - startSec));
+        let revEndFrame = Math.min(totalLen, Math.max(256, Math.floor(forwardPosSec * sr)));
+        let frameCount = Math.max(256, Math.min(Math.floor(winSec * sr), revEndFrame));
+        let subBuf = window.audioCtx.createBuffer(numCh, frameCount, sr);
         for (let c = 0; c < numCh; c++) {
             const inp = srcBuf.getChannelData(c);
             const out = subBuf.getChannelData(c);
@@ -911,8 +913,8 @@ window.extractWindowBufferV71 = function(srcBuf, startSec, winSec, isRev) {
                 out[i] = inp[revEndFrame - 1 - i];
             }
         }
+        return subBuf;
     }
-    return subBuf;
 };
 
 // Мгновенный запуск 1-й передачи (J Buf 90° Pitch Lock) с горизонтом 45 сек для треков > 10 минут

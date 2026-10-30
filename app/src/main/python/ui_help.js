@@ -3223,6 +3223,8 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     const tension = Math.max(0.2, Math.min(2.0, (parseFloat(tensionPct) || 100) / 100));
 
     if (Math.abs(spd - 1.0) < 0.002) {
+        window._hoseSplicerCacheV46.speed = 1.0;
+        window._hoseSplicerCacheV46.srcBuffer = srcBuffer;
         window._hoseSplicerCacheV46.lastBuildMs = 0;
         window._hoseSplicerCacheV46.avgSeamErrMv = 0;
         window._hoseSplicerCacheV46.splicedBuffer = srcBuffer;

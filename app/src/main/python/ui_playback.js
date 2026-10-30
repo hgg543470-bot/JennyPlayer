@@ -184,7 +184,7 @@ window.playTrack = async function(filename, listContext = 'main') {
     const player = document.getElementById('audioPlayer');
     const titleEl = document.getElementById('nowPlaying');
 
-    if(player) { player.pause(); if (player.src && player.src.startsWith('blob:')) URL.revokeObjectURL(player.src); }
+    if(player) { player.pause();  }
     if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} }
     window.isStudioPlaying = false;
     window.studioBuffer = null;
@@ -227,16 +227,20 @@ window.playTrack = async function(filename, listContext = 'main') {
 
         let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
         let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig.pitchLock === true);
+        let decodedBuffer = null;
 
-        // Если этот гигантский трек уже полностью распакован в кэше 16GB RAM — включаем его за 0.01 сек!
-        if (window._hugeRamCacheV71 && window._hugeRamCacheV71.name === filename && window._hugeRamCacheV71.buf && window._hugeRamCacheV71.complete) {
+        // Мгновенный возврат из RAM-кэша при перещёлкивании треков Вперёд <-> Назад (0 мс ожидания!)
+        window._ramTrackHistoryV71 = window._ramTrackHistoryV71 || [];
+        let cachedEntry = window._ramTrackHistoryV71.find(x => x.name === filename && x.buf);
+
+        if (cachedEntry) {
+            decodedBuffer = cachedEntry.buf;
             if (player) {
-                player.src = '/api/media/' + encodeURIComponent(filename);
+                player.src = cachedEntry.blobUrl || ('/api/media/' + encodeURIComponent(filename));
                 player.playbackRate = targetSpeed;
-                player.preservesPitch = isPitchLocked;
+                player.preservesPitch = true;
                 player.play().catch(e => {});
             }
-            decodedBuffer = window._hugeRamCacheV71.buf;
         } else {
             let metaCheck = { duration: 0, size: 0 };
             try {
@@ -244,10 +248,33 @@ window.playTrack = async function(filename, listContext = 'main') {
                 if (mr.ok) metaCheck = await mr.json();
             } catch (e) {}
 
-            const isHugeFile = (metaCheck.duration > 900 || metaCheck.size > 26 * 1024 * 1024);
-
-            if (isHugeFile) {
-                // Стримим <audio> напрямую без скачивания 200 МБ блоба и сразу с 1-й секунды запускаем быструю распаковку в RAM!
+            // Файлы до 115 МБ (включая 62-минутные выпуски) декодируем нативным C++ decodeAudioData за 2 секунды!
+            if (!metaCheck.size || metaCheck.size <= 115 * 1024 * 1024) {
+                const response = await fetch('/api/media/' + encodeURIComponent(filename));
+                const blob = await response.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                if (window.htmlGain) window.htmlGain.gain.value = 1.0;
+                if (player) {
+                    player.src = blobUrl;
+                    player.playbackRate = targetSpeed;
+                    player.preservesPitch = true;
+                    player.play().catch(e => {});
+                }
+                if (window.appConfig.studioMode && titleEl) {
+                    titleEl.innerText = "⏳ RAM (пока играет сжатый): " + filename;
+                }
+                try {
+                    let arrayBuffer = await blob.arrayBuffer();
+                    decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
+                    if (decodedBuffer) {
+                        window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(x => x.name !== filename).slice(0, 1);
+                        window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: blobUrl });
+                    }
+                } catch (decErr) {
+                    decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+                }
+            } else {
+                // Сверхтяжёлые 3-часовые гиганты (>115 МБ) сразу пускаем через быстрый блочный декодер с мгновенным стартом 1-го окна
                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
                 if (player) {
                     player.src = '/api/media/' + encodeURIComponent(filename);
@@ -256,34 +283,13 @@ window.playTrack = async function(filename, listContext = 'main') {
                     player.play().catch(e => {});
                 }
                 decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
-            } else {
-                const response = await fetch('/api/media/' + encodeURIComponent(filename));
-                const blob = await response.blob();
-                window._lastTrackBlob = blob;
-                window._lastTrackBlobName = filename;
-                if (window.htmlGain) {
-                    window.htmlGain.gain.value = (window.appConfig.studioMode && isRevMode) ? 0 : 1;
-                }
-                if (player) {
-                    player.src = URL.createObjectURL(blob);
-                    player.playbackRate = targetSpeed;
-                    player.preservesPitch = isPitchLocked;
-                    if (!isRevMode || !window.appConfig.studioMode) {
-                        player.play().catch(e => {});
-                    }
-                }
-                if (window.appConfig.studioMode && titleEl) {
-                    titleEl.innerText = "⏳ RAM (пока играет сжатый): " + filename;
-                }
-                try {
-                    let arrayBuffer = await blob.arrayBuffer();
-                    decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
-                } catch (decErr) {
-                    decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+                if (decodedBuffer) {
+                    window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(x => x.name !== filename).slice(0, 1);
+                    window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: null });
                 }
             }
         }
-        var decodedBuffer_final = decodedBuffer;
+
         if (!decodedBuffer) {
             if (window.currentPlayingTrack === filename) {
                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
@@ -385,33 +391,20 @@ document.addEventListener("DOMContentLoaded", () => {
             if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
         };
 
-        player.onseeking = () => {
-            if (window.studioSourceNode) {
-                window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){}
-                window.isStudioPlaying = false;
-            }
-        };
+        player.onseeking = () => {};
 
         player.onseeked = () => {
-            if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0 && !(window.appConfig && window.appConfig.elasticHoseMode)) {
-                if (!player.paused) {
-                    if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} }
-                    let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-                    window.studioSourceNode = window.audioCtx.createBufferSource();
-                    window.studioSourceNode.buffer = isVisualReverse ? window.reversedStudioBuffer : window.studioBuffer;
-                    window.studioSourceNode.playbackRate.value = player.playbackRate;
-                    window.studioSourceNode.connect(window.inputMixer);
-                    window.studioSourceNode.start(0, player.currentTime);
-                    window.isStudioPlaying = true;
-                }
+            if (!player.paused && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
             }
         };
 
         player.onratechange = () => {
-            if (window.appConfig.studioMode && window.studioSourceNode) {
-                if (window.appConfig.elasticHoseMode && window.studioSourceNode._isHoseSpliced && player.playbackRate !== 10.0) {
+            if (window.studioSourceNode) {
+                const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+                if (gKey === 'jbuf-lock' || window.studioSourceNode._isHoseSpliced) {
                     window.studioSourceNode.playbackRate.value = 1.0;
-                } else {
+                } else if (player.playbackRate !== 10.0) {
                     window.studioSourceNode.playbackRate.value = player.playbackRate;
                 }
             }
