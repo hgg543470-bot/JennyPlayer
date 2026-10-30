@@ -146,14 +146,6 @@ def get_full_track_path(filename):
 
 @route('/api/media/<filename:path>')
 def serve_media(filename):
-    full_p = os.path.join(MUSIC_DIR, filename)
-    trailer = read_jenny_rev_trailer(full_p)
-    if trailer:
-        with open(full_p, 'rb') as f:
-            clean_audio = f.read(trailer["audio_end"])
-        response.content_type = 'audio/ogg'
-        response.set_header('Content-Length', str(len(clean_audio)))
-        return clean_audio
     return static_file(filename, root=MUSIC_DIR)
 
 

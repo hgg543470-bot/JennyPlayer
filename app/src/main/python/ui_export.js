@@ -312,106 +312,56 @@ function bufferToWav(abuffer, len) {
 }
 
 
-// 🎛️ ПАТЧ V69: ОКНО ВЫБОРА ГАЛОЧЕК ЭФФЕКТОВ В 2 СТОЛБИКА ПЕРЕД ЭКСПОРТОМ
+// 🎛️ ПАТЧ V69.1: СТРОГИЙ СПИСОК ЗВУКОВЫХ DSP-ЭФФЕКТОВ В 2 СТОЛБИКА (БЕЗ ТЕМ И UI-НАСТРОЕК)
+
+window.DSP_EXPORT_EFFECTS_V69 = [
+    { key: 'opt_autoCeiling',  domId: 'chk_autoCeiling',  label: '🛡️ Авто-Мастер-Потолок' },
+    { key: 'opt_cleanFir',     domId: 'chk_cleanFir',     label: '✨ Драйв Чистый FIR (dB)' },
+    { key: 'opt_midPhase',     domId: 'chk_midPhase',     label: '🎯 Фаза СЧ Вокал (dB)' },
+    { key: 'opt_midQ',         domId: 'chk_midQ',         label: '📐 Ширина СЧ купола (%)' },
+    { key: 'opt_deEsser',      domId: 'chk_deEsser',      label: '🐍 Де-эссер ВЧ (dB)' },
+    { key: 'opt_autoRms',      domId: 'chk_autoRms',      label: '⚡ Авто-RMS Цель (dB)' },
+    { key: 'opt_subMono',      domId: 'chk_subMono',      label: '🧲 Моно-Саббас (Hz)' },
+    { key: 'opt_stereoWidth',  domId: 'chk_stereoWidth',  label: '🎭 Стерео-Ширина (%)' },
+    { key: 'opt_punch',        domId: 'chk_punch',        label: '🥁 Панч-Хлыст (dB)' },
+    { key: 'opt_binaural',     domId: 'chk_binaural',     label: '🎧 Бинаурал-Колонки (%)' },
+    { key: 'firEnabled',       domId: 'firToggle',        label: '✨ FIR Сатуратор (Импульс)' },
+    { key: 'eqEnabled',        domId: 'eqToggle',         label: '🎚️ Эквалайзер (5 полос)' },
+    { key: 'limiterEnabled',   domId: 'limiterToggle',    label: '🛡️ Лимитер / Компрессор' },
+    { key: 'multiBandEnabled', domId: 'multiBandToggle',  label: '🎛️ 3-полосный кроссовер (Разделение частот)' },
+    { key: 'phaseFixEnabled',  domId: 'phaseFixToggle',   label: '🎯 Фазовый фокус (Выравнивание вокала 3D)' }
+];
+
+window.getGearboxSummaryV69 = function() {
+    const cfg = window.appConfig || {};
+    const gearKey = cfg.gearKeyV66 || 'jbuf-lock';
+    const gearNames = {
+        'jbuf-lock':  '1-я: ⚡ JBUF 90° [PITCH LOCK]',
+        'jbuf-shift': '2-я: 📐 JBUF [PITCH SHIFT]',
+        'web-lock':   '3-я: 🌐 Web API [PITCH LOCK]',
+        'web-shift':  '4-я: 🌐 Web API [PITCH SHIFT]',
+        'vinyl':      'R: 💿 ВИНИЛ [DIRECT PITCH]'
+    };
+    const spd = (typeof window.getActiveTargetSpeedV59 === 'function')
+        ? window.getActiveTargetSpeedV59()
+        : 1.0;
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    return `⚙️ РКПП: ${gearNames[gearKey] || gearKey} | x${Number(spd).toFixed(2)}${isRev ? ' (⏪ REV)' : ''}`;
+};
 
 window.collectDspCheckboxesV69 = function() {
-    const items = [];
-    const seenEls = new Set();
-    const seenCfgKeys = new Set();
-
-    // Исключаем чекбоксы скорости/дуги/левши и системных модалок
-    const skipWords = [
-        'левша', 'зеркальная дуга', 'left-hand', 'mirror arc',
-        'кастомная скорость', 'писать выбор дуги', 'дефолтная скорость',
-        'custom speed', 'write arc', 'default arc'
-    ];
-
-    const allChks = Array.from(document.querySelectorAll('input[type="checkbox"]'));
-
-    for (const el of allChks) {
-        if (seenEls.has(el)) continue;
-        if (el.closest('#exportModalV69, #trackInfoModal, [id*="format"], [class*="format-slot"]')) continue;
-
-        const idStr = (el.id || '').toLowerCase();
-        if (idStr.includes('format') || idStr.includes('slot') || idStr.includes('lefty') || idStr.includes('arc')) continue;
-
-        let row = el.closest('label, .pro-opt-row, .setting-row, .control-row') || el.parentElement;
-        if (row && row.tagName === 'DIV' && row.children.length === 1 && row.parentElement) {
-            row = row.parentElement;
-        }
-
-        let rawLabel = '';
-        if (row) {
-            const clone = row.cloneNode(true);
-            clone.querySelectorAll('input, button, select, script, style, .help-btn').forEach(n => n.remove());
-            rawLabel = (clone.textContent || '').replace(/\s+/g, ' ').trim();
-        }
-        if (!rawLabel && el.id) rawLabel = el.id;
-
-        const lowerLabel = rawLabel.toLowerCase();
-        if (!rawLabel || skipWords.some(w => lowerLabel.includes(w))) continue;
-        if (/^\.[a-z0-9]{2,5}$/i.test(rawLabel)) continue;
-
-        // Очищаем хвосты вроде двоеточия в конце
-        let cleanLabel = rawLabel.replace(/[:：]+$/, '').trim();
-        if (cleanLabel.length > 34) cleanLabel = cleanLabel.substring(0, 32) + '…';
-
-        // Определяем привязанный ключ в window.appConfig
-        let cfgKeys = [];
-        const cfg = window.appConfig || {};
-        if (el.id) {
-            if (el.id in cfg) cfgKeys.push(el.id);
-            if (('opt_' + el.id) in cfg) cfgKeys.push('opt_' + el.id);
-            const stripped = el.id.replace(/^(chk_|cb_|toggle_)/i, '');
-            if (stripped in cfg && !cfgKeys.includes(stripped)) cfgKeys.push(stripped);
-        }
-        const onChg = (el.getAttribute('onchange') || '') + ' ' + (el.getAttribute('onclick') || '');
-        const rx = /appConfig(?:\[['"]([^'"]+)['"]\]|\.([a-zA-Z0-9_]+))/g;
-        let m;
-        while ((m = rx.exec(onChg)) !== null) {
-            const k = m[1] || m[2];
-            if (k && !cfgKeys.includes(k)) cfgKeys.push(k);
-        }
-
-        cfgKeys.forEach(k => seenCfgKeys.add(k));
-        seenEls.add(el);
-
-        items.push({
-            el: el,
-            cfgKeys: cfgKeys,
-            label: cleanLabel,
-            liveChecked: Boolean(el.checked),
-            modalChecked: Boolean(el.checked)
-        });
-    }
-
-    // Проверяем базовые флаги DSP-тракта, если какие-то из них переключаются кнопками без input[type=checkbox]
-    const coreFallbacks = [
-        { key: 'firEnabled', label: '✨ FIR Сатуратор' },
-        { key: 'eqEnabled', label: '🎚️ Эквалайзер (5 полос)' },
-        { key: 'limiterEnabled', label: '🛡️ Лимитер / Компрессор' },
-        { key: 'multiBandEnabled', label: '🎛️ 3-полосный кроссовер' },
-        { key: 'phaseFixEnabled', label: '🎯 Фазовый фокус (3D)' },
-        { key: 'opt_midQ', label: '📐 Ширина СЧ (Mid Q)' },
-        { key: 'opt_midPhase', label: '🎤 Уровень СЧ (Mid dB)' },
-        { key: 'opt_deEsser', label: '🐍 Де-эссер ВЧ' }
-    ];
-
     const cfg = window.appConfig || {};
-    for (const fb of coreFallbacks) {
-        if (!seenCfgKeys.has(fb.key) && (fb.key in cfg)) {
-            const isAct = Boolean(cfg[fb.key]);
-            items.push({
-                el: null,
-                cfgKeys: [fb.key],
-                label: fb.label,
-                liveChecked: isAct,
-                modalChecked: isAct
-            });
-        }
-    }
-
-    return items;
+    return window.DSP_EXPORT_EFFECTS_V69.map(def => {
+        const el = document.getElementById(def.domId);
+        const isLive = el ? Boolean(el.checked) : Boolean(cfg[def.key]);
+        return {
+            key: def.key,
+            el: el,
+            label: def.label,
+            liveChecked: isLive,
+            modalChecked: isLive
+        };
+    });
 };
 
 window.ensureExportModalV69 = function() {
@@ -428,9 +378,10 @@ window.ensureExportModalV69 = function() {
     modal.innerHTML = `
         <div class="exp-modal-window-v69" onclick="event.stopPropagation()">
             <div class="exp-modal-header-v69">
-                <span class="exp-modal-title-v69" id="expModalTitleV69">💾 НАСТРОЙКИ ЭКСПОРТА</span>
+                <span class="exp-modal-title-v69">💾 НАСТРОЙКИ ЭКСПОРТА DSP</span>
                 <button class="cp-close-btn" onclick="document.getElementById('exportModalV69').style.display='none'">✖</button>
             </div>
+            <div class="exp-gearbox-banner-v69" id="expGearboxBannerV69"></div>
             <div class="exp-modal-top-actions-v69">
                 <button type="button" class="exp-top-btn-v69 btn-apply-cur" id="btnExpApplyCurrentV69">Применить все текущие</button>
                 <button type="button" class="exp-top-btn-v69 btn-clear-all" id="btnExpClearAllV69">Снять все</button>
@@ -438,7 +389,7 @@ window.ensureExportModalV69 = function() {
             <div class="exp-modal-grid-v69" id="expModalGridV69"></div>
             <div class="exp-modal-footer-v69">
                 <button type="button" class="exp-foot-btn-v69" onclick="document.getElementById('exportModalV69').style.display='none'">Отмена</button>
-                <button type="button" class="exp-foot-btn-v69 primary-v69" id="btnExpConfirmRunV69">💾 Экспортировать</button>
+                <button type="button" class="exp-foot-btn-v69 primary-v69" id="btnExpConfirmRunV69">💾 Экспорт</button>
             </div>
         </div>
     `;
@@ -453,6 +404,9 @@ window.exportCurrentTrack = function() {
     }
 
     const modal = window.ensureExportModalV69();
+    const banner = document.getElementById('expGearboxBannerV69');
+    if (banner) banner.textContent = window.getGearboxSummaryV69();
+
     const grid = document.getElementById('expModalGridV69');
     const confirmBtn = document.getElementById('btnExpConfirmRunV69');
     const applyCurBtn = document.getElementById('btnExpApplyCurrentV69');
@@ -463,7 +417,7 @@ window.exportCurrentTrack = function() {
     const renderGrid = () => {
         grid.innerHTML = '';
         let activeCount = 0;
-        items.forEach((item, idx) => {
+        items.forEach(item => {
             if (item.modalChecked) activeCount++;
             const card = document.createElement('div');
             card.className = 'exp-chk-card-v69' + (item.modalChecked ? ' active-card-v69' : '');
@@ -492,8 +446,9 @@ window.exportCurrentTrack = function() {
 
     applyCurBtn.onclick = (e) => {
         e.stopPropagation();
+        const cfg = window.appConfig || {};
         items.forEach(it => {
-            it.liveChecked = it.el ? Boolean(it.el.checked) : Boolean(window.appConfig && window.appConfig[it.cfgKeys[0]]);
+            it.liveChecked = it.el ? Boolean(it.el.checked) : Boolean(cfg[it.key]);
             it.modalChecked = it.liveChecked;
         });
         renderGrid();
@@ -511,7 +466,6 @@ window.exportCurrentTrack = function() {
         e.stopPropagation();
         modal.style.display = 'none';
 
-        // Сохраняем текущие живые состояния галочек и конфига
         const cfg = window.appConfig || {};
         const savedCfgValues = {};
         const savedDomStates = [];
@@ -521,16 +475,13 @@ window.exportCurrentTrack = function() {
                 savedDomStates.push({ el: it.el, checked: it.el.checked });
                 it.el.checked = it.modalChecked;
             }
-            it.cfgKeys.forEach(k => {
-                if (!(k in savedCfgValues)) savedCfgValues[k] = cfg[k];
-                cfg[k] = it.modalChecked;
-            });
+            savedCfgValues[it.key] = cfg[it.key];
+            cfg[it.key] = it.modalChecked;
         });
 
         try {
             await window.executeTrackExportV69();
         } finally {
-            // Возвращаем живые настройки плеера обратно после рендеринга экспорта
             savedDomStates.forEach(s => { s.el.checked = s.checked; });
             Object.keys(savedCfgValues).forEach(k => { cfg[k] = savedCfgValues[k]; });
         }
