@@ -2802,3 +2802,390 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
     };
 })();
 
+
+// === V74.3 UNFOCUSED SUB-STRIP MODE & LIVE CHIP SEARCH (TAGS, ARTISTS, ALBUMS) ===
+
+// Сбрасываем принудительный автофокус при старте
+window.selectedArtistV71 = null;
+window.selectedAlbumV71 = null;
+window.selectedTagV74 = null;
+
+// При клике по вкладке в первой строке: если нажали на уже открытую вкладку (По тегам / По артистам / По альбомам) — снимаем фокус с подкатегории!
+const _origSelectPlaylistTabV71 = window.selectPlaylistTabV71;
+window.selectPlaylistTabV71 = function(tabId, ev) {
+    if (window.activePlaylistTabV71 === tabId) {
+        if (tabId === 'artists') window.selectedArtistV71 = null;
+        if (tabId === 'albums') window.selectedAlbumV71 = null;
+        if (tabId === 'tags') window.selectedTagV74 = null;
+    }
+    return _origSelectPlaylistTabV71.apply(this, arguments);
+};
+
+// Переключатель фокуса капсулы во второй строке (тап — сфокусировать, повторный тап — снять фокус!)
+window.toggleSubFilterChipV74_3 = function(tabId, itemName, scrollChipIntoView) {
+    const prop = (tabId === 'artists') ? 'selectedArtistV71' : ((tabId === 'albums') ? 'selectedAlbumV71' : 'selectedTagV74');
+    if (window[prop] === itemName) {
+        // Повторный тап по активному тегу/артисту/альбому снимает с него фокус
+        window[prop] = null;
+    } else {
+        window[prop] = itemName;
+        // Если пользователь искал сам тег/артиста через строку поиска и тапнул на найденную капсулу — очищаем фильтр, чтобы показать все треки внутри неё
+        const sInp = document.getElementById('trackSearchInput');
+        if (sInp && sInp.value.trim() !== '') {
+            sInp.value = '';
+        }
+    }
+    window.renderActivePlaylistTracksV71(Boolean(scrollChipIntoView));
+};
+
+window.selectSubFilterItemV73 = function(tabId, itemName, scrollChipIntoView) {
+    window.toggleSubFilterChipV74_3(tabId, itemName, scrollChipIntoView);
+};
+
+// Обновляем placeholder строки поиска с учётом сфокусированного/несфокусированного состояния
+window.updateScopedSearchPlaceholderV73 = function(baseCount) {
+    const sInp = document.getElementById('trackSearchInput');
+    if (!sInp) return;
+
+    if (!sInp.parentElement.classList.contains('jenny-search-wrap-v73')) {
+        const p = sInp.parentElement;
+        p.classList.add('jenny-search-wrap-v73');
+        const clrBtn = document.createElement('button');
+        clrBtn.type = 'button';
+        clrBtn.id = 'btnClearTrackSearchV73';
+        clrBtn.className = 'jenny-search-clear-btn-v73';
+        clrBtn.innerHTML = '✖';
+        clrBtn.onclick = (e) => {
+            e.stopPropagation();
+            sInp.value = '';
+            window.filterTracks('');
+            sInp.blur();
+        };
+        p.appendChild(clrBtn);
+        sInp.oninput = function() { window.filterTracks(this.value); };
+    }
+
+    const tabId = window.activePlaylistTabV71 || 'all';
+    const cnt = (typeof baseCount === 'number') ? baseCount : (window.currentTrackList ? window.currentTrackList.length : 0);
+    let scopeLabel = '';
+
+    if (tabId === 'all') {
+        scopeLabel = window.tr(`🔍 Поиск во «Все» (${cnt})...`, `🔍 Search in "All" (${cnt})...`);
+    } else if (tabId === 'fav') {
+        scopeLabel = window.tr(`🔍 Поиск в «Избранное» (${cnt})...`, `🔍 Search in "Favorites" (${cnt})...`);
+    } else if (tabId === 'artists') {
+        if (window.selectedArtistV71) {
+            scopeLabel = window.tr(`🔍 Поиск у «${window.selectedArtistV71}» (${cnt})...`, `🔍 Search in "${window.selectedArtistV71}" (${cnt})...`);
+        } else {
+            const artCnt = Object.keys(window.collectActiveSubGroupsV73('artists')).length;
+            scopeLabel = window.tr(`🔍 Найти артиста (${artCnt}) или трек (${cnt})...`, `🔍 Find artist (${artCnt}) or track (${cnt})...`);
+        }
+    } else if (tabId === 'albums') {
+        if (window.selectedAlbumV71) {
+            scopeLabel = window.tr(`🔍 Поиск в альбоме «${window.selectedAlbumV71}» (${cnt})...`, `🔍 Search in album "${window.selectedAlbumV71}" (${cnt})...`);
+        } else {
+            const albCnt = Object.keys(window.collectActiveSubGroupsV73('albums')).length;
+            scopeLabel = window.tr(`🔍 Найти альбом (${albCnt}) или трек (${cnt})...`, `🔍 Find album (${albCnt}) or track (${cnt})...`);
+        }
+    } else if (tabId === 'tags') {
+        if (window.selectedTagV74) {
+            scopeLabel = window.tr(`🔍 Поиск в теге «${window.selectedTagV74}» (${cnt})...`, `🔍 Search in tag "${window.selectedTagV74}" (${cnt})...`);
+        } else {
+            const tagCnt = Object.keys(window.collectActiveSubGroupsV73('tags')).length;
+            scopeLabel = window.tr(`🔍 Найти тег (${tagCnt}) или трек (${cnt})...`, `🔍 Find tag (${tagCnt}) or track (${cnt})...`);
+        }
+    } else {
+        const pl = (window.appConfig.customPlaylistsV71 || []).find(p => p.id === tabId);
+        const plName = pl ? pl.name : 'Плейлист';
+        scopeLabel = window.tr(`🔍 Поиск в «${plName}» (${cnt})...`, `🔍 Search in "${plName}" (${cnt})...`);
+    }
+
+    sInp.placeholder = scopeLabel;
+    const clrBtn = document.getElementById('btnClearTrackSearchV73');
+    if (clrBtn) {
+        clrBtn.style.display = (sInp.value && sInp.value.length > 0) ? 'inline-flex' : 'none';
+    }
+};
+
+// Единый рендер для всех вкладок (Все, Избранное, По артистам, По альбомам, По тегам, Плейлисты) без принудительного фокуса первой капсулы!
+window.renderActivePlaylistTracksV71 = function(scrollSubChipToCenter) {
+    const unifiedBox = document.getElementById('unifiedList');
+    if (!unifiedBox || !window.lastData) return;
+    window.mountPlaylistStripDOMV71();
+
+    const prevQueue = (window.playingQueueListV73 && window.playingQueueListV73.length > 0)
+        ? [...window.playingQueueListV73]
+        : null;
+
+    const subWrap = document.getElementById('jennySubFilterWrapV71');
+    const oldSubBar = subWrap ? subWrap.querySelector('.jenny-subfilter-bar-v71') : null;
+    const prevSubScroll = oldSubBar ? oldSubBar.scrollLeft : 0;
+
+    const tabId = window.activePlaylistTabV71 || 'all';
+    const allTracks = (window.lastData.all_tracks || []).filter(fn =>
+        window.isTrackAllowedByFormatSlots ? window.isTrackAllowedByFormatSlots(fn) : true
+    );
+    let subHtml = '';
+    let baseList = [];
+
+    if (tabId === 'all') {
+        baseList = allTracks;
+    } else if (tabId === 'fav') {
+        baseList = window.favorites || [];
+    } else if (tabId === 'artists' || tabId === 'albums' || tabId === 'tags') {
+        const icon = tabId === 'artists' ? '🎤' : (tabId === 'albums' ? '💿' : '🏷️');
+        const prop = tabId === 'artists' ? 'selectedArtistV71' : (tabId === 'albums' ? 'selectedAlbumV71' : 'selectedTagV74');
+        const groups = window.collectActiveSubGroupsV73(tabId);
+        const names = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+
+        // Если ранее выбранный элемент больше не существует — сбрасываем фокус в null (НЕ выбираем принудительно names[0]!)
+        if (window[prop] && !groups[window[prop]]) {
+            window[prop] = null;
+        }
+
+        if (names.length > 0) {
+            const chips = names.map(n => {
+                const isSel = (n === window[prop]);
+                const safeN = n.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                const cls = 'jenny-pl-chip-v71' + (isSel ? ' active-pl-chip' : '');
+                return `<div class="${cls}" data-subname="${n.replace(/"/g, '&quot;')}" onclick="window.toggleSubFilterChipV74_3('${tabId}','${safeN}',false)">${icon} ${n} <span class="jenny-pl-chip-count-v71">${groups[n].length}</span></div>`;
+            }).join('');
+            subHtml = `<div id="jennySubFilterBarActiveV73" class="jenny-subfilter-bar-v71">${chips}</div>`;
+        } else if (tabId === 'tags') {
+            subHtml = `<div class="jenny-subfilter-bar-v71"><span style="font-size:11.5px;color:#8b949e;">🏷️ ${window.tr('Нет треков со своими тегами (добавь через кнопку МЕТА)', 'No tracks with custom tags yet (add via META)')}</span></div>`;
+        }
+
+        if (window[prop] && groups[window[prop]]) {
+            baseList = groups[window[prop]];
+        } else if (tabId === 'tags') {
+            // Когда ни один конкретный тег не сфокусирован — показываем все треки, у которых есть хотя бы один кастомный тег
+            const seen = new Set();
+            names.forEach(n => {
+                (groups[n] || []).forEach(fn => {
+                    if (!seen.has(fn)) {
+                        seen.add(fn);
+                        baseList.push(fn);
+                    }
+                });
+            });
+        } else {
+            baseList = allTracks;
+        }
+    } else {
+        const pl = (window.appConfig.customPlaylistsV71 || []).find(p => p.id === tabId);
+        if (pl) {
+            baseList = Array.isArray(pl.tracks) ? pl.tracks : [];
+            subHtml = `<div id="jennySubFilterBarActiveV73" class="jenny-subfilter-bar-v71" style="justify-content:space-between;"><span style="font-size:11.5px;color:#79c0ff;font-weight:bold;">🎶 ${pl.name} (${baseList.length})</span><div style="display:flex;gap:6px;"><button type="button" onclick="window.openImportFolderToPlaylistModalV71('${pl.id}')" style="padding:3px 8px;font-size:10.5px;color:#3fb950;">📁 +Папка</button><button type="button" onclick="window.deleteCustomPlaylistV71('${pl.id}')" style="padding:3px 8px;font-size:10.5px;color:#ff7b72;">🗑️ Удалить</button></div></div>`;
+        }
+    }
+
+    if (subWrap) {
+        subWrap.innerHTML = subHtml;
+        const newSubBar = document.getElementById('jennySubFilterBarActiveV73');
+        if (newSubBar) {
+            newSubBar.scrollLeft = prevSubScroll;
+            if (scrollSubChipToCenter) {
+                const actChip = newSubBar.querySelector('.active-pl-chip');
+                if (actChip && typeof actChip.scrollIntoView === 'function') {
+                    actChip.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                }
+            }
+            window.attachStripLongPressV73(newSubBar, () => {
+                window.openSubStripLongPressModalV73();
+            });
+        }
+    }
+
+    const sorted = window.sortTrackArrayForTabV71(baseList, tabId);
+    window.viewedFullTabListV73 = [...sorted];
+
+    const qCtx = window.playingQueueContextV73 || {};
+    const isSameContext = (
+        qCtx.tabId === tabId &&
+        (tabId !== 'artists' || qCtx.artist === (window.selectedArtistV71 || '')) &&
+        (tabId !== 'albums' || qCtx.album === (window.selectedAlbumV71 || ''))
+    );
+
+    if (!prevQueue || prevQueue.length === 0) {
+        window.playingQueueListV73 = [...sorted];
+        window.playingQueueContextV73 = {
+            tabId: tabId,
+            artist: window.selectedArtistV71 || '',
+            album: window.selectedAlbumV71 || ''
+        };
+    } else if (isSameContext && sorted.includes(window.currentPlayingTrack)) {
+        window.playingQueueListV73 = [...sorted];
+    } else {
+        window.playingQueueListV73 = prevQueue;
+    }
+
+    window.currentTrackList = window.playingQueueListV73;
+    window.topTrack = sorted[0] || null;
+
+    window.updateScopedSearchPlaceholderV73(sorted.length);
+
+    let html = '';
+    if (!sorted.length) {
+        html = `<div style="padding:20px;color:#8b949e;text-align:center;">${window.tr('Список пуст', 'Playlist is empty')}</div>`;
+    } else {
+        sorted.forEach(fn => {
+            const isFav = (window.favorites || []).includes(fn);
+            html += buildTrackRowHTML(fn, 'main', isFav ? '❤️' : '🤍');
+        });
+    }
+    unifiedBox.innerHTML = html;
+
+    if (typeof window.decorateTrackRowsWithCustomTagsV74 === 'function') {
+        window.decorateTrackRowsWithCustomTagsV74();
+    }
+
+    const sInp = document.getElementById('trackSearchInput');
+    window.filterTracks(sInp ? sInp.value : '');
+
+    if (window.expandedTracks && window.expandedTracks.size > 0) {
+        document.querySelectorAll('.track-row-capsule.expanded-capsule').forEach(r => {
+            const fn = r.getAttribute('data-track');
+            if (fn) window.syncRowActionButtons(r, fn, true);
+        });
+    }
+};
+
+// Обновляем filterTracks: если мы во вкладке По тегам / По артистам / По альбомам и ни одна капсула НЕ сфокусирована,
+// ввод в строку поиска в реальном времени фильтрует и КАПСУЛЫ во второй строке, и треки внизу!
+const _prevFilterTracksV74 = window.filterTracks;
+window.filterTracks = function(query) {
+    _prevFilterTracksV74.apply(this, arguments);
+
+    const tabId = window.activePlaylistTabV71 || 'all';
+    if (tabId !== 'artists' && tabId !== 'albums' && tabId !== 'tags') return;
+
+    const prop = tabId === 'artists' ? 'selectedArtistV71' : (tabId === 'albums' ? 'selectedAlbumV71' : 'selectedTagV74');
+    const subBar = document.getElementById('jennySubFilterBarActiveV73');
+    if (!subBar) return;
+
+    const sInp = document.getElementById('trackSearchInput');
+    const rawQ = (query !== undefined && query !== null) ? String(query) : (sInp ? sInp.value : '');
+    const lowerQ = rawQ.trim().toLowerCase();
+    const normQ = window.normSearchV74 ? window.normSearchV74(rawQ) : lowerQ;
+
+    // Если конкретная капсула НЕ сфокусирована — фильтруем сами капсулы второй строки по введённому запросу!
+    if (!window[prop]) {
+        subBar.querySelectorAll('.jenny-pl-chip-v71').forEach(chip => {
+            const subName = (chip.getAttribute('data-subname') || chip.textContent || '').toLowerCase();
+            if (!lowerQ) {
+                chip.style.display = 'inline-flex';
+                return;
+            }
+            const match = subName.includes(lowerQ) || (normQ && window.normSearchV74(subName).includes(normQ));
+            chip.style.display = match ? 'inline-flex' : 'none';
+        });
+    } else {
+        subBar.querySelectorAll('.jenny-pl-chip-v71').forEach(chip => {
+            chip.style.display = 'inline-flex';
+        });
+    }
+};
+
+// Обновляем модальное окно по зажатию 180 мс на второй строке: поддержка 'tags' + снятие фокуса повторным тапом
+window.openSubStripLongPressModalV73 = function() {
+    const tabId = window.activePlaylistTabV71 || 'all';
+    if (tabId !== 'artists' && tabId !== 'albums' && tabId !== 'tags') {
+        if (String(tabId).startsWith('pl_')) {
+            window.openImportFolderToPlaylistModalV71(tabId);
+        } else {
+            window.openAllPlaylistsLongPressModalV73();
+        }
+        return;
+    }
+
+    window.closeAllV71Modals();
+    const icon = tabId === 'artists' ? '🎤' : (tabId === 'albums' ? '💿' : '🏷️');
+    const prop = tabId === 'artists' ? 'selectedArtistV71' : (tabId === 'albums' ? 'selectedAlbumV71' : 'selectedTagV74');
+    const currentSel = window[prop] || '';
+    const groups = window.collectActiveSubGroupsV73(tabId);
+    const allNames = Object.keys(groups);
+
+    const m = document.createElement('div');
+    m.id = 'jennySubItemsPopupV73';
+    m.className = 'jenny-modal-backdrop-v71';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    const titleTxt = tabId === 'artists'
+        ? `🎤 Все артисты (${allNames.length})`
+        : (tabId === 'albums' ? `💿 Все альбомы (${allNames.length})` : `🏷️ Все теги (${allNames.length})`);
+    const phTxt = tabId === 'artists'
+        ? `🔍 Быстрый поиск артиста из ${allNames.length}...`
+        : (tabId === 'albums' ? `🔍 Быстрый поиск альбома из ${allNames.length}...` : `🔍 Быстрый поиск тега из ${allNames.length}...`);
+
+    m.innerHTML = `
+        <div class="jenny-modal-card-v71" onclick="event.stopPropagation()">
+            <div class="jenny-modal-hdr-v71">
+                <span style="color:#58a6ff;font-weight:bold;">${titleTxt}</span>
+                <button type="button" onclick="document.getElementById('jennySubItemsPopupV73').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>
+            </div>
+            <div style="padding:10px 14px 6px 14px;background:#080b10;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid #21262d;">
+                <input type="text" id="inpFilterSubItemsModalV73" placeholder="${phTxt}" style="width:100%;padding:8px 10px;text-align:left !important;box-sizing:border-box;font-size:12.5px;">
+                <div style="display:flex;gap:6px;">
+                    <button type="button" id="btnSubSortAlphaV73" style="flex:1;padding:5px;font-size:11px;">🔤 А ➔ Я</button>
+                    <button type="button" id="btnSubSortCountV73" style="flex:1;padding:5px;font-size:11px;">🔢 По кол-ву треков</button>
+                </div>
+            </div>
+            <div class="jenny-modal-body-v71" id="bodySubItemsModalListV73" style="max-height:60vh;"></div>
+        </div>
+    `;
+    document.body.appendChild(m);
+
+    const listEl = document.getElementById('bodySubItemsModalListV73');
+    const filterInp = document.getElementById('inpFilterSubItemsModalV73');
+    const btnAlpha = document.getElementById('btnSubSortAlphaV73');
+    const btnCount = document.getElementById('btnSubSortCountV73');
+
+    const renderSubList = () => {
+        const rawQ = String(filterInp.value || '').trim().toLowerCase();
+        const normQ = window.normSearchV74 ? window.normSearchV74(rawQ) : rawQ;
+        let names = allNames.filter(n => !rawQ || n.toLowerCase().includes(rawQ) || (normQ && window.normSearchV74(n).includes(normQ)));
+
+        if (window._subModalSortModeV73 === 'count') {
+            names.sort((a, b) => (groups[b].length - groups[a].length) || a.localeCompare(b));
+            btnCount.style.borderColor = '#58a6ff';
+            btnCount.style.color = '#58a6ff';
+            btnAlpha.style.borderColor = '#30363d';
+            btnAlpha.style.color = '#8b949e';
+        } else {
+            names.sort((a, b) => a.localeCompare(b));
+            btnAlpha.style.borderColor = '#58a6ff';
+            btnAlpha.style.color = '#58a6ff';
+            btnCount.style.borderColor = '#30363d';
+            btnCount.style.color = '#8b949e';
+        }
+
+        if (!names.length) {
+            listEl.innerHTML = `<div style="padding:18px;color:#8b949e;text-align:center;">Ничего не найдено</div>`;
+            return;
+        }
+
+        listEl.innerHTML = names.map(n => {
+            const isSel = (n === currentSel);
+            const cnt = groups[n].length;
+            const safeN = n.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            return `
+                <div class="jenny-popup-item-v73 ${isSel ? 'active-popup-item-v73' : ''}" onclick="document.getElementById('jennySubItemsPopupV73').remove();window.toggleSubFilterChipV74_3('${tabId}','${safeN}',true);">
+                    <span style="font-weight:bold;word-break:break-word;flex:1;">${icon} ${n}</span>
+                    <span class="jenny-pl-chip-count-v71" style="font-size:11px;padding:2px 8px;flex-shrink:0;">${cnt}</span>
+                </div>
+            `;
+        }).join('');
+    };
+
+    btnAlpha.onclick = () => { window._subModalSortModeV73 = 'alpha'; renderSubList(); };
+    btnCount.onclick = () => { window._subModalSortModeV73 = 'count'; renderSubList(); };
+    filterInp.oninput = renderSubList;
+
+    renderSubList();
+};
+
+setTimeout(() => {
+    window.renderPlaylistStripChipsV71();
+    window.renderActivePlaylistTracksV71(false);
+}, 100);
+
