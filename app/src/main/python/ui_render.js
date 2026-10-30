@@ -373,8 +373,25 @@ window.openTrackInfoModal = async function(filename) {
         const cfg = window.appConfig || {};
         const spd = window.getTargetPlaybackSpeed ? window.getTargetPlaybackSpeed() : 1.0;
         const isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-        const engineStr = cfg.studioMode ? 'RAM 32-bit Float Buffer 🚀' : 'HTML5 Direct Stream';
-        const pitchStr = cfg.pitchLock ? 'ON (Time-Stretch)' : 'OFF (Vinyl Pitch)';
+        const gKey = cfg.gearKeyV66 || (cfg.elasticHoseMode ? 'jbuf-lock' : (cfg.pitchLock ? 'web-lock' : 'vinyl-shift'));
+        const engineMap = {
+            'jbuf-lock':   'RAM 32-bit Float [1-я: J Buf 90°] 🚀',
+            'jbuf-shift':  'RAM 32-bit Float [2-я: J Buf Shift] 🚀',
+            'web-lock':    'HTML5 Direct Stream [3-я: Web API] 🌐',
+            'web-shift':   'HTML5 Direct Stream [4-я: Web API] 🌐',
+            'vinyl-shift': 'RAM 32-bit Platter [R: ВИНИЛ] 💿',
+            'neutral':     'Idle Bypass 1.00x [N: Нейтраль] ⚙️'
+        };
+        const pitchMap = {
+            'jbuf-lock':   'ON (1-я: J Buf 90° Pitch Lock)',
+            'web-lock':    'ON (3-я: Web API Time-Stretch)',
+            'neutral':     'BYPASS (N: Холостой ход 1.00x)',
+            'jbuf-shift':  'OFF (2-я: J Buf Pitch Shift)',
+            'web-shift':   'OFF (4-я: Web API Pitch Shift)',
+            'vinyl-shift': 'OFF (R: Vinyl Pitch Shift)'
+        };
+        const engineStr = engineMap[gKey] || (cfg.studioMode ? 'RAM 32-bit Float Buffer 🚀' : 'HTML5 Direct Stream');
+        const pitchStr = pitchMap[gKey] || (cfg.pitchLock ? 'ON (Time-Stretch)' : 'OFF (Vinyl Pitch)');
 
         let tagsHtml = '';
         if (info.tags && Object.keys(info.tags).length > 0) {
