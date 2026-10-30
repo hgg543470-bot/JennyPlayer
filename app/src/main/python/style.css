@@ -1452,3 +1452,51 @@ input[type="checkbox"]:checked::before { background: var(--accent-green) !import
 .track-act-btn-v68.btn-slot-del-v71 { background: rgba(248, 81, 73, 0.16) !important; border-color: rgba(248, 81, 73, 0.6) !important; color: #ff7b72 !important; }
 .track-act-btn-v68.btn-slot-del-v71.confirm-armed-v71 { background: #da3633 !important; border-color: #ff7b72 !important; color: #fff !important; }
 .track-act-btn-v68.btn-slot-meta-v71 { background: rgba(227, 179, 65, 0.18) !important; border-color: #e3b341 !important; color: #f2cc60 !important; }
+
+
+/* === JENNY V73: SCOPED SEARCH CLEAR BTN & 180MS POPUP LISTS === */
+.jenny-search-wrap-v73 {
+    position: relative !important;
+    display: flex !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+#trackSearchInput {
+    padding-right: 34px !important;
+}
+.jenny-search-clear-btn-v73 {
+    position: absolute !important;
+    right: 6px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    width: 24px !important;
+    height: 24px !important;
+    border-radius: 50% !important;
+    background: rgba(139, 148, 158, 0.2) !important;
+    border: 1px solid rgba(139, 148, 158, 0.35) !important;
+    color: #e6edf3 !important;
+    font-size: 11px !important;
+    padding: 0 !important;
+    display: none;
+    align-items: center !important;
+    justify-content: center !important;
+    z-index: 10 !important;
+    box-shadow: none !important;
+}
+.jenny-popup-item-v73 {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    background: #0d1117 !important;
+    border: 1px solid #262c36 !important;
+    border-radius: 9px !important;
+    padding: 9px 12px !important;
+    cursor: pointer !important;
+    gap: 8px !important;
+    user-select: none !important;
+}
+.jenny-popup-item-v73.active-popup-item-v73 {
+    background: linear-gradient(135deg, rgba(115, 65, 190, 0.38), rgba(31, 111, 235, 0.28)) !important;
+    border-color: #58a6ff !important;
+    color: #ffffff !important;
+}
