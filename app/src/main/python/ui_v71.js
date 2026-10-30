@@ -1267,3 +1267,172 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
     };
 })();
 
+
+// === V72 TORRENT PIECE MAP DISPATCHER (INSTANT SEEK PRIORITY & ZERO SILENCE) ===
+
+(function hookSeekAndReverseForTorrentMapV72() {
+    const player = document.getElementById('audioPlayer');
+    if (player && !player._torrentSeekHookV72) {
+        player._torrentSeekHookV72 = true;
+        player.addEventListener('seeking', () => {
+            if (typeof window.prioritizeRamPieceAtCursorV72 === 'function') {
+                window.prioritizeRamPieceAtCursorV72();
+            }
+        });
+    }
+    const origRev = window.toggleReverseMode;
+    if (typeof origRev === 'function' && !window._revHookV72) {
+        window._revHookV72 = true;
+        window.toggleReverseMode = function(targetReversed) {
+            if (typeof window.prioritizeRamPieceAtCursorV72 === 'function') {
+                window.prioritizeRamPieceAtCursorV72();
+            }
+            return origRev.apply(this, arguments);
+        };
+    }
+})();
+
+// Обновляем engageHorizonRamEngineV71_5 с проверкой торрент-карты кусков:
+// если кусок в точке клика уже в RAM (pieceMap == 2) — сразу играем из RAM (25-сек окно),
+// если кусок прямо сейчас подкачивается (150 мс) — пингуем торрент-загрузчик и не глушим звук пустыми нулями!
+window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
+    const player = document.getElementById('audioPlayer');
+    const badge = document.getElementById('hoseLiveTelemetryV44');
+    if (!player || !window.audioCtx) return false;
+
+    const targetSpd = (typeof window.getActiveTargetSpeedV59 === 'function')
+        ? window.getActiveTargetSpeedV59()
+        : (player.playbackRate || 1.0);
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    const curSec = player.currentTime || 0;
+    const refDur = (player && isFinite(player.duration) && player.duration > 0)
+        ? player.duration
+        : (window.studioBuffer ? window.studioBuffer.duration : 0);
+
+    const readyNow = window.studioBuffer && window.isRamRangeReadyV72
+        ? window.isRamRangeReadyV72(window.studioBuffer, curSec, 6.0, isRev, refDur)
+        : Boolean(window.studioBuffer);
+
+    if (!window.studioBuffer || !readyNow) {
+        // Кусок в точке клика ещё подлетает из FFmpeg (~150 мс): даём приоритет этой точке!
+        if (typeof window.prioritizeRamPieceAtCursorV72 === 'function') {
+            window.prioritizeRamPieceAtCursorV72();
+        }
+        window._activeBufferSourcesV71.forEach(n => {
+            n.onended = null;
+            try { n.stop(); } catch (e) {}
+            try { n.disconnect(); } catch (e) {}
+        });
+        window._activeBufferSourcesV71.clear();
+        window.studioSourceNode = null;
+        window.isStudioPlaying = false;
+
+        if (!isRev) {
+            if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+            const wantPitchLock = (gearKey === 'jbuf-lock' || gearKey === 'web-lock' || gearKey === 'neutral');
+            player.preservesPitch = wantPitchLock;
+            player.mozPreservesPitch = wantPitchLock;
+            player.webkitPreservesPitch = wantPitchLock;
+            const spd = (gearKey === 'neutral') ? 1.0 : targetSpd;
+            if (Math.abs(player.playbackRate - spd) > 0.003) {
+                try { player.playbackRate = spd; } catch (e) {}
+            }
+        } else {
+            if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+        }
+        if (badge) {
+            badge.style.color = '#e3b341';
+            badge.innerText = `⚡ Подгрузка куска RAM в точке клика...`;
+        }
+        return true;
+    }
+
+    if (window.studioBuffer.duration <= 600 && !(isRev && !window.reversedStudioBuffer)) {
+        return false;
+    }
+
+    if (isDraggingArc) {
+        if (window._hoseArcDebounceTimerV47) clearTimeout(window._hoseArcDebounceTimerV47);
+        window._hoseArcDebounceTimerV47 = setTimeout(() => {
+            window.syncMasterPlaybackEngineV59(false);
+        }, 50);
+        return true;
+    }
+
+    if (window._horizonSliceTimerV71) {
+        clearTimeout(window._horizonSliceTimerV71);
+        window._horizonSliceTimerV71 = null;
+    }
+
+    // Берём компактное 24-секундное окно из готовых кусков торрент-карты
+    const WIN_SEC = 24.0;
+    const rawWindowBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, WIN_SEC, isRev);
+    if (!rawWindowBuf) return false;
+
+    if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+    player.preservesPitch = false;
+    if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+        try { player.playbackRate = targetSpd; } catch (e) {}
+    }
+
+    let playBuf = rawWindowBuf;
+    let nodeRate = 1.0;
+    let buildMs = 0;
+
+    if (gearKey === 'jbuf-lock') {
+        const tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined)
+            ? window.appConfig.hoseTensionPct
+            : 100;
+        const t0 = performance.now();
+        playBuf = window.buildElasticHoseBufferV46(rawWindowBuf, targetSpd, tensionPct);
+        buildMs = Math.round(performance.now() - t0);
+        nodeRate = 1.0;
+    } else {
+        playBuf = rawWindowBuf;
+        nodeRate = targetSpd;
+    }
+
+    if (!player.paused) {
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+        }
+        window.studioSourceNode = window.audioCtx.createBufferSource();
+        window.studioSourceNode._isHoseSpliced = (gearKey === 'jbuf-lock');
+        window.studioSourceNode._isHorizonWindowV71 = true;
+        window.studioSourceNode.buffer = playBuf;
+        window.studioSourceNode.playbackRate.value = nodeRate;
+        window.studioSourceNode.connect(window.inputMixer);
+        window.studioSourceNode.start(0, 0);
+        window.isStudioPlaying = true;
+
+        const realDurSec = (gearKey === 'jbuf-lock') ? playBuf.duration : (playBuf.duration / Math.max(0.25, nodeRate));
+        const nextWaitMs = Math.max(400, (realDurSec - 1.0) * 1000);
+        window._horizonSliceTimerV71 = setTimeout(() => {
+            const activeG = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+            if (!player.paused && (activeG === 'jbuf-lock' || activeG === 'jbuf-shift' || activeG === 'vinyl-shift')) {
+                window.engageHorizonRamEngineV71_5(activeG, false);
+            }
+        }, nextWaitMs);
+    }
+
+    if (badge) {
+        const loadedCnt = window.studioBuffer._loadedCountV72 || 0;
+        const totalCnt = window.studioBuffer._pieceMapV72 ? window.studioBuffer._pieceMapV72.length : 1;
+        const mapStr = window.studioBuffer._pieceMapV72 ? ` [${loadedCnt}/${totalCnt}]` : '';
+        if (gearKey === 'jbuf-lock') {
+            const c = window._hoseSplicerCacheV46 || {};
+            badge.style.color = '#3fb950';
+            badge.innerText = `⚡ J Buf 90°${mapStr}: x${targetSpd.toFixed(2)}${isRev ? ' ⏪' : ''} (${buildMs}мс)`;
+        } else if (gearKey === 'vinyl-shift') {
+            badge.style.color = '#d2a8ff';
+            badge.innerText = `💿 ВИНИЛ${mapStr}: x${targetSpd.toFixed(2)}${isRev ? ' ⏪' : ''}`;
+        } else {
+            badge.style.color = '#3fb950';
+            badge.innerText = `⚡ J Buf SHIFT${mapStr}: x${targetSpd.toFixed(2)}${isRev ? ' ⏪' : ''}`;
+        }
+    }
+    return true;
+};
+

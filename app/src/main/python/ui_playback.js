@@ -1,19 +1,58 @@
-window._hugeRamCacheV71 = { name: null, buf: null, loadedUntilSec: 0, complete: false };
+window._hugeRamCacheV71 = { name: null, buf: null, complete: false };
+window._pieceAbortCtrlV72 = null;
+
+// Проверяет по торрент-карте, загружен ли в RAM интервал [startSec .. startSec + spanSec]
+window.isRamRangeReadyV72 = function(buf, startSec, spanSec, isRev, refDur) {
+    if (!buf) return false;
+    if (!buf._pieceMapV72) return true; // Обычный короткий трек целиком в RAM
+    const pSec = buf._pieceSecV72 || 30;
+    const map = buf._pieceMapV72;
+    const totalP = map.length;
+    const dur = buf.duration;
+
+    if (!isRev) {
+        const p0 = Math.max(0, Math.min(totalP - 1, Math.floor(startSec / pSec)));
+        const p1 = Math.max(0, Math.min(totalP - 1, Math.floor(Math.min(dur - 0.1, startSec + spanSec) / pSec)));
+        for (let p = p0; p <= p1; p++) {
+            if (map[p] !== 2) return false;
+        }
+        return true;
+    } else {
+        const rDur = (refDur && isFinite(refDur) && refDur > 0) ? refDur : dur;
+        const fwdEnd = Math.max(0.2, Math.min(dur, rDur - startSec));
+        const fwdStart = Math.max(0, fwdEnd - spanSec);
+        const p0 = Math.max(0, Math.min(totalP - 1, Math.floor(fwdStart / pSec)));
+        const p1 = Math.max(0, Math.min(totalP - 1, Math.floor(Math.max(0, fwdEnd - 0.05) / pSec)));
+        for (let p = p0; p <= p1; p++) {
+            if (map[p] !== 2) return false;
+        }
+        return true;
+    }
+};
+
+// Вызывается при любом клике по таймлайну или переключении Реверса: прерывает старый кусок и качает кусок под курсором!
+window.prioritizeRamPieceAtCursorV72 = function() {
+    const buf = window.studioBuffer;
+    if (!buf || !buf._pieceMapV72 || buf._allPiecesLoadedV72) return;
+    if (window._pieceAbortCtrlV72) {
+        try { window._pieceAbortCtrlV72.abort(); } catch (e) {}
+    }
+};
 
 window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMeta) {
     if (window._hugeRamCacheV71.name === filename && window._hugeRamCacheV71.buf && window._hugeRamCacheV71.complete) {
         window.studioBuffer = window._hugeRamCacheV71.buf;
-        window.studioBuffer._loadedSecV71 = window.studioBuffer.duration;
         return window.studioBuffer;
     }
 
+    // Берём длительность строго из серверного FFmpeg-проба preMeta, чтобы не захватить старый player.duration от прошлой песни!
     let dur = (preMeta && preMeta.duration) ? parseFloat(preMeta.duration) : 0;
-    if (!dur && player && isFinite(player.duration) && player.duration > 0) dur = player.duration;
     if (!dur) {
         const mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
         const md = await mr.json();
         dur = parseFloat(md.duration) || 0;
     }
+    if (!dur && player && isFinite(player.duration) && player.duration > 0) dur = player.duration;
     if (dur <= 0) return null;
 
     const sr = (dur > 2400) ? 32000 : 44100;
@@ -22,59 +61,118 @@ window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMe
     const chL = audioBuf.getChannelData(0);
     const chR = audioBuf.getChannelData(1);
 
-    audioBuf._loadedSecV71 = 0;
-    window.studioBuffer = audioBuf;
-    window._hugeRamCacheV71 = { name: filename, buf: audioBuf, loadedUntilSec: 0, complete: false };
+    const PIECE_SEC = 30;
+    const numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
+    const pieceMap = new Uint8Array(numPieces); // 0 = пусто, 1 = качается, 2 = готов в RAM
 
-    const loadSlice = async (stSec, dSec) => {
-        const url = `/api/pcm_chunk_v71/${encodeURIComponent(filename)}?start=${stSec}&dur=${dSec}&sr=${sr}`;
-        const res = await fetch(url);
-        if (!res.ok) return 0;
-        const ab = await res.arrayBuffer();
-        const totalFloats = Math.floor(ab.byteLength / 4);
-        const frames = Math.floor(totalFloats / 2);
-        if (frames <= 0) return 0;
-        const startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
-        const maxCopy = Math.min(frames, totalFrames - startFrame);
-        if (maxCopy > 0) {
-            const leftArr = new Float32Array(ab, 0, frames);
-            const rightArr = new Float32Array(ab, frames * 4, frames);
-            chL.set(leftArr.subarray(0, maxCopy), startFrame);
-            chR.set(rightArr.subarray(0, maxCopy), startFrame);
+    audioBuf._pieceSecV72 = PIECE_SEC;
+    audioBuf._pieceMapV72 = pieceMap;
+    audioBuf._loadedCountV72 = 0;
+    audioBuf._allPiecesLoadedV72 = false;
+    audioBuf._trueDurationV72 = dur;
+
+    window.studioBuffer = audioBuf;
+    window._hugeRamCacheV71 = { name: filename, buf: audioBuf, complete: false };
+
+    const fetchPiece = async (pIdx) => {
+        if (pIdx < 0 || pIdx >= numPieces || pieceMap[pIdx] === 2) return true;
+        pieceMap[pIdx] = 1;
+        const stSec = pIdx * PIECE_SEC;
+        const dSec = Math.min(PIECE_SEC, dur - stSec);
+        const ctrl = new AbortController();
+        window._pieceAbortCtrlV72 = ctrl;
+        try {
+            const url = `/api/pcm_chunk_v71/${encodeURIComponent(filename)}?start=${stSec}&dur=${dSec}&sr=${sr}`;
+            const res = await fetch(url, { signal: ctrl.signal });
+            if (!res.ok) { pieceMap[pIdx] = 0; return false; }
+            const ab = await res.arrayBuffer();
+            const totalFloats = Math.floor(ab.byteLength / 4);
+            const frames = Math.floor(totalFloats / 2);
+            if (frames > 0) {
+                const startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
+                const maxCopy = Math.min(frames, totalFrames - startFrame);
+                if (maxCopy > 0) {
+                    const leftArr = new Float32Array(ab, 0, frames);
+                    const rightArr = new Float32Array(ab, frames * 4, frames);
+                    chL.set(leftArr.subarray(0, maxCopy), startFrame);
+                    chR.set(rightArr.subarray(0, maxCopy), startFrame);
+                }
+            }
+            pieceMap[pIdx] = 2;
+            audioBuf._loadedCountV72++;
+            if (audioBuf._loadedCountV72 === 1 && window.appConfig && window.appConfig.opt_autoRms) {
+                // Фиксируем эталонную громкость по первому же загруженному куску и обновляем граф!
+                window.computeBufferAutoGain(audioBuf, window.appConfig.val_autoRms);
+                if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph(true);
+            }
+            return true;
+        } catch (err) {
+            pieceMap[pIdx] = 0;
+            return false;
         }
-        return maxCopy / sr;
     };
 
-    // ШАГ 1: За 0.4 сек декодируем стартовые 75 секунд и СРАЗУ включаем J Buf (не дожидаясь остальных 3 часов!)
-    if (titleEl) titleEl.innerText = `⚡ RAM Старт [1%]: ` + filename;
-    await loadSlice(0, 75);
-    if (window.currentPlayingTrack !== filename) return null;
-    audioBuf._loadedSecV71 = 75;
-    if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
-        window.syncMasterPlaybackEngineV59(false);
-    }
-
-    // ШАГ 2: В фоне докачиваем остальной трек кусками по 10 минут без единого цикла for в JS
-    const chunkSec = 600;
-    for (let st = 75; st < dur; st += chunkSec) {
+    // Торрент-планировщик: всегда в первую очередь проверяет, загружен ли кусок прямо под курсором плеера (и соседний по направлению игры)!
+    while (audioBuf._loadedCountV72 < numPieces) {
         if (window.currentPlayingTrack !== filename) return null;
-        const curPlaySec = (player && player.currentTime) ? player.currentTime : 0;
-        // Если пользователь перемотал вперёд туда, где ещё не загружено — подгружаем 60 сек вокруг курсора вне очереди!
-        if (curPlaySec > audioBuf._loadedSecV71 + 10) {
-            await loadSlice(Math.max(0, curPlaySec - 2), 60);
-            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
-                window.syncMasterPlaybackEngineV59(false);
+
+        const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        const curTime = (player && isFinite(player.currentTime)) ? player.currentTime : 0;
+        const rDur = (player && isFinite(player.duration) && player.duration > 0) ? player.duration : dur;
+        const fwdPosSec = isRev ? Math.max(0, Math.min(dur - 0.1, rDur - curTime)) : Math.max(0, Math.min(dur - 0.1, curTime));
+        const curPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(fwdPosSec / PIECE_SEC)));
+
+        let nextPiece = -1;
+        let urgentCursorFetch = false;
+
+        // Приоритет №1: кусок прямо под курсором и следующий за ним (вперёд или назад при реверсе)
+        const stepDir = isRev ? -1 : 1;
+        for (let look = 0; look < 3; look++) {
+            const cand = curPiece + look * stepDir;
+            if (cand >= 0 && cand < numPieces && pieceMap[cand] !== 2) {
+                nextPiece = cand;
+                if (look <= 1) urgentCursorFetch = true;
+                break;
             }
         }
-        const pct = Math.min(99, Math.round((st / dur) * 100));
-        if (titleEl) titleEl.innerText = `🚀 RAM 16GB [${pct}%]: ` + filename;
-        await loadSlice(st, chunkSec);
-        audioBuf._loadedSecV71 = Math.min(dur, st + chunkSec);
-        window._hugeRamCacheV71.loadedUntilSec = audioBuf._loadedSecV71;
-        await new Promise(r => setTimeout(r, 12));
+
+        // Приоритет №2: идём от курсора в сторону воспроизведения до конца
+        if (nextPiece === -1) {
+            for (let offset = 1; offset < numPieces; offset++) {
+                const cand = curPiece + offset * stepDir;
+                if (cand >= 0 && cand < numPieces && pieceMap[cand] !== 2) {
+                    nextPiece = cand;
+                    break;
+                }
+            }
+        }
+
+        // Приоритет №3: добиваем оставшиеся незагруженные куски с начала файла
+        if (nextPiece === -1) {
+            for (let i = 0; i < numPieces; i++) {
+                if (pieceMap[i] !== 2) { nextPiece = i; break; }
+            }
+        }
+
+        if (nextPiece === -1) break;
+
+        const pct = Math.min(99, Math.round((audioBuf._loadedCountV72 / numPieces) * 100));
+        if (titleEl) {
+            titleEl.innerText = `${urgentCursorFetch ? '⚡' : '🧩'} RAM [${pct}% | ${audioBuf._loadedCountV72}/${numPieces}]: ` + filename;
+        }
+
+        const ok = await fetchPiece(nextPiece);
+        if (window.currentPlayingTrack !== filename) return null;
+
+        // Как только загрузился кусок под курсором — мгновенно включаем чистый RAM-движок (J Buf 90° / 2-я / Винил / Реверс)!
+        if (ok && urgentCursorFetch && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            window.syncMasterPlaybackEngineV59(false);
+        }
+
+        if (ok) await new Promise(r => setTimeout(r, 8));
     }
 
-    audioBuf._loadedSecV71 = dur;
+    audioBuf._allPiecesLoadedV72 = true;
     window._hugeRamCacheV71.complete = true;
     return audioBuf;
 };
@@ -305,10 +403,7 @@ window.playTrack = async function(filename, listContext = 'main') {
             if (typeof window.loadTrackReversibleDataV67 === 'function') {
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
             }
-            if (window.appConfig && window.appConfig.opt_autoRms && window.preAmpNode && typeof window.computeBufferAutoGain === 'function') {
-                window.preAmpNode.gain.value = 0.6 * window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
-            }
-            let nowRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+                        let nowRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
             let isHugeTrack = (decodedBuffer.duration > 900);
             if (nowRev && !isHugeTrack) {
                 window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);

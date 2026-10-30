@@ -174,22 +174,35 @@ window.calculateAutoMasterPadDb = function(cfg) {
 };
 
 window.computeBufferAutoGain = function(audioBuffer, targetDb) {
-    if (!audioBuffer) return 1.0;
-    let ch0 = audioBuffer.getChannelData(0);
-    let ch1 = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : ch0;
+    let tDb = isNaN(parseFloat(targetDb)) ? -10.0 : parseFloat(targetDb);
+    let refBuf = window.studioBuffer || audioBuffer;
+    if (!refBuf) return 1.0;
+
+    // Если для этого трека уже рассчитан эталонный RMS по первому куску — держим его железобетонно, чтобы громкость никогда не прыгала!
+    if (refBuf._lockedRmsDbV72 !== undefined) {
+        let diffLocked = Math.max(-30, Math.min(24, tDb - refBuf._lockedRmsDbV72));
+        return Math.pow(10, diffLocked / 20);
+    }
+
+    let ch0 = refBuf.getChannelData(0);
+    let ch1 = refBuf.numberOfChannels > 1 ? refBuf.getChannelData(1) : ch0;
     let len = ch0.length;
-    let step = Math.max(1, Math.floor(len / 60000));
+    let step = Math.max(1, Math.floor(len / 80000));
     let sumSq = 0;
     let count = 0;
     for (let i = 0; i < len; i += step) {
-        let s = 0.5 * (ch0[i] + ch1[i]);
+        let s0 = ch0[i], s1 = ch1[i];
+        // Пропускаем нераспакованные нулевые области торрент-буфера
+        if (s0 === 0 && s1 === 0) continue;
+        let s = 0.5 * (s0 + s1);
         sumSq += s * s;
         count++;
     }
-    let rms = Math.sqrt(sumSq / Math.max(1, count));
+    if (count < 50) return 1.0;
+    let rms = Math.sqrt(sumSq / count);
     if (rms < 0.0001) return 1.0;
     let currentDb = 20 * Math.log10(rms);
-    let tDb = isNaN(parseFloat(targetDb)) ? -10.0 : parseFloat(targetDb);
+    refBuf._lockedRmsDbV72 = currentDb;
     let diffDb = Math.max(-30, Math.min(24, tDb - currentDb));
     return Math.pow(10, diffDb / 20);
 };
