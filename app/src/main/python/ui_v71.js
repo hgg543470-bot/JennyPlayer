@@ -1934,3 +1934,165 @@ setTimeout(() => {
     window.renderActivePlaylistTracksV71(false);
 }, 120);
 
+
+// === V73.1 INDEPENDENT PLAYBACK QUEUE (BROWSE ANY LIST WHILE LISTENING TO ANOTHER) ===
+
+window.viewedFullTabListV73 = [];
+window.playingQueueListV73 = [];
+window.playingQueueContextV73 = { tabId: 'all', artist: '', album: '' };
+
+// Обновляем renderActivePlaylistTracksV71: сохраняем просматриваемый список в viewedFullTabListV73,
+// НЕ затирая активную очередь воспроизведения playingQueueListV73!
+(function wrapRenderForIndependentQueueV73_1() {
+    const prevRender = window.renderActivePlaylistTracksV71;
+    window.renderActivePlaylistTracksV71 = function(scrollSubChipToCenter) {
+        const prevQueue = (window.playingQueueListV73 && window.playingQueueListV73.length > 0)
+            ? [...window.playingQueueListV73]
+            : null;
+
+        prevRender.apply(this, arguments);
+
+        // window.currentTrackList после рендера содержит отсортированный список открытой вкладки
+        window.viewedFullTabListV73 = Array.isArray(window.currentTrackList) ? [...window.currentTrackList] : [];
+
+        const curTab = window.activePlaylistTabV71 || 'all';
+        const qCtx = window.playingQueueContextV73 || {};
+        const isSameContext = (
+            qCtx.tabId === curTab &&
+            (curTab !== 'artists' || qCtx.artist === (window.selectedArtistV71 || '')) &&
+            (curTab !== 'albums' || qCtx.album === (window.selectedAlbumV71 || ''))
+        );
+
+        if (!prevQueue || prevQueue.length === 0) {
+            window.playingQueueListV73 = [...window.viewedFullTabListV73];
+            window.playingQueueContextV73 = {
+                tabId: curTab,
+                artist: window.selectedArtistV71 || '',
+                album: window.selectedAlbumV71 || ''
+            };
+        } else if (isSameContext && window.viewedFullTabListV73.includes(window.currentPlayingTrack)) {
+            // Если пользователь поменял сортировку внутри того же самого списка, который сейчас играет — обновляем очередь
+            window.playingQueueListV73 = [...window.viewedFullTabListV73];
+        } else {
+            // Если пользователь просто листает другой список — возвращаем неприкосновенную очередь играющего списка!
+            window.playingQueueListV73 = prevQueue;
+        }
+
+        window.currentTrackList = window.playingQueueListV73;
+    };
+})();
+
+// Когда пользователь сам нажимает Play на карточке трека — фиксируем текущий открытый список как новую очередь воспроизведения!
+window.lockCurrentViewAsPlayingQueueV73_1 = function(filename) {
+    const curTab = window.activePlaylistTabV71 || 'all';
+    let listToLock = (window.viewedFullTabListV73 && window.viewedFullTabListV73.length > 0)
+        ? [...window.viewedFullTabListV73]
+        : [];
+
+    // Если в строке поиска введён фильтр и отфильтровано несколько песен, среди которых есть выбранная
+    const sInp = document.getElementById('trackSearchInput');
+    const q = sInp ? sInp.value.trim().toLowerCase() : '';
+    if (q && listToLock.length > 0) {
+        const visibleTracks = [];
+        document.querySelectorAll('#unifiedList .track-row-capsule').forEach(cap => {
+            if (cap.parentElement && cap.parentElement.style.display !== 'none') {
+                const fn = cap.getAttribute('data-track');
+                if (fn) visibleTracks.push(fn);
+            }
+        });
+        if (visibleTracks.length > 1 && visibleTracks.includes(filename)) {
+            listToLock = visibleTracks;
+        }
+    }
+
+    if (listToLock.length === 0 && window.lastData && Array.isArray(window.lastData.all_tracks)) {
+        listToLock = [...window.lastData.all_tracks];
+    }
+
+    window.playingQueueListV73 = listToLock;
+    window.currentTrackList = listToLock;
+    window.playingQueueContextV73 = {
+        tabId: curTab,
+        artist: window.selectedArtistV71 || '',
+        album: window.selectedAlbumV71 || ''
+    };
+};
+
+window.handleTrackPlayBtn = function(filename, listContext, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const player = document.getElementById('audioPlayer');
+    if (window.currentPlayingTrack === filename && player && player.src) {
+        window.togglePlay();
+    } else {
+        window.lockCurrentViewAsPlayingQueueV73_1(filename);
+        window.playTrack(filename, 'queue');
+    }
+};
+
+// Защищаем очередь внутри playTrack, чтобы старый код из ui_playback.js не сбрасывал её на session_tracks
+(function protectQueueInPlayTrackV73_1() {
+    const origPlayTrack = window.playTrack;
+    window.playTrack = async function(filename, listContext) {
+        if (listContext !== 'queue' && (!window.playingQueueListV73 || !window.playingQueueListV73.includes(filename))) {
+            window.lockCurrentViewAsPlayingQueueV73_1(filename);
+        }
+        const savedQueue = (window.playingQueueListV73 && window.playingQueueListV73.length > 0)
+            ? [...window.playingQueueListV73]
+            : null;
+
+        const res = await origPlayTrack.call(this, filename, 'queue');
+
+        if (savedQueue) {
+            window.playingQueueListV73 = savedQueue;
+            window.currentTrackList = savedQueue;
+        }
+        return res;
+    };
+})();
+
+// Надёжное получение текущей очереди для кнопок След. (►|) и Пред. (|◄)
+window.getEffectivePlaybackQueueV73_1 = function() {
+    if (window.playingQueueListV73 && window.playingQueueListV73.length > 0) {
+        if (!window.currentPlayingTrack || window.playingQueueListV73.includes(window.currentPlayingTrack)) {
+            return window.playingQueueListV73;
+        }
+    }
+    if (window.viewedFullTabListV73 && window.viewedFullTabListV73.length > 0 && window.viewedFullTabListV73.includes(window.currentPlayingTrack)) {
+        window.playingQueueListV73 = [...window.viewedFullTabListV73];
+        return window.playingQueueListV73;
+    }
+    const all = (window.lastData && window.lastData.all_tracks) ? window.lastData.all_tracks : [];
+    if (all.length > 0) {
+        return all;
+    }
+    return window.viewedFullTabListV73 || [];
+};
+
+window.playNextTrack = function() {
+    const queue = window.getEffectivePlaybackQueueV73_1();
+    if (!queue || queue.length === 0) return;
+
+    if (!window.currentPlayingTrack) {
+        window.playTrack(queue[0], 'queue');
+        return;
+    }
+
+    let idx = queue.indexOf(window.currentPlayingTrack);
+    let nextIdx = (idx !== -1) ? ((idx + 1) % queue.length) : 0;
+    window.playTrack(queue[nextIdx], 'queue');
+};
+
+window.playPreviousTrack = function() {
+    const queue = window.getEffectivePlaybackQueueV73_1();
+    if (!queue || queue.length === 0) return;
+
+    if (!window.currentPlayingTrack) {
+        window.playTrack(queue[0], 'queue');
+        return;
+    }
+
+    let idx = queue.indexOf(window.currentPlayingTrack);
+    let prevIdx = (idx !== -1) ? ((idx - 1 + queue.length) % queue.length) : 0;
+    window.playTrack(queue[prevIdx], 'queue');
+};
+
