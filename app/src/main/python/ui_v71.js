@@ -2661,30 +2661,46 @@ window._studioClockV74_1 = {
 })();
 
 
-// === V74.2 GEARBOX HARDWARE CLOCK LOCK (NO SILENCE ON 2ND/VINYL & NO 0:00 RESET) ===
+// === V74.2 GEARBOX HARDWARE CLOCK LOCK (SEEK-SAFE VERSION V74.8) ===
 
-// Возвращает точную секунду воспроизведения (даже если фоновый <audio> заснул на 0:00)
+// При любом клике по таймлайну (seeking / seeked) сразу обновляем базовую точку часов WebAudio,
+// чтобы сторож НИКОГДА не откатывал перемотку назад!
+(function bindSeekClockResetV74_8() {
+    const player = document.getElementById('audioPlayer');
+    if (!player || player._seekClockResetV74_8) return;
+    player._seekClockResetV74_8 = true;
+
+    const syncClockToPlayer = () => {
+        if (window._studioClockV74_1 && isFinite(player.currentTime)) {
+            window._studioClockV74_1.startTrackSec = player.currentTime;
+            window._studioClockV74_1.startCtxTime = window.audioCtx ? window.audioCtx.currentTime : 0;
+            window._lastUserSeekTsV74_8 = performance.now();
+        }
+    };
+
+    player.addEventListener('seeking', syncClockToPlayer, { passive: true });
+    player.addEventListener('seeked', syncClockToPlayer, { passive: true });
+})();
+
+// Возвращает текущую секунду: всегда доверяет player.currentTime, кроме случая, когда <audio> заснул в фоне на 0:00
 window.getTruePlaybackTimeV74_2 = function() {
     const player = document.getElementById('audioPlayer');
     const pTime = (player && isFinite(player.currentTime)) ? player.currentTime : 0;
     const clk = window._studioClockV74_1;
-    if (window.isStudioPlaying && clk && clk.active && window.audioCtx) {
+
+    // Только если <audio> стоит на паузе на 0:00 в фоне, а RAM реально играет — берём время из WebAudio
+    if (player && player.paused && pTime < 0.05 && window.isStudioPlaying && clk && clk.active && window.audioCtx) {
         const spd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
         const est = clk.startTrackSec + Math.max(0, window.audioCtx.currentTime - clk.startCtxTime) * spd;
-        const maxDur = (window.studioBuffer && window.studioBuffer.duration) ? window.studioBuffer.duration : (player && isFinite(player.duration) ? player.duration : 999999);
-        const clampedEst = Math.max(0, Math.min(maxDur - 0.05, est));
-        // Если <audio> застрял на 0:00, а WebAudio уже ушёл вперёд — возвращаем аппаратное время WebAudio и синхронизируем <audio>
-        if (Math.abs(pTime - clampedEst) > 0.6) {
-            if (player) {
-                try { player.currentTime = clampedEst; } catch (e) {}
-            }
-            return clampedEst;
-        }
+        const maxDur = (window.studioBuffer && window.studioBuffer.duration)
+            ? window.studioBuffer.duration
+            : (isFinite(player.duration) ? player.duration : 999999);
+        return Math.max(0, Math.min(maxDur - 0.05, est));
     }
     return pTime;
 };
 
-// Переопределяем 2-ю передачу (J Buf Pitch Shift) и Заднюю R (Винил), чтобы они НИКОГДА не глушили звук, если <audio> был на паузе при играющем RAM!
+// 2-я передача (J Buf Pitch Shift) и Задняя R (Винил) с поддержкой мгновенного клика по таймлайну
 window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
     const player = document.getElementById('audioPlayer');
     if (!player || !window.audioCtx) return false;
@@ -2714,9 +2730,6 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
         if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
             try { player.playbackRate = targetSpd; } catch (e) {}
         }
-        if (isActivelyPlaying && player.paused) {
-            player.play().catch(() => {});
-        }
         return false;
     }
 
@@ -2734,10 +2747,12 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
 
     if (isActivelyPlaying) {
         if (player.paused) {
-            try { player.currentTime = trueSec; } catch (e) {}
             player.play().catch(() => {});
         }
-        const needNewNode = !window.studioSourceNode ||
+        // Перезапускаем узел при любом клике по таймлайну (или смене буфера/режима)
+        const seekJustHappened = window._lastUserSeekTsV74_8 && (performance.now() - window._lastUserSeekTsV74_8 < 350);
+        const needNewNode = seekJustHappened ||
+                            !window.studioSourceNode ||
                             !window.isStudioPlaying ||
                             window.studioSourceNode.buffer !== rawBuf ||
                             Boolean(window.studioSourceNode._isHoseSpliced);
@@ -2783,25 +2798,6 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
     }
     return true;
 };
-
-// Перед вызовом любого переключения передач в syncMasterPlaybackEngineV59 синхронизируем player.currentTime с аппаратными часами WebAudio
-(function syncPlayerBeforeGearShiftV74_2() {
-    const prevMasterSync = window.syncMasterPlaybackEngineV59;
-    window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
-        const player = document.getElementById('audioPlayer');
-        if (player && window.isStudioPlaying) {
-            const trueSec = window.getTruePlaybackTimeV74_2();
-            if (Math.abs((player.currentTime || 0) - trueSec) > 0.4) {
-                try { player.currentTime = trueSec; } catch (e) {}
-            }
-            if (player.paused) {
-                player.play().catch(() => {});
-            }
-        }
-        return prevMasterSync.apply(this, arguments);
-    };
-})();
-
 
 // === V74.3 UNFOCUSED SUB-STRIP MODE & LIVE CHIP SEARCH (TAGS, ARTISTS, ALBUMS) ===
 
