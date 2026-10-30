@@ -381,7 +381,7 @@ window.ensureExportModalV69 = function() {
                 <span class="exp-modal-title-v69">💾 НАСТРОЙКИ ЭКСПОРТА DSP</span>
                 <button class="cp-close-btn" onclick="document.getElementById('exportModalV69').style.display='none'">✖</button>
             </div>
-            <div class="exp-gearbox-banner-v69" id="expGearboxBannerV69"></div>
+            
             <div class="exp-modal-top-actions-v69">
                 <button type="button" class="exp-top-btn-v69 btn-apply-cur" id="btnExpApplyCurrentV69">Применить все текущие</button>
                 <button type="button" class="exp-top-btn-v69 btn-clear-all" id="btnExpClearAllV69">Снять все</button>
@@ -405,7 +405,7 @@ window.exportCurrentTrack = function() {
 
     const modal = window.ensureExportModalV69();
     const banner = document.getElementById('expGearboxBannerV69');
-    if (banner) banner.textContent = window.getGearboxSummaryV69();
+    
 
     const grid = document.getElementById('expModalGridV69');
     const confirmBtn = document.getElementById('btnExpConfirmRunV69');
