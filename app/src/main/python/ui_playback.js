@@ -1,50 +1,83 @@
-window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player) {
-    let dur = (player && isFinite(player.duration) && player.duration > 0) ? player.duration : 0;
-    let sr = 44100;
+window._hugeRamCacheV71 = { name: null, buf: null, loadedUntilSec: 0, complete: false };
+
+window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMeta) {
+    if (window._hugeRamCacheV71.name === filename && window._hugeRamCacheV71.buf && window._hugeRamCacheV71.complete) {
+        window.studioBuffer = window._hugeRamCacheV71.buf;
+        window.studioBuffer._loadedSecV71 = window.studioBuffer.duration;
+        return window.studioBuffer;
+    }
+
+    let dur = (preMeta && preMeta.duration) ? parseFloat(preMeta.duration) : 0;
+    if (!dur && player && isFinite(player.duration) && player.duration > 0) dur = player.duration;
     if (!dur) {
         const mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
         const md = await mr.json();
         dur = parseFloat(md.duration) || 0;
-        sr = parseInt(md.sr, 10) || 44100;
     }
     if (dur <= 0) return null;
 
-    // Если трек > 90 минут, используем 44100 Гц стерео (3.8 ГБ на 3.3 часа), чтобы уложиться в 32-битный индекс TypedArray
-    if (dur * sr > 520000000) {
-        sr = 32000;
-    }
+    const sr = (dur > 2400) ? 32000 : 44100;
     const totalFrames = Math.floor(dur * sr);
     const audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
     const chL = audioBuf.getChannelData(0);
     const chR = audioBuf.getChannelData(1);
 
-    const chunkSec = 900; // По 15 минут за 1 блок
-    let writtenFrames = 0;
+    audioBuf._loadedSecV71 = 0;
+    window.studioBuffer = audioBuf;
+    window._hugeRamCacheV71 = { name: filename, buf: audioBuf, loadedUntilSec: 0, complete: false };
 
-    for (let st = 0; st < dur; st += chunkSec) {
-        if (window.currentPlayingTrack !== filename) return null;
-        const pct = Math.min(99, Math.round((st / dur) * 100));
-        if (titleEl) titleEl.innerText = `⏳ RAM 16GB [${pct}%]: ` + filename;
-
-        const url = `/api/pcm_chunk_v71/${encodeURIComponent(filename)}?start=${st}&dur=${chunkSec}&sr=${sr}`;
+    const loadSlice = async (stSec, dSec) => {
+        const url = `/api/pcm_chunk_v71/${encodeURIComponent(filename)}?start=${stSec}&dur=${dSec}&sr=${sr}`;
         const res = await fetch(url);
-        if (!res.ok) break;
+        if (!res.ok) return 0;
         const ab = await res.arrayBuffer();
-        const floats = new Float32Array(ab);
-        const framesInChunk = Math.floor(floats.length / 2);
-        const maxCopy = Math.min(framesInChunk, totalFrames - writtenFrames);
-
-        for (let i = 0; i < maxCopy; i++) {
-            chL[writtenFrames + i] = floats[i * 2];
-            chR[writtenFrames + i] = floats[i * 2 + 1];
+        const totalFloats = Math.floor(ab.byteLength / 4);
+        const frames = Math.floor(totalFloats / 2);
+        if (frames <= 0) return 0;
+        const startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
+        const maxCopy = Math.min(frames, totalFrames - startFrame);
+        if (maxCopy > 0) {
+            const leftArr = new Float32Array(ab, 0, frames);
+            const rightArr = new Float32Array(ab, frames * 4, frames);
+            chL.set(leftArr.subarray(0, maxCopy), startFrame);
+            chR.set(rightArr.subarray(0, maxCopy), startFrame);
         }
-        writtenFrames += maxCopy;
-        await new Promise(r => setTimeout(r, 15));
+        return maxCopy / sr;
+    };
+
+    // ШАГ 1: За 0.4 сек декодируем стартовые 75 секунд и СРАЗУ включаем J Buf (не дожидаясь остальных 3 часов!)
+    if (titleEl) titleEl.innerText = `⚡ RAM Старт [1%]: ` + filename;
+    await loadSlice(0, 75);
+    if (window.currentPlayingTrack !== filename) return null;
+    audioBuf._loadedSecV71 = 75;
+    if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+        window.syncMasterPlaybackEngineV59(false);
     }
+
+    // ШАГ 2: В фоне докачиваем остальной трек кусками по 10 минут без единого цикла for в JS
+    const chunkSec = 600;
+    for (let st = 75; st < dur; st += chunkSec) {
+        if (window.currentPlayingTrack !== filename) return null;
+        const curPlaySec = (player && player.currentTime) ? player.currentTime : 0;
+        // Если пользователь перемотал вперёд туда, где ещё не загружено — подгружаем 60 сек вокруг курсора вне очереди!
+        if (curPlaySec > audioBuf._loadedSecV71 + 10) {
+            await loadSlice(Math.max(0, curPlaySec - 2), 60);
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+        }
+        const pct = Math.min(99, Math.round((st / dur) * 100));
+        if (titleEl) titleEl.innerText = `🚀 RAM 16GB [${pct}%]: ` + filename;
+        await loadSlice(st, chunkSec);
+        audioBuf._loadedSecV71 = Math.min(dur, st + chunkSec);
+        window._hugeRamCacheV71.loadedUntilSec = audioBuf._loadedSecV71;
+        await new Promise(r => setTimeout(r, 12));
+    }
+
+    audioBuf._loadedSecV71 = dur;
+    window._hugeRamCacheV71.complete = true;
     return audioBuf;
 };
-
-
 window.smoothStudioFadeIn = function() {
     if (window.audioCtx && window.inputMixer) {
         let now = window.audioCtx.currentTime;
@@ -190,52 +223,67 @@ window.playTrack = async function(filename, listContext = 'main') {
     }
 
     try {
-        if(titleEl) titleEl.innerText = "⏳ Загрузка: " + filename;
-
-        const response = await fetch('/api/media/' + encodeURIComponent(filename));
-        const blob = await response.blob();
-        window._lastTrackBlob = blob;
-        window._lastTrackBlobName = filename;
+        if (titleEl) titleEl.innerText = "⏳ Загрузка: " + filename;
 
         let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
         let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig.pitchLock === true);
 
-        if (window.htmlGain) {
-            if (window.appConfig.studioMode && isRevMode) {
-                window.htmlGain.gain.value = 0;
-            } else {
-                window.htmlGain.gain.value = 1;
+        // Если этот гигантский трек уже полностью распакован в кэше 16GB RAM — включаем его за 0.01 сек!
+        if (window._hugeRamCacheV71 && window._hugeRamCacheV71.name === filename && window._hugeRamCacheV71.buf && window._hugeRamCacheV71.complete) {
+            if (player) {
+                player.src = '/api/media/' + encodeURIComponent(filename);
+                player.playbackRate = targetSpeed;
+                player.preservesPitch = isPitchLocked;
+                player.play().catch(e => {});
             }
-        }
-
-        if (player) {
-            player.src = URL.createObjectURL(blob);
-            player.playbackRate = targetSpeed;
-            player.preservesPitch = isPitchLocked;
-
-            if (!isRevMode || !window.appConfig.studioMode) {
-                 player.play().catch(e => {});
-            }
-        }
-
-        if (window.appConfig.studioMode) {
-            if(titleEl) titleEl.innerText = "⏳ RAM (пока играет сжатый): " + filename;
+            decodedBuffer = window._hugeRamCacheV71.buf;
         } else {
-            if(titleEl) titleEl.innerText = filename;
-        }
-
-        // Всегда декодируем PCM-буфер в фоне: это даёт живой осциллограф в любом режиме и 0 мс ожидание при включении RAM/Шланга!
-        let decodedBuffer = null;
-        try {
-            let arrayBuffer = await blob.arrayBuffer();
-            decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
-        } catch (decErr) {
+            let metaCheck = { duration: 0, size: 0 };
             try {
-                decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player);
-            } catch (hugeErr) {
-                decodedBuffer = null;
+                const mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
+                if (mr.ok) metaCheck = await mr.json();
+            } catch (e) {}
+
+            const isHugeFile = (metaCheck.duration > 900 || metaCheck.size > 26 * 1024 * 1024);
+
+            if (isHugeFile) {
+                // Стримим <audio> напрямую без скачивания 200 МБ блоба и сразу с 1-й секунды запускаем быструю распаковку в RAM!
+                if (window.htmlGain) window.htmlGain.gain.value = 1.0;
+                if (player) {
+                    player.src = '/api/media/' + encodeURIComponent(filename);
+                    player.playbackRate = targetSpeed;
+                    player.preservesPitch = true;
+                    player.play().catch(e => {});
+                }
+                decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+            } else {
+                const response = await fetch('/api/media/' + encodeURIComponent(filename));
+                const blob = await response.blob();
+                window._lastTrackBlob = blob;
+                window._lastTrackBlobName = filename;
+                if (window.htmlGain) {
+                    window.htmlGain.gain.value = (window.appConfig.studioMode && isRevMode) ? 0 : 1;
+                }
+                if (player) {
+                    player.src = URL.createObjectURL(blob);
+                    player.playbackRate = targetSpeed;
+                    player.preservesPitch = isPitchLocked;
+                    if (!isRevMode || !window.appConfig.studioMode) {
+                        player.play().catch(e => {});
+                    }
+                }
+                if (window.appConfig.studioMode && titleEl) {
+                    titleEl.innerText = "⏳ RAM (пока играет сжатый): " + filename;
+                }
+                try {
+                    let arrayBuffer = await blob.arrayBuffer();
+                    decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
+                } catch (decErr) {
+                    decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+                }
             }
         }
+        var decodedBuffer_final = decodedBuffer;
         if (!decodedBuffer) {
             if (window.currentPlayingTrack === filename) {
                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;

@@ -376,23 +376,25 @@ def api_pcm_meta_v71(filename):
     if not os.path.isfile(fp):
         response.status = 404
         return {"status": "error", "error": "File not found"}
+    st_size = os.path.getsize(fp)
     ff = find_ffmpeg_binary()
     pr = subprocess.run([ff, '-hide_banner', '-i', fp], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     raw = (pr.stderr or "") + (pr.stdout or "")
     m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", raw)
     dur = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
     response.content_type = 'application/json'
-    return json.dumps({"status": "ok", "duration": dur, "sr": 44100, "channels": 2})
+    return json.dumps({"status": "ok", "duration": dur, "size": st_size, "sr": 44100, "channels": 2})
 
 @route('/api/pcm_chunk_v71/<filename:path>', method='GET')
 def api_pcm_chunk_v71(filename):
+    from array import array
     fp = resolve_track_full_path_v71(filename)
     if not os.path.isfile(fp):
         response.status = 404
         return b""
     start_sec = float(request.query.get('start', '0'))
-    dur_sec = float(request.query.get('dur', '1200'))
-    sr = int(request.query.get('sr', '44100'))
+    dur_sec = float(request.query.get('dur', '600'))
+    sr = int(request.query.get('sr', '32000'))
     ff = find_ffmpeg_binary()
     cmd = [
         ff, '-hide_banner', '-loglevel', 'error',
@@ -401,8 +403,18 @@ def api_pcm_chunk_v71(filename):
         '-f', 'f32le', '-acodec', 'pcm_f32le', '-ac', '2', '-ar', str(sr), 'pipe:1'
     ]
     pr = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    raw = pr.stdout
+    rem = len(raw) % 8
+    if rem:
+        raw = raw[:-rem]
+    if not raw:
+        response.content_type = 'application/octet-stream'
+        return b""
+    mv = memoryview(raw).cast('f')
+    ch_l = array('f', mv[0::2]).tobytes()
+    ch_r = array('f', mv[1::2]).tobytes()
     response.content_type = 'application/octet-stream'
-    return pr.stdout
+    return ch_l + ch_r
 # === JENNY V71.3 BIG RAM PCM END ===
 # === JENNY V71 BACKEND END ===
 

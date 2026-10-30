@@ -1091,3 +1091,177 @@ window.syncHeaderHeightWithModalsV71 = function() {
     window.syncHeaderHeightWithModalsV71();
 })();
 
+
+// === V71.5 PERFECT GEARBOX & HORIZON ENGINE (1st, 2nd, R, N & REVERSE ON 1-3H TRACKS) ===
+
+// Отключаем старый дублирующий загрузчик V61, чтобы он не качал 200 МБ во второй поток
+window.ensureStudioBufferLoadedV61 = function() {};
+
+// Единый менеджер оконного горизонта (45 сек) и для 1-й передачи (J Buf 90°), и для 2-й (J Buf Pitch Shift), и для Задней R (Винил)
+window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
+    const player = document.getElementById('audioPlayer');
+    const badge = document.getElementById('hoseLiveTelemetryV44');
+    if (!player || !window.audioCtx) return false;
+
+    const targetSpd = (typeof window.getActiveTargetSpeedV59 === 'function')
+        ? window.getActiveTargetSpeedV59()
+        : (player.playbackRate || 1.0);
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+
+    // Если буфер ещё совсем не создан (первые 0.3 сек старта), честно выставляем параметры на HTML5 плеере:
+    if (!window.studioBuffer) {
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+        const wantPitchLock = (gearKey === 'jbuf-lock' || gearKey === 'web-lock' || gearKey === 'neutral');
+        player.preservesPitch = wantPitchLock;
+        player.mozPreservesPitch = wantPitchLock;
+        player.webkitPreservesPitch = wantPitchLock;
+        const spd = (gearKey === 'neutral') ? 1.0 : targetSpd;
+        if (Math.abs(player.playbackRate - spd) > 0.003) {
+            try { player.playbackRate = spd; } catch (e) {}
+        }
+        return true;
+    }
+
+    // Для коротких треков (<= 600 сек) используем это окно только если включён Реверс без reversedStudioBuffer
+    if (window.studioBuffer.duration <= 600 && !(isRev && !window.reversedStudioBuffer)) {
+        return false;
+    }
+
+    if (isDraggingArc) {
+        if (window._hoseArcDebounceTimerV47) clearTimeout(window._hoseArcDebounceTimerV47);
+        window._hoseArcDebounceTimerV47 = setTimeout(() => {
+            window.syncMasterPlaybackEngineV59(false);
+        }, 50);
+        return true;
+    }
+
+    if (window._horizonSliceTimerV71) {
+        clearTimeout(window._horizonSliceTimerV71);
+        window._horizonSliceTimerV71 = null;
+    }
+
+    const curSec = player.currentTime || 0;
+    const WIN_SEC = 45.0;
+    const rawWindowBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, WIN_SEC, isRev);
+    if (!rawWindowBuf) return false;
+
+    if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+    player.preservesPitch = false;
+    if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+        try { player.playbackRate = targetSpd; } catch (e) {}
+    }
+
+    let playBuf = rawWindowBuf;
+    let nodeRate = 1.0;
+    let buildMs = 0;
+
+    if (gearKey === 'jbuf-lock') {
+        const tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined)
+            ? window.appConfig.hoseTensionPct
+            : 100;
+        const t0 = performance.now();
+        playBuf = window.buildElasticHoseBufferV46(rawWindowBuf, targetSpd, tensionPct);
+        buildMs = Math.round(performance.now() - t0);
+        nodeRate = 1.0;
+    } else {
+        // 2-я передача (J Buf RAM [PITCH SHIFT]) или Задняя R (ВИНИЛ [PITCH SHIFT])
+        playBuf = rawWindowBuf;
+        nodeRate = targetSpd;
+    }
+
+    if (!player.paused) {
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+        }
+        window.studioSourceNode = window.audioCtx.createBufferSource();
+        window.studioSourceNode._isHoseSpliced = (gearKey === 'jbuf-lock');
+        window.studioSourceNode._isHorizonWindowV71 = true;
+        window.studioSourceNode.buffer = playBuf;
+        window.studioSourceNode.playbackRate.value = nodeRate;
+        window.studioSourceNode.connect(window.inputMixer);
+        window.studioSourceNode.start(0, 0);
+        window.isStudioPlaying = true;
+
+        const realDurSec = (gearKey === 'jbuf-lock') ? playBuf.duration : (playBuf.duration / Math.max(0.25, nodeRate));
+        const nextWaitMs = Math.max(500, (realDurSec - 1.2) * 1000);
+        window._horizonSliceTimerV71 = setTimeout(() => {
+            const activeG = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+            if (!player.paused && (activeG === 'jbuf-lock' || activeG === 'jbuf-shift' || activeG === 'vinyl-shift')) {
+                window.engageHorizonRamEngineV71_5(activeG, false);
+            }
+        }, nextWaitMs);
+    }
+
+    if (badge) {
+        if (gearKey === 'jbuf-lock') {
+            const c = window._hoseSplicerCacheV46 || {};
+            badge.style.color = '#3fb950';
+            badge.innerText = `⚡ J Buf 90° [RAM]: x${targetSpd.toFixed(2)}${isRev ? ' ⏪' : ''} | Δy=${((c.avgSeamErrMv || 0) * 100).toFixed(1)}% (${buildMs}мс)`;
+        } else if (gearKey === 'vinyl-shift') {
+            badge.style.color = '#d2a8ff';
+            badge.innerText = `💿 ВИНИЛ [RAM]: x${targetSpd.toFixed(2)}${isRev ? ' ⏪' : ''}`;
+        } else {
+            badge.style.color = '#3fb950';
+            badge.innerText = `⚡ J Buf RAM [PITCH SHIFT]: x${targetSpd.toFixed(2)}${isRev ? ' ⏪' : ''}`;
+        }
+    }
+    return true;
+};
+
+// Единый диспетчер синхронизации всех 5 передач и Нейтрали N
+(function installMasterGearboxDispatcherV71_5() {
+    const baseSync = window.syncMasterPlaybackEngineV59;
+    window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
+        if (window._horizonSliceTimerV71) {
+            clearTimeout(window._horizonSliceTimerV71);
+            window._horizonSliceTimerV71 = null;
+        }
+        const player = document.getElementById('audioPlayer');
+        const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+
+        // 1. НЕЙТРАЛЬ (N): Всегда мгновенно сбрасывает скорость в 1.00x и сохраняет натуральный тон (даже при реверсе!)
+        if ((gKey === 'neutral' || gKey === 'n') && player) {
+            const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+            if (!isRev || !window.studioBuffer) {
+                window._activeBufferSourcesV71.forEach(n => {
+                    n.onended = null;
+                    try { n.stop(); } catch (e) {}
+                    try { n.disconnect(); } catch (e) {}
+                });
+                window._activeBufferSourcesV71.clear();
+                window.studioSourceNode = null;
+                window.isStudioPlaying = false;
+                if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+                player.preservesPitch = true;
+                player.mozPreservesPitch = true;
+                player.webkitPreservesPitch = true;
+                if (Math.abs(player.playbackRate - 1.0) > 0.002) {
+                    try { player.playbackRate = 1.0; } catch (e) {}
+                }
+            } else {
+                // Если в Нейтрали включён Реверс — крутим RAM-окно со скоростью 1.0x
+                window.engageHorizonRamEngineV71_5('jbuf-lock', false);
+            }
+            const badge = document.getElementById('hoseLiveTelemetryV44');
+            if (badge) {
+                badge.style.color = '#e3b341';
+                badge.innerText = '⚙️ НЕЙТРАЛЬ [N]: x1.00 (Холостой ход)';
+            }
+            return;
+        }
+
+        // 2. 1-я (J Buf 90°), 2-я (J Buf Pitch Shift) и Задняя R (Винил) на длинных треках (>10 мин) или пока грузится RAM
+        if (gKey === 'jbuf-lock' || gKey === 'jbuf-shift' || gKey === 'vinyl-shift') {
+            if (!window.studioBuffer || window.studioBuffer.duration > 600) {
+                if (window.engageHorizonRamEngineV71_5(gKey, isDraggingArc)) {
+                    return;
+                }
+            }
+        }
+
+        return baseSync.apply(this, arguments);
+    };
+})();
+

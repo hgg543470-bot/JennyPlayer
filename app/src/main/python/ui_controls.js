@@ -35,7 +35,7 @@ window.toggleReverseMode = function(targetReversed) {
         return;
     }
 
-    if (!window.reversedStudioBuffer) return;
+    if (!window.reversedStudioBuffer && !window.studioBuffer) return;
     if (wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
 
     if (window.scrubState && (window.scrubState.active || window.scrubState.locked)) {
