@@ -1,3 +1,4 @@
+import re
 import os
 import json
 import zlib
@@ -132,10 +133,247 @@ def read_jenny_rev_trailer(file_path):
 
 
 
+
+
+# === JENNY V71 BACKEND START ===
+ACTIVE_MUSIC_DIRS = [DEFAULT_MUSIC_DIR]
+SAVED_MUSIC_DIRS = ["/storage/emulated/0/Music", "/storage/emulated/0/Music/mp3_test", "/storage/emulated/0/Download"]
+TRACK_META_CACHE_V71 = {}
+
+def norm_dir_v71(p):
+    if not p: return "/storage/emulated/0/Music"
+    p = str(p).strip()
+    if not p.startswith('/'): p = os.path.join('/storage/emulated/0', p)
+    return os.path.normpath(p)
+
+def load_multi_dirs_v71():
+    global MUSIC_DIR, ACTIVE_MUSIC_DIRS, SAVED_MUSIC_DIRS
+    if os.path.exists(PRESET_FILE):
+        try:
+            with open(PRESET_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
+            saved, active, c_dir = data.get("savedFolders"), data.get("activeFolders"), data.get("customMusicDir")
+            if isinstance(saved, list) and saved:
+                SAVED_MUSIC_DIRS = []
+                for d in saved:
+                    nd = norm_dir_v71(d)
+                    if nd not in SAVED_MUSIC_DIRS: SAVED_MUSIC_DIRS.append(nd)
+            if isinstance(active, list) and active:
+                ACTIVE_MUSIC_DIRS = []
+                for d in active:
+                    nd = norm_dir_v71(d)
+                    if os.path.isdir(nd) and nd not in ACTIVE_MUSIC_DIRS:
+                        ACTIVE_MUSIC_DIRS.append(nd)
+                        if nd not in SAVED_MUSIC_DIRS: SAVED_MUSIC_DIRS.append(nd)
+            elif c_dir and os.path.isdir(norm_dir_v71(c_dir)):
+                nd = norm_dir_v71(c_dir)
+                ACTIVE_MUSIC_DIRS = [nd]
+                if nd not in SAVED_MUSIC_DIRS: SAVED_MUSIC_DIRS.insert(0, nd)
+        except Exception: pass
+    if not ACTIVE_MUSIC_DIRS: ACTIVE_MUSIC_DIRS = [norm_dir_v71(DEFAULT_MUSIC_DIR)]
+    MUSIC_DIR = ACTIVE_MUSIC_DIRS[0]
+
+def save_multi_dirs_v71():
+    data = {}
+    if os.path.exists(PRESET_FILE):
+        try:
+            with open(PRESET_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
+        except Exception: data = {}
+    data["savedFolders"] = SAVED_MUSIC_DIRS
+    data["activeFolders"] = ACTIVE_MUSIC_DIRS
+    data["customMusicDir"] = ACTIVE_MUSIC_DIRS[0] if ACTIVE_MUSIC_DIRS else MUSIC_DIR
+    os.makedirs(os.path.dirname(PRESET_FILE), exist_ok=True)
+    with open(PRESET_FILE, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=4)
+
+def resolve_track_full_path_v71(filename):
+    if not filename: return os.path.join(MUSIC_DIR, "")
+    load_multi_dirs_v71()
+    for d in ACTIVE_MUSIC_DIRS + SAVED_MUSIC_DIRS:
+        cand = os.path.join(d, filename)
+        if os.path.isfile(cand): return cand
+    return os.path.join(MUSIC_DIR, filename)
+
+def quick_parse_artist_album_v71(filename, full_p):
+    st_mtime, st_size = 0, 0
+    try:
+        st = os.stat(full_p)
+        st_mtime, st_size = st.st_mtime, st.st_size
+    except Exception: pass
+    cached = TRACK_META_CACHE_V71.get(full_p)
+    if cached and cached.get("mtime") == round(st_mtime, 2) and cached.get("size") == st_size:
+        return cached
+    stem = os.path.splitext(filename)[0]
+    clean_stem = re.sub(r'(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock)|_rev(?:ersed)?)+$', '', stem, flags=re.I)
+    artist = "Разные артисты"
+    album = os.path.basename(os.path.dirname(full_p)) or "Music"
+    parts = re.split(r'\s+[-–—]\s+', clean_stem)
+    if len(parts) >= 2 and parts[0].strip():
+        artist = parts[0].strip()
+        if len(parts) >= 3 and parts[1].strip():
+            album = parts[1].strip()
+    ext = os.path.splitext(filename)[1].lower()
+    kbps = 128.0 if ext in ('.opus', '.ogg', '.m4a', '.aac') else (320.0 if ext == '.mp3' else 900.0)
+    meta = {"mtime": round(st_mtime, 2), "size": st_size, "dur": round(max(1.0, (st_size * 8.0) / (kbps * 1000.0)), 1), "artist": artist, "album": album}
+    TRACK_META_CACHE_V71[full_p] = meta
+    return meta
+
+@route('/api/folders_v71', method=['GET', 'POST'])
+def api_folders_v71():
+    global MUSIC_DIR, ACTIVE_MUSIC_DIRS, SAVED_MUSIC_DIRS
+    load_multi_dirs_v71()
+    if request.method == 'POST':
+        try:
+            req = json.loads(request.body.read().decode('utf-8'))
+            act, target = req.get('action', ''), norm_dir_v71(req.get('path', ''))
+            if act in ('toggle', 'add') and not os.path.isdir(target):
+                response.status = 404
+                return {"status": "error", "error": f"Папка не найдена: {target}"}
+            if act == 'toggle':
+                if target not in SAVED_MUSIC_DIRS: SAVED_MUSIC_DIRS.append(target)
+                if target in ACTIVE_MUSIC_DIRS:
+                    if len(ACTIVE_MUSIC_DIRS) > 1: ACTIVE_MUSIC_DIRS.remove(target)
+                else: ACTIVE_MUSIC_DIRS.append(target)
+            elif act == 'add':
+                if target not in SAVED_MUSIC_DIRS: SAVED_MUSIC_DIRS.insert(0, target)
+                if target not in ACTIVE_MUSIC_DIRS: ACTIVE_MUSIC_DIRS.append(target)
+            elif act == 'remove':
+                if target in SAVED_MUSIC_DIRS and len(SAVED_MUSIC_DIRS) > 1: SAVED_MUSIC_DIRS.remove(target)
+                if target in ACTIVE_MUSIC_DIRS and len(ACTIVE_MUSIC_DIRS) > 1: ACTIVE_MUSIC_DIRS.remove(target)
+                if not ACTIVE_MUSIC_DIRS and SAVED_MUSIC_DIRS: ACTIVE_MUSIC_DIRS = [SAVED_MUSIC_DIRS[0]]
+            MUSIC_DIR = ACTIVE_MUSIC_DIRS[0]
+            save_multi_dirs_v71()
+        except Exception as e:
+            response.status = 500
+            return {"status": "error", "error": str(e)}
+    exts = get_allowed_extensions()
+    f_tracks = {}
+    for d in SAVED_MUSIC_DIRS:
+        f_tracks[d] = [fn for fn in (os.listdir(d) if os.path.isdir(d) else []) if fn.lower().endswith(exts) and not fn.startswith(('temp_stretcher_', 'temp_final_')) and os.path.isfile(os.path.join(d, fn))]
+    response.content_type = 'application/json'
+    return json.dumps({"status": "ok", "saved_folders": SAVED_MUSIC_DIRS, "active_folders": ACTIVE_MUSIC_DIRS, "current_folder": MUSIC_DIR, "folder_tracks": f_tracks})
+
+@post('/api/delete_track_v71')
+def delete_track_v71():
+    try:
+        req = json.loads(request.body.read().decode('utf-8'))
+        fn = req.get('filename', '').strip()
+        fp = resolve_track_full_path_v71(fn)
+        if not fn or not os.path.isfile(fp):
+            response.status = 404
+            return {"status": "error", "error": "Файл не найден"}
+        os.remove(fp)
+        TRACK_META_CACHE_V71.pop(fp, None)
+        return {"status": "ok", "deleted": fn}
+    except Exception as e:
+        response.status = 500
+        return {"status": "error", "error": str(e)}
+
+@post('/api/track_meta_v71')
+def get_track_meta_v71():
+    try:
+        req = json.loads(request.body.read().decode('utf-8'))
+        fn = req.get('filename', '').strip()
+        fp = resolve_track_full_path_v71(fn)
+        if not fn or not os.path.isfile(fp):
+            response.status = 404
+            return {"status": "error", "error": "Файл не найден"}
+        ff = find_ffmpeg_binary()
+        pr = subprocess.run([ff, '-hide_banner', '-i', fp], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        raw = (pr.stderr or "") + (pr.stdout or "")
+        tags, in_m = {}, False
+        for line in raw.splitlines():
+            if re.match(r"^\s*Metadata:\s*$", line): in_m = True; continue
+            if in_m:
+                if re.match(r"^\s*(Duration:|Stream #|Chapter #)", line): in_m = False; continue
+                m = re.match(r"^\s*([A-Za-z0-9_\-\.]+)\s*:\s*(.+)$", line)
+                if m and m.group(1).strip().upper() not in ('ENCODER', 'DURATION'):
+                    tags[m.group(1).strip().upper()] = m.group(2).strip()
+        tr = read_jenny_rev_trailer(fp)
+        rev = {"has_rev": False}
+        if tr:
+            try:
+                with open(fp, 'rb') as rf:
+                    rf.seek(tr["map_offset"])
+                    sm = json.loads(zlib.decompress(rf.read(tr["map_len"])).decode('utf-8'))
+                rev = {"has_rev": True, "map_bytes": tr["map_len"], "pocket_bytes": tr["pocket_len"], "spd": sm.get("spd", 1.0), "tension": sm.get("tension", 100), "origLen": sm.get("origLen", 0)}
+            except Exception: rev = {"has_rev": True}
+        response.content_type = 'application/json'
+        return json.dumps({"status": "ok", "filename": fn, "full_path": fp, "tags": tags, "rev": rev})
+    except Exception as e:
+        response.status = 500
+        return {"status": "error", "error": str(e)}
+
+@post('/api/save_meta_v71')
+def save_track_meta_v71():
+    t_in, t_out = None, None
+    try:
+        req = json.loads(request.body.read().decode('utf-8'))
+        fn = req.get('filename', '').strip()
+        new_fn = req.get('new_filename', fn).strip() or fn
+        tags = req.get('tags', {})
+        rev_act = req.get('rev_action', 'keep')
+        rev_upd = req.get('rev_updates', {})
+        fp = resolve_track_full_path_v71(fn)
+        if not fn or not os.path.isfile(fp):
+            response.status = 404
+            return {"status": "error", "error": "Файл не найден"}
+        fdir, ext = os.path.dirname(fp), os.path.splitext(fn)[1]
+        if not os.path.splitext(new_fn)[1]: new_fn += ext
+        tr = read_jenny_rev_trailer(fp)
+        m_zlib, p_mask, sm_obj = b"", b"", None
+        if tr:
+            with open(fp, 'rb') as rf:
+                rf.seek(tr["map_offset"]); m_zlib = rf.read(tr["map_len"])
+                if tr["pocket_len"] > 0: rf.seek(tr["pocket_offset"]); p_mask = rf.read(tr["pocket_len"])
+            try: sm_obj = json.loads(zlib.decompress(m_zlib).decode('utf-8'))
+            except Exception: pass
+        t_in = os.path.join(fdir, f"temp_meta_in_{os.getpid()}{ext}")
+        t_out = os.path.join(fdir, f"temp_meta_out_{os.getpid()}{ext}")
+        with open(fp, 'rb') as sf, open(t_in, 'wb') as df:
+            if tr: df.write(sf.read(tr["audio_end"]))
+            else: shutil.copyfileobj(sf, df)
+        cmd = [find_ffmpeg_binary(), '-y', '-i', t_in, '-c', 'copy', '-map_metadata', '-1']
+        for k, v in (tags.items() if isinstance(tags, dict) else []):
+            if str(k).strip() and str(v).strip(): cmd.extend(['-metadata', f"{str(k).strip()}={str(v).strip()}"])
+        cmd.append(t_out)
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if r.returncode != 0 or not os.path.exists(t_out) or os.path.getsize(t_out) < 64:
+            shutil.copyfile(t_in, t_out)
+        if tr and rev_act != 'strip_all':
+            if rev_act in ('modify', 'strip_pocket') and sm_obj is not None:
+                for k in ('spd', 'tension'):
+                    if k in rev_upd:
+                        try: sm_obj[k] = float(rev_upd[k])
+                        except Exception: pass
+                if 'origLen' in rev_upd:
+                    try: sm_obj['origLen'] = int(rev_upd['origLen'])
+                    except Exception: pass
+                if rev_act == 'strip_pocket': p_mask = b""; sm_obj['pocketFrames'] = 0
+                m_zlib = zlib.compress(json.dumps(sm_obj, ensure_ascii=False).encode('utf-8'), level=9)
+            ftr = struct.pack(JENNY_REV_FOOTER_FMT, b'JREV', 67, len(m_zlib), len(p_mask), b'JENNYV67')
+            with open(t_out, 'ab') as af:
+                af.write(m_zlib)
+                if p_mask: af.write(p_mask)
+                af.write(ftr)
+        dst_fp = os.path.join(fdir, new_fn)
+        shutil.move(t_out, dst_fp)
+        if dst_fp != fp and os.path.exists(fp):
+            try: os.remove(fp)
+            except Exception: pass
+        return {"status": "ok", "old_filename": fn, "new_filename": new_fn}
+    except Exception as e:
+        response.status = 500
+        return {"status": "error", "error": str(e)}
+    finally:
+        for p in (t_in, t_out):
+            if p and os.path.exists(p):
+                try: os.remove(p)
+                except Exception: pass
+# === JENNY V71 BACKEND END ===
+
 @route('/api/full_path/<filename:path>', method='GET')
 def get_full_track_path(filename):
     response.content_type = 'application/json'
-    full_p = os.path.abspath(os.path.join(MUSIC_DIR, filename))
+    full_p = os.path.abspath(resolve_track_full_path_v71(filename))
     return json.dumps({
         "status": "ok",
         "filename": filename,
@@ -146,12 +384,13 @@ def get_full_track_path(filename):
 
 @route('/api/media/<filename:path>')
 def serve_media(filename):
-    return static_file(filename, root=MUSIC_DIR)
+    fp = resolve_track_full_path_v71(filename)
+    return static_file(os.path.basename(fp), root=os.path.dirname(fp))
 
 
 @route('/api/rev_info/<filename:path>', method='GET')
 def get_rev_info(filename):
-    full_p = os.path.join(MUSIC_DIR, filename)
+    full_p = resolve_track_full_path_v71(filename)
     trailer = read_jenny_rev_trailer(full_p)
     response.content_type = 'application/json'
     if not trailer:
@@ -175,7 +414,7 @@ def get_rev_info(filename):
 
 @route('/api/rev_pocket/<filename:path>', method='GET')
 def get_rev_pocket(filename):
-    full_p = os.path.join(MUSIC_DIR, filename)
+    full_p = resolve_track_full_path_v71(filename)
     trailer = read_jenny_rev_trailer(full_p)
     if not trailer or trailer["pocket_len"] <= 0:
         response.status = 404
@@ -223,57 +462,42 @@ def get_allowed_extensions():
 
 @route('/api/data')
 def get_data():
-    all_tracks = []
+    load_multi_dirs_v71()
+    all_tracks, seen, track_meta = [], set(), {}
     allowed_exts = get_allowed_extensions()
-    if os.path.exists(MUSIC_DIR):
-        for f in os.listdir(MUSIC_DIR):
-            if f.lower().endswith(allowed_exts) and not f.startswith(('temp_stretcher_', 'temp_final_')):
-                full_p = os.path.join(MUSIC_DIR, f)
-                if os.path.isfile(full_p):
-                    all_tracks.append(f)
-    all_tracks.sort(key=lambda x: os.path.getmtime(os.path.join(MUSIC_DIR, x)), reverse=True)
-
+    for d in ACTIVE_MUSIC_DIRS:
+        if os.path.exists(d):
+            try:
+                for f in os.listdir(d):
+                    if f.lower().endswith(allowed_exts) and not f.startswith(('temp_stretcher_', 'temp_final_')):
+                        fp = os.path.join(d, f)
+                        if os.path.isfile(fp) and f not in seen:
+                            seen.add(f); all_tracks.append(f)
+                            track_meta[f] = quick_parse_artist_album_v71(f, fp)
+            except Exception: pass
+    all_tracks.sort(key=lambda x: track_meta.get(x, {}).get("mtime", 0), reverse=True)
     response.content_type = 'application/json'
-    return json.dumps({
-        "all_tracks": all_tracks,
-        "session_tracks": all_tracks,
-        "current_folder": MUSIC_DIR
-    })
+    return json.dumps({"all_tracks": all_tracks, "session_tracks": all_tracks, "current_folder": MUSIC_DIR, "active_folders": ACTIVE_MUSIC_DIRS, "saved_folders": SAVED_MUSIC_DIRS, "track_meta": track_meta})
 
 
 @post('/api/folder')
 def change_folder():
-    global MUSIC_DIR
+    global MUSIC_DIR, ACTIVE_MUSIC_DIRS, SAVED_MUSIC_DIRS
     try:
+        load_multi_dirs_v71()
         req = json.loads(request.body.read().decode('utf-8'))
-        new_path = req.get('path', '').strip()
-        if not new_path:
-            response.status = 400
-            return {"status": "error", "error": "Пустой путь"}
-
-        if not new_path.startswith('/'):
-            new_path = os.path.join('/storage/emulated/0', new_path)
-
+        new_path = norm_dir_v71(req.get('path', ''))
         if not os.path.isdir(new_path):
             response.status = 404
             return {"status": "error", "error": f"Папка не найдена: {new_path}"}
-
-        MUSIC_DIR = new_path
-        cleanup_stale_temps(MUSIC_DIR)
-
-        data = {}
-        if os.path.exists(PRESET_FILE):
-            try:
-                with open(PRESET_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-            except Exception:
-                data = {}
-        data["customMusicDir"] = MUSIC_DIR
-        os.makedirs(os.path.dirname(PRESET_FILE), exist_ok=True)
-        with open(PRESET_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-
-        return {"status": "ok", "current_folder": MUSIC_DIR}
+        if new_path not in SAVED_MUSIC_DIRS:
+            SAVED_MUSIC_DIRS.insert(0, new_path)
+        if new_path not in ACTIVE_MUSIC_DIRS:
+            ACTIVE_MUSIC_DIRS.append(new_path)
+        MUSIC_DIR = ACTIVE_MUSIC_DIRS[0]
+        cleanup_stale_temps(new_path)
+        save_multi_dirs_v71()
+        return {"status": "ok", "current_folder": new_path, "active_folders": ACTIVE_MUSIC_DIRS}
     except Exception as e:
         response.status = 500
         return {"status": "error", "error": str(e)}
@@ -341,7 +565,7 @@ def stretch_track():
     try:
         filename = request.forms.get('filename')
         speed = float(request.forms.get('speed', 1.0))
-        original_path = os.path.join(MUSIC_DIR, filename)
+        original_path = resolve_track_full_path_v71(filename)
         temp_stretched = os.path.join(MUSIC_DIR, f"temp_stretcher_{os.getpid()}.wav")
 
         ffmpeg_bin = find_ffmpeg_binary()
@@ -480,7 +704,7 @@ def get_track_info():
     try:
         req = json.loads(request.body.read().decode('utf-8'))
         filename = req.get('filename', '')
-        full_path = os.path.join(MUSIC_DIR, filename)
+        full_path = resolve_track_full_path_v71(filename)
         if not filename or not os.path.isfile(full_path):
             response.status = 404
             return {"status": "error", "error": "Файл не найден"}

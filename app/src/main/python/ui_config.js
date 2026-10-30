@@ -71,11 +71,18 @@ window.toggleShowAll = function() {
 };
 
 window.filterTracks = function(query) {
-    let lowerQuery = query.toLowerCase();
-    document.querySelectorAll('.capsule').forEach(el => {
-        if (!el.id || !el.id.startsWith('track-')) return; 
-        let trackName = el.innerText.toLowerCase();
-        el.parentElement.style.display = trackName.includes(lowerQuery) ? 'block' : 'none';
+    let lowerQuery = String(query || '').toLowerCase().trim();
+    document.querySelectorAll('#unifiedList .track-row-capsule').forEach(el => {
+        let trackName = (el.getAttribute('data-track') || el.innerText || '').toLowerCase();
+        let allowed = window.isTrackAllowedByFormatSlots
+            ? window.isTrackAllowedByFormatSlots(trackName)
+            : true;
+        let show = (!lowerQuery || trackName.includes(lowerQuery)) && allowed;
+        if (el.parentElement && el.parentElement.id !== 'unifiedList') {
+            el.parentElement.style.display = show ? 'block' : 'none';
+        } else {
+            el.style.display = show ? '' : 'none';
+        }
     });
 };
 
@@ -88,24 +95,20 @@ window.toggleVolUI = function() {
 };
 
 window.showToast = function(msg, event) {
+    document.querySelectorAll('.custom-toast').forEach(t => t.remove());
     let toast = document.createElement('div');
-    toast.innerText = msg;
+    toast.innerText = String(msg || '');
     toast.className = 'custom-toast';
-
-    // Вычисляем позицию на 150px выше клика. Если вылезет за верхний край - упираем в 20px от верха экрана.
-    let clickY = event && event.target ? event.target.getBoundingClientRect().top : window.innerHeight / 2;
-    toast.style.top = Math.max(20, clickY - 150) + 'px';
-
+    let vh = window.innerHeight || document.documentElement.clientHeight || 640;
+    let clickY = (event && event.target && typeof event.target.getBoundingClientRect === 'function')
+        ? event.target.getBoundingClientRect().top : (vh * 0.45);
+    toast.style.top = Math.max(18, Math.min(vh - 110, clickY - 95)) + 'px';
     document.body.appendChild(toast);
-
-    // Плавно показываем
     setTimeout(() => toast.classList.add('show'), 10);
-
-    // Убиваем через 3 секунды
     setTimeout(() => {
         toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300); 
-    }, 3000);
+        setTimeout(() => toast.remove(), 280);
+    }, 3200);
 };
 
 window.toggleAutoSave = function(source, event) {

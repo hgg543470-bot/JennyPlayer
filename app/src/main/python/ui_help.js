@@ -222,15 +222,19 @@ window.applyFormatFilterToDOM = function() {
     if (!uList) return;
     const rows = Array.from(uList.children);
     let visibleCount = 0;
+    let hasTrackRows = false;
     rows.forEach(row => {
-        const txt = (row.innerText || '').trim();
-        if (!txt || txt.includes('Загрузка...') || txt.includes('Loading...') || txt.includes('Папка с музыкой пуста') || txt.includes('Music folder is empty')) return;
-        const allowed = window.isTrackAllowedByFormatSlots(txt);
+        const cap = row.classList && row.classList.contains('track-row-capsule')
+            ? row : (row.querySelector ? row.querySelector('.track-row-capsule') : null);
+        const trackName = cap ? (cap.getAttribute('data-track') || '') : '';
+        if (!trackName) return;
+        hasTrackRows = true;
+        const allowed = window.isTrackAllowedByFormatSlots(trackName);
         row.style.display = allowed ? '' : 'none';
         if (allowed) visibleCount++;
     });
     const cnt = document.getElementById('tracksCount');
-    if (cnt && rows.length > 0) cnt.innerText = visibleCount;
+    if (cnt && hasTrackRows) cnt.innerText = visibleCount;
 };
 window.saveFormatSlotsToConfig = async function(triggerReload) {
     window.appConfig = window.appConfig || {};
@@ -303,7 +307,7 @@ window.updateTopSearchOrMonitorBar = function() {
         barWrap.appendChild(monEl);
     }
     if (!isModalOpen) {
-        barWrap.style.display = ''; barWrap.style.paddingTop = '15px'; searchInput.style.display = ''; monEl.style.display = 'none';
+        barWrap.style.display = ''; barWrap.style.paddingTop = '2px'; searchInput.style.display = ''; monEl.style.display = 'none';
     } else {
         searchInput.style.display = 'none';
         if (ceilOn) {
@@ -348,7 +352,7 @@ window.syncDspModUI = function() {
     const wrap = document.getElementById('dspModBodyWrap'); const shield = document.getElementById('dspModLockShield');
     if (wrap && shield) {
         wrap.style.opacity = cfg.phaseFixEnabled ? '0.32' : '1';
-        wrap.style.filter = cfg.phaseFixEnabled ? 'grayscale(100%)' : 'none';
+        wrap.style.filter = 'none';
         shield.style.display = cfg.phaseFixEnabled ? 'block' : 'none';
     }
     if (typeof window.updateTopSearchOrMonitorBar === 'function') window.updateTopSearchOrMonitorBar();
