@@ -876,3 +876,218 @@ window.fetchData = async function() {
     }
 };
 
+
+// === V71.4 INSTANT HORIZON SPLICER FOR LONG TRACKS (5ms ZERO-LAG JBUF) & MODAL HEADER CLEANUP ===
+
+window._horizonSliceTimerV71 = null;
+
+// Вырезает окно [startSec .. startSec + winSec] из гигантского буфера в маленький AudioBuffer (при необходимости разворачивая для реверса)
+window.extractWindowBufferV71 = function(srcBuf, startSec, winSec, isRev) {
+    if (!srcBuf || !window.audioCtx) return null;
+    const sr = srcBuf.sampleRate;
+    const numCh = srcBuf.numberOfChannels;
+    const totalLen = srcBuf.length;
+    const dur = srcBuf.duration;
+
+    let cleanStart = Math.max(0, Math.min(dur - 0.05, startSec));
+    let actualWinSec = Math.min(winSec, Math.max(0.1, dur - cleanStart));
+    let frameCount = Math.max(256, Math.floor(actualWinSec * sr));
+
+    let subBuf = window.audioCtx.createBuffer(numCh, frameCount, sr);
+    if (!isRev) {
+        let startFrame = Math.min(totalLen - frameCount, Math.max(0, Math.floor(cleanStart * sr)));
+        for (let c = 0; c < numCh; c++) {
+            const inp = srcBuf.getChannelData(c);
+            const out = subBuf.getChannelData(c);
+            out.set(inp.subarray(startFrame, startFrame + frameCount));
+        }
+    } else {
+        // Для реверса на длинном треке читаем с конца назад без клонирования всех 3 ГБ!
+        let revEndFrame = Math.min(totalLen, Math.max(frameCount, Math.floor((dur - cleanStart) * sr)));
+        for (let c = 0; c < numCh; c++) {
+            const inp = srcBuf.getChannelData(c);
+            const out = subBuf.getChannelData(c);
+            for (let i = 0; i < frameCount; i++) {
+                out[i] = inp[revEndFrame - 1 - i];
+            }
+        }
+    }
+    return subBuf;
+};
+
+// Мгновенный запуск 1-й передачи (J Buf 90° Pitch Lock) с горизонтом 45 сек для треков > 10 минут
+window.engageInstantHorizonJbufLockV71 = function(isDraggingArc) {
+    const player = document.getElementById('audioPlayer');
+    const badge = document.getElementById('hoseLiveTelemetryV44');
+    if (!player || !window.studioBuffer || !window.audioCtx) return false;
+
+    // Если трек короткий (< 600 сек = 10 минут), используем обычный полный буфер
+    if (window.studioBuffer.duration <= 600) {
+        return false;
+    }
+
+    if (isDraggingArc) {
+        if (window._hoseArcDebounceTimerV47) clearTimeout(window._hoseArcDebounceTimerV47);
+        window._hoseArcDebounceTimerV47 = setTimeout(() => {
+            window.syncMasterPlaybackEngineV59(false);
+        }, 55);
+        return true;
+    }
+
+    if (window._horizonSliceTimerV71) {
+        clearTimeout(window._horizonSliceTimerV71);
+        window._horizonSliceTimerV71 = null;
+    }
+
+    const targetSpd = (typeof window.getActiveTargetSpeedV59 === 'function')
+        ? window.getActiveTargetSpeedV59()
+        : (player.playbackRate || 1.0);
+    const tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined)
+        ? window.appConfig.hoseTensionPct
+        : 100;
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+
+    const curSec = player.currentTime || 0;
+    const WIN_SEC = 45.0; // Нарезаем 45 секунд вперёд — занимает всего ~5 мс!
+    const rawWindowBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, WIN_SEC, isRev);
+    if (!rawWindowBuf) return false;
+
+    const t0 = performance.now();
+    const splicedWindowBuf = window.buildElasticHoseBufferV46(rawWindowBuf, targetSpd, tensionPct);
+    const buildMs = Math.round(performance.now() - t0);
+
+    if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+    player.preservesPitch = false;
+    if (Math.abs(player.playbackRate - targetSpd) > 0.003) {
+        try { player.playbackRate = targetSpd; } catch (e) {}
+    }
+
+    if (!player.paused) {
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+        }
+        window.studioSourceNode = window.audioCtx.createBufferSource();
+        window.studioSourceNode._isHoseSpliced = true;
+        window.studioSourceNode._isHorizonWindowV71 = true;
+        window.studioSourceNode.buffer = splicedWindowBuf;
+        window.studioSourceNode.playbackRate.value = 1.0;
+        window.studioSourceNode.connect(window.inputMixer);
+        window.studioSourceNode.start(0, 0);
+        window.isStudioPlaying = true;
+
+        // Планируем бесшовную подкачку следующего 45-секундного окна за 1.2 сек до конца текущего
+        const realPlayDurationMs = Math.max(500, (splicedWindowBuf.duration - 1.2) * 1000);
+        window._horizonSliceTimerV71 = setTimeout(() => {
+            const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+            if (!player.paused && gKey === 'jbuf-lock' && window.studioBuffer && window.studioBuffer.duration > 600) {
+                window.engageInstantHorizonJbufLockV71(false);
+            }
+        }, realPlayDurationMs);
+    }
+
+    if (badge) {
+        const c = window._hoseSplicerCacheV46 || {};
+        badge.style.color = '#3fb950';
+        badge.innerText = `⚡ J Buf 90° [HORIZON 45s]: x${targetSpd.toFixed(2)} | Δy=${((c.avgSeamErrMv || 0) * 100).toFixed(1)}% (${buildMs}мс)`;
+    }
+    return true;
+};
+
+// Перехватываем syncMasterPlaybackEngineV59, чтобы на длинных треках (>10 мин) 1-я передача включалась за 5 мс через Horizon Splicer!
+(function wrapMasterSyncForHorizonV71() {
+    const prevSync = window.syncMasterPlaybackEngineV59;
+    window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
+        if (window._horizonSliceTimerV71) {
+            clearTimeout(window._horizonSliceTimerV71);
+            window._horizonSliceTimerV71 = null;
+        }
+        const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+        if (gKey === 'jbuf-lock' && window.studioBuffer && window.studioBuffer.duration > 600) {
+            if (window.engageInstantHorizonJbufLockV71(isDraggingArc)) {
+                return;
+            }
+        }
+        return prevSync.apply(this, arguments);
+    };
+})();
+
+// Также ускоряем 2-ю передачу (J Buf Pitch Shift) и Заднюю R (Винил) на длинных треках при реверсе
+const _origEngageShiftV71 = window.engageDirectRamPitchShiftV70;
+window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
+    const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+    if (isRev && window.studioBuffer && window.studioBuffer.duration > 900 && !window.reversedStudioBuffer) {
+        const player = document.getElementById('audioPlayer');
+        if (player && window.audioCtx) {
+            const curSec = player.currentTime || 0;
+            const winBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, 60.0, true);
+            if (winBuf) {
+                if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+                player.preservesPitch = false;
+                if (window.studioSourceNode) {
+                    window.studioSourceNode.onended = null;
+                    try { window.studioSourceNode.stop(); } catch (e) {}
+                    try { window.studioSourceNode.disconnect(); } catch (e) {}
+                }
+                window.studioSourceNode = window.audioCtx.createBufferSource();
+                window.studioSourceNode._isHoseSpliced = false;
+                window.studioSourceNode.buffer = winBuf;
+                window.studioSourceNode.playbackRate.value = targetSpd;
+                window.studioSourceNode.connect(window.inputMixer);
+                if (!player.paused) {
+                    window.studioSourceNode.start(0, 0);
+                    window.isStudioPlaying = true;
+                }
+                return true;
+            }
+        }
+    }
+    return _origEngageShiftV71.apply(this, arguments);
+};
+
+// Прячем ленту плейлистов и поджимаем высоту шапки до 102px, когда открыто любое модальное окно (⚙️, 🄠, 📊, 🎨)
+window.syncHeaderHeightWithModalsV71 = function() {
+    const sm = document.getElementById('settingsModal');
+    const em = document.getElementById('eqModal');
+    const sp = document.getElementById('specModal');
+    const tm = document.getElementById('themeModal');
+    const fm = document.getElementById('favModal');
+    const isOpen = (sm && sm.classList.contains('open')) ||
+                   (em && em.classList.contains('open')) ||
+                   (sp && sp.classList.contains('open')) ||
+                   (tm && tm.classList.contains('open')) ||
+                   (fm && fm.classList.contains('open'));
+
+    const plWrap = document.getElementById('jennyPlaylistBarWrapV71');
+    const stickyTop = document.querySelector('.sticky-top');
+    if (plWrap) {
+        plWrap.style.setProperty('display', isOpen ? 'none' : 'flex', 'important');
+    }
+    if (stickyTop) {
+        stickyTop.style.setProperty('height', isOpen ? '102px' : '140px', 'important');
+    }
+    document.querySelectorAll('.modal-overlay').forEach(m => {
+        m.style.setProperty('top', isOpen ? '102px' : '140px', 'important');
+    });
+};
+
+(function attachHeaderModalSyncV71() {
+    const obs = new MutationObserver(() => window.syncHeaderHeightWithModalsV71());
+    ['settingsModal', 'eqModal', 'favModal', 'specModal', 'themeModal'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) obs.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+    });
+    const origToggle = window.toggleModal;
+    if (typeof origToggle === 'function' && !window._toggleModalHeaderHookV71) {
+        window._toggleModalHeaderHookV71 = true;
+        window.toggleModal = function(id) {
+            const r = origToggle.apply(this, arguments);
+            window.syncHeaderHeightWithModalsV71();
+            setTimeout(window.syncHeaderHeightWithModalsV71, 30);
+            return r;
+        };
+    }
+    window.syncHeaderHeightWithModalsV71();
+})();
+

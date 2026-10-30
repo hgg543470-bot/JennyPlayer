@@ -255,9 +255,10 @@ window.playTrack = async function(filename, listContext = 'main') {
                 window.preAmpNode.gain.value = 0.6 * window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
             }
             let nowRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-            if (nowRev) {
+            let isHugeTrack = (decodedBuffer.duration > 900);
+            if (nowRev && !isHugeTrack) {
                 window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
-            } else {
+            } else if (!isHugeTrack) {
                 setTimeout(async () => {
                     if (window.currentPlayingTrack === filename && !window.reversedStudioBuffer) {
                         window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
