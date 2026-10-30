@@ -3544,3 +3544,92 @@ window.filterTracks = function(query) {
     }
 };
 
+
+// === V74.7 PIN SUB-FILTER STRIP IN STICKY HEADER (NEVER SCROLLS AWAY) ===
+
+// Переносим #jennySubFilterWrapV71 внутрь фиксированной шапки .sticky-top сразу под первой лентой плейлистов
+window.ensureSubStripPinnedInHeaderV74_7 = function() {
+    const stickyTop = document.querySelector('.sticky-top');
+    const plWrap = document.getElementById('jennyPlaylistBarWrapV71');
+    let subWrap = document.getElementById('jennySubFilterWrapV71');
+
+    if (!stickyTop) return null;
+
+    if (!subWrap) {
+        subWrap = document.createElement('div');
+        subWrap.id = 'jennySubFilterWrapV71';
+    }
+
+    if (subWrap.parentElement !== stickyTop) {
+        if (plWrap && plWrap.parentElement === stickyTop) {
+            plWrap.insertAdjacentElement('afterend', subWrap);
+        } else {
+            stickyTop.appendChild(subWrap);
+        }
+    }
+
+    subWrap.style.cssText = 'width:100%;box-sizing:border-box;margin:0;padding:0;z-index:30;flex-shrink:0;';
+    return subWrap;
+};
+
+// Синхронизируем высоту .sticky-top и отступ списка треков в зависимости от наличия 2-й строки и открытых модалок
+window.syncHeaderHeightWithModalsV71 = function() {
+    const sm = document.getElementById('settingsModal');
+    const em = document.getElementById('eqModal');
+    const sp = document.getElementById('specModal');
+    const tm = document.getElementById('themeModal');
+    const fm = document.getElementById('favModal');
+    const isOpen = (sm && sm.classList.contains('open')) ||
+                   (em && em.classList.contains('open')) ||
+                   (sp && sp.classList.contains('open')) ||
+                   (tm && tm.classList.contains('open')) ||
+                   (fm && fm.classList.contains('open'));
+
+    const plWrap = document.getElementById('jennyPlaylistBarWrapV71');
+    const subWrap = window.ensureSubStripPinnedInHeaderV74_7();
+    const stickyTop = document.querySelector('.sticky-top');
+
+    const hasSubContent = Boolean(subWrap && subWrap.innerHTML && subWrap.innerHTML.trim().length > 0);
+
+    if (plWrap) {
+        plWrap.style.setProperty('display', isOpen ? 'none' : 'flex', 'important');
+    }
+    if (subWrap) {
+        subWrap.style.setProperty('display', (!isOpen && hasSubContent) ? 'block' : 'none', 'important');
+    }
+
+    const targetH = isOpen ? '102px' : (hasSubContent ? '178px' : '140px');
+
+    if (stickyTop) {
+        stickyTop.style.setProperty('height', targetH, 'important');
+    }
+    document.querySelectorAll('.modal-overlay').forEach(m => {
+        m.style.setProperty('top', isOpen ? '102px' : targetH, 'important');
+    });
+};
+
+// Оборачиваем mountPlaylistStripDOMV71 и renderActivePlaylistTracksV71, чтобы 2-я строка всегда оставалась прикреплённой в .sticky-top
+(function hookSubStripPinningV74_7() {
+    const origMount = window.mountPlaylistStripDOMV71;
+    if (typeof origMount === 'function') {
+        window.mountPlaylistStripDOMV71 = function() {
+            const res = origMount.apply(this, arguments);
+            window.ensureSubStripPinnedInHeaderV74_7();
+            return res;
+        };
+    }
+
+    const origRender = window.renderActivePlaylistTracksV71;
+    if (typeof origRender === 'function') {
+        window.renderActivePlaylistTracksV71 = function() {
+            window.ensureSubStripPinnedInHeaderV74_7();
+            const res = origRender.apply(this, arguments);
+            window.syncHeaderHeightWithModalsV71();
+            return res;
+        };
+    }
+
+    window.ensureSubStripPinnedInHeaderV74_7();
+    window.syncHeaderHeightWithModalsV71();
+})();
+
