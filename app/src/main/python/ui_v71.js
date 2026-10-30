@@ -2431,3 +2431,232 @@ setTimeout(() => {
     window.renderActivePlaylistTracksV71(false);
 }, 150);
 
+
+// === V74.1 PLAY/PAUSE LONG-PRESS LOCATOR & WEBAUDIO CLOCK SYNC ===
+
+// 1. Функция умного перехода к текущему играющему треку из любой вкладки и любого окна
+window.locateCurrentPlayingTrackV74_1 = function() {
+    if (!window.currentPlayingTrack) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(window.tr('⚠️ Сейчас ни один трек не выбран', '⚠️ No track is currently playing'));
+        }
+        return;
+    }
+
+    try { navigator.vibrate(50); } catch (e) {}
+
+    // Закрываем все открытые модальные и всплывающие окна
+    if (typeof window.closeAllV71Modals === 'function') window.closeAllV71Modals();
+    ['settingsModal', 'favModal', 'eqModal', 'specModal', 'themeModal'].forEach(m => {
+        const el = document.getElementById(m);
+        if (el) el.classList.remove('open');
+        const btn = document.getElementById('btn-' + m);
+        if (btn) btn.style.color = '';
+    });
+    if (typeof window.syncHeaderHeightWithModalsV71 === 'function') {
+        window.syncHeaderHeightWithModalsV71();
+    }
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') {
+        window.updateTopSearchOrMonitorBar();
+    }
+
+    const track = window.currentPlayingTrack;
+    const sInp = document.getElementById('trackSearchInput');
+
+    // Сбрасываем поисковый фильтр, если он скрывает песни
+    if (sInp && sInp.value.trim() !== '') {
+        sInp.value = '';
+        if (typeof window.filterTracks === 'function') window.filterTracks('');
+    }
+
+    // Проверяем, есть ли карточка играющего трека в текущем открытом списке
+    const findRowInDOM = () => {
+        const rows = document.querySelectorAll('#unifiedList .track-row-capsule');
+        for (const r of rows) {
+            if (r.getAttribute('data-track') === track && r.parentElement && r.parentElement.style.display !== 'none') {
+                return r;
+            }
+        }
+        return null;
+    };
+
+    let targetRow = findRowInDOM();
+
+    // Если трека нет в текущей открытой вкладке — переключаемся в ту вкладку, откуда играет очередь (или во «Все»)
+    if (!targetRow) {
+        const qCtx = window.playingQueueContextV73 || {};
+        let targetTab = qCtx.tabId || 'all';
+
+        window.ensurePlaylistStateV71();
+        window.appConfig.visiblePlaylistTabsV71[targetTab] = true;
+        window.activePlaylistTabV71 = targetTab;
+        if (targetTab === 'artists' && qCtx.artist) window.selectedArtistV71 = qCtx.artist;
+        if (targetTab === 'albums' && qCtx.album) window.selectedAlbumV71 = qCtx.album;
+
+        window.renderPlaylistStripChipsV71();
+        window.renderActivePlaylistTracksV71(true);
+        targetRow = findRowInDOM();
+
+        // Если и там не нашлось (например, песня была убрана из Избранного) — открываем вкладку «Все»
+        if (!targetRow && targetTab !== 'all') {
+            window.appConfig.visiblePlaylistTabsV71.all = true;
+            window.activePlaylistTabV71 = 'all';
+            window.renderPlaylistStripChipsV71();
+            window.renderActivePlaylistTracksV71(true);
+            targetRow = findRowInDOM();
+        }
+
+        // Прокручиваем верхнюю ленту плейлистов к активной вкладке
+        const strip = document.getElementById('jennyPlaylistScrollStripV71');
+        const actChip = strip ? strip.querySelector('.active-pl-chip') : null;
+        if (actChip && typeof actChip.scrollIntoView === 'function') {
+            actChip.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }
+    }
+
+    if (targetRow) {
+        setTimeout(() => {
+            targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            targetRow.classList.remove('orig-highlight-pulse-v68');
+            void targetRow.offsetWidth;
+            targetRow.classList.add('orig-highlight-pulse-v68');
+            setTimeout(() => targetRow.classList.remove('orig-highlight-pulse-v68'), 2200);
+        }, 60);
+    }
+};
+
+// Перепривязываем кнопку #playPauseBtn на клон без старого обработчика из ui_controls.js
+(function rebindPlayPauseBtnV74_1() {
+    const oldBtn = document.getElementById('playPauseBtn');
+    if (!oldBtn || oldBtn._reboundV74_1) return;
+    const newBtn = oldBtn.cloneNode(true);
+    newBtn._reboundV74_1 = true;
+    newBtn.removeAttribute('onclick');
+    oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+
+    let ppTimer = null;
+    let ppFired = false;
+
+    newBtn.addEventListener('touchstart', () => {
+        ppFired = false;
+        clearTimeout(ppTimer);
+        ppTimer = setTimeout(() => {
+            ppFired = true;
+            window.locateCurrentPlayingTrackV74_1();
+        }, 360);
+    }, { passive: true });
+
+    newBtn.addEventListener('touchmove', () => {
+        clearTimeout(ppTimer);
+    }, { passive: true });
+
+    newBtn.addEventListener('touchend', (e) => {
+        clearTimeout(ppTimer);
+        if (!ppFired) {
+            if (typeof window.togglePlay === 'function') window.togglePlay();
+        }
+        if (e && e.cancelable) e.preventDefault();
+    }, { passive: false });
+
+    newBtn.addEventListener('click', (e) => {
+        if (!('ontouchstart' in window)) {
+            if (typeof window.togglePlay === 'function') window.togglePlay();
+        }
+    });
+})();
+
+// 2. Синхронизация таймера и состояния Play/Pause при фоновом переключении трека (когда поёт studioSourceNode в WebAudio)
+window._studioClockV74_1 = {
+    active: false,
+    startCtxTime: 0,
+    startTrackSec: 0,
+    lastAdvTime: 0
+};
+
+(function installWebAudioClockWatchdogV74_1() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC && !AC.prototype._clockHookedV74_1) {
+        AC.prototype._clockHookedV74_1 = true;
+        const prevStart = AC.prototype.createBufferSource;
+        AC.prototype.createBufferSource = function() {
+            const node = prevStart.apply(this, arguments);
+            const origNodeStart = node.start;
+            node.start = function(when, offset) {
+                const player = document.getElementById('audioPlayer');
+                window._studioClockV74_1.active = true;
+                window._studioClockV74_1.startCtxTime = (window.audioCtx ? window.audioCtx.currentTime : 0);
+                window._studioClockV74_1.startTrackSec = (player && isFinite(player.currentTime)) ? player.currentTime : (offset || 0);
+                return origNodeStart.apply(this, arguments);
+            };
+            return node;
+        };
+    }
+
+    // Надёжный togglePlay: если studioSourceNode играет, а <audio> заснул в фоне на паузе — ставим на паузу обоих!
+    window.togglePlay = function() {
+        const player = document.getElementById('audioPlayer');
+        if (!player || !player.src) {
+            if (window.topTrack) window.playTrack(window.topTrack, 'main');
+            return;
+        }
+        if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+
+        const isActuallyPlaying = (!player.paused) || Boolean(window.isStudioPlaying && window.studioSourceNode);
+        if (isActuallyPlaying) {
+            if (window.studioSourceNode) {
+                window.studioSourceNode.onended = null;
+                try { window.studioSourceNode.stop(); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+                window.studioSourceNode = null;
+            }
+            window.isStudioPlaying = false;
+            window._studioClockV74_1.active = false;
+            player.pause();
+            const btn = document.getElementById('playPauseBtn');
+            if (btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+        } else {
+            player.play().then(() => {
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+            }).catch(() => {
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+            });
+        }
+    };
+
+    // Фоновый сторож таймера: если studioSourceNode поёт, а <audio> в фоне застрял на 0:00 — двигаем время и UI!
+    setInterval(() => {
+        const player = document.getElementById('audioPlayer');
+        if (!player || !window.isStudioPlaying || !window.studioSourceNode || !window.audioCtx) return;
+
+        const dur = (isFinite(player.duration) && player.duration > 0)
+            ? player.duration
+            : (window.studioBuffer ? window.studioBuffer.duration : 0);
+        if (dur <= 0) return;
+
+        // Если <audio> случайно встал на паузу в фоне, пока играет studioSourceNode — будим его или ведём часы сами
+        if (player.paused) {
+            const spd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
+            const elapsedCtx = Math.max(0, window.audioCtx.currentTime - window._studioClockV74_1.startCtxTime);
+            const estCur = Math.min(dur, window._studioClockV74_1.startTrackSec + elapsedCtx * spd);
+            try { player.currentTime = estCur; } catch (e) {}
+            player.play().catch(() => {});
+
+            const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+            if (typeof window.updateProgressUI === 'function') {
+                window.updateProgressUI(estCur, dur, isRev);
+            }
+            const btn = document.getElementById('playPauseBtn');
+            if (btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+            if (estCur >= dur - 0.15) {
+                window.isStudioPlaying = false;
+                if (typeof window.playNextTrack === 'function') window.playNextTrack();
+            }
+        }
+    }, 300);
+})();
+
