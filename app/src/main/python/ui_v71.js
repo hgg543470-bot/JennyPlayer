@@ -3189,3 +3189,166 @@ setTimeout(() => {
     window.renderActivePlaylistTracksV71(false);
 }, 100);
 
+
+// === V74.4 STATIC OBJECT GESTURE GUARD (SCROLL BRAKE SHIELD & TAP JITTER TOLERANCE) ===
+
+(function installStaticObjectGestureGuardV74_4() {
+    if (window._staticGestureGuardInstalledV74_4) return;
+    window._staticGestureGuardInstalledV74_4 = true;
+
+    const SCROLL_COOLDOWN_MS = 180; // Время полной остановки инерции списка (мс)
+    const TAP_JITTER_PX = 12;       // Допуск дрожания пальца для короткого тапа (px)
+    const HOLD_JITTER_PX = 5;       // Жёсткий допуск для зажатия (стоит как вкопанный)
+
+    window._lastAnyScrollTsV74_4 = 0;
+
+    const state = {
+        active: false,
+        wasBrakingScroll: false,
+        scrolledDuringTouch: false,
+        exceededTapJitter: false,
+        exceededHoldJitter: false,
+        startX: 0,
+        startY: 0
+    };
+
+    const killAllLongPressTimers = () => {
+        if (window.longPressTimer) {
+            clearTimeout(window.longPressTimer);
+            window.longPressTimer = null;
+        }
+        if (window._rowHoldTimerV74_4) {
+            clearTimeout(window._rowHoldTimerV74_4);
+            window._rowHoldTimerV74_4 = null;
+        }
+    };
+
+    // Ловим прокрутку любого контейнера на странице (window, #unifiedList, горизонтальные ленты)
+    window.addEventListener('scroll', () => {
+        window._lastAnyScrollTsV74_4 = performance.now();
+        if (state.active) {
+            state.scrolledDuringTouch = true;
+            state.exceededTapJitter = true;
+            state.exceededHoldJitter = true;
+            killAllLongPressTimers();
+        }
+    }, { capture: true, passive: true });
+
+    // Проверка: относится ли цель касания к списку треков или лентам категорий
+    const isGuardedZone = (el) => {
+        if (!el || !el.closest) return false;
+        return Boolean(
+            el.closest('#unifiedList') ||
+            el.closest('#jennyPlaylistScrollStripV71') ||
+            el.closest('#jennySubFilterWrapV71')
+        );
+    };
+
+    // 1. TOUCHSTART (Capture Phase): проверяем, статичен ли список в момент касания
+    document.addEventListener('touchstart', (e) => {
+        if (!e.touches || e.touches.length !== 1) {
+            state.active = false;
+            killAllLongPressTimers();
+            return;
+        }
+
+        const now = performance.now();
+        const timeSinceScroll = now - window._lastAnyScrollTsV74_4;
+
+        state.active = true;
+        state.startX = e.touches[0].clientX;
+        state.startY = e.touches[0].clientY;
+        state.scrolledDuringTouch = false;
+        state.exceededTapJitter = false;
+        state.exceededHoldJitter = false;
+
+        // Если список ещё летел по инерции (< 180 мс с последнего кадра скролла) — это ТОРМОЖЕНИЕ СКРОЛЛА!
+        if (timeSinceScroll < SCROLL_COOLDOWN_MS && isGuardedZone(e.target)) {
+            state.wasBrakingScroll = true;
+            killAllLongPressTimers();
+            // Останавливаем запуск JS-таймеров зажатия (CORE MEDIA INSPECTOR и 180мс модалок),
+            // при этом браузер штатно тормозит инерционный скролл под пальцем!
+            e.stopImmediatePropagation();
+            return;
+        }
+
+        state.wasBrakingScroll = false;
+    }, { capture: true, passive: true });
+
+    // 2. TOUCHMOVE (Capture Phase): разделяем микро-дрожание пальца (<= 12px) и реальный сдвиг
+    document.addEventListener('touchmove', (e) => {
+        if (!state.active || !e.touches || e.touches.length === 0) return;
+
+        if (state.wasBrakingScroll) {
+            killAllLongPressTimers();
+            e.stopImmediatePropagation();
+            return;
+        }
+
+        const dx = e.touches[0].clientX - state.startX;
+        const dy = e.touches[0].clientY - state.startY;
+        const dist = Math.hypot(dx, dy);
+
+        // Если палец сдвинулся больше чем на 5px — отменяем зажатие (Инспектор / модалки)
+        if (dist > HOLD_JITTER_PX) {
+            state.exceededHoldJitter = true;
+            killAllLongPressTimers();
+        } else if (isGuardedZone(e.target)) {
+            // Пока палец дрожит в пределах 5px на статичном объекте — гасим ложные touchmove для внутренних таймеров
+            e.stopImmediatePropagation();
+            return;
+        }
+
+        // Если палец сдвинулся больше чем на 12px — это скролл, отменяем и тап!
+        if (dist > TAP_JITTER_PX) {
+            state.exceededTapJitter = true;
+            killAllLongPressTimers();
+        } else if (isGuardedZone(e.target)) {
+            // В коридоре 5..12px зажатие уже отменено, но тап сохраняем (не даём внутренним обработчикам сбросить флаг тапа)
+            e.stopImmediatePropagation();
+        }
+    }, { capture: true, passive: true });
+
+    // 3. TOUCHEND (Capture Phase): если это было торможение скролла или перетаскивание (> 12px) — блокируем открытие карточки!
+    document.addEventListener('touchend', (e) => {
+        if (!isGuardedZone(e.target)) {
+            state.active = false;
+            return;
+        }
+
+        const sinceScroll = performance.now() - window._lastAnyScrollTsV74_4;
+        if (state.wasBrakingScroll || state.scrolledDuringTouch || state.exceededTapJitter || sinceScroll < 80) {
+            killAllLongPressTimers();
+            window._blockNextClickV74_4 = performance.now();
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            if (e.cancelable) e.preventDefault();
+        }
+        state.active = false;
+    }, { capture: true, passive: false });
+
+    // 4. CLICK & CONTEXTMENU (Capture Phase): финальный щит от случайного раскрытия кнопок ПУТЬ/МЕТА после остановки скролла
+    document.addEventListener('click', (e) => {
+        if (!isGuardedZone(e.target)) return;
+        const now = performance.now();
+        const blockedByTouchend = window._blockNextClickV74_4 && (now - window._blockNextClickV74_4 < 400);
+        const blockedByRecentScroll = (now - window._lastAnyScrollTsV74_4 < SCROLL_COOLDOWN_MS);
+
+        if (state.wasBrakingScroll || state.scrolledDuringTouch || state.exceededTapJitter || blockedByTouchend || blockedByRecentScroll) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            e.preventDefault();
+            return false;
+        }
+    }, { capture: true, passive: false });
+
+    document.addEventListener('contextmenu', (e) => {
+        if (isGuardedZone(e.target) && (state.wasBrakingScroll || state.scrolledDuringTouch || state.exceededHoldJitter)) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            e.preventDefault();
+            return false;
+        }
+    }, { capture: true, passive: false });
+})();
+
