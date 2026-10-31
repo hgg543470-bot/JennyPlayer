@@ -3219,7 +3219,7 @@ window._hoseScopeStateV49 = {
 // 2) Меняет высоту амплитуды плавной огибающей по целым дугам, НЕ сплющивая верхушки синусоид (0% хрипа на вокале и гитарах!).
 window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
     if (!srcBuffer || !window.audioCtx) return srcBuffer;
-    const spd = Math.max(0.25, Math.min(3.0, parseFloat(speed) || 1.0));
+    const spd = Math.max(0.1, Math.min(100.0, parseFloat(speed) || 1.0));
     const tension = Math.max(0.2, Math.min(2.0, (parseFloat(tensionPct) || 100) / 100));
 
     if (Math.abs(spd - 1.0) < 0.002) {
@@ -5068,7 +5068,7 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
 
     const isVinyl = (gearKey === 'vinyl-shift');
     const effSpd = hasRev67
-        ? Math.max(0.25, Math.min(3.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
+        ? Math.max(0.1, Math.min(100.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
         : targetSpd;
 
     if (!player.paused) {
@@ -5473,7 +5473,7 @@ setTimeout(() => { window.upgradeToThreeWayTumblerV62(); }, 800);
 
 window.buildReversibleExportDataV67 = function(srcBuffer, speed, tensionPct, gearKey, isRev, dspDna) {
     if (!srcBuffer || !window.audioCtx) return null;
-    const spd = Math.max(0.25, Math.min(3.0, parseFloat(speed) || 1.0));
+    const spd = Math.max(0.1, Math.min(100.0, parseFloat(speed) || 1.0));
     const tension = parseFloat(tensionPct) || 100;
     const gKey = gearKey || (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
     const isJbufLock = (gKey === 'jbuf-lock');
@@ -5553,6 +5553,25 @@ window.buildReversibleExportDataV67 = function(srcBuffer, speed, tensionPct, gea
             pckOff,
             pckLen
         ]);
+    }
+    if (needPocket && logs.length > 0) {
+        const lastS = logs[logs.length - 1];
+        const tailStartOrig = lastS.p2 + (lastS.stepOut || baseStep);
+        const tailOutPos = lastS.outPos + (lastS.stepOut || baseStep);
+        if (tailStartOrig < origLen - 16) {
+            const tailLen = origLen - tailStartOrig;
+            compactSeams.push([
+                tailOutPos,
+                0,
+                0,
+                tailStartOrig,
+                origLen,
+                10000,
+                totalPocketFrames,
+                tailLen
+            ]);
+            totalPocketFrames += tailLen;
+        }
     }
 
     let pocketWavBlob = null;
@@ -5815,7 +5834,7 @@ window.loadTrackReversibleDataV67 = async function(filename, decodedBuffer) {
             }
 
             const expSpd = parseFloat(window.currentTrackRevMapV67.spd) || 1.0;
-            const effectiveSpd = Math.max(0.25, Math.min(3.0, expSpd * targetSpd));
+            const effectiveSpd = Math.max(0.1, Math.min(100.0, expSpd * targetSpd));
             const tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined) ? window.appConfig.hoseTensionPct : 100;
             const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
             const cleanBase = isRev ? (window.reconstructedReversedBufferV67 || window.reconstructedMasterBufferV67) : window.reconstructedMasterBufferV67;

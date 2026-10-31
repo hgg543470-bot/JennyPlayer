@@ -335,7 +335,7 @@ window.playTrack = async function(filename, listContext = 'main') {
             if (player) {
                 player.src = cachedEntry.blobUrl || ('/api/media/' + encodeURIComponent(filename));
                 player.currentTime = 0;
-                player.playbackRate = targetSpeed;
+                try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch(e) {}
                 player.preservesPitch = true;
                 player.play().catch(e => {});
             }
@@ -354,7 +354,7 @@ window.playTrack = async function(filename, listContext = 'main') {
                 if (player) {
                     player.src = blobUrl;
                     player.currentTime = 0;
-                    player.playbackRate = targetSpeed;
+                    try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch(e) {}
                     player.preservesPitch = true;
                     player.play().catch(e => {});
                 }
@@ -376,7 +376,7 @@ window.playTrack = async function(filename, listContext = 'main') {
                 if (player) {
                     player.src = '/api/media/' + encodeURIComponent(filename);
                     player.currentTime = 0;
-                    player.playbackRate = targetSpeed;
+                    try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch(e) {}
                     player.preservesPitch = true;
                     player.play().catch(e => {});
                 }

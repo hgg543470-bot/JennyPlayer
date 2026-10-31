@@ -34,7 +34,7 @@ window.startScrub = function(side, speed) {
     let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
     let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig && window.appConfig.pitchLock);
 
-    player.playbackRate = speed;
+    try { player.playbackRate = Math.max(0.1, Math.min(16.0, speed)); } catch(e) {}
     player.preservesPitch = Boolean(isPitchLocked && !wantReverseNow && !(window.appConfig && window.appConfig.elasticHoseMode));
 
     if (typeof window.syncMasterPlaybackEngineV59 === 'function') {

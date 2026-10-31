@@ -802,7 +802,7 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
 
     const isVinyl = (gearKey === 'vinyl-shift');
     const effSpd = hasRev67
-        ? Math.max(0.25, Math.min(3.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
+        ? Math.max(0.1, Math.min(100.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
         : targetSpd;
 
     if (!player.paused) {
@@ -2660,7 +2660,7 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
 
     const isVinyl = (gearKey === 'vinyl-shift');
     const effSpd = hasRev67
-        ? Math.max(0.25, Math.min(3.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
+        ? Math.max(0.1, Math.min(100.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * targetSpd))
         : targetSpd;
 
     if (isActivelyPlaying) {

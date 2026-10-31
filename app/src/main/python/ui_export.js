@@ -52,7 +52,7 @@ window.executeTrackExportV69 = async function() {
         );
 
         let speed = hasRevMaster
-            ? Math.max(0.25, Math.min(3.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * userSpeed))
+            ? Math.max(0.1, Math.min(100.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * userSpeed))
             : userSpeed;
 
         let sourceBuffer = hasRevMaster ? window.reconstructedMasterBufferV67 : window.studioBuffer;
