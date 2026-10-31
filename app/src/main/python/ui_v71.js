@@ -3712,3 +3712,206 @@ window.togglePlayPause = window.togglePlayV75_2;
     }, { capture: true, passive: false });
 })();
 
+
+
+// === JENNY V76.2 DIRECT ANALOG DNA 1.0X MODE ===
+window.dnaDirect1xActiveV76 = false;
+window.dnaCleanGainNodeV76 = null;
+
+window.ensureDnaCleanGainV76 = function() {
+    if (!window.audioCtx) return null;
+    if (!window.dnaCleanGainNodeV76 || window.dnaCleanGainNodeV76.context !== window.audioCtx) {
+        window.dnaCleanGainNodeV76 = window.audioCtx.createGain();
+        window.dnaCleanGainNodeV76.connect(window.masterAntiClickGain || window.audioCtx.destination);
+    }
+    const volBar = document.getElementById('volumeBar');
+    const volVal = volBar ? (parseInt(volBar.value, 10) || 10) : 10;
+    window.dnaCleanGainNodeV76.gain.value = (volVal / 10.0) * 0.85;
+    return window.dnaCleanGainNodeV76;
+};
+
+window.updateDna1xButtonUIV76 = function() {
+    const qGroup = document.getElementById('quickModalsGroup');
+    if (!qGroup) return;
+    let btn = document.getElementById('btnDnaDirect1xV76');
+    const hasRev = Boolean(
+        window.reconstructedMasterBufferV67 &&
+        window.currentTrackRevMapV67 &&
+        window.currentTrackRevNameV67 === window.currentPlayingTrack
+    );
+    if (!hasRev) {
+        if (btn) btn.style.display = 'none';
+        return;
+    }
+    if (!btn) {
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'btnDnaDirect1xV76';
+        btn.className = 'jenny-icon-pill';
+        btn.style.cssText = 'width:auto;padding:0 10px;border-radius:18px;font-size:11px;font-weight:900;gap:4px;';
+        btn.onclick = (e) => window.toggleDnaDirect1xModeV76(e);
+        qGroup.insertBefore(btn, qGroup.firstChild);
+    }
+    btn.style.display = 'inline-flex';
+    const expSpd = parseFloat(window.currentTrackRevMapV67.spd) || 1.0;
+    if (window.dnaDirect1xActiveV76) {
+        btn.innerHTML = '🧬 ОРИГ 1.0x: ВКЛ';
+        btn.style.borderColor = '#3fb950';
+        btn.style.color = '#3fb950';
+        btn.style.boxShadow = '0 0 12px rgba(63,185,80,0.45)';
+    } else {
+        btn.innerHTML = `🧬 Вкл 1.0x (из x${expSpd.toFixed(2)})`;
+        btn.style.borderColor = '#58a6ff';
+        btn.style.color = '#58a6ff';
+        btn.style.boxShadow = '';
+    }
+};
+
+window.toggleDnaDirect1xModeV76 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const hasRev = Boolean(
+        window.reconstructedMasterBufferV67 &&
+        window.currentTrackRevMapV67 &&
+        window.currentTrackRevNameV67 === window.currentPlayingTrack
+    );
+    if (!hasRev) {
+        if (typeof window.showToast === 'function') window.showToast('⚠️ В этом треке нет капсулы JENNYV67!', ev);
+        return;
+    }
+    window.dnaDirect1xActiveV76 = !window.dnaDirect1xActiveV76;
+    if (window.dnaDirect1xActiveV76) {
+        // Сбрасываем скорость дуги в чистую 1.0x, чтобы слушать восстановленный аналог 1:1 без дробей
+        if (window.scrubState) {
+            window.scrubState.active = false;
+            window.scrubState.locked = false;
+            window.scrubState.speed = 1.0;
+        }
+        window.persistedPlaybackSpeed = null;
+        const lockEl = document.getElementById('speedLockIndicator');
+        if (lockEl) {
+            lockEl.style.display = 'block';
+            lockEl.style.color = '#3fb950';
+            lockEl.innerText = '🧬 ДНК 1.00x (Чистый оригинал)';
+        }
+    } else {
+        const lockEl = document.getElementById('speedLockIndicator');
+        if (lockEl) {
+            lockEl.style.display = 'none';
+            lockEl.style.color = '#e3b341';
+        }
+    }
+    window.updateDna1xButtonUIV76();
+    if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+        window.syncMasterPlaybackEngineV59(false);
+    }
+    if (typeof window.showToast === 'function') {
+        window.showToast(
+            window.dnaDirect1xActiveV76
+                ? '🧬 Включён прямой 1.0x оригинал из ДНК (Анти-DSP + обход фильтров)!'
+                : '🎵 Возвращён обычный режим воспроизведения файла',
+            ev
+        );
+    }
+};
+
+// Перехватываем синхронизацию движка: когда включён режим 🧬 ДНК 1.0x, играем reconstructedMasterBufferV67 напрямую 1:1
+(function installDnaDirectEngineHookV76() {
+    const prevSync = window.syncMasterPlaybackEngineV59;
+    window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
+        window.updateDna1xButtonUIV76();
+        const hasRev = Boolean(
+            window.reconstructedMasterBufferV67 &&
+            window.currentTrackRevMapV67 &&
+            window.currentTrackRevNameV67 === window.currentPlayingTrack
+        );
+        if (!hasRev && window.dnaDirect1xActiveV76) {
+            window.dnaDirect1xActiveV76 = false;
+            window.updateDna1xButtonUIV76();
+        }
+        if (hasRev && window.dnaDirect1xActiveV76) {
+            const player = document.getElementById('audioPlayer');
+            if (!player || !window.audioCtx) return;
+            const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+            const cleanBuf = isRev
+                ? (window.reconstructedReversedBufferV67 || window.reconstructedMasterBufferV67)
+                : window.reconstructedMasterBufferV67;
+            const expBuf = window.studioBuffer || cleanBuf;
+            const lenRatio = (expBuf && cleanBuf && cleanBuf.length > 0) ? (expBuf.length / cleanBuf.length) : 1.0;
+
+            if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+            player.preservesPitch = false;
+            // Синхронизируем беззвучный таймер <audio> с длиной полного оригинала
+            const clockRate = Math.max(0.1, Math.min(8.0, lenRatio));
+            if (Math.abs(player.playbackRate - clockRate) > 0.002) {
+                try { player.playbackRate = clockRate; } catch (e) {}
+            }
+
+            if (!player.paused) {
+                if (window.studioSourceNode) {
+                    window.studioSourceNode.onended = null;
+                    try { window.studioSourceNode.stop(); } catch (e) {}
+                    try { window.studioSourceNode.disconnect(); } catch (e) {}
+                }
+                const outGain = window.ensureDnaCleanGainV76() || window.inputMixer;
+                window.studioSourceNode = window.audioCtx.createBufferSource();
+                window.studioSourceNode._isHoseSpliced = true;
+                window.studioSourceNode.buffer = cleanBuf;
+                window.studioSourceNode.playbackRate.value = 1.0; // Строго 1:1 без десятичных дробей!
+                window.studioSourceNode.connect(outGain);
+
+                const expDur = (isFinite(player.duration) && player.duration > 0) ? player.duration : expBuf.duration;
+                const progress01 = expDur > 0 ? Math.max(0, Math.min(0.999, (player.currentTime || 0) / expDur)) : 0;
+                const exactOrigSec = progress01 * cleanBuf.duration;
+
+                window.studioSourceNode.start(0, exactOrigSec);
+                window.isStudioPlaying = true;
+            }
+
+            const badge = document.getElementById('hoseLiveTelemetryV44');
+            if (badge) {
+                badge.style.color = '#3fb950';
+                badge.innerText = `🧬 ПРЯМОЙ ОРИГИНАЛ 1.00x (Аналог 1:1 | 0 швов | Анти-DSP)`;
+            }
+            return;
+        }
+        return prevSync.apply(this, arguments);
+    };
+
+    // Масштабируем цифры таймлайна под настоящую длительность восстановленного оригинала
+    const origUpdateProg = window.updateProgressUI;
+    if (typeof origUpdateProg === 'function' && !window._dnaProgWrappedV76) {
+        window._dnaProgWrappedV76 = true;
+        window.updateProgressUI = function(cur, dur, isRev) {
+            if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67 && dur > 0) {
+                const origDur = window.reconstructedMasterBufferV67.duration;
+                const scale = origDur / dur;
+                return origUpdateProg(cur * scale, origDur, isRev);
+            }
+            return origUpdateProg(cur, dur, isRev);
+        };
+    }
+
+    // Умная кнопка ОРИГ: если файла-оригинала нет на этом телефоне, включает 🧬 ДНК 1.0x прямо из капсулы!
+    const origScrollToOrig = window.scrollToOriginalTrack;
+    if (typeof origScrollToOrig === 'function' && !window._origBtnDnaWrappedV76) {
+        window._origBtnDnaWrappedV76 = true;
+        window.scrollToOriginalTrack = async function(derivedFilename, btnEl, ev) {
+            await origScrollToOrig(derivedFilename, btnEl, ev);
+            if (btnEl && btnEl.classList.contains('orig-deleted-v68')) {
+                const res = await fetch('/api/rev_info/' + encodeURIComponent(derivedFilename)).catch(() => null);
+                const info = res && res.ok ? await res.json().catch(() => null) : null;
+                if (info && info.has_rev) {
+                    btnEl.classList.remove('orig-deleted-v68');
+                    btnEl.innerText = '🧬 ДНК 1.0x';
+                    window.setTrackSublineText(derivedFilename, '🧬 Исходник внутри капсулы JENNYV67 — запускаю 1.0x оригинал!', false);
+                    if (window.currentPlayingTrack !== derivedFilename) {
+                        await window.playTrack(derivedFilename, window.currentListContext || 'main');
+                    }
+                    setTimeout(() => {
+                        if (!window.dnaDirect1xActiveV76) window.toggleDnaDirect1xModeV76();
+                    }, 250);
+                }
+            }
+        };
+    }
+})();
