@@ -5526,7 +5526,10 @@ window.buildReversibleExportDataV67 = function(srcBuffer, speed, tensionPct, gea
 
         if (s.p2 > s.p1) {
             const cutStart = s.p1;
-            const cutEnd = Math.min(origLen, s.p2 + sFillet);
+            const cutPure = s.p2 - s.p1;
+            // Если вырез >= sFillet, храним только 38% начала кроссфейда, а остальные 62% восстанавливаем алгебраически!
+            const savedOverlap = (cutPure >= sFillet) ? Math.round(sFillet * 0.38) : sFillet;
+            const cutEnd = Math.min(origLen, s.p2 + savedOverlap);
             pckLen = Math.max(0, cutEnd - cutStart);
             if (pckLen > 0) {
                 pckOff = totalPocketFrames;

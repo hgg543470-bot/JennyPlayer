@@ -861,12 +861,39 @@ def export_track():
 
         ffmpeg_bin = find_ffmpeg_binary()
 
-        target_br = request.forms.get('pocket_bitrate', '48k').strip()
-        if target_br not in ('128k', '64k', '48k', '32k', '24k', '16k'):
-            target_br = '48k'
+        target_br = request.forms.get('pocket_bitrate', 'orig').strip().lower()
+        orig_kbps_num = 160
+        try:
+            if os.path.exists(orig_path) and os.path.getsize(orig_path) > 1024:
+                # Определяем точный битрейт исходного файла через ffprobe или размер/длительность
+                ffprobe_bin = ffmpeg_bin.replace('ffmpeg', 'ffprobe')
+                pr_b = subprocess.run([ffprobe_bin, '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'format=bit_rate,duration', '-of', 'default=noprint_wrappers=1', orig_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=4)
+                br_val, dur_val = 0, 0.0
+                for line in (pr_b.stdout or '').splitlines():
+                    if line.startswith('bit_rate=') and line.split('=')[1].isdigit():
+                        br_val = int(line.split('=')[1]) // 1000
+                    elif line.startswith('duration='):
+                        try: dur_val = float(line.split('=')[1])
+                        except Exception: pass
+                if br_val <= 0 and dur_val > 0.5:
+                    br_val = int((os.path.getsize(orig_path) * 8) / (dur_val * 1000))
+                if br_val > 0:
+                    orig_kbps_num = max(32, min(510, br_val))
+        except Exception:
+            pass
 
-        # 1. Кодируем через libopus с выбранным битрейтом и 60-мс фреймами для минимального веса
-        cmd1 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'libopus', '-b:a', target_br, '-vbr', 'on', '-compression_level', '10', '-frame_duration', '60', final_opus]
+        if target_br == 'orig':
+            kbps_num = orig_kbps_num
+        elif target_br.endswith('k') and target_br[:-1].isdigit():
+            kbps_num = max(12, min(510, int(target_br[:-1])))
+        else:
+            kbps_num = 128
+
+        target_br = f"{kbps_num}k"
+        frame_dur = '60' if kbps_num <= 64 else '20'
+
+        # 1. Кодируем через libopus с выбранным битрейтом (при >64k ставим 20мс фреймы, чтобы снять потолок 165k)
+        cmd1 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'libopus', '-b:a', target_br, '-vbr', 'on', '-compression_level', '10', '-frame_duration', frame_dur, final_opus]
         r1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         encoded_ok = (r1.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
@@ -889,11 +916,9 @@ def export_track():
                         try:
                             with open(temp_pck_wav, 'wb') as pf:
                                 shutil.copyfileobj(pocket_upload.file, pf)
-                            pck_kbps = request.forms.get('pocket_bitrate', '48k').strip()
-                            if pck_kbps not in ('128k', '64k', '48k', '32k', '24k', '16k'):
-                                pck_kbps = '48k'
+                            pck_kbps = target_br
                             pck_pwd = request.forms.get('pocket_key', '').strip()
-                            pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', pck_kbps, '-vbr', 'on', '-compression_level', '10', '-frame_duration', '60', '-application', 'audio', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', pck_kbps, '-vbr', 'on', '-compression_level', '10', '-frame_duration', frame_dur, '-application', 'audio', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                             if pr.returncode != 0 or not os.path.exists(temp_pck_opus):
                                 subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', pck_kbps, temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                             if os.path.exists(temp_pck_opus) and os.path.getsize(temp_pck_opus) > 32:

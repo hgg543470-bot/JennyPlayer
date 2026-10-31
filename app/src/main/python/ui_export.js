@@ -419,11 +419,15 @@ window.ensureExportModalV69 = function() {
                     <span style="font-size:11px;color:#3fb950;font-weight:bold;">🧬 Режим сжатия (Трек + Бэкап):</span>
                     <span id="lblActiveBrV79" style="font-size:10.5px;color:#58a6ff;font-weight:bold;">48k (Сжатие x2.7)</span>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;" id="brBtnGroupV79">
-                    <button type="button" data-br="48k" onclick="window.selectExportBitrateV79('48k')" style="padding:6px 2px;font-size:10.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.18);color:#fff;">⚡ 48k (x2.7)</button>
-                    <button type="button" data-br="24k" onclick="window.selectExportBitrateV79('24k')" style="padding:6px 2px;font-size:10.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🚀 24k (x5.5)</button>
-                    <button type="button" data-br="16k" onclick="window.selectExportBitrateV79('16k')" style="padding:6px 2px;font-size:10.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👻 16k (x8)</button>
-                    <button type="button" data-br="128k" onclick="window.selectExportBitrateV79('128k')" style="padding:6px 2px;font-size:10.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 128k (Макс)</button>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;" id="brBtnGroupV79">
+                    <button type="button" data-br="16k" onclick="window.selectExportBitrateV79('16k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👻 16k</button>
+                    <button type="button" data-br="24k" onclick="window.selectExportBitrateV79('24k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🚀 24k</button>
+                    <button type="button" data-br="48k" onclick="window.selectExportBitrateV79('48k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">⚡ 48k</button>
+                    <button type="button" data-br="96k" onclick="window.selectExportBitrateV79('96k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🎵 96k</button>
+                    <button type="button" data-br="128k" onclick="window.selectExportBitrateV79('128k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 128k</button>
+                    <button type="button" data-br="192k" onclick="window.selectExportBitrateV79('192k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🔥 192k</button>
+                    <button type="button" data-br="256k" onclick="window.selectExportBitrateV79('256k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 256k</button>
+                    <button type="button" data-br="orig" onclick="window.selectExportBitrateV79('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.22);color:#fff;font-weight:bold;">🎯 ОРИГ</button>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
                     <span style="font-size:11px;color:#d2a8ff;font-weight:bold;">⏩ Скорость упаковки:</span>
@@ -567,10 +571,14 @@ window.selectExportBitrateV79 = function(br) {
     window.appConfig.pocketBitrateV77 = br;
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
     const names = {
-        '48k': '48k (Сжатие x2.7)',
-        '24k': '24k (Сжатие x5.5)',
         '16k': '16k (Фантом x8)',
-        '128k': '128k (Макс качество)'
+        '24k': '24k (Сжатие x5.5)',
+        '48k': '48k (Сжатие x2.7)',
+        '96k': '96k (Hi-Fi Оптимум)',
+        '128k': '128k (Студийный)',
+        '192k': '192k (Мастер)',
+        '256k': '256k (Ультра)',
+        'orig': '🎯 ОРИГ (Битрейт исходника 1:1)'
     };
     const lbl = document.getElementById('lblActiveBrV79');
     if (lbl) lbl.innerText = names[br] || br;
