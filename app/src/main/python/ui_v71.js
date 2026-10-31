@@ -950,7 +950,7 @@ window.engageInstantHorizonJbufLockV71 = function(isDraggingArc) {
     const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
     const curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : (player.currentTime || 0);
-    const WIN_SEC = 45.0; // Нарезаем 45 секунд вперёд — занимает всего ~5 мс!
+    const WIN_SEC = Math.max(45.0, Math.min(360.0, targetSpd * 3.5)); // Нарезаем 45 секунд вперёд — занимает всего ~5 мс!
     const rawWindowBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, WIN_SEC, isRev);
     if (!rawWindowBuf) return false;
 
@@ -1143,7 +1143,7 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
     }
 
     const curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : (player.currentTime || 0);
-    const WIN_SEC = 45.0;
+    const WIN_SEC = Math.max(45.0, Math.min(360.0, targetSpd * 3.5));
     const rawWindowBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, WIN_SEC, isRev);
     if (!rawWindowBuf) return false;
 
@@ -1365,7 +1365,7 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
     }
 
     // Берём компактное 24-секундное окно из готовых кусков торрент-карты
-    const WIN_SEC = 24.0;
+    const WIN_SEC = Math.max(24.0, Math.min(360.0, targetSpd * 3.5));
     const rawWindowBuf = window.extractWindowBufferV71(window.studioBuffer, curSec, WIN_SEC, isRev);
     if (!rawWindowBuf) return false;
 
@@ -3914,4 +3914,91 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             }
         };
     }
+})();
+
+
+// === JENNY V80 HYPER-SPEED CLOCK BYPASS (>16x..100x) ===
+window._hyperClockIntervalV80 = null;
+window._hyperVirtualPosV80 = null;
+window._hyperLastWallTsV80 = 0;
+
+window.stopHyperSpeedClockV80 = function() {
+    if (window._hyperClockIntervalV80) {
+        clearInterval(window._hyperClockIntervalV80);
+        window._hyperClockIntervalV80 = null;
+    }
+    window._hyperVirtualPosV80 = null;
+};
+
+window.startHyperSpeedClockV80 = function(targetSpd) {
+    const player = document.getElementById('audioPlayer');
+    if (!player || targetSpd <= 16.0 || player.paused) {
+        window.stopHyperSpeedClockV80();
+        return;
+    }
+    const dur = (window.studioBuffer && window.studioBuffer.duration)
+        ? window.studioBuffer.duration
+        : ((isFinite(player.duration) && player.duration > 0) ? player.duration : 0);
+    if (dur <= 0) return;
+
+    if (window._hyperVirtualPosV80 === null || !isFinite(window._hyperVirtualPosV80)) {
+        window._hyperVirtualPosV80 = player.currentTime || 0;
+    }
+    window._hyperLastWallTsV80 = performance.now();
+
+    if (window._hyperClockIntervalV80) clearInterval(window._hyperClockIntervalV80);
+    window._hyperClockIntervalV80 = setInterval(() => {
+        const p = document.getElementById('audioPlayer');
+        const spd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
+        if (!p || p.paused || spd <= 16.0 || window.dnaDirect1xActiveV76) {
+            window.stopHyperSpeedClockV80();
+            return;
+        }
+        const now = performance.now();
+        const dtSec = Math.max(0, (now - window._hyperLastWallTsV80) / 1000.0);
+        window._hyperLastWallTsV80 = now;
+
+        window._hyperVirtualPosV80 += dtSec * spd;
+        const maxDur = (window.studioBuffer && window.studioBuffer.duration) ? window.studioBuffer.duration : (p.duration || dur);
+
+        if (window._hyperVirtualPosV80 >= maxDur - 0.05) {
+            window.stopHyperSpeedClockV80();
+            if (typeof window.playNextTrack === 'function') window.playNextTrack();
+            return;
+        }
+
+        if (typeof window.setExactPlaybackPositionV75 === 'function') {
+            window.setExactPlaybackPositionV75(window._hyperVirtualPosV80);
+        }
+        const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        if (typeof window.updateProgressUI === 'function') {
+            window.updateProgressUI(window._hyperVirtualPosV80, maxDur, isRev);
+        }
+        if (typeof window.updateCenterCurrentTime === 'function') {
+            window.updateCenterCurrentTime(window._hyperVirtualPosV80, maxDur, isRev);
+        }
+    }, 40);
+};
+
+(function hookHyperSpeedEngineV80() {
+    const prevGetTime = window.getTruePlaybackTimeV74_2;
+    window.getTruePlaybackTimeV74_2 = function() {
+        if (window._hyperVirtualPosV80 !== null && isFinite(window._hyperVirtualPosV80)) {
+            return window._hyperVirtualPosV80;
+        }
+        return typeof prevGetTime === 'function' ? prevGetTime() : 0;
+    };
+
+    const prevSync = window.syncMasterPlaybackEngineV59;
+    window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
+        const spd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
+        const player = document.getElementById('audioPlayer');
+        if (player && spd > 16.0 && !window.dnaDirect1xActiveV76) {
+            try { player.playbackRate = 16.0; } catch (e) {}
+            if (!player.paused) window.startHyperSpeedClockV80(spd);
+        } else {
+            window.stopHyperSpeedClockV80();
+        }
+        return prevSync.apply(this, arguments);
+    };
 })();
