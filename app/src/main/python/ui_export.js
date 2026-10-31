@@ -276,6 +276,9 @@ window.executeTrackExportV69 = async function() {
         }
         if (revExportPkg && revExportPkg.pocketWavBlob) {
             formData.append('pocket_audio', revExportPkg.pocketWavBlob, 'pocket.wav');
+            const pckSel = document.getElementById('selPocketBitrateV77');
+            const pckBr = pckSel ? pckSel.value : ((window.appConfig && window.appConfig.pocketBitrateV77) || '48k');
+            formData.append('pocket_bitrate', pckBr);
         }
 
         let res = await fetch('/api/export', { method: 'POST', body: formData });
@@ -403,6 +406,15 @@ window.ensureExportModalV69 = function() {
             <div class="exp-modal-top-actions-v69">
                 <button type="button" class="exp-top-btn-v69 btn-apply-cur" id="btnExpApplyCurrentV69">Применить все текущие</button>
                 <button type="button" class="exp-top-btn-v69 btn-clear-all" id="btnExpClearAllV69">Снять все</button>
+            </div>
+            <div style="padding:6px 10px;background:#090d14;border-bottom:1px solid #21262d;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <span style="font-size:11px;color:#3fb950;font-weight:bold;">🧬 Сжатие бэкапа 1.0x:</span>
+                <select id="selPocketBitrateV77" onchange="window.appConfig=window.appConfig||{};window.appConfig.pocketBitrateV77=this.value;localStorage.setItem('ytm_config',JSON.stringify(window.appConfig));" style="background:#0d1117;color:#58a6ff;border:1px solid #30363d;border-radius:6px;padding:4px 6px;font-size:11px;font-weight:bold;flex:1;">
+                    <option value="48k" selected>⚡ 48k VBR + Zlib (Сжатие x2.7 — Оптимум)</option>
+                    <option value="24k">🚀 24k VBR + Zlib (Сжатие x5.5 — Лёгкий)</option>
+                    <option value="16k">👻 16k VBR + Zlib (Фантом x8 — ~350 КБ)</option>
+                    <option value="128k">💎 128k + Zlib (Студийный макс)</option>
+                </select>
             </div>
             <div class="exp-modal-grid-v69" id="expModalGridV69"></div>
             <div class="exp-modal-footer-v69">

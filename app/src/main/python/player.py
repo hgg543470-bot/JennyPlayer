@@ -614,8 +614,11 @@ def get_rev_pocket(filename):
     with open(full_p, 'rb') as f:
         f.seek(trailer["pocket_offset"])
         masked = f.read(trailer["pocket_len"])
-    # Снимаем XOR-маску 0xA5, возвращая валидный .opus поток для decodeAudioData
-    unmasked = bytes(b ^ 0xA5 for b in masked)
+    # Авто-распознавание: сначала пробуем распаковать zlib-сжатый карман, иначе снимаем старую XOR-маску 0xA5
+    try:
+        unmasked = zlib.decompress(bytes(b ^ 0xA5 for b in masked))
+    except Exception:
+        unmasked = bytes(b ^ 0xA5 for b in masked)
     response.content_type = 'audio/ogg'
     response.set_header('Content-Length', str(len(unmasked)))
     return unmasked
@@ -852,13 +855,17 @@ def export_track():
                         try:
                             with open(temp_pck_wav, 'wb') as pf:
                                 shutil.copyfileobj(pocket_upload.file, pf)
-                            pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', '128k', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            pck_kbps = request.forms.get('pocket_bitrate', '48k').strip()
+                            if pck_kbps not in ('128k', '64k', '48k', '32k', '24k', '16k'):
+                                pck_kbps = '48k'
+                            pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', pck_kbps, '-vbr', 'on', '-compression_level', '10', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                             if pr.returncode != 0 or not os.path.exists(temp_pck_opus):
-                                subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', '128k', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', pck_kbps, temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                             if os.path.exists(temp_pck_opus) and os.path.getsize(temp_pck_opus) > 32:
                                 with open(temp_pck_opus, 'rb') as pof:
                                     raw_pck = pof.read()
-                                pocket_masked = bytes(b ^ 0xA5 for b in raw_pck)
+                                comp_pck = zlib.compress(raw_pck, level=9)
+                                pocket_masked = bytes(b ^ 0xA5 for b in comp_pck)
                         finally:
                             for tp in (temp_pck_wav, temp_pck_opus):
                                 if os.path.exists(tp):
