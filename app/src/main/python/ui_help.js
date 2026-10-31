@@ -5768,6 +5768,10 @@ window.loadTrackReversibleDataV67 = async function(filename, decodedBuffer) {
         if (!res.ok) return;
         const info = await res.json();
         if (!info || !info.has_rev || !info.seam_map) return;
+        window.currentTrackRevMapV67 = info.seam_map;
+        window.currentTrackRevNameV67 = filename;
+        window.reconstructedMasterBufferV67 = decodedBuffer;
+        if (typeof window.updateDna1xButtonUIV76 === 'function') window.updateDna1xButtonUIV76();
 
         let pocketBuf = null;
         if (info.pocket_bytes && info.pocket_bytes > 0) {
@@ -6263,8 +6267,9 @@ window.buildFallbackDspDnaFromConfigV76 = function() {
     return window.captureExportDspDnaV76(null, null, cfg);
 };
 
-window.applyInverseDspCompensationV76 = async function(rawReconstructedBuf, smap) {
+window.applyInverseDspCompensationV76 = async function(rawReconstructedBuf, smap, forceFullOffline) {
     if (!rawReconstructedBuf || !window.audioCtx || !window.antiDspEnabledV76) return rawReconstructedBuf;
+    const isHugeBuf = (rawReconstructedBuf.duration > 360) && !forceFullOffline;
     const dna = (smap && smap.dspDna) ? smap.dspDna : window.buildFallbackDspDnaFromConfigV76();
     if (!dna) return rawReconstructedBuf;
 
@@ -6315,6 +6320,18 @@ window.applyInverseDspCompensationV76 = async function(rawReconstructedBuf, smap
         }
     }
 
+    if (isHugeBuf) {
+        const curStats = window.measureBufferStatsV76(workBuf);
+        const targetRms = (dna.origRms && dna.origRms > 0.0005) ? dna.origRms : (curStats.rms * 0.75);
+        const scale = (curStats.rms > 0.0001) ? Math.max(0.15, Math.min(6.0, targetRms / curStats.rms)) : 1.0;
+        for (let c = 0; c < numCh; c++) {
+            const d = workBuf.getChannelData(c);
+            for (let i = 0; i < d.length; i++) d[i] = Math.max(-0.99, Math.min(0.99, d[i] * scale));
+        }
+        workBuf._antiDspAppliedV76 = true;
+        workBuf._dspDnaV76 = dna;
+        return workBuf;
+    }
     // 2. Обратные частотные фильтры в OfflineAudioContext (Анти-Панч, Анти-EQ, Анти-СЧ, Анти-ДеЭссер, Анти-FIR)
     const offCtx = new OfflineAudioContext(numCh, len, sr);
     const src = offCtx.createBufferSource();
@@ -6430,9 +6447,21 @@ window.runRevisorComparisonV76 = async function(saveToMp3Test) {
         if (typeof window.showToast === 'function') window.showToast('⚠️ Сначала запусти экспортированный трек!');
         return;
     }
-    const smap = window.currentTrackRevMapV67;
+    let smap = window.currentTrackRevMapV67;
+    if (!smap) {
+        try {
+            const r = await fetch('/api/rev_info/' + encodeURIComponent(window.currentPlayingTrack));
+            const inf = await r.json();
+            if (inf && inf.has_rev && inf.seam_map) {
+                smap = inf.seam_map;
+                window.currentTrackRevMapV67 = smap;
+                window.currentTrackRevNameV67 = window.currentPlayingTrack;
+                if (!window.reconstructedMasterBufferV67) window.reconstructedMasterBufferV67 = window.studioBuffer;
+            }
+        } catch (e) {}
+    }
     if (!smap || !window.reconstructedMasterBufferV67) {
-        if (typeof window.showToast === 'function') window.showToast('⚠️ В этом треке нет капсулы JENNYV67!');
+        if (typeof window.showToast === 'function') window.showToast('⚠️ Сейчас играет оригинал без капсулы! Нажми ▶ на экспортированном треке (_jbuf90).');
         return;
     }
 
@@ -6640,8 +6669,9 @@ window.captureExportDspDnaV76 = function(srcBuf, renderedBuf, cfg) {
     return dna;
 };
 
-window.runDeepSpectralResynthesisV78 = async function(buf, smap) {
+window.runDeepSpectralResynthesisV78 = async function(buf, smap, isShortSlice) {
     if (!buf || !smap || !smap.dspDna || !smap.dspDna.specBlueprint || !window.audioCtx) return buf;
+    if (buf.duration > 360 && !isShortSlice) return buf;
     const bp = smap.dspDna.specBlueprint;
     const sr = buf.sampleRate;
     const numCh = buf.numberOfChannels;
