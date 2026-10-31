@@ -277,7 +277,7 @@ int xflac_encode_wav_mem(const uint8_t* wav, size_t wav_sz, uint8_t** out_d, siz
     for (size_t i = 0; i < n; ++i) { cl[i] = pcm[ch * i]; cr[i] = (ch == 2) ? pcm[2 * i + 1] : cl[i]; if (cl[i] != cr[i]) eq = 0; }
     if (mode == XFLAC_MODE_PSYCHO_LSB) { apply_dynamic_noise_floor_gate(cl, n); if (eq) memcpy(cr, cl, n * 2); else apply_dynamic_noise_floor_gate(cr, n); }
     int32_t* mid = (int32_t*)malloc((n + 1) * 4), *side = (int32_t*)malloc((n + 1) * 4);
-    for (size_t i = 0; i < n; ++i) { mid[i] = eq ? cl[i] : (((int32_t)cl[i] + (int32_t)cr[i]) >> 1); side[i] = eq ? 0 : ((int32_t)cl[i] - (int32_t)cr[i]); }
+    for (size_t i = 0; i < n; ++i) { mid[i] = (int32_t)cl[i]; side[i] = (int32_t)cr[i]; }
     free(cl); free(cr);
 
     int64_t* ls = (int64_t*)malloc((n + 1) * 8);
@@ -341,7 +341,7 @@ int xflac_decode_wav_mem(const uint8_t* xd, size_t x_sz, uint8_t** out_w, size_t
             int32_t v = mid[i] < -32768 ? -32768 : (mid[i] > 32767 ? 32767 : mid[i]);
             dst[ch * i] = (int16_t)v; if (ch == 2) dst[2 * i + 1] = (int16_t)v;
         } else {
-            int32_t m = mid[i], s = side[i], l = m + ((s + (s & 1)) >> 1), r = l - s;
+            int32_t l = mid[i], r = side[i];
             dst[2 * i] = (int16_t)(l < -32768 ? -32768 : (l > 32767 ? 32767 : l));
             dst[2 * i + 1] = (int16_t)(r < -32768 ? -32768 : (r > 32767 ? 32767 : r));
         }

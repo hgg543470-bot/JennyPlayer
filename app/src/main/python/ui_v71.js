@@ -3794,9 +3794,7 @@ window.startDnaClockTimerV83 = function() {
         if (player.playbackRate !== 1.0) {
             try { player.playbackRate = 1.0; } catch (e) {}
         }
-        if (player.duration > 0.4 && player.currentTime > player.duration * 0.75) {
-            try { player.currentTime = 0.05; } catch (e) {}
-        }
+        // V85: держим беззвучный <audio> на паузе или в loop без ручного currentTime, чтобы не триггерить seeked!
 
         const curOrig = window.getExactDnaOrigSecV82();
         if (curOrig >= cleanBuf.duration - 0.05) {
@@ -4006,6 +4004,22 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         }
         return prevSync.apply(this, arguments);
     };
+
+    // Экранируем события seeking/seeked/ended от 1.58-секундного <audio>, чтобы он не перезапускал 🧬 ДНК 1.0x на "На... На..."
+    const shieldPlayerEventsV85 = () => {
+        const p = document.getElementById('audioPlayer');
+        if (!p || p._dnaShieldV85) return;
+        p._dnaShieldV85 = true;
+        ['seeking', 'seeked', 'ended'].forEach(evType => {
+            p.addEventListener(evType, (e) => {
+                if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67) {
+                    e.stopImmediatePropagation();
+                }
+            }, true);
+        });
+    };
+    shieldPlayerEventsV85();
+    setTimeout(shieldPlayerEventsV85, 500);
 
     // Перемотка ползунком seekBar вручную в режиме ДНК 1.0x
     setTimeout(() => {

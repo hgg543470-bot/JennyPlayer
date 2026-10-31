@@ -147,6 +147,55 @@ def _get_xflac_lib_v84():
             continue
     return _XFLAC_LIB_V84
 
+
+def _encode_wav_to_xflac_bytes_v85(wav_bytes: bytes, mode: int) -> bytes:
+    lib = _get_xflac_lib_v84()
+    if not lib:
+        raise RuntimeError("libxflac.so not loaded")
+    out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+    out_sz = ctypes.c_size_t(0)
+    rc = lib.xflac_encode_wav_mem(wav_bytes, len(wav_bytes), ctypes.byref(out_ptr), ctypes.byref(out_sz), int(mode), None)
+    if rc != 0 or not out_ptr or out_sz.value < 25:
+        raise RuntimeError(f"xflac encode error {rc}")
+    try:
+        raw_xfc = ctypes.string_at(out_ptr, out_sz.value)
+    finally:
+        lib.xflac_free(ctypes.cast(out_ptr, ctypes.c_void_p))
+    # Сжимаем метаданные и коэффициенты предсказателя через LZMA2 Extreme по стандарту XFC3
+    flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", raw_xfc[4:25])
+    raw_meta = raw_xfc[25:25 + rm_sz]
+    rem_tail = raw_xfc[25 + cm_sz:]
+    comp_meta = lzma.compress(raw_meta, format=lzma.FORMAT_XZ, preset=9 | lzma.PRESET_EXTREME)
+    return b"XFC3" + struct.pack("<BIIIII", flags | 2, nf, rm_sz, len(comp_meta), rl_sz, rr_sz) + comp_meta + rem_tail
+
+def _decode_xflac_bytes_to_wav_v85(xfc_bytes: bytes) -> bytes:
+    lib = _get_xflac_lib_v84()
+    if not lib:
+        raise RuntimeError("libxflac.so not loaded")
+    rev_off = xfc_bytes.rfind(JENNY_REV_MAGIC)
+    if rev_off > 0 and len(xfc_bytes) - rev_off <= 64:
+        _, m_len, p_len, _ = struct.unpack(JENNY_REV_FOOTER_FMT, xfc_bytes[rev_off:rev_off + JENNY_REV_FOOTER_SIZE])
+        cut_pos = rev_off - m_len - p_len
+        if cut_pos > 25:
+            xfc_bytes = xfc_bytes[:cut_pos]
+    if xfc_bytes[:4] != b"XFC3":
+        raise RuntimeError("Not an XFC3 buffer")
+    flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", xfc_bytes[4:25])
+    if flags & 2:
+        comp_meta = xfc_bytes[25:25 + cm_sz]
+        rem_tail = xfc_bytes[25 + cm_sz:25 + cm_sz + rl_sz + rr_sz]
+        raw_meta = lzma.decompress(comp_meta)
+        xfc_bytes = b"XFC3" + struct.pack("<BIIIII", flags & ~2, nf, len(raw_meta), len(raw_meta), rl_sz, rr_sz) + raw_meta + rem_tail
+    out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+    out_sz = ctypes.c_size_t(0)
+    rc = lib.xflac_decode_wav_mem(xfc_bytes, len(xfc_bytes), ctypes.byref(out_ptr), ctypes.byref(out_sz))
+    if rc != 0 or not out_ptr or out_sz.value == 0:
+        raise RuntimeError(f"xflac decode error {rc}")
+    try:
+        return ctypes.string_at(out_ptr, out_sz.value)
+    finally:
+        lib.xflac_free(ctypes.cast(out_ptr, ctypes.c_void_p))
+
 def _pack_xflac_pocket_v84(wav_bytes: bytes, mode: int, password: str = "") -> bytes:
     lib = _get_xflac_lib_v84()
     if not lib:
@@ -772,7 +821,7 @@ def get_allowed_extensions():
                     return tuple(exts)
         except Exception:
             pass
-    return ('.mp3', '.opus', '.m4a', '.flac', '.wav', '.ogg', '.mp4', '.aac', '.webm', '.3gp', '.mkv')
+    return ('.mp3', '.opus', '.m4a', '.flac', '.wav', '.xflac', '.ogg', '.mp4', '.aac', '.webm', '.3gp', '.mkv')
 
 
 @route('/api/data')
@@ -984,11 +1033,17 @@ def export_track():
         target_br = f"{kbps_num}k"
         frame_dur = '60' if kbps_num <= 64 else '20'
 
-        # 1. Кодируем через libopus с выбранным битрейтом (при >64k ставим 20мс фреймы, чтобы снять потолок 165k)
-        cmd1 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'libopus', '-b:a', target_br, '-vbr', 'on', '-compression_level', '10', '-frame_duration', frame_dur, final_opus]
-        r1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        encoded_ok = (r1.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
+        if use_xflac_mode >= 0:
+            with open(temp_wav, 'rb') as wf:
+                wav_in_bytes = wf.read()
+            xfc_out_bytes = _encode_wav_to_xflac_bytes_v85(wav_in_bytes, use_xflac_mode)
+            with open(final_opus, 'wb') as xof:
+                xof.write(xfc_out_bytes)
+            encoded_ok = (os.path.exists(final_opus) and os.path.getsize(final_opus) > 25)
+        else:
+            cmd1 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'libopus', '-b:a', target_br, '-vbr', 'on', '-compression_level', '10', '-frame_duration', frame_dur, final_opus]
+            r1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            encoded_ok = (r1.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
         if not encoded_ok:
             cmd2 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', target_br, final_opus]
             r2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
