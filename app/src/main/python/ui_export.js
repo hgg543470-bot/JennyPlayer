@@ -427,7 +427,9 @@ window.ensureExportModalV69 = function() {
                     <button type="button" data-br="128k" onclick="window.selectExportBitrateV79('128k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 128k</button>
                     <button type="button" data-br="192k" onclick="window.selectExportBitrateV79('192k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🔥 192k</button>
                     <button type="button" data-br="256k" onclick="window.selectExportBitrateV79('256k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 256k</button>
-                    <button type="button" data-br="orig" onclick="window.selectExportBitrateV79('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.22);color:#fff;font-weight:bold;">🎯 ОРИГ</button>
+                    <button type="button" data-br="orig" onclick="window.selectExportBitrateV79('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;">🎯 ОРИГ</button>
+                    <button type="button" data-br="xflac_psycho" onclick="window.selectExportBitrateV79('xflac_psycho')" style="grid-column:span 2;padding:6px 4px;font-size:10.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XFLAC Psycho (C++17 OLS)</button>
+                    <button type="button" data-br="xflac_lossless" onclick="window.selectExportBitrateV79('xflac_lossless')" style="grid-column:span 2;padding:6px 4px;font-size:10.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-weight:bold;">💎 XFLAC BitPerfect (1:1)</button>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
                     <span style="font-size:11px;color:#d2a8ff;font-weight:bold;">⏩ Скорость упаковки:</span>
@@ -578,7 +580,9 @@ window.selectExportBitrateV79 = function(br) {
         '128k': '128k (Студийный)',
         '192k': '192k (Мастер)',
         '256k': '256k (Ультра)',
-        'orig': '🎯 ОРИГ (Битрейт исходника 1:1)'
+        'orig': '🎯 ОРИГ (Битрейт исходника 1:1)',
+        'xflac_psycho': '🧬 XFLAC Psycho (C++17 + LZMA2, 0мс сдвиг)',
+        'xflac_lossless': '💎 XFLAC BitPerfect (100% WAV 1:1 без потерь)'
     };
     const lbl = document.getElementById('lblActiveBrV79');
     if (lbl) lbl.innerText = names[br] || br;

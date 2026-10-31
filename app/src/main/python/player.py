@@ -1,3 +1,4 @@
+import ctypes
 import lzma
 import hashlib
 import re
@@ -112,6 +113,77 @@ def _jenny_crypt_stream_v78(data: bytes, password: str = "") -> bytes:
         out[i] = data[i] ^ stream[i]
     return bytes(out)
 
+
+_XFLAC_LIB_V84 = None
+
+def _get_xflac_lib_v84():
+    global _XFLAC_LIB_V84
+    if _XFLAC_LIB_V84 is not None:
+        return _XFLAC_LIB_V84
+    candidates = [
+        "libxflac.so",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "jniLibs", "arm64-v8a", "libxflac.so"),
+        "/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/arm64-v8a/libxflac.so"
+    ]
+    for path in candidates:
+        try:
+            lib = ctypes.CDLL(path)
+            lib.xflac_encode_wav_mem.argtypes = [
+                ctypes.c_char_p, ctypes.c_size_t,
+                ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_size_t),
+                ctypes.c_int, ctypes.c_void_p
+            ]
+            lib.xflac_encode_wav_mem.restype = ctypes.c_int
+            lib.xflac_decode_wav_mem.argtypes = [
+                ctypes.c_char_p, ctypes.c_size_t,
+                ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_size_t)
+            ]
+            lib.xflac_decode_wav_mem.restype = ctypes.c_int
+            lib.xflac_free.argtypes = [ctypes.c_void_p]
+            lib.xflac_free.restype = None
+            _XFLAC_LIB_V84 = lib
+            break
+        except Exception:
+            continue
+    return _XFLAC_LIB_V84
+
+def _pack_xflac_pocket_v84(wav_bytes: bytes, mode: int, password: str = "") -> bytes:
+    lib = _get_xflac_lib_v84()
+    if not lib:
+        raise RuntimeError("libxflac.so not available")
+    out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+    out_sz = ctypes.c_size_t(0)
+    rc = lib.xflac_encode_wav_mem(wav_bytes, len(wav_bytes), ctypes.byref(out_ptr), ctypes.byref(out_sz), int(mode), None)
+    if rc != 0 or not out_ptr or out_sz.value == 0:
+        raise RuntimeError(f"xflac_encode_wav_mem failed: {rc}")
+    try:
+        xfc_raw = ctypes.string_at(out_ptr, out_sz.value)
+    finally:
+        lib.xflac_free(ctypes.cast(out_ptr, ctypes.c_void_p))
+    comp = lzma.compress(xfc_raw, format=lzma.FORMAT_XZ, preset=9 | lzma.PRESET_EXTREME)
+    enc = _jenny_crypt_stream_v78(comp, password)
+    return b"JXF8" + enc
+
+def _unpack_xflac_pocket_v84(masked_body: bytes, password: str = "") -> bytes:
+    lib = _get_xflac_lib_v84()
+    if not lib:
+        raise RuntimeError("libxflac.so not available")
+    try:
+        dec = _jenny_crypt_stream_v78(masked_body, password)
+        xfc_raw = lzma.decompress(dec)
+    except Exception:
+        dec256 = _jenny_crypt_stream_sha256_compat(masked_body, password)
+        xfc_raw = lzma.decompress(dec256)
+    out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+    out_sz = ctypes.c_size_t(0)
+    rc = lib.xflac_decode_wav_mem(xfc_raw, len(xfc_raw), ctypes.byref(out_ptr), ctypes.byref(out_sz))
+    if rc != 0 or not out_ptr or out_sz.value == 0:
+        raise RuntimeError(f"xflac_decode_wav_mem failed: {rc}")
+    try:
+        return ctypes.string_at(out_ptr, out_sz.value)
+    finally:
+        lib.xflac_free(ctypes.cast(out_ptr, ctypes.c_void_p))
+
 def _pack_heavy_pocket_v78(raw_opus: bytes, password: str = "") -> bytes:
     comp = lzma.compress(raw_opus, format=lzma.FORMAT_XZ, preset=9 | lzma.PRESET_EXTREME)
     enc = _jenny_crypt_stream_v78(comp, password)
@@ -130,6 +202,8 @@ def _jenny_crypt_stream_sha256_compat(data: bytes, password: str = "") -> bytes:
     return bytes(out)
 
 def _unpack_heavy_pocket_v78(masked: bytes, password: str = "") -> bytes:
+    if masked.startswith(b"JXF8"):
+        return _unpack_xflac_pocket_v84(masked[4:], password)
     if masked.startswith(b"JLZ8"):
         try:
             dec = _jenny_crypt_stream_v78(masked[4:], password)
@@ -877,7 +951,9 @@ def export_track():
 
         ffmpeg_bin = find_ffmpeg_binary()
 
-        target_br = request.forms.get('pocket_bitrate', 'orig').strip().lower()
+        raw_mode_br = request.forms.get('pocket_bitrate', 'orig').strip().lower()
+        use_xflac_mode = 1 if raw_mode_br == 'xflac_psycho' else (0 if raw_mode_br == 'xflac_lossless' else -1)
+        target_br = 'orig' if use_xflac_mode >= 0 else raw_mode_br
         orig_kbps_num = 160
         try:
             if os.path.exists(orig_path) and os.path.getsize(orig_path) > 1024:
@@ -934,13 +1010,21 @@ def export_track():
                                 shutil.copyfileobj(pocket_upload.file, pf)
                             pck_kbps = target_br
                             pck_pwd = request.forms.get('pocket_key', '').strip()
-                            pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', pck_kbps, '-vbr', 'on', '-compression_level', '10', '-frame_duration', frame_dur, '-application', 'audio', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            if pr.returncode != 0 or not os.path.exists(temp_pck_opus):
-                                subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', pck_kbps, temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            if os.path.exists(temp_pck_opus) and os.path.getsize(temp_pck_opus) > 32:
-                                with open(temp_pck_opus, 'rb') as pof:
-                                    raw_pck = pof.read()
-                                pocket_masked = _pack_heavy_pocket_v78(raw_pck, pck_pwd)
+                            if use_xflac_mode >= 0:
+                                try:
+                                    with open(temp_pck_wav, 'rb') as wf:
+                                        wav_raw = wf.read()
+                                    pocket_masked = _pack_xflac_pocket_v84(wav_raw, use_xflac_mode, pck_pwd)
+                                except Exception:
+                                    pocket_masked = b''
+                            if not pocket_masked:
+                                pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', pck_kbps, '-vbr', 'on', '-compression_level', '10', '-frame_duration', frame_dur, '-application', 'audio', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                if pr.returncode != 0 or not os.path.exists(temp_pck_opus):
+                                    subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', pck_kbps, temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                if os.path.exists(temp_pck_opus) and os.path.getsize(temp_pck_opus) > 32:
+                                    with open(temp_pck_opus, 'rb') as pof:
+                                        raw_pck = pof.read()
+                                    pocket_masked = _pack_heavy_pocket_v78(raw_pck, pck_pwd)
                         finally:
                             for tp in (temp_pck_wav, temp_pck_opus):
                                 if os.path.exists(tp):
