@@ -861,13 +861,17 @@ def export_track():
 
         ffmpeg_bin = find_ffmpeg_binary()
 
-        # 1. Пробуем кодировать через libopus
-        cmd1 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'libopus', '-b:a', '128k', final_opus]
+        target_br = request.forms.get('pocket_bitrate', '48k').strip()
+        if target_br not in ('128k', '64k', '48k', '32k', '24k', '16k'):
+            target_br = '48k'
+
+        # 1. Кодируем через libopus с выбранным битрейтом и 60-мс фреймами для минимального веса
+        cmd1 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'libopus', '-b:a', target_br, '-vbr', 'on', '-compression_level', '10', '-frame_duration', '60', final_opus]
         r1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         encoded_ok = (r1.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
         if not encoded_ok:
-            cmd2 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', '128k', final_opus]
+            cmd2 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', target_br, final_opus]
             r2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             encoded_ok = (r2.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
 

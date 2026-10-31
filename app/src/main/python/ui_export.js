@@ -51,6 +51,8 @@ window.executeTrackExportV69 = async function() {
             Math.abs(userSpeed - 1.0) > 0.002
         );
 
+        const forcedSpd = parseFloat(window._forcedExportSpeedV79 || 0);
+        if (forcedSpd > 0) userSpeed = forcedSpd;
         let speed = hasRevMaster
             ? Math.max(0.1, Math.min(100.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * userSpeed))
             : userSpeed;
@@ -271,6 +273,9 @@ window.executeTrackExportV69 = async function() {
         formData.append('pitch_lock', pitchLock ? 'true' : 'false');
         formData.append('engine_mode', engineMode);
         formData.append('gear_key', gearKey);
+        formData.append('pocket_bitrate', (window.appConfig && window.appConfig.pocketBitrateV77) || '48k');
+        const kInp = document.getElementById('inpPocketKeyV78');
+        if (kInp && kInp.value.trim()) formData.append('pocket_key', kInp.value.trim());
         if (revExportPkg && revExportPkg.seamMapJson) {
             formData.append('seam_map_json', revExportPkg.seamMapJson);
         }
@@ -409,14 +414,31 @@ window.ensureExportModalV69 = function() {
                 <button type="button" class="exp-top-btn-v69 btn-apply-cur" id="btnExpApplyCurrentV69">Применить все текущие</button>
                 <button type="button" class="exp-top-btn-v69 btn-clear-all" id="btnExpClearAllV69">Снять все</button>
             </div>
-            <div style="padding:6px 10px;background:#090d14;border-bottom:1px solid #21262d;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <span style="font-size:11px;color:#3fb950;font-weight:bold;">🧬 Сжатие бэкапа 1.0x:</span>
-                <select id="selPocketBitrateV77" onchange="window.appConfig=window.appConfig||{};window.appConfig.pocketBitrateV77=this.value;localStorage.setItem('ytm_config',JSON.stringify(window.appConfig));" style="background:#0d1117;color:#58a6ff;border:1px solid #30363d;border-radius:6px;padding:4px 6px;font-size:11px;font-weight:bold;flex:1;">
-                    <option value="48k" selected>⚡ 48k VBR + Zlib (Сжатие x2.7 — Оптимум)</option>
-                    <option value="24k">🚀 24k VBR + Zlib (Сжатие x5.5 — Лёгкий)</option>
-                    <option value="16k">👻 16k VBR + Zlib (Фантом x8 — ~350 КБ)</option>
-                    <option value="128k">💎 128k + Zlib (Студийный макс)</option>
-                </select>
+            <div style="padding:8px 10px;background:#090d14;border-bottom:1px solid #21262d;display:flex;flex-direction:column;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-size:11px;color:#3fb950;font-weight:bold;">🧬 Режим сжатия (Трек + Бэкап):</span>
+                    <span id="lblActiveBrV79" style="font-size:10.5px;color:#58a6ff;font-weight:bold;">48k (Сжатие x2.7)</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;" id="brBtnGroupV79">
+                    <button type="button" data-br="48k" onclick="window.selectExportBitrateV79('48k')" style="padding:6px 2px;font-size:10.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.18);color:#fff;">⚡ 48k (x2.7)</button>
+                    <button type="button" data-br="24k" onclick="window.selectExportBitrateV79('24k')" style="padding:6px 2px;font-size:10.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🚀 24k (x5.5)</button>
+                    <button type="button" data-br="16k" onclick="window.selectExportBitrateV79('16k')" style="padding:6px 2px;font-size:10.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👻 16k (x8)</button>
+                    <button type="button" data-br="128k" onclick="window.selectExportBitrateV79('128k')" style="padding:6px 2px;font-size:10.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 128k (Макс)</button>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
+                    <span style="font-size:11px;color:#d2a8ff;font-weight:bold;">⏩ Скорость упаковки:</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;" id="spdBtnGroupV79">
+                    <button type="button" data-spd="0" onclick="window.selectExportSpeedV79(0)" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #58a6ff;background:rgba(88,166,255,0.18);color:#fff;">Тек.</button>
+                    <button type="button" data-spd="1.5" onclick="window.selectExportSpeedV79(1.5)" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">x1.5</button>
+                    <button type="button" data-spd="2" onclick="window.selectExportSpeedV79(2)" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">x2.0</button>
+                    <button type="button" data-spd="10" onclick="window.selectExportSpeedV79(10)" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">x10</button>
+                    <button type="button" data-spd="100" onclick="window.selectExportSpeedV79(100)" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">x100</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
+                    <span style="font-size:11px;color:#e3b341;font-weight:bold;white-space:nowrap;">🔐 Ключ:</span>
+                    <input type="text" id="inpPocketKeyV78" placeholder="Пусто = авто-ключ Jenny" style="flex:1;padding:4px 8px;font-size:11px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;text-align:left !important;">
+                </div>
             </div>
             <div class="exp-modal-grid-v69" id="expModalGridV69"></div>
             <div class="exp-modal-footer-v69">
