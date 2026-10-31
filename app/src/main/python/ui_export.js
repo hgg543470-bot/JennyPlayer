@@ -44,15 +44,43 @@ window.executeTrackExportV69 = async function() {
         }
 
         // Если текущий трек уже содержит восстановленный 1.0x оригинал в RAM и скорость изменена — берём чистый 1.0x исходник!
+        const anyDspActive = window.DSP_EXPORT_EFFECTS_V69.some(def => Boolean(cfg[def.key]));
+        const forcedSpd = parseFloat(window._forcedExportSpeedV79 || 0);
+        if (forcedSpd > 0) userSpeed = forcedSpd;
+
         let hasRevMaster = Boolean(
             window.reconstructedMasterBufferV67 &&
             window.currentTrackRevMapV67 &&
-            window.currentTrackRevNameV67 === window.currentPlayingTrack &&
-            Math.abs(userSpeed - 1.0) > 0.002
+            window.currentTrackRevNameV67 === window.currentPlayingTrack
         );
 
-        const forcedSpd = parseFloat(window._forcedExportSpeedV79 || 0);
-        if (forcedSpd > 0) userSpeed = forcedSpd;
+        const brModeNow = (cfg.pocketBitrateV77 || 'orig').toLowerCase();
+        const srModeNow = (cfg.exportSampleRateV86 || 'orig').toLowerCase();
+
+        if (!anyDspActive && Math.abs(userSpeed - 1.0) < 0.002 && !isRev && !hasRevMaster) {
+            if (typeof window.showToast === 'function') window.showToast(`⏳ Прямое сжатие оригинала (${brModeNow}, частота: ${srModeNow})...`);
+            let formData = new FormData();
+            formData.append('audio_data', new Blob([new Uint8Array(44)], {type: 'audio/wav'}), 'direct.wav');
+            formData.append('direct_clean_source', 'true');
+            formData.append('filename', window.currentPlayingTrack);
+            formData.append('speed', '1.0');
+            formData.append('is_reversed', 'false');
+            formData.append('pitch_lock', 'true');
+            formData.append('engine_mode', engineMode);
+            formData.append('gear_key', gearKey);
+            formData.append('pocket_bitrate', brModeNow);
+            formData.append('sample_rate_mode', srModeNow);
+            let res = await fetch('/api/export', { method: 'POST', body: formData });
+            let json = await res.json();
+            if (res.ok && json.status === 'ok') {
+                if (typeof window.fetchData === 'function') window.fetchData();
+                if (typeof window.showToast === 'function') window.showToast("✅ Сохранено 1:1: " + json.new_file);
+            } else {
+                throw new Error(json.error || "Ошибка прямого экспорта");
+            }
+            if (btn) btn.innerHTML = oldBtnHtml || "💾";
+            return;
+        }
         let speed = hasRevMaster
             ? Math.max(0.1, Math.min(100.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * userSpeed))
             : userSpeed;
@@ -113,7 +141,7 @@ window.executeTrackExportV69 = async function() {
         let currentNode = sourceNode;
 
         let preAmp = offlineCtx.createGain();
-        preAmp.gain.value = 0.6;
+        preAmp.gain.value = anyDspActive ? 0.6 : 1.0;
         currentNode.connect(preAmp);
         currentNode = preAmp;
 
@@ -274,6 +302,7 @@ window.executeTrackExportV69 = async function() {
         formData.append('engine_mode', engineMode);
         formData.append('gear_key', gearKey);
         formData.append('pocket_bitrate', (window.appConfig && window.appConfig.pocketBitrateV77) || '48k');
+        formData.append('sample_rate_mode', (window.appConfig && window.appConfig.exportSampleRateV86) || 'orig');
         const kInp = document.getElementById('inpPocketKeyV78');
         if (kInp && kInp.value.trim()) formData.append('pocket_key', kInp.value.trim());
         if (revExportPkg && revExportPkg.seamMapJson) {
@@ -428,8 +457,19 @@ window.ensureExportModalV69 = function() {
                     <button type="button" data-br="192k" onclick="window.selectExportBitrateV79('192k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🔥 192k</button>
                     <button type="button" data-br="256k" onclick="window.selectExportBitrateV79('256k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 256k</button>
                     <button type="button" data-br="orig" onclick="window.selectExportBitrateV79('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;">🎯 ОРИГ</button>
-                    <button type="button" data-br="xflac_psycho" onclick="window.selectExportBitrateV79('xflac_psycho')" style="grid-column:span 2;padding:6px 4px;font-size:10.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XFLAC Psycho (C++17 OLS)</button>
-                    <button type="button" data-br="xflac_lossless" onclick="window.selectExportBitrateV79('xflac_lossless')" style="grid-column:span 2;padding:6px 4px;font-size:10.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-weight:bold;">💎 XFLAC BitPerfect (1:1)</button>
+                    <button type="button" data-br="xflac_ultra" onclick="window.selectExportBitrateV79('xflac_ultra')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#ff7b72;font-weight:bold;">🔥 XFLAC 15 (~9%)</button>
+                    <button type="button" data-br="xflac_psycho" onclick="window.selectExportBitrateV79('xflac_psycho')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XFLAC 25 (~12%)</button>
+                    <button type="button" data-br="xflac_hifi" onclick="window.selectExportBitrateV79('xflac_hifi')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#d2a8ff;font-weight:bold;">✨ XFLAC 45 (~16%)</button>
+                    <button type="button" data-br="xflac_lossless" onclick="window.selectExportBitrateV79('xflac_lossless')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-weight:bold;">💎 XFLAC 1:1</button>
+                    <button type="button" data-br="wav_pcm" onclick="window.selectExportBitrateV79('wav_pcm')" style="grid-column:span 4;padding:5px 4px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e3b341;font-weight:bold;">💿 Распаковать / Сохранить в чистый .WAV (PCM 16-bit 1:1)</button>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
+                    <span style="font-size:11px;color:#58a6ff;font-weight:bold;">🎛️ Частота дискретизации (Sample Rate):</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;" id="srBtnGroupV86">
+                    <button type="button" data-sr="orig" onclick="window.selectExportSampleRateV86('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🎯 Родная (из файла)</button>
+                    <button type="button" data-sr="44100" onclick="window.selectExportSampleRateV86('44100')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💿 44100 Hz</button>
+                    <button type="button" data-sr="48000" onclick="window.selectExportSampleRateV86('48000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">⚡ 48000 Hz</button>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
                     <span style="font-size:11px;color:#d2a8ff;font-weight:bold;">⏩ Скорость упаковки:</span>
@@ -581,8 +621,11 @@ window.selectExportBitrateV79 = function(br) {
         '192k': '192k (Мастер)',
         '256k': '256k (Ультра)',
         'orig': '🎯 ОРИГ (Битрейт исходника 1:1)',
-        'xflac_psycho': '🧬 XFLAC Psycho (C++17 + LZMA2, 0мс сдвиг)',
-        'xflac_lossless': '💎 XFLAC BitPerfect (100% WAV 1:1 без потерь)'
+        'xflac_ultra': '🔥 XFLAC Ultra (Gate 15 • ~8-9% от WAV)',
+        'xflac_psycho': '🧬 XFLAC Psycho (Gate 25 • ~11-13% от WAV)',
+        'xflac_hifi': '✨ XFLAC Hi-Fi (Gate 45 • ~15-16% от WAV)',
+        'xflac_lossless': '💎 XFLAC BitPerfect (100% WAV 1:1 без потерь)',
+        'wav_pcm': '💿 Чистый WAV (Распаковка XFLAC -> WAV 1:1)'
     };
     const lbl = document.getElementById('lblActiveBrV79');
     if (lbl) lbl.innerText = names[br] || br;

@@ -700,6 +700,23 @@ def get_pcm_meta_v71(filename):
 
 @route('/api/media/<filename:path>', method=['GET', 'HEAD'])
 def serve_media(filename):
+    if filename.lower().endswith('.xflac'):
+        full_xf = resolve_track_full_path_v71(filename)
+        if not os.path.isfile(full_xf):
+            response.status = 404
+            return "File not found"
+        cache_dir = os.path.dirname(full_xf)
+        cache_name = ".jenny_xflac_stream_cache.wav"
+        cache_path = os.path.join(cache_dir, cache_name)
+        try:
+            with open(full_xf, 'rb') as f_in:
+                wav_bytes = _decode_xflac_bytes_to_wav_v85(f_in.read())
+            with open(cache_path, 'wb') as f_out:
+                f_out.write(wav_bytes)
+            return static_file(cache_name, root=cache_dir, mimetype='audio/wav')
+        except Exception as e:
+            response.status = 500
+            return str(e)
     fp = resolve_track_full_path_v71(filename)
     if not fp or not os.path.isfile(fp):
         response.status = 404
@@ -788,7 +805,7 @@ def get_rev_pocket(filename):
     except Exception:
         response.status = 403
         return " Неверный ключ расшифровки капсулы" 
-    response.content_type = 'audio/ogg'
+    response.content_type = 'audio/wav' if unmasked[:4] == b'RIFF' else 'audio/ogg'
     response.set_header('Content-Length', str(len(unmasked)))
     return unmasked
 
@@ -801,7 +818,8 @@ DEFAULT_FORMAT_SLOTS = [
     {"en": True, "ext": "wav"},
     {"en": True, "ext": "ogg"},
     {"en": True, "ext": "mp4"},
-    {"en": True, "ext": "aac"}
+    {"en": True, "ext": "aac"},
+    {"en": True, "ext": "xflac"}
 ]
 
 def get_allowed_extensions():
@@ -991,18 +1009,54 @@ def export_track():
             pitch_suffix = "_vinyl" 
         slow_fast = "_slow" if speed_float < 1.0 else ("_fast" if speed_float > 1.0 else "")
 
-        new_filename = f"{base_name}{speed_suffix}{rev_suffix}{slow_fast}{pitch_suffix}.opus"
+        raw_mode_br = request.forms.get('pocket_bitrate', 'orig').strip().lower()
+        sr_mode = request.forms.get('sample_rate_mode', 'orig').strip().lower()
+        direct_clean = (request.forms.get('direct_clean_source', 'false') == 'true')
+        orig_path = resolve_track_full_path_v71(original_name)
+
+        xflac_modes_map = {
+            'xflac_lossless': (0, '_bitperfect.xflac'),
+            'xflac_psycho':   (25, '_psycho.xflac'),
+            'xflac_ultra':    (15, '_ultra.xflac'),
+            'xflac_hifi':     (45, '_hifi.xflac')
+        }
+        use_xflac_mode = xflac_modes_map[raw_mode_br][0] if raw_mode_br in xflac_modes_map else -1
+        is_wav_unpack = (raw_mode_br == 'wav_pcm')
+
+        if use_xflac_mode >= 0:
+            ext_tag = xflac_modes_map[raw_mode_br][1]
+            new_filename = f"{base_name}{speed_suffix}{rev_suffix}{ext_tag}"
+        elif is_wav_unpack:
+            new_filename = f"{base_name}{speed_suffix}{rev_suffix}_restored.wav"
+        else:
+            new_filename = f"{base_name}{speed_suffix}{rev_suffix}{slow_fast}{pitch_suffix}.opus"
+
         temp_wav = os.path.join(MUSIC_DIR, f"temp_final_{os.getpid()}.wav")
         final_opus = os.path.join(MUSIC_DIR, new_filename)
-
-        with open(temp_wav, 'wb') as out_f:
-            shutil.copyfileobj(upload.file, out_f)
-
         ffmpeg_bin = find_ffmpeg_binary()
 
-        raw_mode_br = request.forms.get('pocket_bitrate', 'orig').strip().lower()
-        use_xflac_mode = 1 if raw_mode_br == 'xflac_psycho' else (0 if raw_mode_br == 'xflac_lossless' else -1)
-        target_br = 'orig' if use_xflac_mode >= 0 else raw_mode_br
+        # Если 0 эффектов DSP, скорость 1.0x и без реверса — берем 100% чистый исходник прямо с диска (сохраняя родные 44100 Hz!)
+        if direct_clean and os.path.isfile(orig_path):
+            if orig_path.lower().endswith('.xflac'):
+                with open(orig_path, 'rb') as xf:
+                    dec_wav = _decode_xflac_bytes_to_wav_v85(xf.read())
+                with open(temp_wav, 'wb') as wf:
+                    wf.write(dec_wav)
+            elif orig_path.lower().endswith('.wav') and sr_mode == 'orig':
+                shutil.copyfile(orig_path, temp_wav)
+            else:
+                ar_args = ['-ar', sr_mode] if sr_mode in ('44100', '48000') else []
+                subprocess.run([ffmpeg_bin, '-y', '-i', orig_path] + ar_args + ['-ac', '2', '-c:a', 'pcm_s16le', temp_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        else:
+            with open(temp_wav, 'wb') as out_f:
+                shutil.copyfileobj(upload.file, out_f)
+            if sr_mode in ('44100', '48000'):
+                temp_sr_wav = temp_wav + ".sr.wav"
+                r_sr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_wav, '-ar', sr_mode, '-ac', '2', '-c:a', 'pcm_s16le', temp_sr_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if r_sr.returncode == 0 and os.path.exists(temp_sr_wav):
+                    os.replace(temp_sr_wav, temp_wav)
+
+        target_br = 'orig' if (use_xflac_mode >= 0 or is_wav_unpack) else raw_mode_br
         orig_kbps_num = 160
         try:
             if os.path.exists(orig_path) and os.path.getsize(orig_path) > 1024:
@@ -1033,7 +1087,10 @@ def export_track():
         target_br = f"{kbps_num}k"
         frame_dur = '60' if kbps_num <= 64 else '20'
 
-        if use_xflac_mode >= 0:
+        if is_wav_unpack:
+            shutil.copyfile(temp_wav, final_opus)
+            encoded_ok = (os.path.exists(final_opus) and os.path.getsize(final_opus) > 44)
+        elif use_xflac_mode >= 0:
             with open(temp_wav, 'rb') as wf:
                 wav_in_bytes = wf.read()
             xfc_out_bytes = _encode_wav_to_xflac_bytes_v85(wav_in_bytes, use_xflac_mode)
@@ -1146,6 +1203,42 @@ def get_track_info():
             'webm': 'WebM Media Audio/Video Container'
         }
         container_desc = container_map.get(ext, f"{ext.upper()} Audio Stream")
+        xflac_custom_meta = None
+        if size_bytes > 25:
+            try:
+                with open(full_path, 'rb') as xff:
+                    xhdr = xff.read(25)
+                    if xhdr[:4] == b'XFC3':
+                        x_flags, x_nf, x_rm_sz, x_cm_sz, x_rl_sz, x_rr_sz = struct.unpack('<BIIIII', xhdr[4:25])
+                        x_sr = 44100
+                        try:
+                            comp_chunk = xff.read(min(x_cm_sz, 65536))
+                            raw_hdr = lzma.decompress(comp_chunk) if (x_flags & 2) else comp_chunk
+                            if len(raw_hdr) >= 44 and raw_hdr[16:20] == b'RIFF':
+                                x_sr = struct.unpack('<I', raw_hdr[40:44])[0]
+                        except Exception:
+                            pass
+                        if x_sr < 8000 or x_sr > 192000:
+                            x_sr = 44100
+                        wav_orig_bytes = int(x_nf) * 4 + 44
+                        dur_s = float(x_nf) / float(x_sr) if x_sr > 0 else 0.0
+                        ratio_pct = (size_bytes * 100.0) / max(1, wav_orig_bytes)
+                        eff_kbps = int((size_bytes * 8) / max(0.1, dur_s * 1000))
+                        mm, ss = int(dur_s // 60), dur_s % 60
+                        hh, mm = int(mm // 60), int(mm % 60)
+                        xflac_custom_meta = {
+                            "container": f"XFLAC (XFC3 + LZMA2) [{ratio_pct:.1f}% от WAV {wav_orig_bytes/(1024*1024):.2f} MB]",
+                            "codec": "libxflac C++17 (21-tap Pitch-OLS + Psycho-LSB)",
+                            "sr": f"{x_sr} Hz",
+                            "ch": "stereo (2 ch)",
+                            "fmt": "s16p (Direct Time-Domain Wave)",
+                            "dur_str": f"{hh:02d}:{mm:02d}:{ss:05.2f}",
+                            "dur_s": dur_s,
+                            "br": f"{eff_kbps} kb/s (WAV экв. {int(x_sr*32/1000)} kb/s)",
+                            "samples": f"{x_nf:,} PCM frames".replace(",", " ")
+                        }
+            except Exception:
+                pass
 
         ffmpeg_bin = find_ffmpeg_binary()
         probe = subprocess.run([ffmpeg_bin, '-hide_banner', '-i', full_path],
@@ -1201,6 +1294,16 @@ def get_track_info():
                 rev_capsule_str = f"🧬 JENNYV67 (x{spd_val} | {seams_cnt} швов | {kb_total:.1f} KB, карман {pck_kb:.1f} KB)"
             except Exception:
                 rev_capsule_str = "🧬 JENNYV67 Capsule"
+
+        if xflac_custom_meta:
+            container_desc = xflac_custom_meta["container"]
+            codec_str = xflac_custom_meta["codec"]
+            sr_str = xflac_custom_meta["sr"]
+            ch_str = xflac_custom_meta["ch"]
+            fmt_str = xflac_custom_meta["fmt"]
+            duration_str = xflac_custom_meta["dur_str"]
+            bitrate_str = xflac_custom_meta["br"]
+            total_samples = xflac_custom_meta["samples"]
 
         return json.dumps({
             "status": "ok",

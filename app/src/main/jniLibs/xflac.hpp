@@ -86,14 +86,15 @@ static void solve_linear_system(int n, double A[TOTAL_TAPS][TOTAL_TAPS], double 
     }
 }
 
-static void apply_dynamic_noise_floor_gate(int16_t* ch, size_t n) {
+static void apply_dynamic_noise_floor_gate(int16_t* ch, size_t n, double gate_div) {
+    if (gate_div < 5.0) gate_div = 25.0;
     for (size_t s = 0; s < n; s += SUBBLOCK_SIZE) {
         size_t e = (s + SUBBLOCK_SIZE < n) ? (s + SUBBLOCK_SIZE) : n;
         double sum_sq = 0.0;
         for (size_t i = s; i < e; ++i) { double v = (double)ch[i]; sum_sq += v * v; }
         double rms = sqrt(sum_sq / (double)(e - s));
-        if (rms > 30.0) {
-            int tz = (int)floor(log2(rms / 25.0));
+        if (rms > gate_div * 1.15) {
+            int tz = (int)floor(log2(rms / gate_div));
             if (tz < 0) tz = 0; else if (tz > 7) tz = 7;
             if (tz > 0) {
                 int32_t half = 1 << (tz - 1), mask = ~((1 << tz) - 1);
@@ -275,7 +276,11 @@ int xflac_encode_wav_mem(const uint8_t* wav, size_t wav_sz, uint8_t** out_d, siz
     const int16_t* pcm = (const int16_t*)(wav + pcm_off);
     int eq = 1;
     for (size_t i = 0; i < n; ++i) { cl[i] = pcm[ch * i]; cr[i] = (ch == 2) ? pcm[2 * i + 1] : cl[i]; if (cl[i] != cr[i]) eq = 0; }
-    if (mode == XFLAC_MODE_PSYCHO_LSB) { apply_dynamic_noise_floor_gate(cl, n); if (eq) memcpy(cr, cl, n * 2); else apply_dynamic_noise_floor_gate(cr, n); }
+    if ((int)mode > 0) {
+        double gdiv = ((int)mode >= 5) ? (double)((int)mode) : 25.0;
+        apply_dynamic_noise_floor_gate(cl, n, gdiv);
+        if (eq) memcpy(cr, cl, n * 2); else apply_dynamic_noise_floor_gate(cr, n, gdiv);
+    }
     int32_t* mid = (int32_t*)malloc((n + 1) * 4), *side = (int32_t*)malloc((n + 1) * 4);
     for (size_t i = 0; i < n; ++i) { mid[i] = (int32_t)cl[i]; side[i] = (int32_t)cr[i]; }
     free(cl); free(cr);
