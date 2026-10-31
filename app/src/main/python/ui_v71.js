@@ -2569,7 +2569,7 @@ window.getTruePlaybackTimeV74_2 = function() {
 // Перехватчик toggleReverseMode: гарантирует зеркальный разворот времени (dur - cur) ровно 1 раз!
 (function installExactReverseFlipInterceptorV75() {
     const baseToggleRev = window.toggleReverseMode;
-    if (typeof baseToggleRev === 'function' && !window._exactRevHookV75) {
+    if (false && typeof baseToggleRev === 'function' && !window._exactRevHookV75) {
         window._exactRevHookV75 = true;
         window.toggleReverseMode = function(targetReversed) {
             const player = document.getElementById('audioPlayer');

@@ -22,7 +22,7 @@ window.toggleReverseMode = function(targetReversed) {
         if (lockEl) lockEl.style.display = 'none';
 
         if (wasReversedNow && player && isFinite(player.duration)) {
-            player.currentTime = Math.max(0, Math.min(player.duration, player.duration - player.currentTime));
+            const _d = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0); if (_d > 0) { const _flipped = Math.max(0, Math.min(_d - 0.02, _d - player.currentTime)); if (typeof window.setExactPlaybackPositionV75 === 'function') window.setExactPlaybackPositionV75(_flipped); else player.currentTime = _flipped; }
         }
         const baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
         if (player) player.playbackRate = baseSpd;
@@ -51,7 +51,7 @@ window.toggleReverseMode = function(targetReversed) {
 
     window.isReversed = true;
     if (!wasReversedNow && player && isFinite(player.duration)) {
-        player.currentTime = Math.max(0, Math.min(player.duration, player.duration - player.currentTime));
+        const _d = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0); if (_d > 0) { const _flipped = Math.max(0, Math.min(_d - 0.02, _d - player.currentTime)); if (typeof window.setExactPlaybackPositionV75 === 'function') window.setExactPlaybackPositionV75(_flipped); else player.currentTime = _flipped; }
     }
     const baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
     if (player) player.playbackRate = baseSpd;
@@ -114,7 +114,7 @@ window.setupTimeBlockControls = function() {
             isLongPress = true;
             try { navigator.vibrate(30); } catch(e){}
             startSilent10xSeek(-1);
-        }, 160);
+        }, 420);
     }, {passive: true});
 
     leftBlock.addEventListener('touchend', () => {
@@ -138,7 +138,7 @@ window.setupTimeBlockControls = function() {
             isLongPress = true;
             try { navigator.vibrate(30); } catch(e){}
             startSilent10xSeek(+1);
-        }, 160);
+        }, 420);
     }, {passive: true});
 
     rightBlock.addEventListener('touchend', () => {

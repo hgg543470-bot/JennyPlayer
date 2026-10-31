@@ -520,10 +520,11 @@ document.addEventListener("DOMContentLoaded", () => {
         };
 
         player.ontimeupdate = () => {
-            if (isFinite(player.duration)) {
+            let effDur = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
+            if (effDur > 0) {
                 let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-                if(typeof window.updateProgressUI === 'function') window.updateProgressUI(player.currentTime, player.duration, isVisualReverse);
-                window.updateCenterCurrentTime(player.currentTime, player.duration, isVisualReverse);
+                if(typeof window.updateProgressUI === 'function') window.updateProgressUI(player.currentTime, effDur, isVisualReverse);
+                window.updateCenterCurrentTime(player.currentTime, effDur, isVisualReverse);
             }
         };
     }
@@ -541,7 +542,7 @@ window.syncAndroidNotification = function(force) {
     if (!player || !window.currentPlayingTrack) return;
 
     let cleanTitle = window.currentPlayingTrack.replace(/\.(opus|m4a|mp3|wav|flac|ogg)$/i, '');
-    let dur = isFinite(player.duration) && player.duration > 0 ? player.duration : 0;
+    let dur = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
     let cur = isFinite(player.currentTime) ? player.currentTime : 0;
     let isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
     let displayPos = (isRev && dur > 0) ? Math.max(0, dur - cur) : cur;

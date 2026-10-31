@@ -29,8 +29,8 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_PERM_NOTIF = 2;
     private static final int REQ_PICK_FOLDER = 42;
     private static MainActivity instance;
-    private WebView webView;
-    private boolean isPageLoaded = false;
+    private static WebView webView;
+    private static boolean isPageLoaded = false;
 
     public static void evalJs(final String script) {
         if (instance != null && instance.webView != null) {
@@ -54,7 +54,15 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        webView = new WebView(this) {
+        if (webView != null) {
+            if (webView.getParent() instanceof android.view.ViewGroup) {
+                ((android.view.ViewGroup) webView.getParent()).removeView(webView);
+            }
+            setContentView(webView);
+            evalJs("if(window.syncAndroidNotification) window.syncAndroidNotification(true);");
+            return;
+        }
+        webView = new WebView(getApplicationContext()) {
             @Override
             public void onWindowVisibilityChanged(int visibility) {
                 super.onWindowVisibilityChanged(View.VISIBLE);
@@ -190,6 +198,13 @@ public class MainActivity extends AppCompatActivity {
                 startPythonServer();
             }
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        evalJs("if(window.syncAndroidNotification) window.syncAndroidNotification(true);");
     }
 
     @Override

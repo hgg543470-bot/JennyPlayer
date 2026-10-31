@@ -481,10 +481,103 @@ def get_full_track_path(filename):
     })
 
 
-@route('/api/media/<filename:path>')
+def calc_jrev_audio_stats(full_path, trailer):
+    try:
+        audio_end = int(trailer["audio_end"])
+        granule = 0
+        if audio_end > 28:
+            read_len = min(65536, audio_end)
+            with open(full_path, "rb") as f:
+                if f.read(4) == b"OggS":
+                    f.seek(audio_end - read_len)
+                    tail = f.read(read_len)
+                    idx = tail.rfind(b"OggS\x00")
+                    if idx >= 0 and idx + 14 <= len(tail):
+                        granule = max(0, struct.unpack_from("<q", tail, idx + 6)[0])
+        smap = {}
+        try:
+            with open(full_path, "rb") as rf:
+                rf.seek(trailer["map_offset"])
+                smap = json.loads(zlib.decompress(rf.read(trailer["map_len"])).decode("utf-8"))
+        except Exception:
+            pass
+        sr = int(smap.get("sr") or 48000)
+        samples = granule if granule > 0 else int(smap.get("outLen") or 0)
+        if samples > 0 and sr > 0:
+            dur_sec = samples / float(sr)
+            hrs = int(dur_sec // 3600)
+            mins = int((dur_sec % 3600) // 60)
+            secs = dur_sec % 60
+            dur_str = f"{hrs:02d}:{mins:02d}:{secs:05.2f}"
+            br_str = f"{int(round((audio_end * 8.0) / (dur_sec * 1000.0)))} kb/s"
+            smp_str = f"{samples:,}".replace(",", " ")
+            return dur_sec, dur_str, br_str, smp_str
+    except Exception:
+        pass
+    return 0.0, "—", "—", "—"
+
+
+@route('/api/pcm_meta_v71/<filename:path>')
+def get_pcm_meta_v71(filename):
+    fp = resolve_track_full_path_v71(filename)
+    response.content_type = 'application/json'
+    if not fp or not os.path.isfile(fp):
+        return json.dumps({"duration": 0, "size": 0})
+    tr = read_jenny_rev_trailer(fp)
+    if tr:
+        dur_sec, _, _, _ = calc_jrev_audio_stats(fp, tr)
+        return json.dumps({"duration": dur_sec, "size": tr["audio_end"]})
+    return json.dumps({"duration": 0, "size": os.path.getsize(fp)})
+
+
+@route('/api/media/<filename:path>', method=['GET', 'HEAD'])
 def serve_media(filename):
     fp = resolve_track_full_path_v71(filename)
-    return static_file(os.path.basename(fp), root=os.path.dirname(fp))
+    if not fp or not os.path.isfile(fp):
+        response.status = 404
+        return "Not found"
+    tr = read_jenny_rev_trailer(fp)
+    if not tr or not tr.get("audio_end"):
+        return static_file(os.path.basename(fp), root=os.path.dirname(fp))
+
+    audio_end = int(tr["audio_end"])
+    ext = os.path.splitext(fp)[1].lower()
+    mime = "audio/ogg" if ext in (".opus", ".ogg") else "application/octet-stream"
+    headers = {
+        "Content-Type": mime,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"
+    }
+    range_hdr = request.headers.get("Range")
+    if range_hdr and range_hdr.startswith("bytes="):
+        try:
+            r_part = range_hdr.split("=", 1)[1].split(",")[0].strip()
+            s_str, e_str = r_part.split("-", 1)
+            start_b = int(s_str) if s_str else 0
+            end_b = int(e_str) if e_str else (audio_end - 1)
+            if end_b >= audio_end:
+                end_b = audio_end - 1
+            if start_b < 0 or start_b >= audio_end or start_b > end_b:
+                headers["Content-Range"] = f"bytes */{audio_end}"
+                return bottle.HTTPResponse(status=416, headers=headers)
+            chunk_len = end_b - start_b + 1
+            headers["Content-Range"] = f"bytes {start_b}-{end_b}/{audio_end}"
+            headers["Content-Length"] = str(chunk_len)
+            if request.method == "HEAD":
+                return bottle.HTTPResponse(status=206, headers=headers)
+            with open(fp, "rb") as f:
+                f.seek(start_b)
+                data = f.read(chunk_len)
+            return bottle.HTTPResponse(body=data, status=206, headers=headers)
+        except Exception:
+            pass
+
+    headers["Content-Length"] = str(audio_end)
+    if request.method == "HEAD":
+        return bottle.HTTPResponse(status=200, headers=headers)
+    with open(fp, "rb") as f:
+        data = f.read(audio_end)
+    return bottle.HTTPResponse(body=data, status=200, headers=headers)
 
 
 @route('/api/rev_info/<filename:path>', method='GET')
@@ -874,6 +967,8 @@ def get_track_info():
         rev_capsule_str = "None (Standard stream)"
         trailer = read_jenny_rev_trailer(full_path)
         if trailer:
+            if dur_seconds <= 0 or duration_str == "—":
+                dur_seconds, duration_str, bitrate_str, total_samples = calc_jrev_audio_stats(full_path, trailer)
             try:
                 with open(full_path, 'rb') as rf:
                     rf.seek(trailer["map_offset"])
@@ -958,275 +1053,3 @@ def start_server():
 
 if __name__ == "__main__":
     start_server()
-
-
-# === V75.3 UNLIMITED JREV CONTAINER & OGGS EOS BEACON ===
-import struct as _struct_v75_3
-from bottle import request as _req_v75_3, HTTPResponse as _HTTPResp_v75_3
-import mimetypes as _mimetypes_v75_3
-
-def _ogg_crc32_v75_3(data: bytes) -> int:
-    crc = 0
-    for b in data:
-        crc ^= (b << 24)
-        for _ in range(8):
-            if crc & 0x80000000:
-                crc = ((crc << 1) ^ 0x04C11DB7) & 0xFFFFFFFF
-            else:
-                crc = (crc << 1) & 0xFFFFFFFF
-    return crc
-
-def _build_ogg_eos_beacon_v75_3(filepath: str, audio_end: int) -> bytes:
-    """Извлекает granule_position и serial из последней страницы OggS чистого аудиопотока и строит 28-байтный маяк EOS."""
-    try:
-        if audio_end <= 28:
-            return b""
-        read_len = min(65536, audio_end)
-        with open(filepath, "rb") as f:
-            f.seek(0)
-            head4 = f.read(4)
-            if head4 != b"OggS":
-                return b""
-            f.seek(audio_end - read_len)
-            tail = f.read(read_len)
-
-        idx = tail.rfind(b"OggS\x00")
-        if idx < 0 or idx + 27 > len(tail):
-            return b""
-
-        granule_pos = _struct_v75_3.unpack_from("<Q", tail, idx + 6)[0]
-        serial_no = _struct_v75_3.unpack_from("<I", tail, idx + 14)[0]
-        seq_no = _struct_v75_3.unpack_from("<I", tail, idx + 18)[0]
-
-        # 28-байтная пустая страница OggS с флагом EOS (0x04) и 1 сегментом нулевой длины
-        page_no_crc = _struct_v75_3.pack(
-            "<4sBBQIIIBB",
-            b"OggS",
-            0,              # version
-            0x04,           # header_type = EOS
-            granule_pos,    # точное число сэмплов трека
-            serial_no,      # серийный номер аудиопотока
-            seq_no + 1,     # следующий номер страницы
-            0,              # CRC32 placeholder
-            1,              # 1 сегмент
-            0               # длина сегмента = 0 байт
-        )
-        crc_val = _ogg_crc32_v75_3(page_no_crc)
-        beacon = page_no_crc[:22] + _struct_v75_3.pack("<I", crc_val) + page_no_crc[26:]
-        return beacon
-    except Exception:
-        return b""
-
-def _read_ogg_granule_before_v75_3(filepath: str, audio_end: int) -> int:
-    try:
-        if audio_end <= 28:
-            return 0
-        read_len = min(65536, audio_end)
-        with open(filepath, "rb") as f:
-            f.seek(0)
-            if f.read(4) != b"OggS":
-                return 0
-            f.seek(audio_end - read_len)
-            tail = f.read(read_len)
-        idx = tail.rfind(b"OggS\x00")
-        if idx >= 0 and idx + 14 <= len(tail):
-            val = _struct_v75_3.unpack_from("<q", tail, idx + 6)[0]
-            return max(0, val)
-    except Exception:
-        pass
-    return 0
-
-# Обновляем read_jenny_rev_trailer: поддержка как старых файлов (указатель в последних 24 байтах),
-# так и новых файлов с замыкающим 28-байтным маяком OggS (указатель в 52 байтах от конца)
-def read_jenny_rev_trailer(filepath):
-    try:
-        if not filepath or not os.path.isfile(filepath):
-            return None
-        fsize = os.path.getsize(filepath)
-        if fsize < 32:
-            return None
-        with open(filepath, "rb") as f:
-            # 1. Проверяем новый формат: [24 байта JENNYV67][28 байт маяк OggS] в конце файла
-            footer_end_pos = fsize
-            has_beacon = False
-            if fsize >= 60:
-                f.seek(fsize - 52)
-                probe52 = f.read(52)
-                if probe52[:8] == JENNY_REV_MAGIC and probe52[24:28] == b"OggS":
-                    footer_end_pos = fsize - 28
-                    has_beacon = True
-
-            if not has_beacon:
-                f.seek(fsize - 24)
-                probe24 = f.read(24)
-                if probe24[:8] != JENNY_REV_MAGIC:
-                    return None
-                footer_end_pos = fsize
-            else:
-                probe24 = probe52[:24]
-
-            _, map_len, pocket_len = _struct_v75_3.unpack("<8sQQ", probe24)
-            audio_end = footer_end_pos - 24 - map_len - pocket_len
-            if audio_end <= 0 or map_len <= 0 or map_len > 250 * 1024 * 1024 or pocket_len > 1024 * 1024 * 1024:
-                return None
-
-            f.seek(audio_end)
-            map_compressed = f.read(map_len)
-            map_json = zlib.decompress(map_compressed).decode("utf-8")
-            map_obj = json.loads(map_json)
-            return {
-                "map": map_obj,
-                "map_len": int(map_len),
-                "pocket_len": int(pocket_len),
-                "pocket_offset": int(audio_end + map_len),
-                "audio_end": int(audio_end),
-                "file_size": int(fsize),
-                "has_beacon": has_beacon
-            }
-    except Exception:
-        return None
-
-# Обновляем write_jenny_rev_trailer: записывает безлимитный блок JENNYV67 + 28-байтный маяк OggS в самый конец файла
-def write_jenny_rev_trailer(filepath, rev_meta_dict, pocket_bytes=b""):
-    try:
-        if not filepath or not os.path.isfile(filepath):
-            return False
-        existing = read_jenny_rev_trailer(filepath)
-        if existing and existing.get("audio_end", 0) > 0:
-            with open(filepath, "r+b") as f:
-                f.truncate(existing["audio_end"])
-
-        audio_end = os.path.getsize(filepath)
-        beacon_28 = _build_ogg_eos_beacon_v75_3(filepath, audio_end)
-
-        raw_json = json.dumps(rev_meta_dict, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        map_comp = zlib.compress(raw_json, level=6)
-        pocket_comp = zlib.compress(pocket_bytes, level=6) if pocket_bytes else b""
-        footer = _struct_v75_3.pack("<8sQQ", JENNY_REV_MAGIC, len(map_comp), len(pocket_comp))
-
-        with open(filepath, "ab") as f:
-            f.write(map_comp)
-            if pocket_comp:
-                f.write(pocket_comp)
-            f.write(footer)
-            if beacon_28 and len(beacon_28) == 28:
-                f.write(beacon_28)
-        return True
-    except Exception as e:
-        print("write_jenny_rev_trailer err:", e)
-        return False
-
-# Авто-лечение уже экспортированных файлов на диске: дописываем 28-байтный маяк OggS старым файлам с JENNYV67
-def _auto_upgrade_existing_jrev_files_v75_3():
-    try:
-        folders = list( MUSIC_FOLDERS ) if "MUSIC_FOLDERS" in globals() else ["/storage/emulated/0/Music"]
-        for folder in folders:
-            if not os.path.isdir(folder):
-                continue
-            for root_dir, _, files in os.walk(folder):
-                for fn in files:
-                    if not fn.lower().endswith((".opus", ".ogg")):
-                        continue
-                    fp = os.path.join(root_dir, fn)
-                    tr = read_jenny_rev_trailer(fp)
-                    if tr and not tr.get("has_beacon"):
-                        beacon = _build_ogg_eos_beacon_v75_3(fp, tr["audio_end"])
-                        if beacon and len(beacon) == 28:
-                            with open(fp, "ab") as f:
-                                f.write(beacon)
-    except Exception:
-        pass
-
-_auto_upgrade_existing_jrev_files_v75_3()
-
-# Перехватываем раздачу /api/media/<filename:path>: если у файла есть капсула JENNYV67,
-# отдаём звуковому движку строго чистый аудиопоток [0 .. audio_end] с поддержкой HTTP 206 Range (мгновенный Seek!)
-@app.route('/api/media/<filename:path>', method=['GET', 'HEAD'])
-def serve_clean_audio_slice_v75_3(filename):
-    filepath = resolve_track_path(filename)
-    if not filepath or not os.path.exists(filepath):
-        return _HTTPResp_v75_3(status=404, body="Not found")
-
-    tr = read_jenny_rev_trailer(filepath)
-    if not tr or not tr.get("audio_end"):
-        return static_file(os.path.basename(filepath), root=os.path.dirname(filepath))
-
-    audio_end = int(tr["audio_end"])
-    mime, _ = _mimetypes_v75_3.guess_type(filepath)
-    if not mime:
-        mime = "audio/ogg" if filepath.lower().endswith(".opus") else "application/octet-stream"
-
-    headers = {
-        "Content-Type": mime,
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "no-cache"
-    }
-
-    range_hdr = _req_v75_3.headers.get("Range")
-    if range_hdr and range_hdr.startswith("bytes="):
-        try:
-            r_part = range_hdr.split("=", 1)[1].split(",")[0].strip()
-            s_str, e_str = r_part.split("-", 1)
-            start_b = int(s_str) if s_str else 0
-            end_b = int(e_str) if e_str else (audio_end - 1)
-            if end_b >= audio_end:
-                end_b = audio_end - 1
-            if start_b < 0 or start_b >= audio_end or start_b > end_b:
-                headers["Content-Range"] = f"bytes */{audio_end}"
-                return _HTTPResp_v75_3(status=416, headers=headers)
-
-            chunk_len = end_b - start_b + 1
-            headers["Content-Range"] = f"bytes {start_b}-{end_b}/{audio_end}"
-            headers["Content-Length"] = str(chunk_len)
-
-            if _req_v75_3.method == "HEAD":
-                return _HTTPResp_v75_3(status=206, headers=headers)
-
-            with open(filepath, "rb") as f:
-                f.seek(start_b)
-                data = f.read(chunk_len)
-            return _HTTPResp_v75_3(body=data, status=206, headers=headers)
-        except Exception:
-            pass
-
-    headers["Content-Length"] = str(audio_end)
-    if _req_v75_3.method == "HEAD":
-        return _HTTPResp_v75_3(status=200, headers=headers)
-
-    with open(filepath, "rb") as f:
-        data = f.read(audio_end)
-    return _HTTPResp_v75_3(body=data, status=200, headers=headers)
-
-# Дополняем /api/pcm_meta_v71 и /api/track_info точным расчётом Duration, Bitrate и Total Samples по чистому потоку [0..audio_end]
-_orig_track_info_v75_3 = globals().get("api_track_info")
-if callable(_orig_track_info_v75_3):
-    @app.route('/api/track_info/<filename:path>')
-    def api_track_info_v75_3_wrapper(filename):
-        res = _orig_track_info_v75_3(filename)
-        try:
-            data = json.loads(res) if isinstance(res, str) else res
-            if isinstance(data, dict):
-                filepath = resolve_track_path(filename)
-                tr = read_jenny_rev_trailer(filepath) if filepath else None
-                if tr and tr.get("audio_end"):
-                    audio_end = int(tr["audio_end"])
-                    sr = int(data.get("sample_rate") or 48000)
-                    granule = _read_ogg_granule_before_v75_3(filepath, audio_end)
-                    if granule > 0 and sr > 0:
-                        dur_sec = granule / float(sr)
-                        if not data.get("duration") or data.get("duration") == "-":
-                            mins = int(dur_sec // 60)
-                            secs = dur_sec - mins * 60
-                            hrs = mins // 60
-                            mins = mins % 60
-                            data["duration"] = f"{hrs:02d}:{mins:02d}:{secs:05.2f}"
-                        if not data.get("total_samples") or data.get("total_samples") == "-":
-                            data["total_samples"] = f"{granule:,}".replace(",", " ")
-                        if not data.get("bitrate") or data.get("bitrate") == "-":
-                            kbps = int(round((audio_end * 8.0) / (dur_sec * 1000.0)))
-                            data["bitrate"] = f"{kbps} kb/s"
-                return json.dumps(data, ensure_ascii=False)
-        except Exception:
-            pass
-        return res
-
