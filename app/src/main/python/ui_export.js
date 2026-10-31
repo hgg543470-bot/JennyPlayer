@@ -496,6 +496,7 @@ window.exportCurrentTrack = function() {
             grid.appendChild(card);
         });
         confirmBtn.textContent = `💾 Экспорт (${activeCount})`;
+        if (typeof window.updateExportConfirmBtnLabelV79 === 'function') window.updateExportConfirmBtnLabelV79();
     };
 
     applyCurBtn.onclick = (e) => {
@@ -542,5 +543,55 @@ window.exportCurrentTrack = function() {
     };
 
     renderGrid();
+    if (typeof window.selectExportBitrateV79 === 'function') window.selectExportBitrateV79((window.appConfig && window.appConfig.pocketBitrateV77) || '48k');
+    if (typeof window.selectExportSpeedV79 === 'function') window.selectExportSpeedV79(window._forcedExportSpeedV79 || 0);
     modal.style.display = 'flex';
+};
+
+
+// === V79.1 EXPORT BUTTON HANDLERS ===
+window._forcedExportSpeedV79 = window._forcedExportSpeedV79 || 0;
+
+window.updateExportConfirmBtnLabelV79 = function() {
+    const confirmBtn = document.getElementById('btnExpConfirmRunV69');
+    if (!confirmBtn) return;
+    const activeCards = document.querySelectorAll('#expModalGridV69 .exp-chk-card-v69.active-card-v69').length;
+    const br = (window.appConfig && window.appConfig.pocketBitrateV77) || '48k';
+    const spd = parseFloat(window._forcedExportSpeedV79 || 0);
+    const spdTxt = spd > 0 ? `x${spd}` : 'Тек.';
+    confirmBtn.textContent = `💾 Экспорт (${activeCards}) • ${br} • ${spdTxt}`;
+};
+
+window.selectExportBitrateV79 = function(br) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.pocketBitrateV77 = br;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    const names = {
+        '48k': '48k (Сжатие x2.7)',
+        '24k': '24k (Сжатие x5.5)',
+        '16k': '16k (Фантом x8)',
+        '128k': '128k (Макс качество)'
+    };
+    const lbl = document.getElementById('lblActiveBrV79');
+    if (lbl) lbl.innerText = names[br] || br;
+    document.querySelectorAll('#brBtnGroupV79 button').forEach(b => {
+        const act = (b.getAttribute('data-br') === br);
+        b.style.borderColor = act ? '#3fb950' : '#30363d';
+        b.style.background = act ? 'rgba(63, 185, 80, 0.28)' : '#161b22';
+        b.style.color = act ? '#ffffff' : '#8b949e';
+        b.style.boxShadow = act ? '0 0 10px rgba(63, 185, 80, 0.45)' : 'none';
+    });
+    window.updateExportConfirmBtnLabelV79();
+};
+
+window.selectExportSpeedV79 = function(spd) {
+    window._forcedExportSpeedV79 = parseFloat(spd) || 0;
+    document.querySelectorAll('#spdBtnGroupV79 button').forEach(b => {
+        const act = (Math.abs((parseFloat(b.getAttribute('data-spd')) || 0) - window._forcedExportSpeedV79) < 0.01);
+        b.style.borderColor = act ? '#58a6ff' : '#30363d';
+        b.style.background = act ? 'rgba(88, 166, 255, 0.28)' : '#161b22';
+        b.style.color = act ? '#ffffff' : '#8b949e';
+        b.style.boxShadow = act ? '0 0 10px rgba(88, 166, 255, 0.45)' : 'none';
+    });
+    window.updateExportConfirmBtnLabelV79();
 };
