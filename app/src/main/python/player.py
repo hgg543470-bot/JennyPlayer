@@ -102,12 +102,12 @@ def serve_static(filename):
 
 def _jenny_crypt_stream_v78(data: bytes, password: str = "") -> bytes:
     key_seed = ("JENNY_V78_SECRET::" + (password or "").strip()).encode("utf-8")
-    key = hashlib.pbkdf2_hmac("sha256", key_seed, b"JENNYV67_SALT_2026", 10000, dklen=32)
+    key = hashlib.pbkdf2_hmac("sha512", key_seed, b"JENNYV67_SALT_2026", 10000, dklen=64)
     out = bytearray(len(data))
-    blocks = (len(data) + 31) // 32
+    blocks = (len(data) + 63) // 64
     stream = bytearray()
     for blk in range(blocks):
-        stream.extend(hashlib.sha256(key + struct.pack("<I", blk)).digest())
+        stream.extend(hashlib.sha512(key + struct.pack("<I", blk)).digest())
     for i in range(len(data)):
         out[i] = data[i] ^ stream[i]
     return bytes(out)

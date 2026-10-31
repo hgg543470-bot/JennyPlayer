@@ -436,7 +436,7 @@ window.ensureExportModalV69 = function() {
                     <button type="button" data-spd="100" onclick="window.selectExportSpeedV79(100)" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">x100</button>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
-                    <span style="font-size:11px;color:#e3b341;font-weight:bold;white-space:nowrap;">🔐 Ключ:</span>
+                    <span style="font-size:11px;color:#e3b341;font-weight:bold;white-space:nowrap;">🔐 Ключ (SHA-512):</span>
                     <input type="text" id="inpPocketKeyV78" placeholder="Пусто = авто-ключ Jenny" style="flex:1;padding:4px 8px;font-size:11px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;text-align:left !important;">
                 </div>
             </div>
