@@ -117,10 +117,26 @@ def _pack_heavy_pocket_v78(raw_opus: bytes, password: str = "") -> bytes:
     enc = _jenny_crypt_stream_v78(comp, password)
     return b"JLZ8" + enc
 
+def _jenny_crypt_stream_sha256_compat(data: bytes, password: str = "") -> bytes:
+    key_seed = ("JENNY_V78_SECRET::" + (password or "").strip()).encode("utf-8")
+    key = hashlib.pbkdf2_hmac("sha256", key_seed, b"JENNYV67_SALT_2026", 10000, dklen=32)
+    out = bytearray(len(data))
+    blocks = (len(data) + 31) // 32
+    stream = bytearray()
+    for blk in range(blocks):
+        stream.extend(hashlib.sha256(key + struct.pack("<I", blk)).digest())
+    for i in range(len(data)):
+        out[i] = data[i] ^ stream[i]
+    return bytes(out)
+
 def _unpack_heavy_pocket_v78(masked: bytes, password: str = "") -> bytes:
     if masked.startswith(b"JLZ8"):
-        dec = _jenny_crypt_stream_v78(masked[4:], password)
-        return lzma.decompress(dec)
+        try:
+            dec = _jenny_crypt_stream_v78(masked[4:], password)
+            return lzma.decompress(dec)
+        except Exception:
+            dec256 = _jenny_crypt_stream_sha256_compat(masked[4:], password)
+            return lzma.decompress(dec256)
     try:
         return zlib.decompress(bytes(b ^ 0xA5 for b in masked))
     except Exception:
