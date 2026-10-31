@@ -1,3 +1,5 @@
+import lzma
+import hashlib
 import re
 import os
 import json
@@ -96,6 +98,33 @@ def serve_static(filename):
     return res
 
 
+
+
+def _jenny_crypt_stream_v78(data: bytes, password: str = "") -> bytes:
+    key_seed = ("JENNY_V78_SECRET::" + (password or "").strip()).encode("utf-8")
+    key = hashlib.pbkdf2_hmac("sha256", key_seed, b"JENNYV67_SALT_2026", 10000, dklen=32)
+    out = bytearray(len(data))
+    blocks = (len(data) + 31) // 32
+    stream = bytearray()
+    for blk in range(blocks):
+        stream.extend(hashlib.sha256(key + struct.pack("<I", blk)).digest())
+    for i in range(len(data)):
+        out[i] = data[i] ^ stream[i]
+    return bytes(out)
+
+def _pack_heavy_pocket_v78(raw_opus: bytes, password: str = "") -> bytes:
+    comp = lzma.compress(raw_opus, format=lzma.FORMAT_XZ, preset=9 | lzma.PRESET_EXTREME)
+    enc = _jenny_crypt_stream_v78(comp, password)
+    return b"JLZ8" + enc
+
+def _unpack_heavy_pocket_v78(masked: bytes, password: str = "") -> bytes:
+    if masked.startswith(b"JLZ8"):
+        dec = _jenny_crypt_stream_v78(masked[4:], password)
+        return lzma.decompress(dec)
+    try:
+        return zlib.decompress(bytes(b ^ 0xA5 for b in masked))
+    except Exception:
+        return bytes(b ^ 0xA5 for b in masked)
 
 JENNY_REV_FOOTER_FMT = '<4sIII8s'
 JENNY_REV_FOOTER_SIZE = 24  # struct.calcsize('<4sIII8s')
@@ -614,11 +643,12 @@ def get_rev_pocket(filename):
     with open(full_p, 'rb') as f:
         f.seek(trailer["pocket_offset"])
         masked = f.read(trailer["pocket_len"])
-    # Авто-распознавание: сначала пробуем распаковать zlib-сжатый карман, иначе снимаем старую XOR-маску 0xA5
+    pwd = request.query.get('key', '').strip()
     try:
-        unmasked = zlib.decompress(bytes(b ^ 0xA5 for b in masked))
+        unmasked = _unpack_heavy_pocket_v78(masked, pwd)
     except Exception:
-        unmasked = bytes(b ^ 0xA5 for b in masked)
+        response.status = 403
+        return " Неверный ключ расшифровки капсулы" 
     response.content_type = 'audio/ogg'
     response.set_header('Content-Length', str(len(unmasked)))
     return unmasked
@@ -858,14 +888,14 @@ def export_track():
                             pck_kbps = request.forms.get('pocket_bitrate', '48k').strip()
                             if pck_kbps not in ('128k', '64k', '48k', '32k', '24k', '16k'):
                                 pck_kbps = '48k'
-                            pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', pck_kbps, '-vbr', 'on', '-compression_level', '10', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            pck_pwd = request.forms.get('pocket_key', '').strip()
+                            pr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'libopus', '-b:a', pck_kbps, '-vbr', 'on', '-compression_level', '10', '-frame_duration', '60', '-application', 'audio', temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                             if pr.returncode != 0 or not os.path.exists(temp_pck_opus):
                                 subprocess.run([ffmpeg_bin, '-y', '-i', temp_pck_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', pck_kbps, temp_pck_opus], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                             if os.path.exists(temp_pck_opus) and os.path.getsize(temp_pck_opus) > 32:
                                 with open(temp_pck_opus, 'rb') as pof:
                                     raw_pck = pof.read()
-                                comp_pck = zlib.compress(raw_pck, level=9)
-                                pocket_masked = bytes(b ^ 0xA5 for b in comp_pck)
+                                pocket_masked = _pack_heavy_pocket_v78(raw_pck, pck_pwd)
                         finally:
                             for tp in (temp_pck_wav, temp_pck_opus):
                                 if os.path.exists(tp):

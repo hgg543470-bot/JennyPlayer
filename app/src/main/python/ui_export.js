@@ -279,6 +279,8 @@ window.executeTrackExportV69 = async function() {
             const pckSel = document.getElementById('selPocketBitrateV77');
             const pckBr = pckSel ? pckSel.value : ((window.appConfig && window.appConfig.pocketBitrateV77) || '48k');
             formData.append('pocket_bitrate', pckBr);
+            const keyInp = document.getElementById('inpPocketKeyV78');
+            if (keyInp && keyInp.value.trim()) formData.append('pocket_key', keyInp.value.trim());
         }
 
         let res = await fetch('/api/export', { method: 'POST', body: formData });

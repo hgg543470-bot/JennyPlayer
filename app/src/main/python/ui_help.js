@@ -5771,7 +5771,14 @@ window.loadTrackReversibleDataV67 = async function(filename, decodedBuffer) {
 
         let pocketBuf = null;
         if (info.pocket_bytes && info.pocket_bytes > 0) {
-            const pRes = await fetch('/api/rev_pocket/' + encodeURIComponent(filename));
+            let pRes = await fetch('/api/rev_pocket/' + encodeURIComponent(filename) + '?key=' + encodeURIComponent(window._lastPocketKeyV78 || ''));
+            if (pRes.status === 403) {
+                const usrKey = prompt('🔐 Этот трек зашифрован паролем. Введи ключ для распаковки оригинала 1.0x:', '');
+                if (usrKey !== null) {
+                    window._lastPocketKeyV78 = usrKey.trim();
+                    pRes = await fetch('/api/rev_pocket/' + encodeURIComponent(filename) + '?key=' + encodeURIComponent(window._lastPocketKeyV78));
+                }
+            }
             if (pRes.ok) {
                 const pAb = await pRes.arrayBuffer();
                 pocketBuf = await window.audioCtx.decodeAudioData(pAb);
@@ -6591,3 +6598,152 @@ setTimeout(() => {
         sliceBox.insertAdjacentElement('afterend', revBox);
     }
 }, 750);
+
+
+// === JENNY V78 DEEP SPECTRAL BLUEPRINT & HEAVY RESYNTHESIS ===
+window.captureSpectralBlueprintV78 = function(srcBuf) {
+    if (!srcBuf) return null;
+    const sr = srcBuf.sampleRate;
+    const ch0 = srcBuf.getChannelData(0);
+    const ch1 = srcBuf.numberOfChannels > 1 ? srcBuf.getChannelData(1) : ch0;
+    const len = ch0.length;
+    const win = Math.max(512, Math.round(0.04 * sr)); // окна по 40 мс
+    const hfCurve = [];
+    const sideCurve = [];
+    for (let p = 0; p + win <= len; p += win) {
+        let lowE = 0.00001, hfE = 0.00001, midE = 0.00001, sideE = 0.00001;
+        for (let i = p + 2; i < p + win; i += 2) {
+            const l = ch0[i], r = ch1[i];
+            const prevL = ch0[i - 1], prevR = ch1[i - 1];
+            const prev2L = ch0[i - 2], prev2R = ch1[i - 2];
+            // 2-я разность выделяет ВЧ-гармоники (6..20 кГц)
+            const hf = Math.abs((l - 2 * prevL + prev2L) + (r - 2 * prevR + prev2R)) * 0.25;
+            const body = (Math.abs(l) + Math.abs(r)) * 0.5;
+            hfE += hf;
+            lowE += body;
+            midE += Math.abs(0.5 * (l + r));
+            sideE += Math.abs(0.5 * (l - r));
+        }
+        // Квантуем отношение ВЧ/Тело и Side/Mid в компактные целые 0..255 для идеального сжатия LZMA
+        hfCurve.push(Math.min(255, Math.round((hfE / lowE) * 180)));
+        sideCurve.push(Math.min(255, Math.round((sideE / midE) * 120)));
+    }
+    return { win: win, hf: hfCurve, side: sideCurve };
+};
+
+const _origCaptureDnaV76 = window.captureExportDspDnaV76;
+window.captureExportDspDnaV76 = function(srcBuf, renderedBuf, cfg) {
+    const dna = _origCaptureDnaV76(srcBuf, renderedBuf, cfg);
+    if (dna && srcBuf) {
+        dna.specBlueprint = window.captureSpectralBlueprintV78(srcBuf);
+    }
+    return dna;
+};
+
+window.runDeepSpectralResynthesisV78 = async function(buf, smap) {
+    if (!buf || !smap || !smap.dspDna || !smap.dspDna.specBlueprint || !window.audioCtx) return buf;
+    const bp = smap.dspDna.specBlueprint;
+    const sr = buf.sampleRate;
+    const numCh = buf.numberOfChannels;
+    const len = buf.length;
+
+    // 1. Синтезируем гармонический ВЧ-слой через нелинейный эксайтер + фильтр верхних частот 5.5 кГц
+    const offCtx = new OfflineAudioContext(numCh, len, sr);
+    const src = offCtx.createBufferSource();
+    src.buffer = buf;
+
+    const bpFilter = offCtx.createBiquadFilter();
+    bpFilter.type = 'bandpass';
+    bpFilter.frequency.value = 3800;
+    bpFilter.Q.value = 0.7;
+
+    const shaper = offCtx.createWaveShaper();
+    const curve = new Float32Array(8193);
+    for (let i = 0; i < 8193; i++) {
+        const x = (i - 4096) / 4096;
+        curve[i] = x - 0.35 * x * x * x + 0.15 * (2 * x * x - 1);
+    }
+    shaper.curve = curve;
+
+    const hpFilter = offCtx.createBiquadFilter();
+    hpFilter.type = 'highpass';
+    hpFilter.frequency.value = 5800;
+    hpFilter.Q.value = 0.707;
+
+    src.connect(bpFilter);
+    bpFilter.connect(shaper);
+    shaper.connect(hpFilter);
+    hpFilter.connect(offCtx.destination);
+    src.start(0);
+
+    const harmonicBuf = await offCtx.startRendering();
+
+    // 2. Покадровая калибровка ВЧ-гармоник и стерео-панорамы строго по чертежу оригинала (с плавной интерполяцией)
+    const win = bp.win || Math.max(512, Math.round(0.04 * sr));
+    const hfArr = bp.hf || [];
+    const sideArr = bp.side || [];
+
+    const c0 = buf.getChannelData(0);
+    const c1 = numCh > 1 ? buf.getChannelData(1) : c0;
+    const h0 = harmonicBuf.getChannelData(0);
+    const h1 = numCh > 1 ? harmonicBuf.getChannelData(1) : h0;
+
+    let prevHfBoost = 0.0;
+    let prevSideScale = 1.0;
+
+    for (let wIdx = 0; wIdx < hfArr.length; wIdx++) {
+        const p = wIdx * win;
+        if (p >= len) break;
+        const end = Math.min(len, p + win);
+
+        let curLowE = 0.00001, curHfE = 0.00001, harmE = 0.00001, curMidE = 0.00001, curSideE = 0.00001;
+        for (let i = p + 2; i < end; i += 2) {
+            const l = c0[i], r = c1[i];
+            const hf = Math.abs((l - 2 * c0[i - 1] + c0[i - 2]) + (r - 2 * c1[i - 1] + c1[i - 2])) * 0.25;
+            curHfE += hf;
+            curLowE += (Math.abs(l) + Math.abs(r)) * 0.5;
+            harmE += (Math.abs(h0[i]) + Math.abs(h1[i])) * 0.5;
+            curMidE += Math.abs(0.5 * (l + r));
+            curSideE += Math.abs(0.5 * (l - r));
+        }
+
+        const targetHfRatio = (hfArr[wIdx] || 0) / 180.0;
+        const actualHfRatio = curHfE / curLowE;
+        const missingHfEnergy = Math.max(0.0, targetHfRatio - actualHfRatio) * curLowE;
+        const targetHfBoost = Math.min(1.6, missingHfEnergy / Math.max(0.0001, harmE * 1.4));
+
+        const targetSideRatio = (sideArr[wIdx] || 0) / 120.0;
+        const actualSideRatio = curSideE / curMidE;
+        const targetSideScale = (actualSideRatio > 0.02)
+            ? Math.max(0.6, Math.min(2.2, targetSideRatio / actualSideRatio))
+            : 1.0;
+
+        const span = Math.max(1, end - p);
+        for (let i = p; i < end; i++) {
+            const t = (i - p) / span;
+            const hfGain = prevHfBoost * (1.0 - t) + targetHfBoost * t;
+            const sScale = prevSideScale * (1.0 - t) + targetSideScale * t;
+
+            const l = c0[i] + h0[i] * hfGain;
+            const r = c1[i] + h1[i] * hfGain;
+            if (numCh > 1) {
+                const m = 0.5 * (l + r);
+                const s = 0.5 * (l - r) * sScale;
+                c0[i] = Math.max(-0.99, Math.min(0.99, m + s));
+                c1[i] = Math.max(-0.99, Math.min(0.99, m - s));
+            } else {
+                c0[i] = Math.max(-0.99, Math.min(0.99, l));
+            }
+        }
+        prevHfBoost = targetHfBoost;
+        prevSideScale = targetSideScale;
+    }
+    return buf;
+};
+
+// Подключаем глубокий ресинтез и запрос пароля (если файл зашифрован своим ключом) при распаковке
+const _origApplyInvV76 = window.applyInverseDspCompensationV76;
+window.applyInverseDspCompensationV76 = async function(rawReconstructedBuf, smap) {
+    const step1 = await _origApplyInvV76(rawReconstructedBuf, smap);
+    return await window.runDeepSpectralResynthesisV78(step1, smap);
+};
