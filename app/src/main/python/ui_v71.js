@@ -3881,6 +3881,15 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
     const origUpdateProg = window.updateProgressUI;
     if (typeof origUpdateProg === 'function' && !window._dnaProgWrappedV76) {
         window._dnaProgWrappedV76 = true;
+        const origCenterTime = window.updateCenterCurrentTime;
+        window.updateCenterCurrentTime = function(cur, dur, isRev) {
+            if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67 && dur > 0) {
+                const origDur = window.reconstructedMasterBufferV67.duration;
+                const scale = origDur / dur;
+                return origCenterTime(cur * scale, origDur, isRev);
+            }
+            return origCenterTime(cur, dur, isRev);
+        };
         window.updateProgressUI = function(cur, dur, isRev) {
             if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67 && dur > 0) {
                 const origDur = window.reconstructedMasterBufferV67.duration;

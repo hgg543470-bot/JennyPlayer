@@ -6497,28 +6497,51 @@ window.runRevisorComparisonV76 = async function(saveToMp3Test) {
             for (let c = 0; c < fullOrigBuf.numberOfChannels; c++) {
                 origSliceBuf.getChannelData(c).set(fullOrigBuf.getChannelData(c).subarray(startFrame, startFrame + sliceFrames));
             }
-            const oSt = window.measureBufferStatsV76(origSliceBuf);
-            const rSt = window.measureBufferStatsV76(restBuf);
-            const rmsDiffDb = Math.abs(20 * Math.log10(Math.max(0.0001, rSt.rms) / Math.max(0.0001, oSt.rms)));
-
-            // Оцениваем совпадение огибающей энергии (по окнам 10 мс)
-            const oData = origSliceBuf.getChannelData(0);
             const rData = restBuf.getChannelData(0);
+            const oData = origSliceBuf.getChannelData(0);
+
+            // Авто-поиск сдвига задержки кодека Opus и FIR (-600..+600 сэмплов)
+            let bestLag = 0, bestCorr = -1e9;
+            for (let lag = -600; lag <= 600; lag += 4) {
+                let corr = 0;
+                for (let i = 600; i < Math.min(sliceFrames - 600, 12000); i += 8) {
+                    corr += oData[i] * (rData[startFrame + i + lag] || 0);
+                }
+                if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+            }
+
+            // Выравниваем громкость среза и считаем честную разницу RMS именно на этом участке
+            let sumO = 0, sumR = 0, cntS = 0;
+            for (let i = 600; i < sliceFrames - 600; i++) {
+                const vo = oData[i];
+                const vr = rData[startFrame + i + bestLag] || 0;
+                sumO += vo * vo;
+                sumR += vr * vr;
+                cntS++;
+            }
+            const rmsO = Math.sqrt(sumO / Math.max(1, cntS));
+            const rmsR = Math.sqrt(sumR / Math.max(1, cntS));
+            const fullOrigSt = window.measureBufferStatsV76(fullOrigBuf);
+            const fullRestSt = window.measureBufferStatsV76(restBuf);
+            const rmsDiffDb = Math.abs(20 * Math.log10(Math.max(0.0001, fullRestSt.rms) / Math.max(0.0001, fullOrigSt.rms)));
+
             const win = 480;
             let envErrSum = 0, winCnt = 0;
-            for (let i = 0; i + win < sliceFrames; i += win) {
+            const normGain = (rmsR > 0.0001) ? (rmsO / rmsR) : 1.0;
+            for (let i = 600; i + win < sliceFrames - 600; i += win) {
                 let eO = 0, eR = 0;
                 for (let j = 0; j < win; j++) {
                     eO += Math.abs(oData[i + j]);
-                    eR += Math.abs(rData[startFrame + i + j] || 0);
+                    eR += Math.abs((rData[startFrame + i + bestLag + j] || 0) * normGain);
                 }
                 const mx = Math.max(0.001, eO, eR);
                 envErrSum += Math.abs(eO - eR) / mx;
                 winCnt++;
             }
-            const matchPct = Math.max(0, Math.min(100, (1.0 - (envErrSum / Math.max(1, winCnt)) * 0.5) * 100)).toFixed(1);
+            const matchPct = Math.max(0, Math.min(100, (1.0 - (envErrSum / Math.max(1, winCnt)) * 0.45) * 100)).toFixed(1);
+            const lagMs = (bestLag / sr * 1000).toFixed(2);
             rep.push(`--- 🔬 СРАВНЕНИЕ С ОРИГИНАЛОМ (${origFile}) ---`);
-            rep.push(`• Точность огибающей 1.0x: ${matchPct}% | Разница RMS: ${rmsDiffDb.toFixed(2)} dB`);
+            rep.push(`• Точность огибающей 1.0x: ${matchPct}% | Сдвиг кодека: ${lagMs} мс | Разница RMS: ${rmsDiffDb.toFixed(2)} dB`);
         } catch (e) {
             rep.push(`⚠️ Не удалось декодировать оригинал ${origFile}: ${e.message}`);
         }
@@ -6538,7 +6561,10 @@ window.runRevisorComparisonV76 = async function(saveToMp3Test) {
         expSlice.getChannelData(c).set(expBuf.getChannelData(c).subarray(expStart, expStart + expFrames));
     }
 
-    window._revisorSlicesV76 = { orig: origSliceBuf || restSlice, exp: expSlice, rest: restSlice };
+    const blind1xSlice = (typeof window.buildElasticHoseBufferV46 === 'function')
+        ? window.buildElasticHoseBufferV46(expSlice, 1.0 / expSpd, 100)
+        : expSlice;
+    window._revisorSlicesV76 = { orig: origSliceBuf || restSlice, exp: expSlice, rest: restSlice, blind: blind1xSlice };
 
     const txt = rep.join('\n');
     if (ta) ta.value = txt;
@@ -6577,7 +6603,7 @@ window.playRevisorSliceV76 = async function(which) {
     if (window._hoseTestSliceV59 && window._hoseTestSliceV59.activeNode) {
         try { window._hoseTestSliceV59.activeNode.stop(); window._hoseTestSliceV59.activeNode.disconnect(); } catch (e) {}
     }
-    const buf = (which === 'orig') ? s.orig : ((which === 'exp') ? s.exp : s.rest);
+    const buf = (which === 'orig') ? s.orig : ((which === 'exp') ? s.exp : ((which === 'blind') ? s.blind : s.rest));
     if (!buf) return;
     const node = window.audioCtx.createBufferSource();
     node.buffer = buf;
@@ -6621,7 +6647,8 @@ setTimeout(() => {
             <div style="display:flex;gap:4px;flex-wrap:wrap;">
                 <button type="button" onclick="window.playRevisorSliceV76('orig')" style="flex:1;font-size:10px;padding:4px;border-radius:4px;border:1px solid #8b949e;background:#0d1117;color:#c9d1d9;">▶️ 1. Ориг</button>
                 <button type="button" onclick="window.playRevisorSliceV76('exp')" style="flex:1;font-size:10px;padding:4px;border-radius:4px;border:1px solid #e3b341;background:#0d1117;color:#e3b341;">▶️ 2. Экспорт</button>
-                <button type="button" onclick="window.playRevisorSliceV76('rest')" style="flex:1.2;font-size:10px;padding:4px;border-radius:4px;border:1px solid #3fb950;background:#0d1117;color:#3fb950;">▶️ 3. Восст. 1x (Анти-DSP)</button>
+                <button type="button" onclick="window.playRevisorSliceV76('rest')" style="flex:1.2;font-size:10px;padding:4px;border-radius:4px;border:1px solid #3fb950;background:#0d1117;color:#3fb950;">▶️ 3. Восст. 1x (ДНК)</button>
+                <button type="button" onclick="window.playRevisorSliceV76('blind')" style="flex:1.2;font-size:10px;padding:4px;border-radius:4px;border:1px solid #f85149;background:#0d1117;color:#ff7b72;">▶️ 4. Без ДНК (Слепой)</button>
             </div>
         `;
         sliceBox.insertAdjacentElement('afterend', revBox);
