@@ -3584,3 +3584,120 @@ window.syncHeaderHeightWithModalsV71 = function() {
     window.syncHeaderHeightWithModalsV71();
 })();
 
+
+// === V75.1 PLAY/PAUSE BUTTON & STUDIO SYNC FIX ===
+
+window.togglePlay = function() {
+    const player = document.getElementById('audioPlayer');
+    if (!player || (!player.src && !window.currentPlayingTrack)) {
+        const firstTrack = window.topTrack || (window.currentTrackList && window.currentTrackList[0]);
+        if (firstTrack && typeof window.playTrack === 'function') {
+            window.playTrack(firstTrack, 'main');
+        }
+        return;
+    }
+
+    if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+    if (window.audioCtx && window.audioCtx.state === 'suspended') {
+        try { window.audioCtx.resume(); } catch (e) {}
+    }
+
+    const isActuallyPlaying = (!player.paused) || Boolean(window.isStudioPlaying && window.studioSourceNode);
+    const btn = document.getElementById('playPauseBtn');
+
+    if (isActuallyPlaying) {
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+            window.studioSourceNode = null;
+        }
+        window.isStudioPlaying = false;
+        try { player.pause(); } catch (e) {}
+
+        if (btn) {
+            btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+        }
+        if (typeof window.updateTrackListPlayIcons === 'function') {
+            window.updateTrackListPlayIcons();
+        }
+    } else {
+        if (btn) {
+            btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+        }
+        player.play().then(() => {
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+            if (typeof window.updateTrackListPlayIcons === 'function') {
+                window.updateTrackListPlayIcons();
+            }
+        }).catch(() => {
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+            if (typeof window.updateTrackListPlayIcons === 'function') {
+                window.updateTrackListPlayIcons();
+            }
+        });
+    }
+};
+
+window.togglePlayPause = window.togglePlay;
+
+(function rebindPlayPauseBtnV75_1() {
+    const oldBtn = document.getElementById('playPauseBtn');
+    if (!oldBtn) return;
+    const newBtn = oldBtn.cloneNode(true);
+    newBtn._reboundV75_1 = true;
+    newBtn.removeAttribute('onclick');
+    oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+
+    let ppTimer = null;
+    let ppFired = false;
+    let startX = 0;
+    let startY = 0;
+    let lastTouchToggleTs = 0;
+
+    newBtn.addEventListener('touchstart', (e) => {
+        ppFired = false;
+        if (e.touches && e.touches[0]) {
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+        }
+        clearTimeout(ppTimer);
+        ppTimer = setTimeout(() => {
+            ppFired = true;
+            if (typeof window.locateCurrentPlayingTrackV74_1 === 'function') {
+                window.locateCurrentPlayingTrackV74_1();
+            }
+        }, 360);
+    }, { passive: true });
+
+    newBtn.addEventListener('touchmove', (e) => {
+        if (e.touches && e.touches[0]) {
+            const dist = Math.hypot(e.touches[0].clientX - startX, e.touches[0].clientY - startY);
+            if (dist > 10) clearTimeout(ppTimer);
+        }
+    }, { passive: true });
+
+    newBtn.addEventListener('touchend', (e) => {
+        clearTimeout(ppTimer);
+        if (!ppFired) {
+            lastTouchToggleTs = performance.now();
+            window.togglePlay();
+        }
+        if (e && e.cancelable) e.preventDefault();
+    }, { passive: false });
+
+    newBtn.addEventListener('touchcancel', () => {
+        clearTimeout(ppTimer);
+    }, { passive: true });
+
+    newBtn.addEventListener('click', (e) => {
+        if (performance.now() - lastTouchToggleTs > 400 && !ppFired) {
+            window.togglePlay();
+        }
+    });
+})();
+
