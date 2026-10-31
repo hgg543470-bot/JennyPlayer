@@ -1026,6 +1026,9 @@ def save_test_slices():
 
         with open(orig_wav, 'wb') as f1: f1.write(base64.b64decode(req['orig_wav_b64']))
         with open(hose_wav, 'wb') as f2: f2.write(base64.b64decode(req['hose_wav_b64']))
+        if req.get('restored_wav_b64'):
+            rest_wav = os.path.join(out_dir, f"{prefix}_3_RESTORED_1X.wav")
+            with open(rest_wav, 'wb') as f_r: f_r.write(base64.b64decode(req['restored_wav_b64']))
         with open(log_path, 'w', encoding='utf-8') as f3: f3.write(req.get('report_txt', ''))
 
         try:

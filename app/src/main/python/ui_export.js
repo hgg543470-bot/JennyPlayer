@@ -248,14 +248,17 @@ window.executeTrackExportV69 = async function() {
         let renderedBuffer = await offlineCtx.startRendering();
         let revExportPkg = null;
 
+        let dspDna = (typeof window.captureExportDspDnaV76 === 'function')
+            ? window.captureExportDspDnaV76(sourceBuffer, renderedBuffer, cfg)
+            : null;
         if (isJbuf && Math.abs(speed - 1.0) > 0.002 && typeof window.buildElasticHoseBufferV46 === 'function') {
             let tensionPct = (cfg.hoseTensionPct !== undefined) ? cfg.hoseTensionPct : 100;
             if (typeof window.buildReversibleExportDataV67 === 'function') {
-                revExportPkg = window.buildReversibleExportDataV67(renderedBuffer, speed, tensionPct, gearKey, isRev);
+                revExportPkg = window.buildReversibleExportDataV67(renderedBuffer, speed, tensionPct, gearKey, isRev, dspDna);
             }
             renderedBuffer = window.buildElasticHoseBufferV46(renderedBuffer, speed, tensionPct);
-        } else if (typeof window.buildReversibleExportDataV67 === 'function' && Math.abs(speed - 1.0) > 0.002) {
-            revExportPkg = window.buildReversibleExportDataV67(sourceBuffer, speed, 100, gearKey, isRev);
+        } else if (typeof window.buildReversibleExportDataV67 === 'function') {
+            revExportPkg = window.buildReversibleExportDataV67(renderedBuffer, speed, 100, gearKey, isRev, dspDna);
         }
 
         let wavBlob = bufferToWav(renderedBuffer, renderedBuffer.length);
