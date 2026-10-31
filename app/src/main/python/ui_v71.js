@@ -2525,46 +2525,6 @@ window.locateCurrentPlayingTrackV74_1 = function() {
     }
 };
 
-// Перепривязываем кнопку #playPauseBtn на клон без старого обработчика из ui_controls.js
-(function rebindPlayPauseBtnV74_1() {
-    const oldBtn = document.getElementById('playPauseBtn');
-    if (!oldBtn || oldBtn._reboundV74_1) return;
-    const newBtn = oldBtn.cloneNode(true);
-    newBtn._reboundV74_1 = true;
-    newBtn.removeAttribute('onclick');
-    oldBtn.parentNode.replaceChild(newBtn, oldBtn);
-
-    let ppTimer = null;
-    let ppFired = false;
-
-    newBtn.addEventListener('touchstart', () => {
-        ppFired = false;
-        clearTimeout(ppTimer);
-        ppTimer = setTimeout(() => {
-            ppFired = true;
-            window.locateCurrentPlayingTrackV74_1();
-        }, 360);
-    }, { passive: true });
-
-    newBtn.addEventListener('touchmove', () => {
-        clearTimeout(ppTimer);
-    }, { passive: true });
-
-    newBtn.addEventListener('touchend', (e) => {
-        clearTimeout(ppTimer);
-        if (!ppFired) {
-            if (typeof window.togglePlay === 'function') window.togglePlay();
-        }
-        if (e && e.cancelable) e.preventDefault();
-    }, { passive: false });
-
-    newBtn.addEventListener('click', (e) => {
-        if (!('ontouchstart' in window)) {
-            if (typeof window.togglePlay === 'function') window.togglePlay();
-        }
-    });
-})();
-
 // 2. Перехватчики Play/Pause, кликов по таймлайну и точного разворота Реверса (V75)
 window._studioClockV74_1 = {
     active: false,
@@ -3585,11 +3545,13 @@ window.syncHeaderHeightWithModalsV71 = function() {
 })();
 
 
-// === V75.1 PLAY/PAUSE BUTTON & STUDIO SYNC FIX ===
+// === V75.2 INDESTRUCTIBLE CAPTURE-PHASE PLAY/PAUSE & LONG-PRESS LOCATOR ===
 
-window.togglePlay = function() {
+window.togglePlayV75_2 = function() {
     const player = document.getElementById('audioPlayer');
-    if (!player || (!player.src && !window.currentPlayingTrack)) {
+    if (!player) return;
+
+    if (!player.src && !window.currentPlayingTrack) {
         const firstTrack = window.topTrack || (window.currentTrackList && window.currentTrackList[0]);
         if (firstTrack && typeof window.playTrack === 'function') {
             window.playTrack(firstTrack, 'main');
@@ -3602,10 +3564,11 @@ window.togglePlay = function() {
         try { window.audioCtx.resume(); } catch (e) {}
     }
 
-    const isActuallyPlaying = (!player.paused) || Boolean(window.isStudioPlaying && window.studioSourceNode);
+    const isPlayingNow = (!player.paused) || Boolean(window.isStudioPlaying && window.studioSourceNode);
     const btn = document.getElementById('playPauseBtn');
 
-    if (isActuallyPlaying) {
+    if (isPlayingNow) {
+        window._userPausedV75_2 = true;
         if (window.studioSourceNode) {
             window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch (e) {}
@@ -3613,6 +3576,9 @@ window.togglePlay = function() {
             window.studioSourceNode = null;
         }
         window.isStudioPlaying = false;
+        if (window._studioClockV74_1) {
+            window._studioClockV74_1.active = false;
+        }
         try { player.pause(); } catch (e) {}
 
         if (btn) {
@@ -3622,82 +3588,127 @@ window.togglePlay = function() {
             window.updateTrackListPlayIcons();
         }
     } else {
+        window._userPausedV75_2 = false;
         if (btn) {
             btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
         }
-        player.play().then(() => {
+        const resumeStudio = () => {
             if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
             }
             if (typeof window.updateTrackListPlayIcons === 'function') {
                 window.updateTrackListPlayIcons();
             }
-        }).catch(() => {
-            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
-                window.syncMasterPlaybackEngineV59(false);
-            }
-            if (typeof window.updateTrackListPlayIcons === 'function') {
-                window.updateTrackListPlayIcons();
-            }
-        });
+        };
+        const p = player.play();
+        if (p && typeof p.then === 'function') {
+            p.then(resumeStudio).catch(resumeStudio);
+        } else {
+            resumeStudio();
+        }
     }
 };
 
-window.togglePlayPause = window.togglePlay;
+window.togglePlay = window.togglePlayV75_2;
+window.togglePlayPause = window.togglePlayV75_2;
 
-(function rebindPlayPauseBtnV75_1() {
-    const oldBtn = document.getElementById('playPauseBtn');
-    if (!oldBtn) return;
-    const newBtn = oldBtn.cloneNode(true);
-    newBtn._reboundV75_1 = true;
-    newBtn.removeAttribute('onclick');
-    oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+(function installPlayPauseDocumentCaptureV75_2() {
+    if (window._ppDocCaptureInstalledV75_2) return;
+    window._ppDocCaptureInstalledV75_2 = true;
 
-    let ppTimer = null;
-    let ppFired = false;
+    let holdTimer = null;
+    let holdTriggered = false;
+    let touchActive = false;
     let startX = 0;
     let startY = 0;
-    let lastTouchToggleTs = 0;
+    let movedTooMuch = false;
+    let lastTouchActionTs = 0;
 
-    newBtn.addEventListener('touchstart', (e) => {
-        ppFired = false;
+    const getPlayPauseBtn = (target) => {
+        if (!target || !target.closest) return null;
+        return target.closest('#playPauseBtn');
+    };
+
+    document.addEventListener('touchstart', (e) => {
+        const btn = getPlayPauseBtn(e.target);
+        if (!btn) return;
+
+        e.stopImmediatePropagation();
+        touchActive = true;
+        holdTriggered = false;
+        movedTooMuch = false;
+
         if (e.touches && e.touches[0]) {
             startX = e.touches[0].clientX;
             startY = e.touches[0].clientY;
         }
-        clearTimeout(ppTimer);
-        ppTimer = setTimeout(() => {
-            ppFired = true;
-            if (typeof window.locateCurrentPlayingTrackV74_1 === 'function') {
-                window.locateCurrentPlayingTrackV74_1();
+
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(() => {
+            holdTimer = null;
+            if (touchActive && !movedTooMuch) {
+                holdTriggered = true;
+                lastTouchActionTs = performance.now();
+                if (typeof window.locateCurrentPlayingTrackV74_1 === 'function') {
+                    window.locateCurrentPlayingTrackV74_1();
+                }
             }
         }, 360);
-    }, { passive: true });
+    }, { capture: true, passive: true });
 
-    newBtn.addEventListener('touchmove', (e) => {
+    document.addEventListener('touchmove', (e) => {
+        if (!touchActive) return;
         if (e.touches && e.touches[0]) {
             const dist = Math.hypot(e.touches[0].clientX - startX, e.touches[0].clientY - startY);
-            if (dist > 10) clearTimeout(ppTimer);
+            if (dist > 12) {
+                movedTooMuch = true;
+                clearTimeout(holdTimer);
+                holdTimer = null;
+            }
         }
-    }, { passive: true });
+    }, { capture: true, passive: true });
 
-    newBtn.addEventListener('touchend', (e) => {
-        clearTimeout(ppTimer);
-        if (!ppFired) {
-            lastTouchToggleTs = performance.now();
-            window.togglePlay();
+    document.addEventListener('touchend', (e) => {
+        const btn = getPlayPauseBtn(e.target);
+        if (!btn && !touchActive) return;
+
+        clearTimeout(holdTimer);
+        holdTimer = null;
+
+        if (btn) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            if (e.cancelable) e.preventDefault();
         }
-        if (e && e.cancelable) e.preventDefault();
-    }, { passive: false });
 
-    newBtn.addEventListener('touchcancel', () => {
-        clearTimeout(ppTimer);
-    }, { passive: true });
+        const shouldToggle = touchActive && !holdTriggered && !movedTooMuch;
+        touchActive = false;
+        holdTriggered = false;
 
-    newBtn.addEventListener('click', (e) => {
-        if (performance.now() - lastTouchToggleTs > 400 && !ppFired) {
-            window.togglePlay();
+        if (shouldToggle) {
+            lastTouchActionTs = performance.now();
+            window.togglePlayV75_2();
         }
-    });
+    }, { capture: true, passive: false });
+
+    document.addEventListener('touchcancel', () => {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+        touchActive = false;
+        holdTriggered = false;
+    }, { capture: true, passive: true });
+
+    document.addEventListener('click', (e) => {
+        const btn = getPlayPauseBtn(e.target);
+        if (!btn) return;
+
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        e.preventDefault();
+
+        if (performance.now() - lastTouchActionTs > 400) {
+            window.togglePlayV75_2();
+        }
+    }, { capture: true, passive: false });
 })();
 
