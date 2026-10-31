@@ -3713,11 +3713,13 @@ window.togglePlayPause = window.togglePlayV75_2;
 })();
 
 
-// === JENNY V76.2 DIRECT ANALOG DNA 1.0X MODE ===
+// === JENNY V76.2 DIRECT ANALOG DNA 1.0X MODE (V83 INDEPENDENT CLOCK) ===
 window.dnaDirect1xActiveV76 = false;
 window.dnaCleanGainNodeV76 = null;
 window._dnaPlayStartCtxTimeV82 = 0;
 window._dnaPlayStartOrigSecV82 = 0;
+window._dnaClockTimerV83 = null;
+window._dnaBoundTrackV83 = null;
 
 window.ensureDnaCleanGainV76 = function() {
     if (!window.audioCtx) return null;
@@ -3731,18 +3733,81 @@ window.ensureDnaCleanGainV76 = function() {
     return window.dnaCleanGainNodeV76;
 };
 
+window.stopDnaClockTimerV83 = function() {
+    if (window._dnaClockTimerV83) {
+        clearInterval(window._dnaClockTimerV83);
+        window._dnaClockTimerV83 = null;
+    }
+};
+
+window.resetDnaModeOnTrackChangeV83 = function() {
+    window.stopDnaClockTimerV83();
+    window.dnaDirect1xActiveV76 = false;
+    window._dnaPlayStartCtxTimeV82 = 0;
+    window._dnaPlayStartOrigSecV82 = 0;
+    const player = document.getElementById('audioPlayer');
+    if (player) {
+        player.loop = false;
+        try { player.playbackRate = 1.0; } catch (e) {}
+    }
+    const lockEl = document.getElementById('speedLockIndicator');
+    if (lockEl && lockEl.innerText && lockEl.innerText.indexOf('ДНК') !== -1) {
+        lockEl.style.display = 'none';
+        lockEl.style.color = '#e3b341';
+    }
+    if (typeof window.updateDna1xButtonUIV76 === 'function') window.updateDna1xButtonUIV76();
+};
+
 window.getExactDnaOrigSecV82 = function() {
     const cleanBuf = window.reconstructedMasterBufferV67;
     if (!cleanBuf || !window.audioCtx) return 0;
     const player = document.getElementById('audioPlayer');
-    if (window.dnaDirect1xActiveV76 && window.isStudioPlaying && player && !player.paused && window._dnaPlayStartCtxTimeV82 > 0) {
-        const elapsed = Math.max(0, window.audioCtx.currentTime - window._dnaPlayStartCtxTimeV82);
-        return Math.min(cleanBuf.duration - 0.01, window._dnaPlayStartOrigSecV82 + elapsed);
+    if (window.dnaDirect1xActiveV76) {
+        if (player && !player.paused && window._dnaPlayStartCtxTimeV82 > 0) {
+            const elapsed = Math.max(0, window.audioCtx.currentTime - window._dnaPlayStartCtxTimeV82);
+            return Math.min(cleanBuf.duration, window._dnaPlayStartOrigSecV82 + elapsed);
+        }
+        return Math.min(cleanBuf.duration, window._dnaPlayStartOrigSecV82 || 0);
     }
     const expBuf = window.studioBuffer || cleanBuf;
     const expDur = (player && isFinite(player.duration) && player.duration > 0) ? player.duration : expBuf.duration;
     const cur = player ? (player.currentTime || 0) : 0;
     return expDur > 0 ? Math.min(cleanBuf.duration - 0.01, (cur / expDur) * cleanBuf.duration) : 0;
+};
+
+window.startDnaClockTimerV83 = function() {
+    window.stopDnaClockTimerV83();
+    window._dnaClockTimerV83 = setInterval(() => {
+        if (!window.dnaDirect1xActiveV76 || !window.reconstructedMasterBufferV67) {
+            window.stopDnaClockTimerV83();
+            return;
+        }
+        if (window._dnaBoundTrackV83 && window.currentPlayingTrack !== window._dnaBoundTrackV83) {
+            window.resetDnaModeOnTrackChangeV83();
+            return;
+        }
+        const player = document.getElementById('audioPlayer');
+        const cleanBuf = window.reconstructedMasterBufferV67;
+        if (!player || player.paused) return;
+
+        // Удерживаем беззвучный <audio> в начале файла со скоростью 1.0, чтобы он никогда не завершался раньше cleanBuf
+        if (player.playbackRate !== 1.0) {
+            try { player.playbackRate = 1.0; } catch (e) {}
+        }
+        if (player.duration > 0.4 && player.currentTime > player.duration * 0.75) {
+            try { player.currentTime = 0.05; } catch (e) {}
+        }
+
+        const curOrig = window.getExactDnaOrigSecV82();
+        if (curOrig >= cleanBuf.duration - 0.05) {
+            window.resetDnaModeOnTrackChangeV83();
+            if (typeof window.playNextTrack === 'function') window.playNextTrack();
+            return;
+        }
+        const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        if (typeof window.updateProgressUI === 'function') window.updateProgressUI(curOrig, cleanBuf.duration, isRev);
+        if (typeof window.updateCenterCurrentTime === 'function') window.updateCenterCurrentTime(curOrig, cleanBuf.duration, isRev);
+    }, 50);
 };
 
 window.updateDna1xButtonUIV76 = function() {
@@ -3789,6 +3854,9 @@ window.startDnaBufferNodeFromSecV82 = function(origSec) {
         : window.reconstructedMasterBufferV67;
     if (!player || !window.audioCtx || !cleanBuf) return;
 
+    if (typeof window.disengageHorizonRamEngineV71_5 === 'function') {
+        window.disengageHorizonRamEngineV71_5();
+    }
     if (window.studioSourceNode) {
         window.studioSourceNode.onended = null;
         try { window.studioSourceNode.stop(); } catch (e) {}
@@ -3798,8 +3866,12 @@ window.startDnaBufferNodeFromSecV82 = function(origSec) {
     if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
 
     const safeOrigSec = Math.max(0, Math.min(cleanBuf.duration - 0.02, origSec));
-    window._dnaPlayStartCtxTimeV82 = window.audioCtx.currentTime;
     window._dnaPlayStartOrigSecV82 = safeOrigSec;
+    window._dnaPlayStartCtxTimeV82 = window.audioCtx.currentTime;
+    window._dnaBoundTrackV83 = window.currentPlayingTrack;
+
+    player.loop = true;
+    try { player.playbackRate = 1.0; } catch (e) {}
 
     if (!player.paused) {
         const outGain = window.ensureDnaCleanGainV76() || window.inputMixer;
@@ -3811,6 +3883,7 @@ window.startDnaBufferNodeFromSecV82 = function(origSec) {
         window.studioSourceNode.connect(outGain);
         window.studioSourceNode.start(0, safeOrigSec);
         window.isStudioPlaying = true;
+        window.startDnaClockTimerV83();
     }
 };
 
@@ -3832,9 +3905,8 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
     const lenRatio = (expDur > 0 && cleanBuf.duration > 0) ? (expDur / cleanBuf.duration) : 1.0;
 
     if (!window.dnaDirect1xActiveV76) {
-        // ВКЛЮЧАЕМ 🧬 ОРИГ 1.0x: берем точную текущую долю трека и переводим в секунды оригинала
         const curFileSec = player ? (player.currentTime || 0) : 0;
-        const targetOrigSec = lenRatio > 0 ? (curFileSec / lenRatio) : curFileSec;
+        const targetOrigSec = (expDur > 2.5 && lenRatio > 0) ? (curFileSec / lenRatio) : 0;
 
         window.dnaDirect1xActiveV76 = true;
         if (window.scrubState) {
@@ -3843,10 +3915,6 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             window.scrubState.speed = 1.0;
         }
         window.persistedPlaybackSpeed = null;
-        if (player) {
-            player.preservesPitch = false;
-            try { player.playbackRate = Math.max(0.1, Math.min(8.0, lenRatio)); } catch (e) {}
-        }
         window.startDnaBufferNodeFromSecV82(targetOrigSec);
 
         const lockEl = document.getElementById('speedLockIndicator');
@@ -3856,101 +3924,74 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             lockEl.innerText = '🧬 ДНК 1.00x (Чистый оригинал)';
         }
     } else {
-        // ВЫКЛЮЧАЕМ 🧬 ОРИГ 1.0x: вычисляем точную секунду по часам AudioContext и возвращаем скорость <audio> строго в 1.0!
         const exactOrigSec = window.getExactDnaOrigSecV82();
         const exactFileSec = Math.max(0, Math.min(expDur - 0.02, exactOrigSec * lenRatio));
 
-        window.dnaDirect1xActiveV76 = false;
-        window._dnaPlayStartCtxTimeV82 = 0;
+        window.resetDnaModeOnTrackChangeV83();
         if (window.studioSourceNode) {
             window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch (e) {}
             try { window.studioSourceNode.disconnect(); } catch (e) {}
             window.studioSourceNode = null;
         }
-        if (window.scrubState) {
-            window.scrubState.active = false;
-            window.scrubState.locked = false;
-            window.scrubState.speed = 1.0;
-        }
-        window.persistedPlaybackSpeed = null;
-
         if (player) {
-            try { player.playbackRate = 1.0; } catch (e) {}
             try { player.currentTime = exactFileSec; } catch (e) {}
         }
         if (typeof window.setExactPlaybackPositionV75 === 'function') {
             window.setExactPlaybackPositionV75(exactFileSec);
-        }
-
-        const lockEl = document.getElementById('speedLockIndicator');
-        if (lockEl) {
-            lockEl.style.display = 'none';
-            lockEl.style.color = '#e3b341';
         }
         if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
             window.syncMasterPlaybackEngineV59(false);
         }
     }
     window.updateDna1xButtonUIV76();
-    if (typeof window.showToast === 'function') {
-        window.showToast(
-            window.dnaDirect1xActiveV76
-                ? '🧬 Включён прямой 1.0x оригинал из ДНК (Анти-DSP + обход фильтров)!'
-                : '🎵 Возвращён обычный режим воспроизведения файла (x1.0)',
-            ev
-        );
-    }
 };
 
-(function installDnaDirectEngineHookV76() {
+
+(function installDnaDirectEngineHookV83() {
+    const origPlayTrack = window.playTrack;
+    if (typeof origPlayTrack === 'function' && !window._dnaPlayTrackWrappedV83) {
+        window._dnaPlayTrackWrappedV83 = true;
+        window.playTrack = async function(filename, context) {
+            if (window.dnaDirect1xActiveV76 && filename !== window.currentPlayingTrack) {
+                window.resetDnaModeOnTrackChangeV83();
+            }
+            const player = document.getElementById('audioPlayer');
+            if (player) {
+                player.loop = false;
+                try { player.playbackRate = 1.0; } catch (e) {}
+            }
+            return await origPlayTrack.apply(this, arguments);
+        };
+    }
+
     const prevSync = window.syncMasterPlaybackEngineV59;
     window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
         window.updateDna1xButtonUIV76();
+        if (window.dnaDirect1xActiveV76 && window._dnaBoundTrackV83 && window.currentPlayingTrack !== window._dnaBoundTrackV83) {
+            window.resetDnaModeOnTrackChangeV83();
+        }
         const hasRev = Boolean(
             window.reconstructedMasterBufferV67 &&
             window.currentTrackRevMapV67 &&
             window.currentTrackRevNameV67 === window.currentPlayingTrack
         );
-        if (!hasRev && window.dnaDirect1xActiveV76) {
-            window.dnaDirect1xActiveV76 = false;
-            window._dnaPlayStartCtxTimeV82 = 0;
-            window.updateDna1xButtonUIV76();
-        }
-        // Если пользователь крутит радиальную дугу или зафиксировал на ней скорость != 1.0, автоматически выключаем режим ДНК 1.0x!
         const userArcSpd = (window.scrubState && (window.scrubState.active || window.scrubState.locked))
             ? parseFloat(window.scrubState.speed || 1.0)
             : 1.0;
         if (window.dnaDirect1xActiveV76 && (isDraggingArc || Math.abs(userArcSpd - 1.0) > 0.01)) {
-            const player = document.getElementById('audioPlayer');
-            const cleanBuf = window.reconstructedMasterBufferV67;
-            const expBuf = window.studioBuffer || cleanBuf;
-            const expDur = (player && isFinite(player.duration) && player.duration > 0) ? player.duration : (expBuf ? expBuf.duration : 1);
-            const lenRatio = (expDur > 0 && cleanBuf && cleanBuf.duration > 0) ? (expDur / cleanBuf.duration) : 1.0;
-            const exactOrigSec = window.getExactDnaOrigSecV82();
-            window.dnaDirect1xActiveV76 = false;
-            window._dnaPlayStartCtxTimeV82 = 0;
-            if (player) {
-                try { player.currentTime = Math.max(0, Math.min(expDur - 0.02, exactOrigSec * lenRatio)); } catch (e) {}
-            }
-            window.updateDna1xButtonUIV76();
+            window.resetDnaModeOnTrackChangeV83();
         }
-
         if (hasRev && window.dnaDirect1xActiveV76) {
             const player = document.getElementById('audioPlayer');
             if (!player || !window.audioCtx) return;
-            const cleanBuf = window.reconstructedMasterBufferV67;
-            const expBuf = window.studioBuffer || cleanBuf;
-            const lenRatio = (expBuf && cleanBuf && cleanBuf.length > 0) ? (expBuf.length / cleanBuf.length) : 1.0;
-
             if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
-            player.preservesPitch = false;
-            const clockRate = Math.max(0.1, Math.min(8.0, lenRatio));
-            if (Math.abs(player.playbackRate - clockRate) > 0.002) {
-                try { player.playbackRate = clockRate; } catch (e) {}
-            }
+            player.loop = true;
+            try { player.playbackRate = 1.0; } catch (e) {}
 
             if (player.paused) {
+                window._dnaPlayStartOrigSecV82 = window.getExactDnaOrigSecV82();
+                window._dnaPlayStartCtxTimeV82 = 0;
                 if (window.studioSourceNode) {
                     window.studioSourceNode.onended = null;
                     try { window.studioSourceNode.stop(); } catch (e) {}
@@ -3959,57 +4000,43 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                 }
                 window.isStudioPlaying = false;
             } else if (!window.studioSourceNode || !window.studioSourceNode._isDna1xNodeV82 || !window.isStudioPlaying) {
-                // Перезапускаем узел только если он ещё не играет или была перемотка
-                const expDur = (isFinite(player.duration) && player.duration > 0) ? player.duration : expBuf.duration;
-                const progress01 = expDur > 0 ? Math.max(0, Math.min(0.999, (player.currentTime || 0) / expDur)) : 0;
-                window.startDnaBufferNodeFromSecV82(progress01 * cleanBuf.duration);
-            }
-
-            const badge = document.getElementById('hoseLiveTelemetryV44');
-            if (badge) {
-                badge.style.color = '#3fb950';
-                badge.innerText = `🧬 ПРЯМОЙ ОРИГИНАЛ 1.00x (Аналог 1:1 | 0 швов | Анти-DSP)`;
+                window.startDnaBufferNodeFromSecV82(window._dnaPlayStartOrigSecV82 || 0);
             }
             return;
         }
         return prevSync.apply(this, arguments);
     };
 
-    // При ручной перемотке ползунка в режиме ДНК 1.0x пересчитываем стартовую секунду
-    const playerEl = document.getElementById('audioPlayer');
-    if (playerEl && !window._dnaSeekHookedV82) {
-        window._dnaSeekHookedV82 = true;
-        playerEl.addEventListener('seeked', () => {
-            if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67) {
-                const cleanBuf = window.reconstructedMasterBufferV67;
-                const expDur = (isFinite(playerEl.duration) && playerEl.duration > 0) ? playerEl.duration : cleanBuf.duration;
-                const p01 = expDur > 0 ? Math.max(0, Math.min(0.999, (playerEl.currentTime || 0) / expDur)) : 0;
-                window.startDnaBufferNodeFromSecV82(p01 * cleanBuf.duration);
-            }
-        });
-    }
+    // Перемотка ползунком seekBar вручную в режиме ДНК 1.0x
+    setTimeout(() => {
+        const sb = document.getElementById('seekBar');
+        if (sb && !window._dnaSeekBarHookedV83) {
+            window._dnaSeekBarHookedV83 = true;
+            sb.addEventListener('input', () => {
+                if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67) {
+                    const maxVal = parseFloat(sb.max) || 1000;
+                    const ratio = Math.max(0, Math.min(0.999, (parseFloat(sb.value) || 0) / maxVal));
+                    window.startDnaBufferNodeFromSecV82(ratio * window.reconstructedMasterBufferV67.duration);
+                }
+            });
+        }
+    }, 600);
 
     const origCenterTime = window.updateCenterCurrentTime;
-    if (typeof origCenterTime === 'function' && !window._dnaCenterWrappedV82) {
-        window._dnaCenterWrappedV82 = true;
+    if (typeof origCenterTime === 'function') {
         window.updateCenterCurrentTime = function(cur, dur, isRev) {
-            if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67 && dur > 0) {
-                const origDur = window.reconstructedMasterBufferV67.duration;
-                const exactOrig = window.getExactDnaOrigSecV82();
-                return origCenterTime(exactOrig, origDur, isRev);
+            if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67) {
+                return origCenterTime(window.getExactDnaOrigSecV82(), window.reconstructedMasterBufferV67.duration, isRev);
             }
             return origCenterTime(cur, dur, isRev);
         };
     }
 
     const origUpdateProg = window.updateProgressUI;
-    if (typeof origUpdateProg === 'function' && !window._dnaProgWrappedV82) {
-        window._dnaProgWrappedV82 = true;
+    if (typeof origUpdateProg === 'function') {
         window.updateProgressUI = function(cur, dur, isRev) {
-            if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67 && dur > 0) {
-                const origDur = window.reconstructedMasterBufferV67.duration;
-                const exactOrig = window.getExactDnaOrigSecV82();
-                return origUpdateProg(exactOrig, origDur, isRev);
+            if (window.dnaDirect1xActiveV76 && window.reconstructedMasterBufferV67) {
+                return origUpdateProg(window.getExactDnaOrigSecV82(), window.reconstructedMasterBufferV67.duration, isRev);
             }
             return origUpdateProg(cur, dur, isRev);
         };
