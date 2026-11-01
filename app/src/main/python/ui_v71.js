@@ -5464,7 +5464,7 @@ window.openMagnetInGoEngineV96 = async function(magnetUrl) {
         if (d.status !== 'ok') throw new Error(d.error || 'Ошибка чтения Magnet');
         window._torStateV96.currentHash = d.hash;
         window._torStateV96.currentName = d.name;
-        const audioExts = ['.flac', '.wav', '.mp3', '.ogg', '.opus', '.m4a', '.mp4', '.mkv'];
+        const audioExts = ['.flac', '.wav', '.mp3', '.ogg', '.aac', '.m4a', '.opus', '.alac', '.ape', '.wv', '.mp4', '.mkv'];
         window._torStateV96.files = (d.files || []).filter(f => audioExts.some(ext => f.path.toLowerCase().endsWith(ext)));
         if (!window._torStateV96.files.length) window._torStateV96.files = d.files || [];
         window._torStateV96.selectedFiles = new Set(window._torStateV96.files.map(f => f.index));
@@ -6366,6 +6366,263 @@ window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
             const stEl = document.getElementById('torStatusLineV96');
             if (stEl) {
                 stEl.innerText = `🧲 Сидов: ${tor.seeders} • Пиров: ${tor.peers} • Сеть: ${totalPct}%` +
+                    (te.total_count > 0 ? ` • xFLAC: ${te.done_count}/${te.total_count} (${te.overall_pct || 0}%)` : '');
+            }
+        } catch (e) {}
+    }, 750);
+};
+
+// === 🏷️ JENNY V101: TORRENT AUDIO FORMAT TAGS STRIP (ALL, FLAC, WAV, MP3, M4A, AAC, OGG) ===
+window._torStateV96 = Object.assign(window._torStateV96 || {}, {
+    formatTag: 'flac', // 'all' | 'flac' | 'wav' | 'mp3' | 'm4a' | 'aac' | 'ogg'
+    exactSearch: false,
+    hideZeroSeeds: true
+});
+
+window.TORRENT_FORMAT_TAGS_V101 = [
+    { id: 'all',  label: '🌐 ВСЕ',  color: '#58a6ff' },
+    { id: 'flac', label: '💎 FLAC', color: '#3fb950' },
+    { id: 'wav',  label: '💿 WAV',  color: '#3fb950' },
+    { id: 'mp3',  label: '🎵 MP3',  color: '#e3b341' },
+    { id: 'm4a',  label: '🍏 M4A',  color: '#79c0ff' },
+    { id: 'aac',  label: '⚡ AAC',  color: '#ff8c42' },
+    { id: 'ogg',  label: '🌀 OGG',  color: '#d2a8ff' }
+];
+
+window.selectTorrentFormatTagV101 = function(tagId) {
+    if (window._torStateV96.formatTag === tagId && tagId !== 'all') {
+        window._torStateV96.formatTag = 'all';
+    } else {
+        window._torStateV96.formatTag = tagId;
+    }
+    window.renderTorrentFilterBarV99();
+    if (!document.getElementById('torFooterBarV96') || document.getElementById('torFooterBarV96').style.display === 'none') {
+        window.runTorrentActionV96();
+    }
+};
+
+window.renderTorrentFilterBarV99 = function() {
+    const m = document.getElementById('jennyTorrentModalV91');
+    if (!m) return;
+    let bar = document.getElementById('torFilterPillsBarV99');
+    if (!bar) {
+        const stLine = document.getElementById('torStatusLineV96');
+        if (!stLine || !stLine.parentNode) return;
+        bar = document.createElement('div');
+        bar.id = 'torFilterPillsBarV99';
+        bar.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin:2px 0;';
+        stLine.parentNode.insertBefore(bar, stLine);
+    }
+    const ts = window._torStateV96;
+    const mkCheck = (k, icon, label, activeColor) => {
+        const on = Boolean(ts[k]);
+        return `<button type="button" onclick="window.toggleTorrentFilterPillV99('${k}')" style="flex:1;padding:4px 8px;font-size:10.5px;border-radius:8px;font-weight:bold;background:${on ? 'rgba(63,185,80,0.18)' : '#11161f'};border:1px solid ${on ? activeColor : '#30363d'};color:${on ? activeColor : '#8b949e'};display:inline-flex;align-items:center;justify-content:center;gap:4px;"><span>${on ? '☑️' : '⬜'}</span><span>${icon} ${label}</span></button>`;
+    };
+
+    const curTag = ts.formatTag || 'flac';
+    const tagsHtml = window.TORRENT_FORMAT_TAGS_V101.map(t => {
+        const act = (curTag === t.id);
+        return `<button type="button" onclick="window.selectTorrentFormatTagV101('${t.id}')" style="padding:4px 9px;font-size:10.5px;border-radius:10px;font-weight:900;flex-shrink:0;background:${act ? 'rgba(88,166,255,0.22)' : '#0d1117'};border:1.5px solid ${act ? t.color : '#262c36'};color:${act ? t.color : '#8b949e'};box-shadow:${act ? '0 0 8px rgba(88,166,255,0.25)' : 'none'};">${t.label}</button>`;
+    }).join('');
+
+    bar.innerHTML = `
+        <div style="display:flex;gap:6px;width:100%;">
+            ${mkCheck('exactSearch', '🎯', 'Точный поиск', '#58a6ff')}
+            ${mkCheck('hideZeroSeeds', '🚫', 'Скрыть 0 сидов', '#3fb950')}
+        </div>
+        <div style="display:flex;gap:5px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none;">
+            ${tagsHtml}
+        </div>
+    `;
+};
+
+window.runTorrentActionV96 = async function() {
+    window.renderTorrentFilterBarV99();
+    const inp = document.getElementById('torMagnetInpV91');
+    const body = document.getElementById('torBodyListV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    if (!inp || !body) return;
+    const val = inp.value.trim();
+    if (!val) return;
+    if (val.toLowerCase().startsWith('magnet:?')) {
+        await window.openMagnetInGoEngineV96(val);
+        return;
+    }
+    if (ftr) ftr.style.display = 'none';
+    const ts = window._torStateV96;
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase();
+    body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Поиск раздач «${val}» [${fmtLabel}]...</div>`;
+    try {
+        const res = await fetch('/api/torrent/search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: val, format_tag: ts.formatTag || 'all', exact: ts.exactSearch, hide_zero: ts.hideZeroSeeds })
+        });
+        const d = await res.json();
+        const list = d.results || [];
+        const hidZero = d.hidden_zero || 0;
+        if (stEl) {
+            stEl.innerText = `📋 [${fmtLabel}] Живых раздач: ${list.length}` + (hidZero > 0 ? ` (скрыто с 0 сидов: ${hidZero})` : '');
+        }
+        if (!list.length) {
+            body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;">В формате <b>${fmtLabel}</b> раздач не найдено${hidZero > 0 ? ` (скрыто ${hidZero} раздач с 0 сидов)` : ''}. Выбери тег <b>🌐 ВСЕ</b> или другой формат выше.</div>`;
+            return;
+        }
+        window._torSearchResultsV96 = list;
+        body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
+            <div style="flex:1;min-width:0;">
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders > 0 ? '#3fb950' : '#ff7b72'};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+            </div>
+            <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
+        </div>`).join('');
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:20px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+// === 🎯 JENNY V102: STRICT SINGLE-TRACK TORRENT DOWNLOAD VS BATCH ===
+const _origOpenMagnetV96 = window.openMagnetInGoEngineV96;
+window.openMagnetInGoEngineV96 = async function(magnetUrl) {
+    if (window._torStateV96) {
+        window._torStateV96.activeDlSet = new Set();
+        window._torStateV96.dlActive = false;
+    }
+    return await _origOpenMagnetV96.call(this, magnetUrl);
+};
+
+// Одиночная кнопка ⬇️ качает ТОЛЬКО нажатый трек (плюс те одиночные треки, которые уже были запущены кнопкой ⬇️)
+window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const ts = window._torStateV96;
+    if (!ts || !ts.currentHash) return;
+    ts.activeDlSet = ts.activeDlSet || new Set();
+    ts.activeDlSet.add(fileIdx);
+    const chk = document.querySelector(`#torFileRowV96_${fileIdx} input[type="checkbox"]`);
+    if (chk) chk.checked = true;
+    if (btnEl) { btnEl.innerText = '⏳'; btnEl.style.color = '#3fb950'; }
+    await window.runTorrentDownloadQueueV102(Array.from(ts.activeDlSet));
+};
+
+// Нижняя кнопка «⬇️ Качать выбранные» запускает все отмеченные галочками файлы
+window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
+    const ts = window._torStateV96;
+    if (!ts || !ts.currentHash) return;
+    if (Array.isArray(explicitFiles) && explicitFiles.length > 0) {
+        ts.activeDlSet = ts.activeDlSet || new Set();
+        explicitFiles.forEach(idx => ts.activeDlSet.add(idx));
+        await window.runTorrentDownloadQueueV102(Array.from(ts.activeDlSet));
+    } else {
+        ts.activeDlSet = new Set(ts.selectedFiles);
+        await window.runTorrentDownloadQueueV102(Array.from(ts.activeDlSet));
+    }
+};
+
+window.runTorrentDownloadQueueV102 = async function(targetFilesArray) {
+    const ts = window._torStateV96;
+    const hash = ts.currentHash;
+    if (!hash || !targetFilesArray || !targetFilesArray.length) return;
+    const totWrap = document.getElementById('torTotalProgWrapV97');
+    const totFill = document.getElementById('torTotalProgFillV97');
+    if (totWrap) totWrap.style.display = 'block';
+    ts.dlActive = true;
+
+    const alreadyDoneCnt = targetFilesArray.filter(idx => ts.importedSet.has(`${hash}_${idx}`)).length;
+    await fetch('/api/torrent/queue_plan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ total: targetFilesArray.length, done: alreadyDoneCnt })
+    });
+    await fetch('/api/torrent/download', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hash, files: targetFilesArray })
+    });
+
+    if (ts.pollTimer) clearInterval(ts.pollTimer);
+    ts.pollTimer = setInterval(async () => {
+        try {
+            const [d, badges] = await Promise.all([
+                fetch('/api/torrent/status').then(r => r.json()),
+                fetch('/api/sources/live_badges').then(r => r.json())
+            ]);
+            const tor = (d.torrents || []).find(x => x.hash === hash);
+            if (!tor) return;
+            const te = (badges && badges.torrent_enc) || {};
+
+            const encWrap = document.getElementById('torXflacProgWrapV99');
+            const encLbl = document.getElementById('torXflacProgLabelV99');
+            const encFill = document.getElementById('torXflacProgFillV99');
+            if (encWrap) {
+                if (te.active || (te.done_count > 0 && te.done_count < te.total_count)) {
+                    encWrap.style.display = 'flex';
+                    if (encLbl) encLbl.innerText = `🧬 Пережатие в xFLAC [${te.done_count}/${te.total_count}]: ${te.current_track || '...'} (${te.track_pct || 0}% • Общий: ${te.overall_pct || 0}%)`;
+                    if (encFill) encFill.style.width = (te.overall_pct || 0) + '%';
+                } else if (te.total_count > 0 && te.done_count >= te.total_count) {
+                    encWrap.style.display = 'flex';
+                    if (encLbl) encLbl.innerText = `✅ Сжато в .xFLAC: ${te.done_count} из ${te.total_count}`;
+                    if (encFill) encFill.style.width = '100%';
+                }
+            }
+
+            let sumLen = 0, sumDone = 0;
+            for (const f of (tor.files || [])) {
+                sumLen += (f.length || 0);
+                sumDone += (f.completed || 0);
+                const impKey = `${hash}_${f.index}`;
+                const rowEl = document.getElementById('torFileRowV96_' + f.index);
+                const pEl = document.getElementById('torFileProgV96_' + f.index);
+                const dlBtn = document.getElementById('torDlSingleBtnV98_' + f.index);
+                const pct = Math.max(0, Math.min(100, f.percent || 0));
+                const doneMb = (f.completed / (1024 * 1024)).toFixed(1);
+                const totMb = (f.length / (1024 * 1024)).toFixed(1);
+                const isCurrentlyEncoding = (te.active && te.current_key === impKey);
+
+                if (rowEl) {
+                    if (f.xflac_file) {
+                        rowEl.style.background = 'linear-gradient(90deg, rgba(63,185,80,0.28) 100%, #0b0f16 100%)';
+                        rowEl.style.borderColor = 'rgba(63,185,80,0.65)';
+                    } else if (isCurrentlyEncoding) {
+                        const ep = te.track_pct || 10;
+                        rowEl.style.background = `linear-gradient(90deg, rgba(63,185,80,0.38) ${ep}%, rgba(137,87,229,0.25) ${ep}%)`;
+                        rowEl.style.borderColor = '#3fb950';
+                    } else {
+                        rowEl.style.background = `linear-gradient(90deg, rgba(137,87,229,0.32) ${pct}%, #0b0f16 ${pct}%)`;
+                    }
+                }
+
+                if (f.xflac_file) {
+                    if (pEl) pEl.innerText = `✅ В плеере: ${f.xflac_file}`;
+                    if (dlBtn) dlBtn.innerText = '✅';
+                } else if (isCurrentlyEncoding) {
+                    if (pEl) pEl.innerText = `🧬 Сжатие в .xFLAC: ${te.track_pct || 0}% (трек ${te.done_count + 1} из ${te.total_count})`;
+                } else if (pEl) {
+                    pEl.innerText = f.done
+                        ? `⏳ Очередь сжатия xFLAC (готово ${te.done_count}/${te.total_count})...`
+                        : `⬇️ Скачивание: ${doneMb} / ${totMb} MB (${pct}%)`;
+                }
+
+                if (f.done && !f.xflac_file && !ts.importedSet.has(impKey) && !window._torImportBusyV98) {
+                    ts.importedSet.add(impKey);
+                    window._torImportBusyV98 = true;
+                    fetch('/api/torrent/import_track', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ hash, index: f.index, full_path: f.full_path, torrent_name: tor.name, format_mode: 'xflac_psycho' })
+                    }).then(r => r.json()).then(res => {
+                        if (res.status === 'ok') {
+                            if (pEl) pEl.innerText = `✅ В плеере: ${res.filename} (${res.size_mb} MB)`;
+                            if (dlBtn) dlBtn.innerText = '✅';
+                            if (typeof window.fetchData === 'function') window.fetchData();
+                        }
+                    }).finally(() => {
+                        window._torImportBusyV98 = false;
+                    });
+                }
+            }
+            const totalPct = sumLen > 0 ? Math.round((sumDone * 100) / sumLen) : 0;
+            ts.dlOverallPct = totalPct;
+            if (totFill) totFill.style.width = totalPct + '%';
+            const stEl = document.getElementById('torStatusLineV96');
+            if (stEl) {
+                stEl.innerText = `🧲 Сидов: ${tor.seeders} • Пиров: ${tor.peers} • Сеть: ${totalPct}% (выбрано: ${targetFilesArray.length})` +
                     (te.total_count > 0 ? ` • xFLAC: ${te.done_count}/${te.total_count} (${te.overall_pct || 0}%)` : '');
             }
         } catch (e) {}

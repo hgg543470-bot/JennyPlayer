@@ -2092,7 +2092,7 @@ def api_soundcloud_search_v92():
         tracks = []
         for idx, item in enumerate(data.get("collection") or [], 1):
             trans = (item.get("media") or {}).get("transcodings") or []
-            prog_u = next((tr.get("url") for tr in trans if (tr.get("format") or {}).get("protocol") == "progressive"), "")
+            prog_u = next((tr.get("url") for tr in trans if (tr.get("format") or {}).get("protocol") == "progressive" and "mpeg" in (tr.get("format") or {}).get("mime_type", "")), "") or next((tr.get("url") for tr in trans if "mpeg" in (tr.get("format") or {}).get("mime_type", "")), "")
             if not prog_u and trans:
                 prog_u = trans[0].get("url") or ""
             if not prog_u:
@@ -2707,6 +2707,215 @@ def api_inspect_track_v100():
         return json.dumps(d, ensure_ascii=False)
     except Exception:
         return res_raw
+
+
+# ==============================================================================
+# 🏷️ JENNY V101: MULTI-FORMAT TORRENT SEARCH TAGS (FLAC, WAV, MP3, M4A, AAC, OGG)
+# ==============================================================================
+@post('/api/torrent/search')
+def api_torrent_search_v101():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        q = (req.get("query") or "").strip()
+        fmt_tag = (req.get("format_tag") or "flac").strip().lower()
+        exact_match = bool(req.get("exact", False))
+        hide_zero = bool(req.get("hide_zero", True))
+        if not q:
+            return json.dumps({"status": "error", "error": "Пустой запрос"})
+
+        q_words = [w.lower() for w in re.split(r'\s+', q) if w]
+        fmt_keywords = {
+            "flac": ["flac", "lossless"],
+            "wav":  ["wav", "wave", "pcm"],
+            "mp3":  ["mp3", "320", "cbr", "vbr"],
+            "m4a":  ["m4a", "alac", "itunes", "aac"],
+            "aac":  ["aac", "m4a"],
+            "ogg":  ["ogg", "vorbis"]
+        }
+
+        if fmt_tag in fmt_keywords and fmt_tag not in q.lower():
+            sq = f"{q} {fmt_tag.upper()}"
+        else:
+            sq = q
+
+        raw_rows = []
+        try:
+            u = f"https://apibay.org/q.php?q={urllib.parse.quote(sq)}&cat=100"
+            raw_rows = _ost_fetch_json_v88(u, timeout=8) or []
+        except Exception:
+            pass
+
+        # Если узкий запрос с форматом не дал результатов в аудио, ищем по общему запросу и фильтруем по имени
+        if (not raw_rows or (len(raw_rows) == 1 and raw_rows[0].get("name") == "No results returned")) and sq != q:
+            try:
+                u2 = f"https://apibay.org/q.php?q={urllib.parse.quote(q)}&cat=100"
+                raw_rows = _ost_fetch_json_v88(u2, timeout=8) or []
+            except Exception:
+                pass
+
+        results = []
+        hidden_zero_cnt = 0
+        for r in raw_rows:
+            ih = (r.get("info_hash") or "").strip()
+            nm = (r.get("name") or "").strip()
+            if not ih or ih == "0000000000000000000000000000000000000000" or nm == "No results returned":
+                continue
+            seeds = int(r.get("seeders") or 0)
+            peers = int(r.get("leechers") or 0)
+            sz_mb = round(int(r.get("size") or 0) / (1024 * 1024), 1)
+            nm_low = nm.lower()
+
+            if exact_match and not all(w in nm_low for w in q_words):
+                continue
+            if fmt_tag in fmt_keywords:
+                allowed_tokens = fmt_keywords[fmt_tag]
+                # Если в самом запросе apibay мы откатились на общий поиск, проверяем вхождение тега формата
+                if sq == q and not any(tok in nm_low for tok in allowed_tokens):
+                    continue
+            if hide_zero and seeds <= 0:
+                hidden_zero_cnt += 1
+                continue
+
+            tr_list = "&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://open.stealth.si:80/announce&tr=udp://exodus.desync.com:6969/announce"
+            mag = f"magnet:?xt=urn:btih:{ih}&dn={urllib.parse.quote(nm)}{tr_list}"
+            results.append({"title": nm, "size_mb": sz_mb, "seeders": seeds, "peers": peers, "magnet": mag})
+
+        results.sort(key=lambda x: (x["seeders"], x["peers"]), reverse=True)
+        return json.dumps({"status": "ok", "results": results[:40], "hidden_zero": hidden_zero_cnt}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+# ==============================================================================
+# 🛠️ JENNY V102: CLEAN HLS ID3 SEGMENT BOUNDARIES + AUTO-REPAIR EXISTING SC MP3
+# ==============================================================================
+def _clean_concatenated_hls_mp3_bytes_v102(raw_bytes: bytes) -> bytes:
+    out = bytearray()
+    i = 0
+    n = len(raw_bytes)
+    while i < n:
+        idx = raw_bytes.find(b'ID3', i)
+        if idx == -1:
+            out.extend(raw_bytes[i:])
+            break
+        if idx + 10 <= n and raw_bytes[idx+3] in (2, 3, 4) and raw_bytes[idx+4] == 0 and all((b & 0x80) == 0 for b in raw_bytes[idx+6:idx+10]):
+            out.extend(raw_bytes[i:idx])
+            b6, b7, b8, b9 = raw_bytes[idx+6], raw_bytes[idx+7], raw_bytes[idx+8], raw_bytes[idx+9]
+            tag_len = 10 + ((b6 & 0x7F) << 21) + ((b7 & 0x7F) << 14) + ((b8 & 0x7F) << 7) + (b9 & 0x7F)
+            if idx + tag_len <= n:
+                i = idx + tag_len
+                continue
+        out.extend(raw_bytes[i:idx+3])
+        i = idx + 3
+    return bytes(out)
+
+def _mux_clean_sc_mp3_v102(src_file: str, dst_file: str):
+    with open(src_file, "rb") as f:
+        raw_b = f.read()
+    clean_b = _clean_concatenated_hls_mp3_bytes_v102(raw_b)
+    with open(src_file, "wb") as f:
+        f.write(clean_b)
+    ff_bin = find_ffmpeg_binary()
+    tmp_out = dst_file + f".tmp_{os.getpid()}.mp3"
+    try:
+        subprocess.run([ff_bin, '-y', '-i', src_file, '-vn', '-c:a', 'copy', '-write_xing', '1', tmp_out], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        if os.path.isfile(tmp_out) and os.path.getsize(tmp_out) >= 16384:
+            shutil.move(tmp_out, dst_file)
+        elif src_file != dst_file:
+            shutil.move(src_file, dst_file)
+    finally:
+        if os.path.exists(tmp_out):
+            try: os.remove(tmp_out)
+            except Exception: pass
+
+def _auto_repair_existing_sc_mp3s_v102():
+    try:
+        if not os.path.isdir(MUSIC_DIR):
+            return
+        for fn in os.listdir(MUSIC_DIR):
+            if fn.startswith("SoundCloud - ") and fn.lower().endswith(".mp3"):
+                fp = os.path.join(MUSIC_DIR, fn)
+                try:
+                    with open(fp, "rb") as f:
+                        data = f.read()
+                    # Если внутри файла после первых 10 КБ есть вшитые сегментные ID3-шапки — чистим и пишем Xing-заголовок
+                    if len(data) > 20000 and data.find(b'ID3', 4096) != -1:
+                        _mux_clean_sc_mp3_v102(fp, fp)
+                        TRACK_META_CACHE_V71.pop(fp, None)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+threading.Thread(target=_auto_repair_existing_sc_mp3s_v102, daemon=True).start()
+
+@post('/api/soundcloud/download_track')
+def api_soundcloud_download_track_v102():
+    response.content_type = 'application/json'
+    tmp_raw = os.path.join(MUSIC_DIR, f"temp_final_sc_{os.getpid()}.stream")
+    try:
+        load_multi_dirs_v71()
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        page_path = (req.get("page_path") or "").strip()
+        track_title = (req.get("track_title") or "Track").strip()
+        track_num = int(req.get("track_num") or 1)
+        _SC_DL_STATE_V99.update({"active": True, "pct": 3, "title": track_title})
+
+        stream_u = _sc_resolve_direct_url_v92(page_path)
+        if not stream_u:
+            return json.dumps({"status": "error", "error": "SoundCloud не отдал поток"})
+
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        with _sc_urlopen_v95(stream_u, timeout=20) as r:
+            first_b = r.read(16384)
+            if first_b.lstrip().startswith(b"#EXTM3U") or ".m3u8" in stream_u.lower():
+                m3u8_txt = (first_b + r.read()).decode("utf-8", errors="ignore")
+                seg_urls = [ln.strip() for ln in m3u8_txt.splitlines() if ln.strip().startswith("http")]
+                tot_s = max(1, len(seg_urls))
+                with open(tmp_raw, "wb") as out_f:
+                    for idx_s, su in enumerate(seg_urls, 1):
+                        with _sc_urlopen_v95(su, timeout=15) as sr:
+                            seg_b = _clean_concatenated_hls_mp3_bytes_v102(sr.read())
+                            out_f.write(seg_b)
+                        _SC_DL_STATE_V99["pct"] = min(85, max(5, int((idx_s * 82) / tot_s)))
+            else:
+                tot_b = int(r.headers.get("Content-Length") or 0)
+                done_b = len(first_b)
+                with open(tmp_raw, "wb") as out_f:
+                    out_f.write(first_b)
+                    while True:
+                        chunk = r.read(65536)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+                        done_b += len(chunk)
+                        if tot_b > 0:
+                            _SC_DL_STATE_V99["pct"] = min(85, int((done_b * 82) / tot_b))
+
+        _SC_DL_STATE_V99["pct"] = 90
+        safe_t = re.sub(r'[\\/:*?"<>|\[\]]+', '_', track_title).strip()[:65]
+        final_name = f"SoundCloud - {track_num:02d}. {safe_t}.mp3"
+        final_path = os.path.join(MUSIC_DIR, final_name)
+
+        _mux_clean_sc_mp3_v102(tmp_raw, final_path)
+
+        db = load_custom_tags_db_v74()
+        db[final_name] = {"TITLE": track_title, "ARTIST": "SoundCloud", "ALBUM": "SoundCloud Stream", "GENRE": "SoundCloud"}
+        save_custom_tags_db_v74(db)
+        TRACK_META_CACHE_V71.pop(final_path, None)
+        sz_mb = round(os.path.getsize(final_path) / (1024.0 * 1024.0), 2)
+        _SC_DL_STATE_V99["pct"] = 100
+        return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb, "ext": "MP3"})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+    finally:
+        _SC_DL_STATE_V99["active"] = False
+        _SC_DL_STATE_V99["pct"] = 0
+        if os.path.exists(tmp_raw):
+            try: os.remove(tmp_raw)
+            except Exception: pass
 
 def start_server():
     load_saved_music_dir()
