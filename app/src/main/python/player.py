@@ -2448,7 +2448,7 @@ def api_torrent_search_v105():
     try:
         req = json.loads(request.body.read().decode('utf-8') or "{}")
         q = (req.get("query") or "").strip()
-        fmt_tag = (req.get("format_tag") or "flac").strip().lower()
+        fmt_tag = (req.get("format_tag") or "all").strip().lower()
         exact_match = bool(req.get("exact", False))
         hide_zero = bool(req.get("hide_zero", True))
         min_two_seeds = bool(req.get("min_two_seeds", False))

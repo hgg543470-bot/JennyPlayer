@@ -5405,7 +5405,7 @@ window.openTorrentHubPreviewModalV91 = function(ev) {
         </div>
         <div style="padding:9px 12px;background:#090d14;border-bottom:1px solid #21262d;display:flex;flex-direction:column;gap:6px;">
             <div style="display:flex;gap:6px;">
-                <input type="text" id="torMagnetInpV91" value="Doom Eternal FLAC" placeholder="Поиск FLAC-раздачи или вставь magnet:?xt=..." onkeydown="if(event.key==='Enter') window.runTorrentActionV96()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
+                <input type="text" id="torMagnetInpV91" value="" placeholder="Поиск FLAC-раздачи или вставь magnet:?xt=..." onkeydown="if(event.key==='Enter') window.runTorrentActionV96()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
                 <button type="button" onclick="window.runTorrentActionV96()" style="padding:7px 12px;background:#8957e5;color:#fff;border:none;border-radius:8px;font-weight:bold;">🔍 / 🧲</button>
             </div>
             <div id="torStatusLineV96" style="font-size:11px;color:#d2a8ff;font-weight:bold;">⚡ Введи название альбома/игры или вставь Magnet-ссылку</div>
@@ -6374,7 +6374,7 @@ window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
 
 // === 🏷️ JENNY V101: TORRENT AUDIO FORMAT TAGS STRIP (ALL, FLAC, WAV, MP3, M4A, AAC, OGG) ===
 window._torStateV96 = Object.assign(window._torStateV96 || {}, {
-    formatTag: 'flac', // 'all' | 'flac' | 'wav' | 'mp3' | 'm4a' | 'aac' | 'ogg'
+    formatTag: 'all', // 'all' | 'flac' | 'wav' | 'mp3' | 'm4a' | 'aac' | 'ogg'
     exactSearch: false,
     hideZeroSeeds: true
 });
@@ -6419,7 +6419,7 @@ window.renderTorrentFilterBarV99 = function() {
         return `<button type="button" onclick="window.toggleTorrentFilterPillV99('${k}')" style="flex:1;padding:4px 8px;font-size:10.5px;border-radius:8px;font-weight:bold;background:${on ? 'rgba(63,185,80,0.18)' : '#11161f'};border:1px solid ${on ? activeColor : '#30363d'};color:${on ? activeColor : '#8b949e'};display:inline-flex;align-items:center;justify-content:center;gap:4px;"><span>${on ? '☑️' : '⬜'}</span><span>${icon} ${label}</span></button>`;
     };
 
-    const curTag = ts.formatTag || 'flac';
+    const curTag = ts.formatTag || 'all';
     const tagsHtml = window.TORRENT_FORMAT_TAGS_V101.map(t => {
         const act = (curTag === t.id);
         return `<button type="button" onclick="window.selectTorrentFormatTagV101('${t.id}')" style="padding:4px 9px;font-size:10.5px;border-radius:10px;font-weight:900;flex-shrink:0;background:${act ? 'rgba(88,166,255,0.22)' : '#0d1117'};border:1.5px solid ${act ? t.color : '#262c36'};color:${act ? t.color : '#8b949e'};box-shadow:${act ? '0 0 8px rgba(88,166,255,0.25)' : 'none'};">${t.label}</button>`;
@@ -6987,7 +6987,7 @@ window.renderTorrentFilterBarV99 = function() {
         return `<button type="button" onclick="window.toggleTorrentFilterPillV99('${k}')" style="flex:1;padding:4px 4px;font-size:10px;border-radius:8px;font-weight:bold;white-space:nowrap;background:${on ? 'rgba(63,185,80,0.18)' : '#11161f'};border:1px solid ${on ? activeColor : '#30363d'};color:${on ? activeColor : '#8b949e'};display:inline-flex;align-items:center;justify-content:center;gap:3px;"><span>${on ? '☑️' : '⬜'}</span><span>${icon} ${label}</span></button>`;
     };
 
-    const curTag = ts.formatTag || 'flac';
+    const curTag = ts.formatTag || 'all';
     const tagsHtml = (window.TORRENT_FORMAT_TAGS_V101 || []).map(t => {
         const act = (curTag === t.id);
         return `<button type="button" onclick="window.selectTorrentFormatTagV101('${t.id}')" style="padding:4px 9px;font-size:10.5px;border-radius:10px;font-weight:900;flex-shrink:0;background:${act ? 'rgba(88,166,255,0.22)' : '#0d1117'};border:1.5px solid ${act ? t.color : '#262c36'};color:${act ? t.color : '#8b949e'};box-shadow:${act ? '0 0 8px rgba(88,166,255,0.25)' : 'none'};">${t.label}</button>`;
