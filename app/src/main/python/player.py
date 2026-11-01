@@ -1704,6 +1704,9 @@ def api_khinsider_album_v88():
         return json.dumps({"status": "error", "error": f"Ошибка альбома: {e}"})
 
 def _ost_resolve_urls_from_pack_v88(page_path: str):
+    if page_path.startswith("sc:"):
+        u = _sc_resolve_direct_url_v92(page_path)
+        return {"flac_url": "", "mp3_url": u}
     if page_path.startswith("b64:"):
         info = json.loads(base64.urlsafe_b64decode(page_path[4:].encode("ascii")).decode("utf-8"))
     else:
@@ -1971,6 +1974,84 @@ def api_radio_rec_stop_v91():
             if fp and os.path.exists(fp):
                 try: os.remove(fp)
                 except Exception: pass
+
+# ☁️ JENNY V92: SOUNDCLOUD ENGINE (AUTO CLIENT_ID + STREAM + XFLAC DOWNLOAD)
+_SC_CLIENT_ID_V92 = None
+
+def _sc_get_client_id_v92():
+    global _SC_CLIENT_ID_V92
+    if _SC_CLIENT_ID_V92:
+        return _SC_CLIENT_ID_V92
+    req = urllib.request.Request("https://soundcloud.com", headers=OST_HEADERS)
+    with urllib.request.urlopen(req, timeout=12) as r:
+        html = r.read().decode("utf-8", errors="ignore")
+    scripts = re.findall(r'<script[^>]+src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"', html)
+    for s_url in reversed(scripts[-8:]):
+        try:
+            sr = urllib.request.Request(s_url, headers=OST_HEADERS)
+            with urllib.request.urlopen(sr, timeout=10) as resp:
+                js_txt = resp.read().decode("utf-8", errors="ignore")
+            m = re.search(r'client_id\s*:\s*"([a-zA-Z0-9]{32})"', js_txt) or re.search(r'client_id="([a-zA-Z0-9]{32})"', js_txt)
+            if m:
+                _SC_CLIENT_ID_V92 = m.group(1)
+                return _SC_CLIENT_ID_V92
+        except Exception:
+            pass
+    raise RuntimeError("Не удалось получить client_id SoundCloud")
+
+@post('/api/soundcloud/search')
+def api_soundcloud_search_v92():
+    global _SC_CLIENT_ID_V92
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        q = (req.get("query") or "").strip()
+        if not q:
+            return json.dumps({"status": "error", "error": "Введите запрос"})
+        cid = _sc_get_client_id_v92()
+        u = f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit=30"
+        try:
+            data = _ost_fetch_json_v88(u, timeout=12)
+        except Exception:
+            _SC_CLIENT_ID_V92 = None
+            cid = _sc_get_client_id_v92()
+            data = _ost_fetch_json_v88(f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit=30", timeout=12)
+
+        tracks = []
+        for idx, item in enumerate(data.get("collection") or [], 1):
+            trans = (item.get("media") or {}).get("transcodings") or []
+            prog_u = ""
+            for tr in trans:
+                if (tr.get("format") or {}).get("protocol") == "progressive":
+                    prog_u = tr.get("url") or ""
+                    break
+            if not prog_u and trans:
+                prog_u = trans[0].get("url") or ""
+            if not prog_u:
+                continue
+            dur_ms = int(item.get("duration") or 0)
+            dur_s = dur_ms // 1000
+            art = (item.get("user") or {}).get("username") or "SoundCloud"
+            title = item.get("title") or f"Track {idx}"
+            full_t = f"{art} — {title}" if art.lower() not in title.lower() else title
+            b64_p = "sc:" + base64.urlsafe_b64encode(prog_u.encode("utf-8")).decode("ascii")
+            ex = _ost_find_existing_track_v89("SoundCloud", idx, full_t)
+            tracks.append({
+                "index": idx, "title": full_t, "duration": f"{dur_s // 60}:{dur_s % 60:02d}",
+                "page_path": b64_p, "downloaded": ex["exists"],
+                "local_ext": ex["ext"], "local_size_mb": ex["size_mb"]
+            })
+        return json.dumps({"status": "ok", "tracks": tracks}, ensure_ascii=False)
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+
+def _sc_resolve_direct_url_v92(page_path: str) -> str:
+    api_u = base64.urlsafe_b64decode(page_path[3:].encode("ascii")).decode("utf-8")
+    cid = _sc_get_client_id_v92()
+    sep = "&" if "?" in api_u else "?"
+    j = _ost_fetch_json_v88(f"{api_u}{sep}client_id={cid}", timeout=10)
+    return j.get("url") or ""
 
 def start_server():
     load_saved_music_dir()

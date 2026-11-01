@@ -4527,18 +4527,30 @@ window.downloadSelectedKhTracksV88 = async function() {
     if (typeof window.showToast === 'function') window.showToast(`🎉 Загружено в плеер: ${doneCnt} треков!`);
 };
 
-// === JENNY V91: SOURCES DROPDOWN HUB (ICON-ONLY HEADER + GENRE/QUALITY RADIO FILTERS) ===
+// === JENNY V91: SOURCES DROPDOWN HUB (CUSTOM NEON SVG ICONS + HIGH/LOW SVG + SOUNDCLOUD) ===
+window.JENNY_NEON_SVGS_V92 = {
+    hub: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 4px rgba(88,166,255,0.65));"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 16l3.5 4 3.5-4"/></svg>',
+    ost: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#3fb950" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(63,185,80,0.65));"><path d="M6 11h4M8 9v4"/><circle cx="15.5" cy="10" r="1" fill="#3fb950"/><circle cx="17.5" cy="12" r="1" fill="#3fb950"/><path d="M17.3 5H6.7a4 4 0 0 0-3.9 3.1l-1.2 6A3.5 3.5 0 0 0 5 18.3c1.2 0 2.3-.6 3-1.6l1.1-1.7h5.8l1.1 1.7c.7 1 1.8 1.6 3 1.6a3.5 3.5 0 0 0 3.4-4.2l-1.2-6A4 4 0 0 0 17.3 5z"/></svg>',
+    radio: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#58a6ff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(88,166,255,0.65));"><path d="M4 10a7.5 7.5 0 0 0 10.6 10.6L4 10z"/><path d="M9.3 15.3l4.2-4.2"/><circle cx="14.5" cy="10.1" r="1.2" fill="#58a6ff"/><path d="M16 4c2.2.6 3.4 1.8 4 4"/><path d="M13.5 6.5c1.2.4 1.8 1 2.2 2.2"/><path d="M5 21l3-4 3 4H5z"/></svg>',
+    torrent: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#d2a8ff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(210,168,255,0.65));"><polygon points="12 2 19 5 22 12 19 19 12 22 5 19 2 12 5 5"/><polygon points="12 6.5 16 8.2 17.5 12 16 15.8 12 17.5 8 15.8 6.5 12 8 8.2"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>',
+    archive: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#79c0ff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(121,192,255,0.65));"><polygon points="12 2 2 7 22 7"/><line x1="6" y1="7" x2="6" y2="17"/><line x1="10" y1="7" x2="10" y2="17"/><line x1="14" y1="7" x2="14" y2="17"/><line x1="18" y1="7" x2="18" y2="17"/><rect x="3" y="17" width="18" height="4" rx="1"/></svg>',
+    soundcloud: '<svg viewBox="0 0 24 24" width="18" height="17" fill="none" stroke="#ff8c42" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(255,140,66,0.65));"><line x1="2" y1="13" x2="2" y2="17"/><line x1="5" y1="10" x2="5" y2="18"/><line x1="8" y1="11" x2="8" y2="18"/><path d="M11 18h7.5a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6-1.5A3.5 3.5 0 0 0 11 18z"/></svg>',
+    badgeHigh: '<svg viewBox="0 0 36 16" width="34" height="15" style="vertical-align:middle;filter:drop-shadow(0 0 4px rgba(63,185,80,0.45));"><rect x="1" y="1" width="34" height="14" rx="4" fill="rgba(63,185,80,0.14)" stroke="#3fb950" stroke-width="1.3"/><text x="18" y="11" fill="#3fb950" font-size="9.5" font-weight="900" font-family="monospace" text-anchor="middle">HIGH</text></svg>',
+    badgeLow: '<svg viewBox="0 0 32 16" width="30" height="15" style="vertical-align:middle;filter:drop-shadow(0 0 4px rgba(227,179,65,0.4));"><rect x="1" y="1" width="30" height="14" rx="4" fill="rgba(227,179,65,0.14)" stroke="#e3b341" stroke-width="1.3"/><text x="16" y="11" fill="#e3b341" font-size="9.5" font-weight="900" font-family="monospace" text-anchor="middle">LOW</text></svg>'
+};
+
 window.SOURCES_CATALOG_V91 = [
-    { id: 'ost',     icon: '🎮', title: '🎮 Game OST Студия (Lossless ➔ xFLAC)' },
-    { id: 'radio',   icon: '📻', title: '📻 Радиоэфир (💎 FLAC / ⚡ MP3 ➔ xFLAC)' },
-    { id: 'torrent', icon: '🧲', title: '🧲 Торрент-Студия (Magnet / Поиск)' },
-    { id: 'archive', icon: '☁️', title: '☁️ Lossless Архивы и Концерты' }
+    { id: 'ost',        svg: window.JENNY_NEON_SVGS_V92.ost,        title: 'Game OST Студия (Lossless ➔ xFLAC)' },
+    { id: 'radio',      svg: window.JENNY_NEON_SVGS_V92.radio,      title: 'Радиоэфир (HIGH / LOW ➔ xFLAC)' },
+    { id: 'soundcloud', svg: window.JENNY_NEON_SVGS_V92.soundcloud, title: 'SoundCloud Студия (Поток ➔ xFLAC)' },
+    { id: 'torrent',    svg: window.JENNY_NEON_SVGS_V92.torrent,    title: 'Торрент-Студия (P2P / Magnet)' },
+    { id: 'archive',    svg: window.JENNY_NEON_SVGS_V92.archive,    title: 'Lossless Архивы и Концерты' }
 ];
 
 window.getPinnedSourcesV91 = function() {
     window.appConfig = window.appConfig || {};
     if (!Array.isArray(window.appConfig.pinnedSourcesV91)) {
-        window.appConfig.pinnedSourcesV91 = ['ost', 'radio'];
+        window.appConfig.pinnedSourcesV91 = ['ost', 'radio', 'soundcloud'];
     }
     return window.appConfig.pinnedSourcesV91.slice(0, 3);
 };
@@ -4546,9 +4558,8 @@ window.getPinnedSourcesV91 = function() {
 window.togglePinSourceV91 = function(srcId, ev) {
     if (ev && ev.stopPropagation) ev.stopPropagation();
     let pinned = [...window.getPinnedSourcesV91()];
-    if (pinned.includes(srcId)) {
-        pinned = pinned.filter(x => x !== srcId);
-    } else {
+    if (pinned.includes(srcId)) pinned = pinned.filter(x => x !== srcId);
+    else {
         if (pinned.length >= 3) {
             if (typeof window.showToast === 'function') window.showToast('⚠️ Максимум 3 значка в шапке');
             return;
@@ -4567,6 +4578,7 @@ window.triggerSourceActionV91 = function(srcId, ev) {
     if (menu) menu.style.display = 'none';
     if (srcId === 'ost') window.openKhinsiderModalV88(ev);
     else if (srcId === 'radio') window.openFlacRadioModalV91(ev);
+    else if (srcId === 'soundcloud') window.openSoundCloudModalV92(ev);
     else if (srcId === 'torrent') window.openTorrentHubPreviewModalV91(ev);
     else if (srcId === 'archive') {
         window.openKhinsiderModalV88(ev);
@@ -4581,7 +4593,7 @@ window.toggleSourcesDropdownMenuV91 = function(ev) {
     if (!menu) {
         menu = document.createElement('div');
         menu.id = 'jennySourcesDropMenuV91';
-        menu.style.cssText = 'position:fixed;top:54px;right:12px;width:290px;background:#0b0f17;border:1.5px solid #58a6ff;border-radius:12px;padding:8px;z-index:2147483645;box-shadow:0 12px 32px rgba(0,0,0,0.95);display:none;flex-direction:column;gap:6px;';
+        menu.style.cssText = 'position:fixed;top:54px;right:12px;width:305px;background:#090d14;border:1.5px solid #58a6ff;border-radius:12px;padding:8px;z-index:2147483645;box-shadow:0 12px 32px rgba(0,0,0,0.95);display:none;flex-direction:column;gap:6px;';
         document.body.appendChild(menu);
         document.addEventListener('click', (e) => {
             if (menu.style.display !== 'none' && !menu.contains(e.target) && !e.target.closest('#btnSourcesHubDropV91')) {
@@ -4592,18 +4604,20 @@ window.toggleSourcesDropdownMenuV91 = function(ev) {
     if (menu.style.display === 'flex') { menu.style.display = 'none'; return; }
     const pinned = window.getPinnedSourcesV91();
     menu.innerHTML = `<div style="font-size:10.5px;color:#8b949e;padding:2px 4px;display:flex;justify-content:space-between;">
-        <span>🌐 ИСТОЧНИКИ МУЗЫКИ:</span><span>📌 Значки (${pinned.length}/3)</span>
+        <span>ВЫБЕРИ ИСТОЧНИК:</span><span>В шапке (${pinned.length}/3)</span>
     </div>` + window.SOURCES_CATALOG_V91.map(s => {
         const isPin = pinned.includes(s.id);
-        return `<div style="display:flex;align-items:center;gap:6px;background:#11161f;border:1px solid ${isPin ? '#3fb950' : '#262c36'};border-radius:8px;padding:7px 9px;">
-            <div onclick="window.triggerSourceActionV91('${s.id}', event)" style="flex:1;color:#e6edf3;font-size:12px;font-weight:bold;cursor:pointer;">${s.title}</div>
-            <button type="button" onclick="window.togglePinSourceV91('${s.id}', event);window.toggleSourcesDropdownMenuV91();window.toggleSourcesDropdownMenuV91();" style="padding:3px 7px;font-size:11px;border-radius:6px;background:${isPin ? 'rgba(63,185,80,0.22)' : '#161b22'};border:1px solid ${isPin ? '#3fb950' : '#30363d'};color:${isPin ? '#3fb950' : '#8b949e'};">📌</button>
+        return `<div style="display:flex;align-items:center;gap:8px;background:#0f141d;border:1px solid ${isPin ? '#3fb950' : '#262c36'};border-radius:9px;padding:7px 9px;">
+            <div onclick="window.triggerSourceActionV91('${s.id}', event)" style="display:flex;align-items:center;gap:8px;flex:1;color:#e6edf3;font-size:12px;font-weight:bold;cursor:pointer;">
+                <span style="display:inline-flex;width:20px;justify-content:center;">${s.svg}</span>
+                <span>${s.title}</span>
+            </div>
+            <button type="button" onclick="window.togglePinSourceV91('${s.id}', event);window.toggleSourcesDropdownMenuV91();window.toggleSourcesDropdownMenuV91();" style="padding:3px 7px;font-size:10.5px;border-radius:6px;background:${isPin ? 'rgba(63,185,80,0.22)' : '#161b22'};border:1px solid ${isPin ? '#3fb950' : '#30363d'};color:${isPin ? '#3fb950' : '#8b949e'};">${isPin ? 'ВКЛ' : '+'}</button>
         </div>`;
     }).join('');
     menu.style.display = 'flex';
 };
 
-// В шапке отображаем ТОЛЬКО компактные значки (32x30px), чтобы кнопка меню и шестерёнка никогда не вылезали за край!
 window.renderHeaderSourcesHubV91 = function() {
     const oldBtn = document.getElementById('btnKhinsiderOstV88');
     const settingsBtn = document.getElementById('btn-settingsModal');
@@ -4625,10 +4639,10 @@ window.renderHeaderSourcesHubV91 = function() {
         const s = window.SOURCES_CATALOG_V91.find(x => x.id === id);
         if (!s) return '';
         const btnIdAttr = (id === 'ost') ? 'id="btnKhinsiderOstV88"' : `id="btnPinnedSrc_${id}_V91"`;
-        return `<button type="button" ${btnIdAttr} class="jenny-icon-pill" onclick="window.triggerSourceActionV91('${s.id}', event)" title="${s.title}" style="width:32px;height:30px;padding:0;border-radius:10px;font-size:14px;border-color:rgba(63,185,80,0.55) !important;">${s.icon}</button>`;
+        return `<button type="button" ${btnIdAttr} class="jenny-icon-pill" onclick="window.triggerSourceActionV91('${s.id}', event)" title="${s.title}" style="width:32px;height:30px;padding:0;border-radius:9px;">${s.svg}</button>`;
     }).join('');
 
-    hub.innerHTML = btnsHtml + `<button type="button" id="btnSourcesHubDropV91" class="jenny-icon-pill" onclick="window.toggleSourcesDropdownMenuV91(event)" title="Все источники" style="width:34px;height:30px;padding:0;border-radius:10px;font-size:12px;font-weight:900;color:#58a6ff !important;border-color:#58a6ff !important;">🌐▾</button>`;
+    hub.innerHTML = btnsHtml + `<button type="button" id="btnSourcesHubDropV91" class="jenny-icon-pill" onclick="window.toggleSourcesDropdownMenuV91(event)" title="Все источники" style="width:32px;height:30px;padding:0;border-radius:9px;">${window.JENNY_NEON_SVGS_V92.hub}</button>`;
 };
 
 window.updateKhHeaderBtnBadgeV89 = function(text, isBusy) {
@@ -4637,11 +4651,11 @@ window.updateKhHeaderBtnBadgeV89 = function(text, isBusy) {
     if (isBusy) {
         hdrBtn.style.width = 'auto';
         hdrBtn.style.padding = '0 6px';
-        hdrBtn.innerHTML = `<span style="font-size:10px;color:#58a6ff;font-weight:900;">🎮${text}</span>`;
+        hdrBtn.innerHTML = `<span style="font-size:10px;color:#3fb950;font-weight:900;">${text}</span>`;
     } else {
         hdrBtn.style.width = '32px';
         hdrBtn.style.padding = '0';
-        hdrBtn.innerHTML = '🎮';
+        hdrBtn.innerHTML = window.JENNY_NEON_SVGS_V92.ost;
     }
 };
 
@@ -4658,22 +4672,15 @@ window.renderSourcesSettingsSectionV91 = function() {
         container.appendChild(box);
     }
     const pinned = window.getPinnedSourcesV91();
-    box.innerHTML = `<summary>🌐 Значки источников в шапке (до 3 шт.)</summary><div class="group-content">` +
-        window.SOURCES_CATALOG_V91.map(s => `<label style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;color:#e6edf3;font-size:12.5px;cursor:pointer;"><span>${s.title}</span><input type="checkbox" ${pinned.includes(s.id) ? 'checked' : ''} onchange="window.togglePinSourceV91('${s.id}', event)"></label>`).join('') +
+    box.innerHTML = `<summary>Значки источников в шапке (до 3 шт.)</summary><div class="group-content">` +
+        window.SOURCES_CATALOG_V91.map(s => `<label style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;color:#e6edf3;font-size:12.5px;cursor:pointer;"><span style="display:flex;align-items:center;gap:8px;">${s.svg}<span>${s.title}</span></span><input type="checkbox" ${pinned.includes(s.id) ? 'checked' : ''} onchange="window.togglePinSourceV91('${s.id}', event)"></label>`).join('') +
         `</div>`;
 };
 
-// === 📻 РАДИОЭФИР С ПОЛОСОЙ ЖАНРОВ И ПОДСТРОКОЙ КАЧЕСТВА (💎 LOSSLESS / ⚡ LOSSY) ===
 window._radioStateV91 = {
     stations: [], currentStation: null, audio: null,
     isRecording: false, recTimer: null, formatMode: 'xflac_psycho',
-    qualityFilter: 'all', // 'all' | 'lossless' | 'lossy'
-    selectedGenre: null
-};
-
-window.GENRE_ICONS_V92 = {
-    'Rock': '🎸', 'Electronic': '🎹', 'Chill': '🌙',
-    'Retro': '🕹️', 'Jazz': '🎷', 'Classical': '🎻', 'Pop / Misc': '🎤'
+    qualityFilter: 'all', selectedGenre: null
 };
 
 window.minimizeFlacRadioModalV91 = function() {
@@ -4705,19 +4712,14 @@ window.renderRadioFiltersAndStationsV92 = function() {
     const qInp = document.getElementById('radSearchInpV91');
     const txtQ = (qInp ? qInp.value.trim().toLowerCase() : '');
 
-    // 1. Фильтр по качеству (🌐 Все | 💎 Lossless | ⚡ Обычное)
     const byQual = all.filter(s => {
         if (st.qualityFilter === 'lossless' && !s.lossless) return false;
         if (st.qualityFilter === 'lossy' && s.lossless) return false;
         return true;
     });
 
-    // Считаем жанры для первой ленты (как в основном окне плеера)
     const genreCounts = {};
-    byQual.forEach(s => {
-        const g = s.genre || 'Pop / Misc';
-        genreCounts[g] = (genreCounts[g] || 0) + 1;
-    });
+    byQual.forEach(s => { const g = s.genre || 'Pop / Misc'; genreCounts[g] = (genreCounts[g] || 0) + 1; });
     const genres = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a]);
     if (st.selectedGenre && !genreCounts[st.selectedGenre]) st.selectedGenre = null;
 
@@ -4725,26 +4727,21 @@ window.renderRadioFiltersAndStationsV92 = function() {
     if (gBar) {
         gBar.innerHTML = genres.map(g => {
             const isSel = (st.selectedGenre === g);
-            const ic = window.GENRE_ICONS_V92[g] || '🎵';
-            const cls = 'jenny-pl-chip-v71' + (isSel ? ' active-pl-chip' : '');
-            return `<div class="${cls}" onclick="window.toggleRadioGenreFilterV92('${g}')"><span>${ic}</span><span>${g}</span><span class="jenny-pl-chip-count-v71">${genreCounts[g]}</span></div>`;
+            return `<div class="jenny-pl-chip-v71 ${isSel ? 'active-pl-chip' : ''}" onclick="window.toggleRadioGenreFilterV92('${g}')"><span>${g}</span><span class="jenny-pl-chip-count-v71">${genreCounts[g]}</span></div>`;
         }).join('');
     }
 
-    // Подстрока компактных значков качества: 🌐 Все | 💎 Lossless | ⚡ Lossy
     const qBar = document.getElementById('radQualitySubStripV92');
     if (qBar) {
         const llCnt = all.filter(x => x.lossless).length;
         const lsCnt = all.filter(x => !x.lossless).length;
+        const svgs = window.JENNY_NEON_SVGS_V92;
         const qItems = [
-            { id: 'all',      lbl: `🌐 Все (${all.length})`,       title: 'Все радиостанции' },
-            { id: 'lossless', lbl: `💎 Lossless (${llCnt})`,       title: 'Лучшее качество без потерь (FLAC / PCM)' },
-            { id: 'lossy',    lbl: `⚡ Lossy (${lsCnt})`,          title: 'Обычное сжатое качество (MP3 / AAC)' }
+            { id: 'all',      html: `<span>ВСЕ (${all.length})</span>` },
+            { id: 'lossless', html: `${svgs.badgeHigh} <span style="color:#3fb950;">Lossless (${llCnt})</span>` },
+            { id: 'lossy',    html: `${svgs.badgeLow} <span style="color:#e3b341;">Обычное (${lsCnt})</span>` }
         ];
-        qBar.innerHTML = qItems.map(qi => {
-            const act = (st.qualityFilter === qi.id);
-            return `<div class="jenny-pl-chip-v71 ${act ? 'active-pl-chip' : ''}" title="${qi.title}" onclick="window.setRadioQualityFilterV92('${qi.id}')" style="padding:3px 9px;font-size:11px;">${qi.lbl}</div>`;
-        }).join('');
+        qBar.innerHTML = qItems.map(qi => `<div class="jenny-pl-chip-v71 ${st.qualityFilter === qi.id ? 'active-pl-chip' : ''}" onclick="window.setRadioQualityFilterV92('${qi.id}')" style="padding:3px 9px;font-size:11px;display:inline-flex;align-items:center;gap:5px;">${qi.html}</div>`).join('');
     }
 
     const filtered = byQual.filter(s => {
@@ -4760,17 +4757,16 @@ window.renderRadioFiltersAndStationsV92 = function() {
         return;
     }
 
+    const svgs = window.JENNY_NEON_SVGS_V92;
     body.innerHTML = filtered.map(s => {
         const origIdx = all.indexOf(s);
         const isPlayingThis = Boolean(st.audio && st.currentStation && st.currentStation.url === s.url && !st.audio.paused);
-        const qIcon = s.lossless
-            ? `<span title="Lossless (Без потерь)" style="color:#3fb950;font-weight:bold;">💎 ${s.codec}</span>`
-            : `<span title="Lossy (Обычное качество)" style="color:#e3b341;">⚡ ${s.codec}</span>`;
-        const gIcon = window.GENRE_ICONS_V92[s.genre] || '🎵';
+        const badgeSvg = s.lossless ? svgs.badgeHigh : svgs.badgeLow;
+        const clr = s.lossless ? '#3fb950' : '#e3b341';
         return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid ${isPlayingThis ? '#3fb950' : '#262c36'};border-radius:9px;">
             <div style="flex:1;min-width:0;" onclick="window.playFlacRadioStationV91(${origIdx}, this.nextElementSibling)">
-                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.lossless ? '💎' : '⚡'} ${s.title}</div>
-                <div style="font-size:10px;margin-top:2px;color:#8b949e;">${qIcon} • ${gIcon} ${s.genre}</div>
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px;">${badgeSvg}<span>${s.title}</span></div>
+                <div style="font-size:10px;margin-top:3px;color:#8b949e;"><span style="color:${clr};font-weight:bold;">${s.codec}</span> • ${s.genre}</div>
             </div>
             <button type="button" class="rad-play-btn-v91" onclick="window.playFlacRadioStationV91(${origIdx}, this)" style="padding:5px 10px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">${isPlayingThis ? '⏹' : '▶'}</button>
         </div>`;
@@ -4782,8 +4778,6 @@ window.playFlacRadioStationV91 = async function(idx, btnEl) {
     if (!st) return;
     if (window._radioStateV91.audio && window._radioStateV91.currentStation && window._radioStateV91.currentStation.url === st.url && !window._radioStateV91.audio.paused) {
         window.stopFlacRadioStreamV91();
-        const infoEl = document.getElementById('radNowPlayingTitleV91');
-        if (infoEl) infoEl.innerText = '⏹ Эфир остановлен';
         window.renderRadioFiltersAndStationsV92();
         return;
     }
@@ -4799,7 +4793,7 @@ window.playFlacRadioStationV91 = async function(idx, btnEl) {
     const infoEl = document.getElementById('radNowPlayingTitleV91');
     try {
         await aud.play();
-        if (infoEl) infoEl.innerText = `${st.lossless ? '💎' : '⚡'} В эфире: ${st.title}`;
+        if (infoEl) infoEl.innerHTML = `${st.lossless ? window.JENNY_NEON_SVGS_V92.badgeHigh : window.JENNY_NEON_SVGS_V92.badgeLow} В эфире: ${st.title}`;
         window.renderRadioFiltersAndStationsV92();
     } catch (e) {
         if (btnEl) btnEl.innerText = '▶';
@@ -4823,9 +4817,7 @@ window.toggleRadioRecordToXflacV91 = async function() {
             window._radioStateV91.recTimer = setInterval(async () => {
                 try {
                     const stData = await (await fetch('/api/radio/record_status')).json();
-                    if (stData.active && btn) {
-                        btn.innerText = `⏹ Стоп и сжать в xFLAC (${stData.sec}с • ${stData.wav_mb} МБ)`;
-                    }
+                    if (stData.active && btn) btn.innerText = `⏹ Стоп и сжать в xFLAC (${stData.sec}с • ${stData.wav_mb} МБ)`;
                 } catch (e) {}
             }, 600);
         }
@@ -4839,9 +4831,7 @@ window.toggleRadioRecordToXflacV91 = async function() {
             if (statusEl) statusEl.innerText = `✅ Сохранено: ${r.filename} (${r.size_mb} MB)`;
             if (typeof window.fetchData === 'function') window.fetchData();
             if (typeof window.showToast === 'function') window.showToast(`✅ Эфир сжат: ${r.filename} (${r.size_mb} MB)`);
-        } else if (statusEl) {
-            statusEl.innerText = `❌ ${r.error || 'Ошибка записи'}`;
-        }
+        } else if (statusEl) statusEl.innerText = `❌ ${r.error || 'Ошибка записи'}`;
     }
 };
 
@@ -4849,12 +4839,11 @@ window.loadFlacRadioStationsV91 = async function() {
     const inp = document.getElementById('radSearchInpV91');
     const body = document.getElementById('radStationsListV91');
     if (!body) return;
-    const q = inp ? inp.value.trim() : '';
     body.innerHTML = '<div style="color:#58a6ff;text-align:center;padding:25px;">⏳ Загрузка радиостанций...</div>';
     try {
         const d = await (await fetch('/api/radio/stations', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q })
+            body: JSON.stringify({ query: inp ? inp.value.trim() : '' })
         })).json();
         window._radioStateV91.stations = d.stations || [];
         if (!window._radioStateV91.currentStation && window._radioStateV91.stations.length) {
@@ -4880,23 +4869,55 @@ window.openFlacRadioModalV91 = function(ev) {
     m.onclick = (e) => { if (e.target === m) window.minimizeFlacRadioModalV91(); };
     m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:450px;max-height:88vh;display:flex;flex-direction:column;">
         <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(88,166,255,0.22),rgba(63,185,80,0.22));">
-            <span style="color:#58a6ff;font-weight:900;font-size:13px;">📻 РАДИОЭФИР ➔ XFLAC</span>
+            <span style="color:#58a6ff;font-weight:900;font-size:13px;display:flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.radio}<span>РАДИОЭФИР ➔ XFLAC</span></span>
             <button type="button" onclick="window.minimizeFlacRadioModalV91()" style="padding:4px 10px;font-size:11px;border-radius:7px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>
         </div>
         <div style="padding:9px 12px;background:#090d14;border-bottom:1px solid #21262d;display:flex;flex-direction:column;gap:6px;">
             <div style="display:flex;gap:6px;">
                 <input type="text" id="radSearchInpV91" placeholder="Поиск станции или жанра..." oninput="window.renderRadioFiltersAndStationsV92()" onkeydown="if(event.key==='Enter') window.loadFlacRadioStationsV91()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
-                <button type="button" onclick="window.loadFlacRadioStationsV91()" title="Искать в мировой базе" style="padding:7px 12px;background:#1f6feb;color:#fff;border:none;border-radius:8px;font-weight:bold;">🌐🔍</button>
+                <button type="button" onclick="window.loadFlacRadioStationsV91()" style="padding:7px 12px;background:#1f6feb;color:#fff;border:none;border-radius:8px;font-weight:bold;">🔍</button>
             </div>
             <div id="radGenreStripV92" class="jenny-pl-scroll-strip-v71" style="padding-bottom:2px;"></div>
             <div id="radQualitySubStripV92" class="jenny-subfilter-bar-v71" style="margin-bottom:0;padding-bottom:4px;"></div>
-            <div id="radNowPlayingTitleV91" style="font-size:11px;color:#3fb950;font-weight:bold;padding:1px 0;">🎧 Выбери станцию (💎 Lossless / ⚡ Lossy)</div>
+            <div id="radNowPlayingTitleV91" style="font-size:11px;color:#3fb950;font-weight:bold;padding:1px 0;display:flex;align-items:center;gap:6px;">Выбери станцию (${window.JENNY_NEON_SVGS_V92.badgeHigh} / ${window.JENNY_NEON_SVGS_V92.badgeLow})</div>
             <button type="button" id="btnRadioRecV91" onclick="window.toggleRadioRecordToXflacV91()" style="width:100%;padding:8px;background:#238636;color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:12px;">⏺ Записать эфир станции в .xFLAC</button>
         </div>
         <div id="radStationsListV91" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-height:220px;"></div>
     </div>`;
     document.body.appendChild(m);
     window.loadFlacRadioStationsV91();
+};
+
+// === ☁️ SOUNDCLOUD СТУДИЯ (ПОИСК, ПОТОК -30% С SEEK И СКАЧИВАНИЕ В .XFLAC) ===
+window.openSoundCloudModalV92 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    window.openKhinsiderModalV88(ev);
+    const hdrTitle = document.querySelector('#jennyKhinsiderModalV88 .jenny-modal-hdr-v71 span');
+    if (hdrTitle) hdrTitle.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;color:#ff8c42;">${window.JENNY_NEON_SVGS_V92.soundcloud}<span>SOUNDCLOUD ➔ XFLAC</span></span>`;
+    const inp = document.getElementById('khSearchInpV88');
+    if (inp) inp.placeholder = 'Трек или артист в SoundCloud (Phonk, Synthwave, Remix...)';
+    window._scModeActiveV92 = true;
+};
+
+const _origRunKhSearchV88 = window.runKhSearchV88;
+window.runKhSearchV88 = async function() {
+    if (!window._scModeActiveV92) return _origRunKhSearchV88.apply(this, arguments);
+    const inp = document.getElementById('khSearchInpV88');
+    const body = document.getElementById('khBodyContentV88');
+    if (!inp || !body) return;
+    const q = inp.value.trim() || 'Synthwave';
+    body.innerHTML = `<div style="color:#ff8c42;text-align:center;padding:35px 10px;">⏳ Поиск «${q}» в SoundCloud...</div>`;
+    try {
+        const res = await fetch('/api/soundcloud/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) });
+        const d = await res.json();
+        if (!res.ok || d.status !== 'ok') throw new Error(d.error || 'Ошибка SoundCloud');
+        const alb = { slug: 'sc_search', album_title: `SoundCloud: ${q}`, has_flac: false, tracks: d.tracks || [] };
+        window._khStateV88.currentAlbum = alb;
+        window._khStateV88.selectedTracks = new Set((alb.tracks || []).filter(t => !t.downloaded).map(t => t.index));
+        window.renderKhAlbumTracksV88(alb);
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 10px;">❌ ${e.message || e}</div>`;
+    }
 };
 
 window.openTorrentHubPreviewModalV91 = function(ev) {
@@ -4913,12 +4934,12 @@ window.openTorrentHubPreviewModalV91 = function(ev) {
     m.onclick = (e) => { if (e.target === m) m.style.setProperty('display', 'none', 'important'); };
     m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:450px;">
         <div class="jenny-modal-hdr-v71">
-            <span style="color:#d2a8ff;font-weight:900;font-size:13px;">🧲 ТОРРЕНТ-СТУДИЯ (GO ENGINE)</span>
+            <span style="color:#d2a8ff;font-weight:900;font-size:13px;display:flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.torrent}<span>ТОРРЕНТ-СТУДИЯ (GO ENGINE)</span></span>
             <button type="button" onclick="document.getElementById('jennyTorrentModalV91').style.setProperty('display','none','important')" style="padding:4px 10px;font-size:11px;border-radius:7px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>
         </div>
         <div class="jenny-modal-body-v71">
             <input type="text" id="torMagnetInpV91" placeholder="Вставь Magnet-ссылку или поисковый запрос FLAC..." style="width:100%;padding:8px 10px;text-align:left !important;box-sizing:border-box;">
-            <div style="font-size:11.5px;color:#8b949e;line-height:1.4;">⚡ Слот готов. Следующим шагом подключим сюда Go-демон <b>libjtorrent.so</b>.</div>
+            <div style="font-size:11.5px;color:#8b949e;line-height:1.4;">Слот готов. Следующим шагом подключим сюда Go-демон <b>libjtorrent.so</b>.</div>
         </div>
     </div>`;
     document.body.appendChild(m);
