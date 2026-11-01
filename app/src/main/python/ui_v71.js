@@ -48,7 +48,7 @@ window.closeAllV71Modals = function() {
     [
         'jennyPlEyeModalV71', 'jennyPlSortModalV71', 'jennyCreatePlModalV71',
         'jennyImpFolderModalV71', 'jennyFolderManagerModal',
-        'jennyTrackToPlModalV71', 'jennyMetaEditorModalV71', 'jennyKhinsiderModalV88'
+        'jennyTrackToPlModalV71', 'jennyMetaEditorModalV71'
     ].forEach(id => document.getElementById(id)?.remove());
 };
 
@@ -4056,11 +4056,28 @@ window.stopKhPreviewV88 = function() {
     }
 };
 
+window.updateKhHeaderBtnBadgeV89 = function(text, isBusy) {
+    const hdrBtn = document.getElementById('btnKhinsiderOstV88');
+    if (!hdrBtn) return;
+    hdrBtn.innerHTML = isBusy
+        ? `<span>⏳</span><span style="color:#58a6ff;">${text}</span>`
+        : `<span>🎮</span><span>OST</span>`;
+};
+
+window.minimizeKhinsiderModalV88 = function() {
+    const m = document.getElementById('jennyKhinsiderModalV88');
+    if (m) m.style.display = 'none';
+    if (window._khStateV88.isDownloading && typeof window.showToast === 'function') {
+        window.showToast('⏬ OST Студия свёрнута в фон (загрузка продолжается)');
+    }
+};
+
 window.stopKhProgressPollV89 = function() {
     if (window._khStateV88.pollTimer) {
         clearInterval(window._khStateV88.pollTimer);
         window._khStateV88.pollTimer = null;
     }
+    window.updateKhHeaderBtnBadgeV89('OST', false);
 };
 
 window.startKhProgressPollV89 = function(prefixLabel) {
@@ -4083,6 +4100,9 @@ window.startKhProgressPollV89 = function(prefixLabel) {
                 barFill.style.background = (p.stage === 'converting')
                     ? 'linear-gradient(90deg, #a371f7, #3fb950)'
                     : 'linear-gradient(90deg, #1f6feb, #3fb950)';
+            }
+            if (p.active) {
+                window.updateKhHeaderBtnBadgeV89(p.stage === 'converting' ? 'xFLAC' : (pct + '%'), true);
             }
             if (stEl && p.message) {
                 stEl.innerText = (prefixLabel ? prefixLabel + ' ' : '') + p.message;
@@ -4117,11 +4137,21 @@ window.selectKhFormatV88 = function(fmt) {
 
 window.openKhinsiderModalV88 = function(ev) {
     if (ev && ev.stopPropagation) ev.stopPropagation();
+    const existing = document.getElementById('jennyKhinsiderModalV88');
+    if (existing) {
+        if (existing.style.display === 'none') {
+            window.closeAllV71Modals();
+            existing.style.display = 'flex';
+        } else {
+            window.minimizeKhinsiderModalV88();
+        }
+        return;
+    }
     window.closeAllV71Modals();
     const m = document.createElement('div');
     m.id = 'jennyKhinsiderModalV88';
     m.className = 'jenny-modal-backdrop-v71';
-    m.onclick = (e) => { if (e.target === m) { window.stopKhPreviewV88(); window.stopKhProgressPollV89(); m.remove(); } };
+    m.onclick = (e) => { if (e.target === m) window.minimizeKhinsiderModalV88(); };
 
     const quickGames = ['Gothic', 'Fallout', 'Silent Hill', 'Doom', 'Need for Speed', 'Witcher', 'Heroes III', 'GTA'];
     const chips = quickGames.map(g => `<button type="button" onclick="document.getElementById('khSearchInpV88').value='${g}';window.runKhSearchV88();" style="padding:3px 8px;font-size:10.5px;border-radius:12px;background:#11161d;border:1px solid #30363d;color:#79c0ff;white-space:nowrap;">🎮 ${g}</button>`).join('');
@@ -4129,7 +4159,10 @@ window.openKhinsiderModalV88 = function(ev) {
     m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:460px;max-height:88vh;display:flex;flex-direction:column;">
         <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(63,185,80,0.22),rgba(115,65,190,0.25));">
             <span style="color:#3fb950;font-weight:900;font-size:13px;">🎮 GAME OST ➔ XFLAC СТУДИЯ</span>
-            <button type="button" onclick="window.stopKhPreviewV88();window.stopKhProgressPollV89();document.getElementById('jennyKhinsiderModalV88').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <button type="button" onclick="window.minimizeKhinsiderModalV88()" style="padding:3px 8px;font-size:11px;border-radius:6px;background:rgba(88,166,255,0.16);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>
+                <button type="button" onclick="window.minimizeKhinsiderModalV88()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>
+            </div>
         </div>
         <div style="padding:10px 12px;border-bottom:1px solid #21262d;background:#090d14;display:flex;flex-direction:column;gap:7px;">
             <div style="display:flex;gap:6px;">
