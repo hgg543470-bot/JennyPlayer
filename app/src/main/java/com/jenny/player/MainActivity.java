@@ -173,6 +173,12 @@ public class MainActivity extends AppCompatActivity {
                 nativeFFmpeg.setExecutable(true);
                 Os.setenv("FFMPEG_BINARY", nativeFFmpeg.getAbsolutePath(), true);
             }
+            File nativeXflac = new File(nativeDir, "libxflac.so");
+            if (nativeXflac.exists()) {
+                Os.setenv("XFLAC_LIB_PATH", nativeXflac.getAbsolutePath(), true);
+            }
+            Os.setenv("JENNY_NATIVE_DIR", nativeDir, true);
+            Os.setenv("JENNY_FILES_DIR", getFilesDir().getAbsolutePath(), true);
 
             String path = System.getenv("PATH");
             Os.setenv("PATH", nativeDir + ":" + getFilesDir().getAbsolutePath() + ":" + path, true);

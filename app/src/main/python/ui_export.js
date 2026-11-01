@@ -7,7 +7,8 @@ window.executeTrackExportV69 = async function() {
     const btn = document.getElementById('btnExport');
     const oldBtnHtml = btn ? btn.innerHTML : "";
     if (btn) btn.innerText = "⏳";
-    if (typeof window.showToast === 'function') window.showToast("⏳ Рендеринг в OPUS...");
+    const _activeBrToast = (window.appConfig && window.appConfig.pocketBitrateV77) || "48k";
+    if (typeof window.showToast === 'function') window.showToast(_activeBrToast.startsWith("xflac") ? "⏳ Рендеринг и сжатие в XFLAC..." : (_activeBrToast === "wav_pcm" ? "⏳ Сохранение в чистый WAV..." : "⏳ Рендеринг в OPUS..."));
 
     try {
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
@@ -85,10 +86,14 @@ window.executeTrackExportV69 = async function() {
             ? Math.max(0.1, Math.min(100.0, (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) * userSpeed))
             : userSpeed;
 
-        let sourceBuffer = hasRevMaster ? window.reconstructedMasterBufferV67 : window.studioBuffer;
+        const isStudioBufComplete = Boolean(window.studioBuffer && (!window.studioBuffer._pieceMapV72 || window.studioBuffer._allPiecesLoadedV72));
+        let sourceBuffer = hasRevMaster ? window.reconstructedMasterBufferV67 : (isStudioBufComplete ? window.studioBuffer : null);
         if (!sourceBuffer) {
             let res = await fetch('/api/media/' + encodeURIComponent(window.currentPlayingTrack));
-            if (!res.ok) throw new Error("Не удалось загрузить исходник трека");
+            if (!res.ok) {
+                let errMsg = await res.text().catch(() => "Не удалось загрузить исходник трека");
+                throw new Error(errMsg || "Не удалось загрузить исходник трека");
+            }
             let arrayBuffer = await res.arrayBuffer();
             sourceBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
         }
@@ -310,11 +315,6 @@ window.executeTrackExportV69 = async function() {
         }
         if (revExportPkg && revExportPkg.pocketWavBlob) {
             formData.append('pocket_audio', revExportPkg.pocketWavBlob, 'pocket.wav');
-            const pckSel = document.getElementById('selPocketBitrateV77');
-            const pckBr = pckSel ? pckSel.value : ((window.appConfig && window.appConfig.pocketBitrateV77) || '48k');
-            formData.append('pocket_bitrate', pckBr);
-            const keyInp = document.getElementById('inpPocketKeyV78');
-            if (keyInp && keyInp.value.trim()) formData.append('pocket_key', keyInp.value.trim());
         }
 
         let res = await fetch('/api/export', { method: 'POST', body: formData });
@@ -456,7 +456,7 @@ window.ensureExportModalV69 = function() {
                     <button type="button" data-br="128k" onclick="window.selectExportBitrateV79('128k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 128k</button>
                     <button type="button" data-br="192k" onclick="window.selectExportBitrateV79('192k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🔥 192k</button>
                     <button type="button" data-br="256k" onclick="window.selectExportBitrateV79('256k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 256k</button>
-                    <button type="button" data-br="orig" onclick="window.selectExportBitrateV79('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;">🎯 ОРИГ</button>
+                    <button type="button" data-br="orig" onclick="window.selectExportBitrateV79('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;" title="Кодировать в .opus с битрейтом исходника">🎯 OPUS Авто</button>
                     <button type="button" data-br="xflac_ultra" onclick="window.selectExportBitrateV79('xflac_ultra')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#ff7b72;font-weight:bold;">🔥 XFLAC 15 (~9%)</button>
                     <button type="button" data-br="xflac_psycho" onclick="window.selectExportBitrateV79('xflac_psycho')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XFLAC 25 (~12%)</button>
                     <button type="button" data-br="xflac_hifi" onclick="window.selectExportBitrateV79('xflac_hifi')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#d2a8ff;font-weight:bold;">✨ XFLAC 45 (~16%)</button>
@@ -589,7 +589,8 @@ window.exportCurrentTrack = function() {
     };
 
     renderGrid();
-    if (typeof window.selectExportBitrateV79 === 'function') window.selectExportBitrateV79((window.appConfig && window.appConfig.pocketBitrateV77) || '48k');
+    if (typeof window.selectExportBitrateV79 === 'function') window.selectExportBitrateV79((window.appConfig && window.appConfig.pocketBitrateV77) || 'xflac_psycho');
+    if (typeof window.selectExportSampleRateV86 === 'function') window.selectExportSampleRateV86((window.appConfig && window.appConfig.exportSampleRateV86) || 'orig');
     if (typeof window.selectExportSpeedV79 === 'function') window.selectExportSpeedV79(window._forcedExportSpeedV79 || 0);
     modal.style.display = 'flex';
 };
@@ -620,7 +621,7 @@ window.selectExportBitrateV79 = function(br) {
         '128k': '128k (Студийный)',
         '192k': '192k (Мастер)',
         '256k': '256k (Ультра)',
-        'orig': '🎯 ОРИГ (Битрейт исходника 1:1)',
+        'orig': '🎯 OPUS Авто (Сжатие в .opus под битрейт исходника)',
         'xflac_ultra': '🔥 XFLAC Ultra (Gate 15 • ~8-9% от WAV)',
         'xflac_psycho': '🧬 XFLAC Psycho (Gate 25 • ~11-13% от WAV)',
         'xflac_hifi': '✨ XFLAC Hi-Fi (Gate 45 • ~15-16% от WAV)',
@@ -649,4 +650,18 @@ window.selectExportSpeedV79 = function(spd) {
         b.style.boxShadow = act ? '0 0 10px rgba(88, 166, 255, 0.45)' : 'none';
     });
     window.updateExportConfirmBtnLabelV79();
+};
+
+
+window.selectExportSampleRateV86 = function(sr) {
+    window.appConfig = window.appConfig || {};
+    window.appConfig.exportSampleRateV86 = sr;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    document.querySelectorAll('#srBtnGroupV86 button').forEach(b => {
+        const act = (b.getAttribute('data-sr') === sr);
+        b.style.borderColor = act ? '#3fb950' : '#30363d';
+        b.style.background = act ? 'rgba(63, 185, 80, 0.24)' : '#161b22';
+        b.style.color = act ? '#ffffff' : '#8b949e';
+        b.style.fontWeight = act ? 'bold' : 'normal';
+    });
 };

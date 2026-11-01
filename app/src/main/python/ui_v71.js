@@ -48,7 +48,7 @@ window.closeAllV71Modals = function() {
     [
         'jennyPlEyeModalV71', 'jennyPlSortModalV71', 'jennyCreatePlModalV71',
         'jennyImpFolderModalV71', 'jennyFolderManagerModal',
-        'jennyTrackToPlModalV71', 'jennyMetaEditorModalV71'
+        'jennyTrackToPlModalV71', 'jennyMetaEditorModalV71', 'jennyKhinsiderModalV88'
     ].forEach(id => document.getElementById(id)?.remove());
 };
 
@@ -56,7 +56,7 @@ window.closeAllV71Modals = function() {
 window.getTrackMetaV71 = function(filename) {
     const srv = (window.lastData && window.lastData.track_meta && window.lastData.track_meta[filename]) || {};
     let stem = String(filename || '').replace(/\.[^/.]+$/, '');
-    stem = stem.replace(/(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock)|_rev(?:ersed)?)+$/ig, '');
+    stem = stem.replace(/(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock|bitperfect|psycho|ultra|hifi|restored)|_rev(?:ersed)?)+$/ig, '');
 
     let artist = srv.artist || '';
     let album = srv.album || '';
@@ -4056,3 +4056,387 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         };
     }
 })();
+
+
+// =========================================================================
+// 🎮 JENNY V88: ВСТРОЕННЫЙ КЛИЕНТ KHINSIDER GAME OST (FLAC -> XFLAC НА ЛЕТУ)
+// =========================================================================
+window._khStateV88 = {
+    formatMode: (window.appConfig && window.appConfig.khFormatModeV88) || 'xflac_psycho',
+    lastQuery: 'Gothic',
+    lastAlbums: [],
+    currentAlbum: null,
+    selectedTracks: new Set(),
+    isDownloading: false,
+    abortDownload: false,
+    previewAudio: null
+};
+
+window.stopKhPreviewV88 = function() {
+    if (window._khStateV88.previewAudio) {
+        try {
+            window._khStateV88.previewAudio.pause();
+            window._khStateV88.previewAudio.src = '';
+        } catch (e) {}
+        window._khStateV88.previewAudio = null;
+    }
+};
+
+window.selectKhFormatV88 = function(fmt) {
+    window._khStateV88.formatMode = fmt;
+    window.appConfig = window.appConfig || {};
+    window.appConfig.khFormatModeV88 = fmt;
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    document.querySelectorAll('#khFmtGroupV88 button').forEach(b => {
+        const act = (b.getAttribute('data-khfmt') === fmt);
+        b.style.borderColor = act ? '#3fb950' : '#30363d';
+        b.style.background = act ? 'rgba(63,185,80,0.24)' : '#161b22';
+        b.style.color = act ? '#ffffff' : '#8b949e';
+        b.style.boxShadow = act ? '0 0 8px rgba(63,185,80,0.4)' : 'none';
+    });
+};
+
+window.openKhinsiderModalV88 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    window.closeAllV71Modals();
+
+    const m = document.createElement('div');
+    m.id = 'jennyKhinsiderModalV88';
+    m.className = 'jenny-modal-backdrop-v71';
+    m.onclick = (e) => {
+        if (e.target === m) {
+            window.stopKhPreviewV88();
+            m.remove();
+        }
+    };
+
+    const quickGames = ['Gothic', 'Fallout', 'Silent Hill', 'Doom', 'Need for Speed', 'Witcher', 'Heroes III', 'GTA'];
+    const quickChipsHtml = quickGames.map(g =>
+        `<button type="button" onclick="document.getElementById('khSearchInpV88').value='${g}';window.runKhSearchV88();" style="padding:3px 8px;font-size:10.5px;border-radius:12px;background:#11161d;border:1px solid #30363d;color:#79c0ff;white-space:nowrap;">🎮 ${g}</button>`
+    ).join('');
+
+    m.innerHTML = `
+        <div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:460px;max-height:88vh;display:flex;flex-direction:column;">
+            <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg, rgba(63,185,80,0.22), rgba(115,65,190,0.25));">
+                <span style="color:#3fb950;font-weight:900;font-size:13px;letter-spacing:0.5px;">🎮 KHINSIDER OST ➔ XFLAC СТУДИЯ</span>
+                <button type="button" onclick="window.stopKhPreviewV88();document.getElementById('jennyKhinsiderModalV88').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>
+            </div>
+
+            <div style="padding:10px 12px;border-bottom:1px solid #21262d;background:#090d14;display:flex;flex-direction:column;gap:7px;">
+                <div style="display:flex;gap:6px;">
+                    <input type="text" id="khSearchInpV88" value="${window._khStateV88.lastQuery || ''}" placeholder="Игра или ссылка (Gothic, Fallout, Silent Hill...)"
+                           onkeydown="if(event.key==='Enter') window.runKhSearchV88()"
+                           style="flex:1;padding:8px 10px;font-size:12.5px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
+                    <button type="button" onclick="window.runKhSearchV88()" style="padding:8px 14px;background:#238636;color:#fff;border:none;border-radius:8px;font-weight:bold;">🔍 Найти</button>
+                </div>
+
+                <div style="display:flex;gap:5px;overflow-x:auto;padding-bottom:2px;">${quickChipsHtml}</div>
+
+                <div style="display:flex;flex-direction:column;gap:4px;margin-top:2px;">
+                    <span style="font-size:10.5px;color:#8b949e;">🧬 Формат сохранения в активную папку плеера (при наличии FLAC на сервере берётся Lossless):</span>
+                    <div id="khFmtGroupV88" style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;">
+                        <button type="button" data-khfmt="xflac_ultra" onclick="window.selectKhFormatV88('xflac_ultra')" style="padding:5px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;">🔥 XF 15 (~9%)</button>
+                        <button type="button" data-khfmt="xflac_psycho" onclick="window.selectKhFormatV88('xflac_psycho')" style="padding:5px 2px;font-size:9.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XF 25 (~12%)</button>
+                        <button type="button" data-khfmt="xflac_lossless" onclick="window.selectKhFormatV88('xflac_lossless')" style="padding:5px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;">💎 XF 1:1</button>
+                        <button type="button" data-khfmt="flac" onclick="window.selectKhFormatV88('flac')" style="padding:5px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;">💿 FLAC</button>
+                        <button type="button" data-khfmt="mp3" onclick="window.selectKhFormatV88('mp3')" style="padding:5px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;">🎵 MP3</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="khBodyContentV88" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:240px;">
+                <div style="color:#8b949e;text-align:center;padding:30px 10px;font-size:12px;">Введи название игры выше и нажми «🔍 Найти», чтобы открыть базу саундтреков KHInsider.</div>
+            </div>
+
+            <div id="khFooterBarV88" style="display:none;padding:10px 12px;border-top:1px solid #21262d;background:#090c10;flex-direction:column;gap:6px;">
+                <div id="khDownloadStatusV88" style="font-size:11px;color:#58a6ff;display:none;"></div>
+                <div style="display:flex;gap:8px;">
+                    <button type="button" id="btnKhBackV88" onclick="window.renderKhAlbumsListV88()" style="padding:8px 12px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:8px;">⬅ Альбомы</button>
+                    <button type="button" id="btnKhDownloadSelV88" onclick="window.downloadSelectedKhTracksV88()" style="flex:1;padding:8px 12px;background:linear-gradient(135deg,#238636,#1f6feb);color:#fff;border:none;border-radius:8px;font-weight:bold;">⬇️ Скачать выбранные в плеер</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(m);
+    window.selectKhFormatV88(window._khStateV88.formatMode);
+    if (window._khStateV88.currentAlbum) {
+        window.renderKhAlbumTracksV88(window._khStateV88.currentAlbum);
+    } else if (window._khStateV88.lastAlbums && window._khStateV88.lastAlbums.length > 0) {
+        window.renderKhAlbumsListV88();
+    }
+};
+
+window.runKhSearchV88 = async function() {
+    const inp = document.getElementById('khSearchInpV88');
+    const body = document.getElementById('khBodyContentV88');
+    const ftr = document.getElementById('khFooterBarV88');
+    if (!inp || !body) return;
+    const q = inp.value.trim();
+    if (!q) return;
+    window._khStateV88.lastQuery = q;
+    window.stopKhPreviewV88();
+    if (ftr) ftr.style.display = 'none';
+    body.innerHTML = `<div style="color:#58a6ff;text-align:center;padding:35px 10px;font-size:12.5px;">⏳ Поиск «${q}» на downloads.khinsider.com...</div>`;
+
+    try {
+        const res = await fetch('/api/khinsider/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') {
+            throw new Error(data.error || 'Ошибка поиска KHInsider');
+        }
+        if (data.direct_album) {
+            window._khStateV88.currentAlbum = data.direct_album;
+            window.renderKhAlbumTracksV88(data.direct_album);
+            return;
+        }
+        window._khStateV88.lastAlbums = data.albums || [];
+        window._khStateV88.currentAlbum = null;
+        window.renderKhAlbumsListV88();
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 10px;font-size:12px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+window.renderKhAlbumsListV88 = function() {
+    const body = document.getElementById('khBodyContentV88');
+    const ftr = document.getElementById('khFooterBarV88');
+    if (!body) return;
+    window._khStateV88.currentAlbum = null;
+    if (ftr) ftr.style.display = 'none';
+    const albums = window._khStateV88.lastAlbums || [];
+    if (albums.length === 0) {
+        body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:30px 10px;">Ничего не найдено. Попробуй другое название на английском.</div>`;
+        return;
+    }
+    body.innerHTML = albums.map(a => {
+        const safeSlug = String(a.slug || '').replace(/'/g, "\'");
+        const metaParts = [a.platforms, a.type, a.year].filter(Boolean).join(' • ');
+        const thumbHtml = a.thumb
+            ? `<img src="${a.thumb}" style="width:42px;height:42px;border-radius:6px;object-fit:cover;flex-shrink:0;border:1px solid #30363d;">`
+            : `<div style="width:42px;height:42px;border-radius:6px;background:#161b22;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">💿</div>`;
+        return `
+            <div onclick="window.openKhAlbumSlugV88('${safeSlug}')" style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:10px;cursor:pointer;">
+                ${thumbHtml}
+                <div style="flex:1;min-width:0;">
+                    <div style="color:#e6edf3;font-weight:bold;font-size:12.5px;line-height:1.3;word-break:break-word;">${a.title}</div>
+                    ${metaParts ? `<div style="color:#8b949e;font-size:10.5px;margin-top:2px;">${metaParts}</div>` : ''}
+                </div>
+                <span style="color:#3fb950;font-size:11px;font-weight:bold;flex-shrink:0;">Открыть ➔</span>
+            </div>
+        `;
+    }).join('');
+};
+
+window.openKhAlbumSlugV88 = async function(slug) {
+    const body = document.getElementById('khBodyContentV88');
+    if (!body) return;
+    window.stopKhPreviewV88();
+    body.innerHTML = `<div style="color:#58a6ff;text-align:center;padding:35px 10px;font-size:12.5px;">⏳ Загрузка треклиста альбома...</div>`;
+    try {
+        const res = await fetch('/api/khinsider/album', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slug })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') {
+            throw new Error(data.error || 'Ошибка чтения альбома');
+        }
+        window._khStateV88.currentAlbum = data;
+        window._khStateV88.selectedTracks = new Set((data.tracks || []).map(t => t.index));
+        window.renderKhAlbumTracksV88(data);
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 10px;font-size:12px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+window.toggleKhTrackCheckV88 = function(idx, checked) {
+    if (checked) window._khStateV88.selectedTracks.add(idx);
+    else window._khStateV88.selectedTracks.delete(idx);
+    window.updateKhDownloadBtnLabelV88();
+};
+
+window.toggleAllKhTracksV88 = function(selectAll) {
+    const alb = window._khStateV88.currentAlbum;
+    if (!alb || !alb.tracks) return;
+    if (selectAll) {
+        window._khStateV88.selectedTracks = new Set(alb.tracks.map(t => t.index));
+    } else {
+        window._khStateV88.selectedTracks.clear();
+    }
+    document.querySelectorAll('.kh-trk-chk-v88').forEach(c => { c.checked = selectAll; });
+    window.updateKhDownloadBtnLabelV88();
+};
+
+window.updateKhDownloadBtnLabelV88 = function() {
+    const btn = document.getElementById('btnKhDownloadSelV88');
+    if (!btn || window._khStateV88.isDownloading) return;
+    const cnt = window._khStateV88.selectedTracks.size;
+    btn.innerText = `⬇️ Скачать выбранные (${cnt}) в плеер`;
+};
+
+window.previewKhTrackV88 = async function(pagePath, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (window._khStateV88.previewAudio && window._khStateV88.previewAudio._pagePath === pagePath) {
+        window.stopKhPreviewV88();
+        if (btnEl) btnEl.innerText = '▶';
+        return;
+    }
+    window.stopKhPreviewV88();
+    document.querySelectorAll('.kh-prev-btn-v88').forEach(b => { b.innerText = '▶'; });
+    if (btnEl) btnEl.innerText = '⏳';
+    try {
+        const res = await fetch('/api/khinsider/resolve_stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page_path: pagePath })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.stream_url) throw new Error(data.error || 'Нет потока');
+        const aud = new Audio(data.stream_url);
+        aud._pagePath = pagePath;
+        window._khStateV88.previewAudio = aud;
+        aud.onended = () => { if (btnEl) btnEl.innerText = '▶'; };
+        await aud.play();
+        if (btnEl) btnEl.innerText = '⏹';
+    } catch (e) {
+        if (btnEl) btnEl.innerText = '▶';
+        if (typeof window.showToast === 'function') window.showToast('❌ Предпрослушка: ' + (e.message || e));
+    }
+};
+
+window.renderKhAlbumTracksV88 = function(alb) {
+    const body = document.getElementById('khBodyContentV88');
+    const ftr = document.getElementById('khFooterBarV88');
+    if (!body || !alb) return;
+    if (ftr) ftr.style.display = 'flex';
+
+    const tracks = alb.tracks || [];
+    const flacBadge = alb.has_flac
+        ? `<span style="background:rgba(63,185,80,0.2);color:#3fb950;border:1px solid #3fb950;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:bold;">💎 FLAC LOSSLESS ДОСТУПЕН</span>`
+        : `<span style="background:rgba(227,179,65,0.18);color:#e3b341;border:1px solid #e3b341;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:bold;">🎵 ТОЛЬКО MP3</span>`;
+
+    const hdrHtml = `
+        <div style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:10px;">
+            <div style="color:#58a6ff;font-weight:900;font-size:13px;">💿 ${alb.album_title}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+                ${flacBadge}
+                <div style="display:flex;gap:6px;">
+                    <button type="button" onclick="window.toggleAllKhTracksV88(true)" style="padding:3px 8px;font-size:10px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;">☑ Все (${tracks.length})</button>
+                    <button type="button" onclick="window.toggleAllKhTracksV88(false)" style="padding:3px 8px;font-size:10px;background:#161b22;color:#8b949e;border:1px solid #30363d;">☐ Снять</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const rowsHtml = tracks.map(t => {
+        const isChk = window._khStateV88.selectedTracks.has(t.index);
+        const safePath = String(t.page_path || '').replace(/'/g, "\'");
+        const szInfo = [t.flac_size ? `FLAC: ${t.flac_size}` : '', t.mp3_size ? `MP3: ${t.mp3_size}` : ''].filter(Boolean).join(' | ');
+        return `
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;">
+                <input type="checkbox" class="kh-trk-chk-v88" ${isChk ? 'checked' : ''} onchange="window.toggleKhTrackCheckV88(${t.index}, this.checked)">
+                <div style="flex:1;min-width:0;" onclick="this.previousElementSibling.click()">
+                    <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.index}. ${t.title}</div>
+                    <div style="color:#8b949e;font-size:10px;margin-top:1px;">⏱ ${t.duration || '—'} ${szInfo ? ' • ' + szInfo : ''}</div>
+                </div>
+                <button type="button" class="kh-prev-btn-v88" onclick="window.previewKhTrackV88('${safePath}', this, event)" title="Предпрослушать" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
+                <button type="button" onclick="window.downloadSingleKhTrackV88(${t.index}, this, event)" title="Скачать этот трек" style="padding:4px 8px;font-size:11px;background:rgba(63,185,80,0.18);color:#3fb950;border:1px solid #3fb950;">⬇️</button>
+            </div>
+        `;
+    }).join('');
+
+    body.innerHTML = hdrHtml + rowsHtml;
+    window.updateKhDownloadBtnLabelV88();
+};
+
+window.downloadSingleKhTrackV88 = async function(trackIdx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const alb = window._khStateV88.currentAlbum;
+    if (!alb || !alb.tracks) return;
+    const t = alb.tracks.find(x => x.index === trackIdx);
+    if (!t) return;
+    const oldTxt = btnEl ? btnEl.innerText : '⬇️';
+    if (btnEl) btnEl.innerText = '⏳';
+    try {
+        const res = await fetch('/api/khinsider/download_track', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                page_path: t.page_path,
+                album_title: alb.album_title,
+                track_title: t.title,
+                track_num: t.index,
+                format_mode: window._khStateV88.formatMode
+            })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.error || 'Ошибка скачивания');
+        if (btnEl) btnEl.innerText = '✅';
+        if (typeof window.fetchData === 'function') window.fetchData();
+        if (typeof window.showToast === 'function') window.showToast(`✅ Скачано: ${data.filename} (${data.size_mb} MB)`);
+    } catch (e) {
+        if (btnEl) btnEl.innerText = oldTxt;
+        if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+    }
+};
+
+window.downloadSelectedKhTracksV88 = async function() {
+    const alb = window._khStateV88.currentAlbum;
+    if (!alb || !alb.tracks) return;
+    if (window._khStateV88.isDownloading) {
+        window._khStateV88.abortDownload = true;
+        return;
+    }
+    const selList = alb.tracks.filter(t => window._khStateV88.selectedTracks.has(t.index));
+    if (selList.length === 0) {
+        if (typeof window.showToast === 'function') window.showToast('⚠️ Выбери хотя бы один трек галочкой!');
+        return;
+    }
+    window._khStateV88.isDownloading = true;
+    window._khStateV88.abortDownload = false;
+    const btn = document.getElementById('btnKhDownloadSelV88');
+    const stEl = document.getElementById('khDownloadStatusV88');
+    if (stEl) stEl.style.display = 'block';
+    if (btn) btn.innerText = '⏹ Остановить очередь';
+
+    let doneCnt = 0;
+    for (let i = 0; i < selList.length; i++) {
+        if (window._khStateV88.abortDownload) break;
+        const t = selList[i];
+        if (stEl) {
+            stEl.innerText = `⏳ [${i + 1}/${selList.length}] Качаем и сжимаем: ${t.title}...`;
+        }
+        try {
+            const res = await fetch('/api/khinsider/download_track', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    page_path: t.page_path,
+                    album_title: alb.album_title,
+                    track_title: t.title,
+                    track_num: t.index,
+                    format_mode: window._khStateV88.formatMode
+                })
+            });
+            const data = await res.json();
+            if (res.ok && data.status === 'ok') {
+                doneCnt++;
+                if (typeof window.fetchData === 'function') window.fetchData();
+            }
+        } catch (e) {}
+    }
+
+    window._khStateV88.isDownloading = false;
+    if (stEl) {
+        stEl.innerText = `✅ Готово! Загружено треков в плеер: ${doneCnt} из ${selList.length}.`;
+    }
+    window.updateKhDownloadBtnLabelV88();
+    if (typeof window.showToast === 'function') {
+        window.showToast(`🎉 Загружено в плеер: ${doneCnt} треков!`);
+    }
+};

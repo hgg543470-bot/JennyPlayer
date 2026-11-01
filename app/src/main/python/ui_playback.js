@@ -71,8 +71,8 @@ window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMe
     audioBuf._allPiecesLoadedV72 = false;
     audioBuf._trueDurationV72 = dur;
 
-    window.studioBuffer = audioBuf;
     window._hugeRamCacheV71 = { name: filename, buf: audioBuf, complete: false };
+    let pieceFailCounts = new Uint8Array(numPieces);
 
     const fetchPiece = async (pIdx) => {
         if (pIdx < 0 || pIdx >= numPieces || pieceMap[pIdx] === 2) return true;
@@ -164,12 +164,20 @@ window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMe
         const ok = await fetchPiece(nextPiece);
         if (window.currentPlayingTrack !== filename) return null;
 
-        // Как только загрузился кусок под курсором — мгновенно включаем чистый RAM-движок (J Buf 90° / 2-я / Винил / Реверс)!
-        if (ok && urgentCursorFetch && typeof window.syncMasterPlaybackEngineV59 === 'function') {
-            window.syncMasterPlaybackEngineV59(false);
+        if (ok) {
+            window.studioBuffer = audioBuf;
+            if (urgentCursorFetch && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+            await new Promise(r => setTimeout(r, 8));
+        } else {
+            pieceFailCounts[nextPiece] = (pieceFailCounts[nextPiece] || 0) + 1;
+            if (pieceFailCounts[nextPiece] >= 3) {
+                if (titleEl) titleEl.innerText = "❌ Ошибка декодирования: " + filename;
+                return null;
+            }
+            await new Promise(r => setTimeout(r, 250));
         }
-
-        if (ok) await new Promise(r => setTimeout(r, 8));
     }
 
     audioBuf._allPiecesLoadedV72 = true;
@@ -348,6 +356,11 @@ window.playTrack = async function(filename, listContext = 'main') {
 
             if (!metaCheck.size || metaCheck.size <= 115 * 1024 * 1024) {
                 const response = await fetch('/api/media/' + encodeURIComponent(filename));
+                if (!response.ok) {
+                    const errTxt = await response.text().catch(() => "HTTP " + response.status);
+                    if (typeof window.showToast === 'function') window.showToast("❌ " + errTxt);
+                    throw new Error(errTxt);
+                }
                 const blob = await response.blob();
                 const blobUrl = URL.createObjectURL(blob);
                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;

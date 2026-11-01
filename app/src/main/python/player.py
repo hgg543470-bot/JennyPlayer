@@ -115,20 +115,56 @@ def _jenny_crypt_stream_v78(data: bytes, password: str = "") -> bytes:
     return bytes(out)
 
 
+JENNY_REV_MAGIC = b'JREV'
+JENNY_REV_FOOTER_FMT = '<4sIII8s'
+JENNY_REV_FOOTER_SIZE = 24
+
 _XFLAC_LIB_V84 = None
 
 def _get_xflac_lib_v84():
     global _XFLAC_LIB_V84
     if _XFLAC_LIB_V84 is not None:
         return _XFLAC_LIB_V84
-    candidates = [
+
+    ff_bin = os.environ.get("FFMPEG_BINARY", "")
+    ff_dir = os.path.dirname(ff_bin) if ff_bin else ""
+    native_dir = os.environ.get("JENNY_NATIVE_DIR", "") or ff_dir
+    files_dir = os.environ.get("JENNY_FILES_DIR", "")
+    path_dirs = [p.strip() for p in os.environ.get("PATH", "").split(":") if p.strip()]
+
+    candidates = []
+    if os.environ.get("XFLAC_LIB_PATH"):
+        candidates.append(os.environ["XFLAC_LIB_PATH"])
+    if native_dir:
+        candidates.append(os.path.join(native_dir, "libxflac.so"))
+    for pd in path_dirs:
+        candidates.append(os.path.join(pd, "libxflac.so"))
+    candidates.extend([
         "libxflac.so",
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "jniLibs", "arm64-v8a", "libxflac.so"),
-        "/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/arm64-v8a/libxflac.so"
-    ]
+        "/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/arm64-v8a/libxflac.so",
+        "/data/data/com.termux/files/home/JennyPlayer/app/src/main/jniLibs/arm64-v8a/libxflac.so"
+    ])
+
+    seen_cands = set()
     for path in candidates:
+        if not path or path in seen_cands:
+            continue
+        seen_cands.add(path)
         try:
-            lib = ctypes.CDLL(path)
+            load_target = path
+            # Если .so лежит на /storage/emulated/0 (где Android ставит noexec), копируем во внутренний каталог приложения
+            if path.startswith("/storage/") and os.path.isfile(path):
+                exec_dir = files_dir or (path_dirs[1] if len(path_dirs) > 1 else os.path.dirname(os.path.abspath(__file__)))
+                if exec_dir and os.path.isdir(exec_dir):
+                    cached_so = os.path.join(exec_dir, "libxflac_exec.so")
+                    try:
+                        shutil.copy2(path, cached_so)
+                        os.chmod(cached_so, 0o755)
+                        load_target = cached_so
+                    except Exception:
+                        pass
+            lib = ctypes.CDLL(load_target)
             lib.xflac_encode_wav_mem.argtypes = [
                 ctypes.c_char_p, ctypes.c_size_t,
                 ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_size_t),
@@ -149,10 +185,36 @@ def _get_xflac_lib_v84():
     return _XFLAC_LIB_V84
 
 
+def _strip_jrev_trailer_from_bytes_v88(xfc_bytes: bytes) -> bytes:
+    if len(xfc_bytes) > JENNY_REV_FOOTER_SIZE + 25:
+        try:
+            footer = xfc_bytes[-JENNY_REV_FOOTER_SIZE:]
+            head_magic, ver, m_len, p_len, tail_magic = struct.unpack(JENNY_REV_FOOTER_FMT, footer)
+            if head_magic == b'JREV' and tail_magic == b'JENNYV67':
+                cut_pos = len(xfc_bytes) - JENNY_REV_FOOTER_SIZE - int(m_len) - int(p_len)
+                if cut_pos > 25:
+                    return xfc_bytes[:cut_pos]
+        except Exception:
+            pass
+    rev_off = xfc_bytes.rfind(b'JREV')
+    if rev_off > 0 and len(xfc_bytes) - rev_off >= JENNY_REV_FOOTER_SIZE and len(xfc_bytes) - rev_off <= 64:
+        try:
+            head_magic, ver, m_len, p_len, tail_magic = struct.unpack(
+                JENNY_REV_FOOTER_FMT, xfc_bytes[rev_off:rev_off + JENNY_REV_FOOTER_SIZE]
+            )
+            if head_magic == b'JREV' and tail_magic == b'JENNYV67':
+                cut_pos = rev_off - int(m_len) - int(p_len)
+                if cut_pos > 25:
+                    return xfc_bytes[:cut_pos]
+        except Exception:
+            pass
+    return xfc_bytes
+
+
 def _encode_wav_to_xflac_bytes_v85(wav_bytes: bytes, mode: int) -> bytes:
     lib = _get_xflac_lib_v84()
     if not lib:
-        raise RuntimeError("libxflac.so not loaded")
+        raise RuntimeError("libxflac.so не загружена (проверьте сборку NDK arm64-v8a)")
     out_ptr = ctypes.POINTER(ctypes.c_uint8)()
     out_sz = ctypes.c_size_t(0)
     rc = lib.xflac_encode_wav_mem(wav_bytes, len(wav_bytes), ctypes.byref(out_ptr), ctypes.byref(out_sz), int(mode), None)
@@ -162,25 +224,20 @@ def _encode_wav_to_xflac_bytes_v85(wav_bytes: bytes, mode: int) -> bytes:
         raw_xfc = ctypes.string_at(out_ptr, out_sz.value)
     finally:
         lib.xflac_free(ctypes.cast(out_ptr, ctypes.c_void_p))
-    # Сжимаем метаданные и коэффициенты предсказателя через LZMA2 Extreme по стандарту XFC3
     flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", raw_xfc[4:25])
     raw_meta = raw_xfc[25:25 + rm_sz]
     rem_tail = raw_xfc[25 + cm_sz:]
-    comp_meta = lzma.compress(raw_meta, format=lzma.FORMAT_XZ, preset=9 | lzma.PRESET_EXTREME)
+    comp_meta = lzma.compress(raw_meta, format=lzma.FORMAT_XZ, preset=6)
     return b"XFC3" + struct.pack("<BIIIII", flags | 2, nf, rm_sz, len(comp_meta), rl_sz, rr_sz) + comp_meta + rem_tail
+
 
 def _decode_xflac_bytes_to_wav_v85(xfc_bytes: bytes) -> bytes:
     lib = _get_xflac_lib_v84()
     if not lib:
-        raise RuntimeError("libxflac.so not loaded")
-    rev_off = xfc_bytes.rfind(JENNY_REV_MAGIC)
-    if rev_off > 0 and len(xfc_bytes) - rev_off <= 64:
-        _, m_len, p_len, _ = struct.unpack(JENNY_REV_FOOTER_FMT, xfc_bytes[rev_off:rev_off + JENNY_REV_FOOTER_SIZE])
-        cut_pos = rev_off - m_len - p_len
-        if cut_pos > 25:
-            xfc_bytes = xfc_bytes[:cut_pos]
-    if xfc_bytes[:4] != b"XFC3":
-        raise RuntimeError("Not an XFC3 buffer")
+        raise RuntimeError("libxflac.so не загружена (проверьте сборку NDK arm64-v8a)")
+    xfc_bytes = _strip_jrev_trailer_from_bytes_v88(xfc_bytes)
+    if len(xfc_bytes) < 25 or xfc_bytes[:4] != b"XFC3":
+        raise RuntimeError("Файл не является корректным контейнером XFC3 (.xflac)")
     flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", xfc_bytes[4:25])
     if flags & 2:
         comp_meta = xfc_bytes[25:25 + cm_sz]
@@ -204,14 +261,30 @@ def _get_xflac_fast_header_info_v87(full_p: str):
     try:
         with open(full_p, 'rb') as f:
             hdr = f.read(25)
-        if len(hdr) >= 25 and hdr[:4] == b'XFC3':
-            flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack('<BIIIII', hdr[4:25])
-            wav_sz = int(nf) * 4 + 44
-            dur_s = float(nf) / 44100.0
-            return dur_s, wav_sz
+            if len(hdr) >= 25 and hdr[:4] == b'XFC3':
+                flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack('<BIIIII', hdr[4:25])
+                sr = 44100
+                try:
+                    comp_chunk = f.read(min(int(cm_sz), 16384))
+                    if flags & 2:
+                        decomp = lzma.LZMADecompressor()
+                        raw_hdr = decomp.decompress(comp_chunk, max_length=64)
+                    else:
+                        raw_hdr = comp_chunk[:64]
+                    if len(raw_hdr) >= 44 and raw_hdr[16:20] == b'RIFF':
+                        cand_sr = struct.unpack('<I', raw_hdr[40:44])[0]
+                        if 8000 <= cand_sr <= 192000:
+                            sr = int(cand_sr)
+                except Exception:
+                    pass
+                ch = 1 if (flags & 4) else 2
+                wav_sz = int(nf) * ch * 2 + 44
+                dur_s = float(nf) / float(sr) if sr > 0 else 0.0
+                return dur_s, wav_sz
     except Exception:
         pass
     return 0.0, 0
+
 
 def _ensure_xflac_wav_cache_v87(full_xf: str) -> str:
     cache_dir = os.path.dirname(full_xf)
@@ -228,7 +301,8 @@ def _ensure_xflac_wav_cache_v87(full_xf: str) -> str:
             except Exception:
                 pass
         with open(full_xf, 'rb') as f_in:
-            wav_bytes = _decode_xflac_bytes_to_wav_v85(f_in.read())
+            raw_data = f_in.read()
+        wav_bytes = _decode_xflac_bytes_to_wav_v85(raw_data)
         with open(cache_path, 'wb') as f_out:
             f_out.write(wav_bytes)
         with open(meta_tag_path, 'w', encoding='utf-8') as tf:
@@ -467,7 +541,7 @@ def quick_parse_artist_album_v71(filename, full_p):
     if cached and cached.get("mtime") == round(st_mtime, 2) and cached.get("size") == st_size and cached.get("user_tags") == db_tags:
         return cached
     stem = os.path.splitext(filename)[0]
-    clean_stem = re.sub(r'(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock)|_rev(?:ersed)?)+$', '', stem, flags=re.I)
+    clean_stem = re.sub(r'(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock|bitperfect|psycho|ultra|hifi|restored)|_rev(?:ersed)?)+$', '', stem, flags=re.I)
     artist = "Разные артисты"
     album = os.path.basename(os.path.dirname(full_p)) or "Music"
     parts = re.split(r'\s+[-–—]\s+', clean_stem)
@@ -636,15 +710,17 @@ def save_track_meta_v71():
                 df.write(sf.read(tr["audio_end"]))
             else:
                 shutil.copyfileobj(sf, df)
-        cmd = [find_ffmpeg_binary(), '-y', '-i', t_in, '-c', 'copy', '-map_metadata', '-1', '-map_metadata:s:a', '-1']
-        for k, v in clean_tags.items():
-            # Для стандартных ASCII-ключей пишем напрямую в FFmpeg, а кириллические теги дублируем в ASCII-слот + в базу
-            if re.match(r'^[A-Za-z0-9_\-]+$', k):
-                cmd.extend(['-metadata', f"{k}={v}", '-metadata:s:a:0', f"{k}={v}"])
-        cmd.append(t_out)
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if r.returncode != 0 or not os.path.exists(t_out) or os.path.getsize(t_out) < 64:
+        if ext.lower() == '.xflac':
             shutil.copyfile(t_in, t_out)
+        else:
+            cmd = [find_ffmpeg_binary(), '-y', '-i', t_in, '-c', 'copy', '-map_metadata', '-1', '-map_metadata:s:a', '-1']
+            for k, v in clean_tags.items():
+                if re.match(r'^[A-Za-z0-9_\-]+$', k):
+                    cmd.extend(['-metadata', f"{k}={v}", '-metadata:s:a:0', f"{k}={v}"])
+            cmd.append(t_out)
+            r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if r.returncode != 0 or not os.path.exists(t_out) or os.path.getsize(t_out) < 64:
+                shutil.copyfile(t_in, t_out)
         if tr and rev_act != 'strip_all':
             if rev_act in ('modify', 'strip_pocket') and sm_obj is not None:
                 for k in ('spd', 'tension'):
@@ -736,18 +812,57 @@ def get_pcm_meta_v71(filename):
     if not fp or not os.path.isfile(fp):
         return json.dumps({"duration": 0, "size": 0})
     if filename.lower().endswith('.xflac'):
-        try:
-            wav_cache_fp = _ensure_xflac_wav_cache_v87(fp)
-            xf_dur, _ = _get_xflac_fast_header_info_v87(fp)
-            return json.dumps({"duration": xf_dur, "size": os.path.getsize(wav_cache_fp)})
-        except Exception:
-            xf_dur, xf_wav_sz = _get_xflac_fast_header_info_v87(fp)
-            return json.dumps({"duration": xf_dur, "size": xf_wav_sz})
+        xf_dur, xf_wav_sz = _get_xflac_fast_header_info_v87(fp)
+        return json.dumps({"duration": xf_dur, "size": xf_wav_sz})
     tr = read_jenny_rev_trailer(fp)
     if tr:
         dur_sec, _, _, _ = calc_jrev_audio_stats(fp, tr)
         return json.dumps({"duration": dur_sec, "size": tr["audio_end"]})
     return json.dumps({"duration": 0, "size": os.path.getsize(fp)})
+
+
+@route('/api/pcm_chunk_v71/<filename:path>')
+def get_pcm_chunk_v71(filename):
+    fp = resolve_track_full_path_v71(filename)
+    if not fp or not os.path.isfile(fp):
+        response.status = 404
+        return "Not found"
+    try:
+        st_sec = max(0.0, float(request.query.get('start', 0.0)))
+        dur_sec = max(0.1, min(120.0, float(request.query.get('dur', 30.0))))
+        sr = int(request.query.get('sr', 44100))
+        if sr < 8000 or sr > 96000:
+            sr = 44100
+
+        src_path = _ensure_xflac_wav_cache_v87(fp) if filename.lower().endswith('.xflac') else fp
+        ffmpeg_bin = find_ffmpeg_binary()
+        cmd = [
+            ffmpeg_bin, '-v', 'error',
+            '-ss', f"{st_sec:.3f}",
+            '-t', f"{dur_sec:.3f}",
+            '-i', src_path,
+            '-vn', '-ac', '2', '-ar', str(sr),
+            '-f', 'f32le', '-acodec', 'pcm_f32le', '-'
+        ]
+        pr = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+        raw_interleaved = pr.stdout or b""
+        n_floats = len(raw_interleaved) // 4
+        frames = n_floats // 2
+        if frames <= 0:
+            response.content_type = 'application/octet-stream'
+            return b""
+        import array
+        arr = array.array('f')
+        arr.frombytes(raw_interleaved[:frames * 8])
+        left = arr[0::2]
+        right = arr[1::2]
+        out_bytes = left.tobytes() + right.tobytes()
+        response.content_type = 'application/octet-stream'
+        response.set_header('Content-Length', str(len(out_bytes)))
+        return out_bytes
+    except Exception as e:
+        response.status = 500
+        return str(e)
 
 
 @route('/api/media/<filename:path>', method=['GET', 'HEAD'])
@@ -1000,6 +1115,8 @@ def stretch_track():
         filename = request.forms.get('filename')
         speed = float(request.forms.get('speed', 1.0))
         original_path = resolve_track_full_path_v71(filename)
+        if original_path.lower().endswith('.xflac'):
+            original_path = _ensure_xflac_wav_cache_v87(original_path)
         temp_stretched = os.path.join(MUSIC_DIR, f"temp_stretcher_{os.getpid()}.wav")
 
         ffmpeg_bin = find_ffmpeg_binary()
@@ -1042,7 +1159,11 @@ def export_track():
             response.status = 400
             return {"status": "error", "error": "Нет файла или имени трека"}
 
-        base_name, _ = os.path.splitext(original_name)
+        raw_base_name, _ = os.path.splitext(original_name)
+        base_name = re.sub(
+            r'(?:_x\d+(?:[.,]\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock|bitperfect|psycho|ultra|hifi|restored)|_rev(?:ersed)?)+$',
+            '', raw_base_name, flags=re.I
+        ) or raw_base_name
         speed_float = float(speed)
         speed_suffix = f"_x{speed}" if speed_float != 1.0 else ""
         rev_suffix = "_rev" if is_reversed else ""
@@ -1088,8 +1209,11 @@ def export_track():
                     dec_wav = _decode_xflac_bytes_to_wav_v85(xf.read())
                 with open(temp_wav, 'wb') as wf:
                     wf.write(dec_wav)
-            elif orig_path.lower().endswith('.wav') and sr_mode == 'orig':
-                shutil.copyfile(orig_path, temp_wav)
+                if sr_mode in ('44100', '48000'):
+                    temp_sr_wav = temp_wav + ".sr.wav"
+                    r_sr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_wav, '-ar', sr_mode, '-ac', '2', '-c:a', 'pcm_s16le', temp_sr_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    if r_sr.returncode == 0 and os.path.exists(temp_sr_wav):
+                        os.replace(temp_sr_wav, temp_wav)
             else:
                 ar_args = ['-ar', sr_mode] if sr_mode in ('44100', '48000') else []
                 subprocess.run([ffmpeg_bin, '-y', '-i', orig_path] + ar_args + ['-ac', '2', '-c:a', 'pcm_s16le', temp_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1147,7 +1271,7 @@ def export_track():
             cmd1 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'libopus', '-b:a', target_br, '-vbr', 'on', '-compression_level', '10', '-frame_duration', frame_dur, final_opus]
             r1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             encoded_ok = (r1.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
-        if not encoded_ok:
+        if not encoded_ok and use_xflac_mode < 0 and not is_wav_unpack:
             cmd2 = [ffmpeg_bin, '-y', '-i', temp_wav, '-c:a', 'opus', '-strict', '-2', '-b:a', target_br, final_opus]
             r2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             encoded_ok = (r2.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
@@ -1266,10 +1390,12 @@ def get_track_info():
                             pass
                         if x_sr < 8000 or x_sr > 192000:
                             x_sr = 44100
+                        tr_xf = read_jenny_rev_trailer(full_path)
+                        xf_audio_bytes = int(tr_xf["audio_end"]) if (tr_xf and tr_xf.get("audio_end")) else size_bytes
                         wav_orig_bytes = int(x_nf) * 4 + 44
                         dur_s = float(x_nf) / float(x_sr) if x_sr > 0 else 0.0
-                        ratio_pct = (size_bytes * 100.0) / max(1, wav_orig_bytes)
-                        eff_kbps = int((size_bytes * 8) / max(0.1, dur_s * 1000))
+                        ratio_pct = (xf_audio_bytes * 100.0) / max(1, wav_orig_bytes)
+                        eff_kbps = int((xf_audio_bytes * 8) / max(0.1, dur_s * 1000))
                         mm, ss = int(dur_s // 60), dur_s % 60
                         hh, mm = int(mm // 60), int(mm % 60)
                         xflac_custom_meta = {
@@ -1413,6 +1539,306 @@ def save_test_slices():
     except Exception as e:
         response.status = 500
         return {"status": "error", "error": str(e)}
+
+
+
+
+# ==============================================================================
+# 🎮 JENNY V88: KHINSIDER GAME OST DOWNLOADER + DIRECT XFLAC CONVERTER
+# ==============================================================================
+import urllib.request
+import urllib.parse
+from html import unescape as _html_unescape
+
+KHINSIDER_BASE_URL = "https://downloads.khinsider.com"
+KHINSIDER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
+}
+
+def _kh_fetch_html_v88(url: str, timeout: int = 20):
+    req = urllib.request.Request(url, headers=KHINSIDER_HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        final_url = resp.geturl()
+        raw = resp.read().decode("utf-8", errors="replace")
+    return raw, final_url
+
+def _kh_strip_tags_v88(s: str) -> str:
+    return re.sub(r"\s+", " ", _html_unescape(re.sub(r"<[^>]+>", "", s or ""))).strip()
+
+def _kh_parse_album_page_v88(html_text: str, slug: str):
+    title_m = re.search(r"<h2>([^<]+)</h2>", html_text, re.I)
+    album_title = _kh_strip_tags_v88(title_m.group(1)) if title_m else slug.replace("-", " ").title()
+
+    cover_url = ""
+    cov_m = re.search(r'<div[^>]+class="albumImage"[^>]*>\s*<a[^>]+href="([^"]+)"', html_text, re.I)
+    if cov_m:
+        cover_url = cov_m.group(1).strip()
+        if cover_url.startswith("/"):
+            cover_url = KHINSIDER_BASE_URL + cover_url
+
+    tbl_m = re.search(r'<table[^>]+id="songlist"[^>]*>(.*?)</table>', html_text, re.I | re.S)
+    table_html = tbl_m.group(1) if tbl_m else html_text
+    has_flac = bool(re.search(r">\s*FLAC\s*<", table_html, re.I))
+    has_mp3 = bool(re.search(r">\s*MP3\s*<", table_html, re.I)) or True
+
+    tracks = []
+    seen_paths = set()
+    for tr_m in re.finditer(r"<tr[^>]*>(.*?)</tr>", table_html, re.I | re.S):
+        row = tr_m.group(1)
+        if "songlist_header" in row or "songlist_footer" in row:
+            continue
+        link_m = re.search(r'<td[^>]+class="clickable-row"[^>]*>\s*<a[^>]+href="(/game-soundtracks/album/[^"]+\.mp3)"[^>]*>(.*?)</a>', row, re.I | re.S)
+        if not link_m:
+            link_m = re.search(r'<a[^>]+href="(/game-soundtracks/album/[^"]+\.mp3)"[^>]*>(.*?)</a>', row, re.I | re.S)
+        if not link_m:
+            continue
+        page_path = link_m.group(1).strip()
+        if page_path in seen_paths:
+            continue
+        seen_paths.add(page_path)
+        t_title = _kh_strip_tags_v88(link_m.group(2))
+        if not t_title:
+            continue
+
+        all_tds = [_kh_strip_tags_v88(x) for x in re.findall(r"<td[^>]*>(.*?)</td>", row, re.I | re.S)]
+        dur_str = ""
+        sizes = []
+        for cell in all_tds:
+            if re.match(r"^\d+:\d{2}$", cell):
+                dur_str = cell
+            elif re.match(r"^[\d.,]+\s*(?:MB|KB)$", cell, re.I):
+                sizes.append(cell)
+
+        mp3_sz = sizes[0] if len(sizes) >= 1 else ""
+        flac_sz = sizes[1] if len(sizes) >= 2 else ""
+
+        tracks.append({
+            "index": len(tracks) + 1,
+            "title": t_title,
+            "duration": dur_str,
+            "mp3_size": mp3_sz,
+            "flac_size": flac_sz,
+            "page_path": page_path
+        })
+
+    return {
+        "status": "ok",
+        "slug": slug,
+        "album_title": album_title,
+        "cover_url": cover_url,
+        "has_flac": has_flac,
+        "has_mp3": has_mp3,
+        "tracks": tracks
+    }
+
+@post('/api/khinsider/search')
+def api_khinsider_search_v88():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8'))
+        query = (req.get('query') or '').strip()
+        if not query:
+            return json.dumps({"status": "error", "error": "Введите название игры или саундтрека"})
+
+        # Если вставлена прямая ссылка на альбом KHInsider
+        direct_m = re.search(r"/game-soundtracks/album/([a-zA-Z0-9_\-]+)", query)
+        if direct_m:
+            slug = direct_m.group(1)
+            html_text, _ = _kh_fetch_html_v88(f"{KHINSIDER_BASE_URL}/game-soundtracks/album/{slug}")
+            alb = _kh_parse_album_page_v88(html_text, slug)
+            return json.dumps({"status": "ok", "direct_album": alb, "albums": []})
+
+        search_url = f"{KHINSIDER_BASE_URL}/search?search={urllib.parse.quote_plus(query)}"
+        html_text, final_url = _kh_fetch_html_v88(search_url)
+
+        # Если поиск сразу перенаправил на страницу единственного альбома
+        redir_m = re.search(r"/game-soundtracks/album/([a-zA-Z0-9_\-]+)$", final_url)
+        if redir_m:
+            slug = redir_m.group(1)
+            alb = _kh_parse_album_page_v88(html_text, slug)
+            return json.dumps({"status": "ok", "direct_album": alb, "albums": []})
+
+        albums = []
+        seen_slugs = set()
+        for tr_m in re.finditer(r"<tr[^>]*>(.*?)</tr>", html_text, re.I | re.S):
+            row = tr_m.group(1)
+            links = re.findall(r'<a[^>]+href="/game-soundtracks/album/([a-zA-Z0-9_\-]+)"[^>]*>(.*?)</a>', row, re.I | re.S)
+            if not links:
+                continue
+            slug = links[0][0].strip()
+            if slug in seen_slugs:
+                continue
+            title = ""
+            for _, ltxt in links:
+                clean_t = _kh_strip_tags_v88(ltxt)
+                if clean_t:
+                    title = clean_t
+                    break
+            if not title:
+                continue
+            seen_slugs.add(slug)
+
+            img_m = re.search(r'<img[^>]+src="([^"]+)"', row, re.I)
+            thumb = img_m.group(1).strip() if img_m else ""
+            if thumb.startswith("/"):
+                thumb = KHINSIDER_BASE_URL + thumb
+
+            tds = [_kh_strip_tags_v88(x) for x in re.findall(r"<td[^>]*>(.*?)</td>", row, re.I | re.S)]
+            platforms = tds[2] if len(tds) > 2 else ""
+            alb_type = tds[3] if len(tds) > 3 else ""
+            year = tds[4] if len(tds) > 4 else ""
+
+            albums.append({
+                "slug": slug,
+                "title": title,
+                "thumb": thumb,
+                "platforms": platforms,
+                "type": alb_type,
+                "year": year
+            })
+            if len(albums) >= 45:
+                break
+
+        return json.dumps({"status": "ok", "albums": albums})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": f"Ошибка KHInsider: {e}"})
+
+@post('/api/khinsider/album')
+def api_khinsider_album_v88():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8'))
+        slug = (req.get('slug') or '').strip()
+        if not slug:
+            return json.dumps({"status": "error", "error": "Не указан slug альбома"})
+        html_text, _ = _kh_fetch_html_v88(f"{KHINSIDER_BASE_URL}/game-soundtracks/album/{slug}")
+        return json.dumps(_kh_parse_album_page_v88(html_text, slug))
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": f"Не удалось загрузить альбом: {e}"})
+
+def _kh_resolve_track_audio_urls_v88(page_path: str):
+    full_url = page_path if page_path.startswith("http") else (KHINSIDER_BASE_URL + page_path)
+    html_text, _ = _kh_fetch_html_v88(full_url)
+    flac_url, mp3_url = "", ""
+    for m in re.finditer(r'<a[^>]+href="(https?://[^"]+\.(flac|mp3))"[^>]*>', html_text, re.I):
+        u, ext = m.group(1), m.group(2).lower()
+        if ext == "flac" and not flac_url:
+            flac_url = u
+        elif ext == "mp3" and not mp3_url:
+            mp3_url = u
+    if not mp3_url:
+        aud_m = re.search(r'<audio[^>]+src="(https?://[^"]+)"', html_text, re.I)
+        if aud_m:
+            mp3_url = aud_m.group(1)
+    return {"flac_url": flac_url, "mp3_url": mp3_url}
+
+@post('/api/khinsider/resolve_stream')
+def api_khinsider_resolve_stream_v88():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8'))
+        page_path = (req.get('page_path') or '').strip()
+        urls = _kh_resolve_track_audio_urls_v88(page_path)
+        stream_url = urls["mp3_url"] or urls["flac_url"]
+        if not stream_url:
+            return json.dumps({"status": "error", "error": "Прямая ссылка на аудио не найдена"})
+        return json.dumps({"status": "ok", "stream_url": stream_url, "urls": urls})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+
+@post('/api/khinsider/download_track')
+def api_khinsider_download_track_v88():
+    response.content_type = 'application/json'
+    tmp_dl, tmp_wav = None, None
+    try:
+        load_multi_dirs_v71()
+        req = json.loads(request.body.read().decode('utf-8'))
+        page_path = (req.get('page_path') or '').strip()
+        album_title = (req.get('album_title') or 'KHInsider OST').strip()
+        track_title = (req.get('track_title') or 'Track').strip()
+        track_num = int(req.get('track_num') or 1)
+        fmt_mode = (req.get('format_mode') or 'xflac_psycho').strip().lower()
+
+        urls = _kh_resolve_track_audio_urls_v88(page_path)
+        want_mp3_only = (fmt_mode == 'mp3')
+        dl_url = (urls["mp3_url"] or urls["flac_url"]) if want_mp3_only else (urls["flac_url"] or urls["mp3_url"])
+        if not dl_url:
+            response.status = 404
+            return json.dumps({"status": "error", "error": "Ссылка на скачивание трека не найдена"})
+
+        src_ext = ".flac" if dl_url.lower().endswith(".flac") else ".mp3"
+        safe_alb = re.sub(r'[\\/:*?"<>|]+', '_', album_title).strip()[:42]
+        safe_trk = re.sub(r'[\\/:*?"<>|]+', '_', track_title).strip()[:68]
+        stem_name = f"{safe_alb} - {track_num:02d}. {safe_trk}"
+
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        tmp_dl = os.path.join(MUSIC_DIR, f"temp_final_khdl_{os.getpid()}{src_ext}")
+
+        dl_req = urllib.request.Request(dl_url, headers=KHINSIDER_HEADERS)
+        with urllib.request.urlopen(dl_req, timeout=90) as r_in, open(tmp_dl, "wb") as f_out:
+            shutil.copyfileobj(r_in, f_out)
+
+        xflac_map = {
+            'xflac_lossless': (0, '_bitperfect.xflac'),
+            'xflac_psycho':   (25, '_psycho.xflac'),
+            'xflac_ultra':    (15, '_ultra.xflac'),
+            'xflac_hifi':     (45, '_hifi.xflac')
+        }
+
+        if fmt_mode in xflac_map:
+            xf_mode, xf_suf = xflac_map[fmt_mode]
+            final_name = f"{stem_name}{xf_suf}"
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            tmp_wav = os.path.join(MUSIC_DIR, f"temp_final_khwav_{os.getpid()}.wav")
+            ff_bin = find_ffmpeg_binary()
+            r_ff = subprocess.run(
+                [ff_bin, '-y', '-i', tmp_dl, '-vn', '-ac', '2', '-c:a', 'pcm_s16le', tmp_wav],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            if r_ff.returncode != 0 or not os.path.isfile(tmp_wav) or os.path.getsize(tmp_wav) < 44:
+                raise RuntimeError("Ошибка FFmpeg при декодировании в PCM WAV")
+            with open(tmp_wav, "rb") as wf:
+                wav_bytes = wf.read()
+            xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_bytes, xf_mode)
+            with open(final_path, "wb") as xf_out:
+                xf_out.write(xfc_bytes)
+        else:
+            final_name = f"{stem_name}{src_ext}"
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            shutil.move(tmp_dl, final_path)
+            tmp_dl = None
+
+        # Записываем теги в базу Jenny, чтобы трек сразу попал в «💿 По альбомам»
+        db = load_custom_tags_db_v74()
+        db[final_name] = {
+            "TITLE": track_title,
+            "ARTIST": safe_alb,
+            "ALBUM": album_title,
+            "GENRE": "Game OST (KHInsider)"
+        }
+        save_custom_tags_db_v74(db)
+        TRACK_META_CACHE_V71.pop(final_path, None)
+
+        sz_mb = os.path.getsize(final_path) / (1024.0 * 1024.0)
+        return json.dumps({
+            "status": "ok",
+            "filename": final_name,
+            "size_mb": round(sz_mb, 2),
+            "folder": MUSIC_DIR
+        })
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+    finally:
+        for p in (tmp_dl, tmp_wav):
+            if p and os.path.exists(p):
+                try: os.remove(p)
+                except Exception: pass
 
 
 def start_server():
