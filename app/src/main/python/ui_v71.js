@@ -6628,3 +6628,98 @@ window.runTorrentDownloadQueueV102 = async function(targetFilesArray) {
         } catch (e) {}
     }, 750);
 };
+
+// === 🚀 JENNY V105: CLEAN SOUNDCLOUD UI (NO MANUAL COOKIES) + TORRENT PATH & BUTTON LOCK ===
+window.openSoundCloudModalV92 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const ex = document.getElementById('jennySoundCloudModalV93');
+    if (ex) {
+        const isHid = (ex.style.display === 'none' || getComputedStyle(ex).display === 'none');
+        ex.style.setProperty('display', isHid ? 'flex' : 'none', 'important');
+        return;
+    }
+    const m = document.createElement('div');
+    m.id = 'jennySoundCloudModalV93';
+    m.className = 'jenny-modal-backdrop-v71';
+    m.onclick = (e) => { if (e.target === m) m.style.setProperty('display', 'none', 'important'); };
+    m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:450px;max-height:88vh;display:flex;flex-direction:column;">
+        <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(255,140,66,0.22),rgba(115,65,190,0.22));">
+            <span style="color:#ff8c42;font-weight:900;font-size:13px;display:flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.soundcloud}<span>SOUNDCLOUD СТУДИЯ</span></span>
+            <button type="button" onclick="document.getElementById('jennySoundCloudModalV93').style.setProperty('display','none','important')" style="padding:4px 10px;font-size:11px;border-radius:7px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>
+        </div>
+        <div style="padding:9px 12px;background:#090d14;border-bottom:1px solid #21262d;display:flex;gap:6px;">
+            <input type="text" id="scDedicatedInpV93" value="Synthwave" placeholder="Трек или артист в SoundCloud..." onkeydown="if(event.key==='Enter') window.runScDedicatedSearchV93()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
+            <button type="button" onclick="window.runScDedicatedSearchV93()" style="padding:7px 12px;background:#ff8c42;color:#000;border:none;border-radius:8px;font-weight:bold;">🔍 Найти</button>
+        </div>
+        <div id="scDedicatedBodyV93" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-height:220px;"></div>
+    </div>`;
+    document.body.appendChild(m);
+    window.runScDedicatedSearchV93();
+};
+
+// Очищаем длинное имя папки из имён файлов в Торренте и сбрасываем старый поллер при открытии новой раздачи
+window.openMagnetInGoEngineV96 = async function(magnetUrl) {
+    const ts = window._torStateV96;
+    if (ts) {
+        if (ts.pollTimer) { clearInterval(ts.pollTimer); ts.pollTimer = null; }
+        ts.activeDlSet = new Set();
+        ts.dlActive = false;
+        ts.dlOverallPct = 0;
+    }
+    const body = document.getElementById('torBodyListV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    if (ftr) ftr.style.display = 'none';
+    if (stEl) stEl.innerText = '🧲 Опрос DHT и 14 трекеров...';
+    if (body) body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:35px 10px;">🧲 Получение списка файлов от пиров (до 25с)...<br><span style="font-size:10.5px;color:#8b949e;">(Если у раздачи 1 сид за закрытым роутером, выбери раздачу, где больше сидов)</span></div>`;
+    try {
+        const res = await fetch('/api/torrent/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet: magnetUrl }) });
+        const d = await res.json();
+        if (d.status !== 'ok') throw new Error(d.error || 'Пиры не отдали оглавление');
+        ts.currentHash = d.hash;
+        ts.currentName = d.name;
+        const audioExts = ['.flac', '.wav', '.mp3', '.ogg', '.aac', '.m4a', '.opus', '.alac', '.ape', '.wv', '.mp4', '.mkv'];
+        const rawFiles = (d.files || []).filter(f => audioExts.some(ext => f.path.toLowerCase().endsWith(ext)));
+        const finalFiles = rawFiles.length ? rawFiles : (d.files || []);
+        ts.files = finalFiles.map(f => {
+            const parts = String(f.path || '').split('/');
+            return Object.assign({}, f, { path: parts[parts.length - 1] || f.path });
+        });
+        ts.selectedFiles = new Set(ts.files.map(f => f.index));
+        if (stEl) stEl.innerText = `💿 ${d.name} (треков: ${ts.files.length})`;
+        if (ftr) ftr.style.display = 'flex';
+        window.renderTorrentFilesListV96();
+    } catch (e) {
+        if (stEl) stEl.innerText = '⚠️ Раздача не ответила';
+        if (body) body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 12px;font-size:12px;">❌ ${e.message || e}<br><br><button type="button" onclick="window.backToTorrentSearchListV97()" style="padding:7px 14px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;font-weight:bold;">⬅ Вернуться к списку раздач</button></div>`;
+    }
+};
+
+// Блокировка нижней кнопки в Торрент-студии на время скачивания и пережатия в xFLAC
+setInterval(() => {
+    const btn = document.getElementById('btnTorStartDlV97');
+    const ts = window._torStateV96;
+    if (!btn || !ts || !ts.dlActive) return;
+    const encLbl = document.getElementById('torXflacProgLabelV99');
+    const encTxt = encLbl ? encLbl.innerText : '';
+    const netPct = ts.dlOverallPct || 0;
+    if (encTxt.startsWith('✅')) {
+        btn.disabled = true;
+        btn.style.opacity = '0.85';
+        btn.style.background = 'linear-gradient(135deg, #238636, #1f6feb)';
+        btn.innerText = '✅ Все выбранные треки в плеере';
+        ts.dlActive = false;
+        if (ts.pollTimer) { clearInterval(ts.pollTimer); ts.pollTimer = null; }
+    } else if (netPct < 100) {
+        btn.disabled = true;
+        btn.style.opacity = '0.75';
+        btn.style.background = 'linear-gradient(135deg, #30363d, #1f6feb)';
+        btn.innerText = `⏳ Загрузка: ${netPct}% (Подождите...)`;
+    } else {
+        btn.disabled = true;
+        btn.style.opacity = '0.75';
+        btn.style.background = 'linear-gradient(135deg, #30363d, #7341be)';
+        const m = encTxt.match(/\[(\d+\/\d+)\].*Общий:\s*(\d+%)/);
+        btn.innerText = m ? `🧬 Пережатие xFLAC (${m[1]} • ${m[2]})...` : '🧬 Пережатие в xFLAC (Подождите...)';
+    }
+}, 600);
