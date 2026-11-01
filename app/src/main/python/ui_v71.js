@@ -4040,9 +4040,9 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
 
 
 // =========================================================================
-// 🎮 JENNY V88.3: КЛИЕНТ GAME OST (ЖИВОЙ ПРОГРЕСС МБ/% + МЕТКИ «СКАЧАН»)
+// 🎮 JENNY V88.4: КЛИЕНТ GAME OST (ФОНОВЫЙ РЕЖИМ + ПРОГРЕСС МБ/% + «СКАЧАН»)
 // =========================================================================
-window._khStateV88 = {
+window._khStateV88 = window._khStateV88 || {
     formatMode: (window.appConfig && window.appConfig.khFormatModeV88) || 'xflac_psycho',
     lastQuery: 'Gothic', lastAlbums: [], currentAlbum: null,
     selectedTracks: new Set(), isDownloading: false, abortDownload: false,
@@ -4095,14 +4095,14 @@ window.startKhProgressPollV89 = function(prefixLabel) {
             const p = await r.json();
             if (!p) return;
             const pct = Math.max(2, Math.min(100, parseInt(p.percent || 0, 10)));
+            if (p.active) {
+                window.updateKhHeaderBtnBadgeV89(p.stage === 'converting' ? 'xFLAC' : (pct + '%'), true);
+            }
             if (barFill) {
                 barFill.style.width = pct + '%';
                 barFill.style.background = (p.stage === 'converting')
                     ? 'linear-gradient(90deg, #a371f7, #3fb950)'
                     : 'linear-gradient(90deg, #1f6feb, #3fb950)';
-            }
-            if (p.active) {
-                window.updateKhHeaderBtnBadgeV89(p.stage === 'converting' ? 'xFLAC' : (pct + '%'), true);
             }
             if (stEl && p.message) {
                 stEl.innerText = (prefixLabel ? prefixLabel + ' ' : '') + p.message;
@@ -4158,7 +4158,7 @@ window.openKhinsiderModalV88 = function(ev) {
 
     m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:460px;max-height:88vh;display:flex;flex-direction:column;">
         <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(63,185,80,0.22),rgba(115,65,190,0.25));">
-            <span style="color:#3fb950;font-weight:900;font-size:13px;">🎮 GAME OST ➔ XFLAC СТУДИЯ</span>
+            <span style="color:#3fb950;font-weight:900;font-size:13px;">🎮 GAME OST ➔ XFLAC</span>
             <div style="display:flex;align-items:center;gap:6px;">
                 <button type="button" onclick="window.minimizeKhinsiderModalV88()" style="padding:3px 8px;font-size:11px;border-radius:6px;background:rgba(88,166,255,0.16);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>
                 <button type="button" onclick="window.minimizeKhinsiderModalV88()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>
@@ -4421,4 +4421,5 @@ window.downloadSelectedKhTracksV88 = async function() {
     window._khStateV88.isDownloading = false;
     if (stEl) stEl.innerText = `✅ Готово! Загружено: ${doneCnt} из ${selList.length}.`;
     window.updateKhDownloadBtnLabelV88();
+    if (typeof window.showToast === 'function') window.showToast(`🎉 Загружено в плеер: ${doneCnt} треков!`);
 };
