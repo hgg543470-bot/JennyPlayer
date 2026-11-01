@@ -2408,6 +2408,7 @@ def api_torrent_search_v105():
         fmt_tag = (req.get("format_tag") or "flac").strip().lower()
         exact_match = bool(req.get("exact", False))
         hide_zero = bool(req.get("hide_zero", True))
+        min_two_seeds = bool(req.get("min_two_seeds", False))
         if not q:
             return json.dumps({"status": "error", "error": "Пустой запрос"})
 
@@ -2467,7 +2468,8 @@ def api_torrent_search_v105():
             if fmt_tag in fmt_keywords and sq == q:
                 if not any(tok in nm_low for tok in fmt_keywords[fmt_tag]):
                     continue
-            if hide_zero and seeds <= 0:
+            min_req_seeds = 2 if min_two_seeds else (1 if hide_zero else 0)
+            if seeds < min_req_seeds:
                 hidden_zero_cnt += 1
                 continue
 

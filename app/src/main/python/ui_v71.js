@@ -6960,3 +6960,269 @@ window.runTorrentDownloadQueueV102 = async function(targetFilesArray) {
         } catch (e) {}
     }, 750);
 };
+
+// === 🧲 JENNY V108: >= 2 SEEDS FILTER + OPEN PLAYING TORRENT FROM MINI-PLAYER ===
+window._torStateV96 = Object.assign(window._torStateV96 || {}, {
+    minTwoSeeds: false
+});
+window._torSnapshotsByHashV108 = window._torSnapshotsByHashV108 || {};
+window._umpPlayingTorrentCtxV108 = null;
+
+// 1. Отрисовываем 3 кнопки в верхнем ряду: [Точный поиск] [>= 2 сидов] [Скрыть 0 сидов]
+window.renderTorrentFilterBarV99 = function() {
+    const m = document.getElementById('jennyTorrentModalV91');
+    if (!m) return;
+    let bar = document.getElementById('torFilterPillsBarV99');
+    if (!bar) {
+        const stLine = document.getElementById('torStatusLineV96');
+        if (!stLine || !stLine.parentNode) return;
+        bar = document.createElement('div');
+        bar.id = 'torFilterPillsBarV99';
+        bar.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin:2px 0;';
+        stLine.parentNode.insertBefore(bar, stLine);
+    }
+    const ts = window._torStateV96;
+    const mkCheck = (k, icon, label, activeColor) => {
+        const on = Boolean(ts[k]);
+        return `<button type="button" onclick="window.toggleTorrentFilterPillV99('${k}')" style="flex:1;padding:4px 4px;font-size:10px;border-radius:8px;font-weight:bold;white-space:nowrap;background:${on ? 'rgba(63,185,80,0.18)' : '#11161f'};border:1px solid ${on ? activeColor : '#30363d'};color:${on ? activeColor : '#8b949e'};display:inline-flex;align-items:center;justify-content:center;gap:3px;"><span>${on ? '☑️' : '⬜'}</span><span>${icon} ${label}</span></button>`;
+    };
+
+    const curTag = ts.formatTag || 'flac';
+    const tagsHtml = (window.TORRENT_FORMAT_TAGS_V101 || []).map(t => {
+        const act = (curTag === t.id);
+        return `<button type="button" onclick="window.selectTorrentFormatTagV101('${t.id}')" style="padding:4px 9px;font-size:10.5px;border-radius:10px;font-weight:900;flex-shrink:0;background:${act ? 'rgba(88,166,255,0.22)' : '#0d1117'};border:1.5px solid ${act ? t.color : '#262c36'};color:${act ? t.color : '#8b949e'};box-shadow:${act ? '0 0 8px rgba(88,166,255,0.25)' : 'none'};">${t.label}</button>`;
+    }).join('');
+
+    bar.innerHTML = `
+        <div style="display:flex;gap:5px;width:100%;">
+            ${mkCheck('exactSearch', '🎯', 'Точный поиск', '#58a6ff')}
+            ${mkCheck('minTwoSeeds', '👥', '>= 2 сидов', '#e3b341')}
+            ${mkCheck('hideZeroSeeds', '🚫', 'Скрыть 0 сидов', '#3fb950')}
+        </div>
+        <div style="display:flex;gap:5px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none;">
+            ${tagsHtml}
+        </div>
+    `;
+};
+
+// Обновляем поиск торрентов с передачей min_two_seeds
+window.runTorrentActionV96 = async function() {
+    window.renderTorrentFilterBarV99();
+    const inp = document.getElementById('torMagnetInpV91');
+    const body = document.getElementById('torBodyListV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    if (!inp || !body) return;
+    const val = inp.value.trim();
+    if (!val) return;
+    if (val.toLowerCase().startsWith('magnet:?')) {
+        await window.openMagnetInGoEngineV96(val);
+        return;
+    }
+    if (ftr) ftr.style.display = 'none';
+    const ts = window._torStateV96;
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase();
+    body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Поиск раздач «${val}» [${fmtLabel}]...</div>`;
+    try {
+        const res = await fetch('/api/torrent/search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: val,
+                format_tag: ts.formatTag || 'all',
+                exact: Boolean(ts.exactSearch),
+                hide_zero: Boolean(ts.hideZeroSeeds),
+                min_two_seeds: Boolean(ts.minTwoSeeds)
+            })
+        });
+        const d = await res.json();
+        const list = d.results || [];
+        const hidCnt = d.hidden_zero || 0;
+        const seedFilterLbl = ts.minTwoSeeds ? '<2 сидов' : '0 сидов';
+        if (stEl) {
+            stEl.innerText = `📋 [${fmtLabel}] Живых раздач: ${list.length}` + (hidCnt > 0 ? ` (скрыто с ${seedFilterLbl}: ${hidCnt})` : '');
+        }
+        if (!list.length) {
+            body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;">В формате <b>${fmtLabel}</b> раздач не найдено${hidCnt > 0 ? ` (скрыто ${hidCnt} раздач с ${seedFilterLbl})` : ''}. Попробуй снять галочку <b>👥 >= 2 сидов</b> или выбрать <b>🌐 ВСЕ</b>.</div>`;
+            return;
+        }
+        window._torSearchResultsV96 = list;
+        body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
+            <div style="flex:1;min-width:0;">
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+            </div>
+            <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
+        </div>`).join('');
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:20px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+// 2. Сохраняем слепок каждого открытого торрента по его хэшу, чтобы мгновенно возвращаться к нему из мини-плеера
+const _origOpenMagV105 = window.openMagnetInGoEngineV96;
+window.openMagnetInGoEngineV96 = async function(magnetUrl) {
+    await _origOpenMagV105.call(this, magnetUrl);
+    const ts = window._torStateV96;
+    if (ts && ts.currentHash && ts.files && ts.files.length) {
+        window._torSnapshotsByHashV108[ts.currentHash] = {
+            hash: ts.currentHash,
+            name: ts.currentName,
+            files: ts.files.map(f => Object.assign({}, f)),
+            selectedFiles: new Set(ts.selectedFiles)
+        };
+    }
+};
+
+// Встраиваем кнопку «🧲 Торрент» в шапку всех мини-плееров
+window.ensureMiniPlayerTorrentJumpBtnV108 = function() {
+    document.querySelectorAll('.jenny-univ-mini-player-v98').forEach(bar => {
+        const topRow = bar.firstElementChild;
+        if (topRow && !topRow.querySelector('.ump-open-tor-btn-v108')) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'ump-open-tor-btn-v108';
+            btn.title = 'Открыть торрент-раздачу этого трека';
+            btn.style.cssText = 'display:none;padding:2px 7px;font-size:10px;background:rgba(210,168,255,0.2);border:1px solid #d2a8ff;color:#d2a8ff;border-radius:6px;font-weight:900;align-items:center;gap:3px;flex-shrink:0;';
+            btn.innerHTML = '🧲 Раздача';
+            btn.onclick = (e) => window.openPlayingTorrentFromMiniPlayerV108(e);
+            const playBtn = topRow.querySelector('.ump-play-btn');
+            if (playBtn) topRow.insertBefore(btn, playBtn);
+            else topRow.appendChild(btn);
+        }
+    });
+    const khBar = document.getElementById('khMiniPlayerBarV90');
+    if (khBar && khBar.firstElementChild && !khBar.querySelector('.ump-open-tor-btn-v108')) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ump-open-tor-btn-v108';
+        btn.style.cssText = 'display:none;padding:2px 7px;font-size:10px;background:rgba(210,168,255,0.2);border:1px solid #d2a8ff;color:#d2a8ff;border-radius:6px;font-weight:900;align-items:center;gap:3px;';
+        btn.innerHTML = '🧲 Раздача';
+        btn.onclick = (e) => window.openPlayingTorrentFromMiniPlayerV108(e);
+        khBar.firstElementChild.appendChild(btn);
+    }
+};
+
+window.syncMiniPlayerTorrentBtnVisibilityV108 = function() {
+    window.ensureMiniPlayerTorrentJumpBtnV108();
+    const aud = window._khStateV88 ? window._khStateV88.previewAudio : null;
+    const isTorStream = Boolean(aud && String(aud._pagePath || '').startsWith('/api/torrent/stream/'));
+    document.querySelectorAll('.ump-open-tor-btn-v108').forEach(b => {
+        b.style.display = isTorStream ? 'inline-flex' : 'none';
+    });
+};
+
+// Перехватываем bindAudioToAllMiniPlayersV98 и previewTorrentFileStreamV97 для запоминания торрента играющего трека
+const _origBindMiniV106 = window.bindAudioToAllMiniPlayersV98;
+window.bindAudioToAllMiniPlayersV98 = function(aud, titleText) {
+    _origBindMiniV106.call(this, aud, titleText);
+    window.syncMiniPlayerTorrentBtnVisibilityV108();
+};
+
+const _origPreviewTorV98 = window.previewTorrentFileStreamV97;
+window.previewTorrentFileStreamV97 = async function(fileIdx, btnEl, ev) {
+    const ts = window._torStateV96;
+    if (ts && ts.currentHash) {
+        window._torSnapshotsByHashV108[ts.currentHash] = {
+            hash: ts.currentHash,
+            name: ts.currentName,
+            files: (ts.files || []).map(f => Object.assign({}, f)),
+            selectedFiles: new Set(ts.selectedFiles || []),
+            activeDlSet: new Set(ts.activeDlSet || []),
+            dlActive: Boolean(ts.dlActive)
+        };
+        window._umpPlayingTorrentCtxV108 = {
+            hash: ts.currentHash,
+            fileIdx: Number(fileIdx)
+        };
+    }
+    await _origPreviewTorV98.call(this, fileIdx, btnEl, ev);
+    window.syncMiniPlayerTorrentBtnVisibilityV108();
+};
+
+// Функция перехода к раздаче и дорожке при нажатии на кнопку «🧲 Раздача» в мини-плеере
+window.openPlayingTorrentFromMiniPlayerV108 = async function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const aud = window._khStateV88 ? window._khStateV88.previewAudio : null;
+    let hash = window._umpPlayingTorrentCtxV108 ? window._umpPlayingTorrentCtxV108.hash : '';
+    let fileIdx = window._umpPlayingTorrentCtxV108 ? window._umpPlayingTorrentCtxV108.fileIdx : -1;
+
+    if (aud && String(aud._pagePath || '').startsWith('/api/torrent/stream/')) {
+        const parts = String(aud._pagePath).split('/');
+        if (parts.length >= 6) {
+            hash = parts[4];
+            fileIdx = Number(parts[5]);
+        }
+    }
+    if (!hash) return;
+
+    // Скрываем другие открытые модальные студии и поднимаем окно Торрент-студии
+    ['jennyKhinsiderModalV88', 'jennyFlacRadioModalV91', 'jennySoundCloudModalV93'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.setProperty('display', 'none', 'important');
+    });
+    const torModal = document.getElementById('jennyTorrentModalV91');
+    if (!torModal) {
+        window.openTorrentHubPreviewModalV91();
+    } else {
+        torModal.style.setProperty('display', 'flex', 'important');
+    }
+
+    const ts = window._torStateV96;
+    const snap = window._torSnapshotsByHashV108[hash];
+
+    // Если сейчас открыт список раздач или другой торрент — восстанавливаем нужную раздачу из памяти или демона
+    const ftr = document.getElementById('torFooterBarV96');
+    const isShowingOther = (ts.currentHash !== hash) || !ftr || ftr.style.display === 'none' || !document.getElementById('torFileRowV96_' + fileIdx);
+
+    if (isShowingOther) {
+        if (snap && snap.files && snap.files.length) {
+            ts.currentHash = snap.hash;
+            ts.currentName = snap.name;
+            ts.files = snap.files.map(f => Object.assign({}, f));
+            ts.selectedFiles = new Set(snap.selectedFiles || ts.files.map(f => f.index));
+            if (snap.activeDlSet && snap.activeDlSet.size > 0) ts.activeDlSet = new Set(snap.activeDlSet);
+        } else {
+            // Подтягиваем из живого Go-демона /api/torrent/status
+            try {
+                const stData = await fetch('/api/torrent/status').then(r => r.json());
+                const found = (stData.torrents || []).find(x => x.hash === hash);
+                if (found) {
+                    ts.currentHash = found.hash;
+                    ts.currentName = found.name;
+                    ts.files = (found.files || []).map(f => {
+                        const p = String(f.path || '').split('/');
+                        return Object.assign({}, f, { path: p[p.length - 1] || f.path });
+                    });
+                    ts.selectedFiles = new Set(ts.files.map(f => f.index));
+                }
+            } catch (e) {}
+        }
+
+        const stEl = document.getElementById('torStatusLineV96');
+        if (stEl) stEl.innerText = `💿 ${ts.currentName || 'Торрент'} (треков: ${(ts.files || []).length})`;
+        if (ftr) ftr.style.display = 'flex';
+        window.renderTorrentFilesListV96();
+
+        // Если по этому торренту идёт активная закачка — перезапускаем визуальный поллер
+        if (ts.activeDlSet && ts.activeDlSet.size > 0) {
+            window.runTorrentDownloadQueueV102(Array.from(ts.activeDlSet));
+        }
+    }
+
+    // Подсвечиваем и прокручиваем прямо к играющему файлу
+    setTimeout(() => {
+        const row = document.getElementById('torFileRowV96_' + fileIdx);
+        if (row) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const prevBorder = row.style.borderColor;
+            row.style.borderColor = '#d2a8ff';
+            row.style.boxShadow = '0 0 12px rgba(210, 168, 255, 0.65)';
+            const playBtn = row.querySelector('.tor-prev-btn-v97');
+            if (playBtn && aud && !aud.paused) playBtn.innerText = '⏹';
+            setTimeout(() => {
+                row.style.boxShadow = 'none';
+                if (prevBorder) row.style.borderColor = prevBorder;
+            }, 2200);
+        }
+    }, 60);
+};
