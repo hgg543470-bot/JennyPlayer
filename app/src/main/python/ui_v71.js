@@ -7227,24 +7227,397 @@ window.openPlayingTorrentFromMiniPlayerV108 = async function(ev) {
     }, 60);
 };
 
-// === 🕸️ JENNY V109: SPIDERWEB CLICK 24H TRACKER SYNC ===
-window.triggerDailyTrackerSyncOnSpiderwebV109 = function() {
-    fetch('/api/torrent/sync_trackers', { method: 'POST' })
-        .then(r => r.json())
-        .then(d => {
-            if (d && d.updated && typeof window.showToast === 'function') {
-                window.showToast(`🕸️ База трекеров обновлена на 24ч (${d.count} шт.)`);
-            }
-        })
-        .catch(() => {});
+
+// === 🔑🕸️ JENNY V110: SERVICE AUTH ACCORDION + 70%x70% TRACKERS WINDOW WITH DIFF REPORT ===
+window._trackersStateV110 = {
+    trackers: [],
+    autoUpdate: true,
+    lastSync: 0,
+    lastAdded: [],
+    lastOutdated: []
 };
 
-const _origOpenTorModalV109 = window.openTorrentHubPreviewModalV91;
+// 1. Автообновление при клике на паутину (срабатывает не чаще 1 раза в сутки и только если включена галочка autoUpdate)
+window.triggerDailyTrackerSyncOnSpiderwebV109 = function() {
+    fetch('/api/torrent/sync_trackers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: false })
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d && d.status === 'ok') {
+            window._trackersStateV110.trackers = d.trackers || [];
+            window._trackersStateV110.autoUpdate = Boolean(d.auto_update);
+            window.updateTrackersCountLabelsV110();
+            if (d.updated && typeof window.showToast === 'function') {
+                const addCnt = (d.added || []).length;
+                const outCnt = (d.outdated || []).length;
+                window.showToast(`🕸️ Трекеры обновлены (${d.count} шт. | +${addCnt} новых, -${outCnt} устар.)`);
+            }
+        }
+    })
+    .catch(() => {});
+};
+
+const _origOpenTorModalV110 = window.openTorrentHubPreviewModalV91;
 window.openTorrentHubPreviewModalV91 = function(ev) {
     const ex = document.getElementById('jennyTorrentModalV91');
     const willOpen = !ex || ex.style.display === 'none' || getComputedStyle(ex).display === 'none';
-    _origOpenTorModalV109.apply(this, arguments);
+    _origOpenTorModalV110.apply(this, arguments);
     if (willOpen) {
         window.triggerDailyTrackerSyncOnSpiderwebV109();
     }
 };
+
+// 2. Функции сохранения и загрузки полей авторизации сервисов
+window.loadServiceAuthFromDiskV110 = async function(singleKey, btnEl) {
+    try {
+        const res = await fetch('/api/sources/auth');
+        const d = await res.json();
+        if (d.status !== 'ok' || !d.auth) return;
+        const keys = singleKey ? [singleKey] : ['sc_oauth_token', 'sc_client_id', 'ia_s3_keys', 'ia_cookie', 'tor_passkey'];
+        keys.forEach(k => {
+            const inp = document.getElementById('inp_auth_' + k + '_v110');
+            if (inp && d.auth[k] !== undefined) inp.value = d.auth[k];
+        });
+        if (btnEl) {
+            const old = btnEl.innerHTML;
+            btnEl.innerHTML = '✅';
+            setTimeout(() => { btnEl.innerHTML = old; }, 900);
+        } else if (typeof window.showToast === 'function') {
+            window.showToast('📥 Поля авторизации сервисов загружены с диска');
+        }
+    } catch (e) {}
+};
+
+window.saveServiceAuthToDiskV110 = async function(singleKey, btnEl) {
+    try {
+        let payload = {};
+        if (singleKey) {
+            const inp = document.getElementById('inp_auth_' + singleKey + '_v110');
+            payload = { key: singleKey, value: inp ? inp.value.trim() : '' };
+        } else {
+            const authObj = {};
+            ['sc_oauth_token', 'sc_client_id', 'ia_s3_keys', 'ia_cookie', 'tor_passkey'].forEach(k => {
+                const inp = document.getElementById('inp_auth_' + k + '_v110');
+                if (inp) authObj[k] = inp.value.trim();
+            });
+            payload = { auth: authObj };
+        }
+        const res = await fetch('/api/sources/auth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const d = await res.json();
+        if (d.status === 'ok') {
+            if (btnEl) {
+                const old = btnEl.innerHTML;
+                btnEl.innerHTML = '✅';
+                setTimeout(() => { btnEl.innerHTML = old; }, 900);
+            } else if (typeof window.showToast === 'function') {
+                window.showToast('💾 Авторизация сервисов сохранена на диск');
+            }
+        }
+    } catch (e) {}
+};
+
+// 3. Функции управления списком трекеров (Загрузка, Сохранение своего списка, Ручное обновление с диффом)
+window.updateTrackersCountLabelsV110 = function() {
+    const cnt = (window._trackersStateV110.trackers || []).length;
+    const autoOn = Boolean(window._trackersStateV110.autoUpdate);
+    const badge = document.getElementById('lblTrackersCntSettingsV110');
+    if (badge) badge.innerText = `${cnt} шт.`;
+    const winTitle = document.getElementById('lblTrackersModalTitleV110');
+    if (winTitle) winTitle.innerText = `🕸️ СПИСОК ТРЕКЕРОВ (${cnt} шт.)`;
+    ['chkAutoSyncTrackersSettingsV110', 'chkAutoSyncTrackersModalV110'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = autoOn;
+    });
+};
+
+window.loadTrackersFromDiskV110 = async function(showNotification) {
+    try {
+        const res = await fetch('/api/torrent/trackers');
+        const d = await res.json();
+        if (d.status === 'ok') {
+            window._trackersStateV110.trackers = d.trackers || [];
+            window._trackersStateV110.autoUpdate = Boolean(d.auto_update);
+            window._trackersStateV110.lastSync = d.last_sync || 0;
+            const ta = document.getElementById('torTrackersTextareaV110');
+            if (ta) ta.value = (d.trackers || []).join('\n');
+            window.updateTrackersCountLabelsV110();
+            if (showNotification && typeof window.showToast === 'function') {
+                window.showToast(`📥 Загружен список трекеров (${d.count} шт.)`);
+            }
+        }
+    } catch (e) {}
+};
+
+window.toggleAutoSyncTrackersV110 = async function(isChecked) {
+    window._trackersStateV110.autoUpdate = Boolean(isChecked);
+    window.updateTrackersCountLabelsV110();
+    try {
+        await fetch('/api/torrent/trackers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'toggle_auto', auto_update: Boolean(isChecked) })
+        });
+        if (typeof window.showToast === 'function') {
+            window.showToast(isChecked
+                ? '🔄 Автообновление трекеров из сети ВКЛЮЧЕНО'
+                : '🔒 Автообновление ВЫКЛ (используется только ваш список)');
+        }
+    } catch (e) {}
+};
+
+window.saveCustomTrackersListV110 = async function() {
+    const ta = document.getElementById('torTrackersTextareaV110');
+    const rawText = ta ? ta.value : (window._trackersStateV110.trackers || []).join('\n');
+    try {
+        const res = await fetch('/api/torrent/trackers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'save',
+                trackers: rawText,
+                auto_update: window._trackersStateV110.autoUpdate
+            })
+        });
+        const d = await res.json();
+        if (d.status === 'ok') {
+            window._trackersStateV110.trackers = d.trackers || [];
+            if (ta) ta.value = (d.trackers || []).join('\n');
+            window.updateTrackersCountLabelsV110();
+            window.renderTrackersDiffReportV110(null, null, `✅ Текущий список заменён и сохранён (${d.count} трекеров).`);
+            if (typeof window.showToast === 'function') {
+                window.showToast(`💾 Сохранено трекеров: ${d.count} шт.`);
+            }
+        }
+    } catch (e) {}
+};
+
+window.resetTrackersToFludBaseV110 = async function() {
+    try {
+        const res = await fetch('/api/torrent/trackers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'reset_flud' })
+        });
+        const d = await res.json();
+        if (d.status === 'ok') {
+            window._trackersStateV110.trackers = d.trackers || [];
+            const ta = document.getElementById('torTrackersTextareaV110');
+            if (ta) ta.value = (d.trackers || []).join('\n');
+            window.updateTrackersCountLabelsV110();
+            window.renderTrackersDiffReportV110(null, null, `🔄 Восстановлен базовый список Flud (${d.count} шт.).`);
+        }
+    } catch (e) {}
+};
+
+window.renderTrackersDiffReportV110 = function(addedArr, outdatedArr, customBannerText) {
+    const htmlBuild = () => {
+        if (customBannerText) {
+            return `<div style="color:#3fb950;font-weight:bold;">${customBannerText}</div>`;
+        }
+        const add = addedArr || [];
+        const out = outdatedArr || [];
+        const addListHtml = add.length
+            ? `<div style="max-height:75px;overflow-y:auto;background:#05070a;padding:4px 6px;border-radius:5px;border:1px solid rgba(63,185,80,0.35);font-family:monospace;font-size:10px;color:#3fb950;margin-top:3px;">${add.map(x => '➕ ' + x).join('<br>')}</div>`
+            : `<div style="font-size:10.5px;color:#8b949e;">Новых трекеров сверх текущего списка не обнаружено.</div>`;
+        const outListHtml = out.length
+            ? `<div style="max-height:75px;overflow-y:auto;background:#05070a;padding:4px 6px;border-radius:5px;border:1px solid rgba(248,81,73,0.35);font-family:monospace;font-size:10px;color:#ff7b72;margin-top:3px;">${out.map(x => '🗑️ ' + x).join('<br>')}</div>`
+            : `<div style="font-size:10.5px;color:#8b949e;">Устаревших / недоступных трекеров нет (все живы).</div>`;
+        return `
+            <div style="display:flex;flex-direction:column;gap:6px;">
+                <div>
+                    <div style="font-size:11px;font-weight:bold;color:#3fb950;">✅ Добавлены новые (${add.length} шт.):</div>
+                    ${addListHtml}
+                </div>
+                <div>
+                    <div style="font-size:11px;font-weight:bold;color:#ff7b72;">❌ Устарели и удалены (${out.length} шт.):</div>
+                    ${outListHtml}
+                </div>
+            </div>
+        `;
+    };
+
+    ['torTrackersDiffReportModalV110', 'torTrackersDiffReportSettingsV110'].forEach(id => {
+        const box = document.getElementById(id);
+        if (box) {
+            box.style.display = 'block';
+            box.innerHTML = htmlBuild();
+        }
+    });
+};
+
+window.manualUpdateTrackersNowV110 = async function(btnEl) {
+    const oldTxt = btnEl ? btnEl.innerHTML : '🔄 Обновить';
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = '⏳ Проверка живых и устаревших...';
+    }
+    try {
+        const res = await fetch('/api/torrent/sync_trackers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: true })
+        });
+        const d = await res.json();
+        if (d.status !== 'ok') throw new Error(d.error || 'Ошибка обновления');
+        window._trackersStateV110.trackers = d.trackers || [];
+        window._trackersStateV110.lastAdded = d.added || [];
+        window._trackersStateV110.lastOutdated = d.outdated || [];
+        const ta = document.getElementById('torTrackersTextareaV110');
+        if (ta) ta.value = (d.trackers || []).join('\n');
+        window.updateTrackersCountLabelsV110();
+        window.renderTrackersDiffReportV110(d.added || [], d.outdated || [], null);
+        if (typeof window.showToast === 'function') {
+            window.showToast(`✅ Добавлено: ${(d.added || []).length} | Устарело: ${(d.outdated || []).length} | Всего: ${d.count}`);
+        }
+    } catch (e) {
+        if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+    } finally {
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.innerHTML = oldTxt;
+        }
+    }
+};
+
+// 4. Центрированное окно списка трекеров строго 70% ширины и 70% высоты экрана (70vw x 70vh)
+window.openTrackersManagerWindowV110 = async function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    let m = document.getElementById('jennyTrackersModalV110');
+    if (m) m.remove();
+
+    m = document.createElement('div');
+    m.id = 'jennyTrackersModalV110';
+    m.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;background:rgba(4,6,10,0.86);z-index:2147483646;display:flex;align-items:center;justify-content:center;box-sizing:border-box;';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    m.innerHTML = `
+        <div onclick="event.stopPropagation()" style="width:70vw !important;height:70vh !important;min-width:290px;background:#080b10;border:1.5px solid #58a6ff;border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,0.96);display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:linear-gradient(90deg,rgba(88,166,255,0.22),rgba(115,65,190,0.22));border-bottom:1px solid #262c36;flex-shrink:0;">
+                <span id="lblTrackersModalTitleV110" style="color:#58a6ff;font-weight:900;font-size:12.5px;">🕸️ СПИСОК ТРЕКЕРОВ</span>
+                <button type="button" onclick="document.getElementById('jennyTrackersModalV110').remove()" style="background:transparent;border:1px solid #30363d;color:#8b949e;width:26px;height:26px;border-radius:50%;font-size:12px;">✖</button>
+            </div>
+
+            <div style="padding:8px 10px;background:#0d1117;border-bottom:1px solid #21262d;display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#e6edf3;font-weight:bold;cursor:pointer;">
+                    <input type="checkbox" id="chkAutoSyncTrackersModalV110" onchange="window.toggleAutoSyncTrackersV110(this.checked)">
+                    <span>🔄 Автообновлять через интернет-ресурсы (раз в 24ч по клику на 🕸️)</span>
+                </label>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                    <button type="button" onclick="window.manualUpdateTrackersNowV110(this)" style="flex:1.2;padding:6px 8px;font-size:11px;background:linear-gradient(135deg,#1f6feb,#238636);color:#fff;border:none;border-radius:7px;font-weight:bold;">🔄 Обновить из сети</button>
+                    <button type="button" onclick="window.loadTrackersFromDiskV110(true)" style="padding:6px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:7px;">📥 Загрузить</button>
+                    <button type="button" onclick="window.saveCustomTrackersListV110()" style="padding:6px 8px;font-size:11px;background:rgba(63,185,80,0.2);color:#3fb950;border:1px solid #3fb950;border-radius:7px;font-weight:bold;">💾 Заменить своим</button>
+                </div>
+                <div id="torTrackersDiffReportModalV110" style="display:none;background:#090d14;border:1px solid #30363d;border-radius:8px;padding:7px 8px;"></div>
+            </div>
+
+            <div style="flex:1;padding:8px 10px;display:flex;flex-direction:column;min-height:0;background:#05070a;">
+                <div style="font-size:10px;color:#8b949e;margin-bottom:4px;">По одному адресу (udp://, http://, https://) на строку. Впиши свой список и нажми «💾 Заменить своим»:</div>
+                <textarea id="torTrackersTextareaV110" spellcheck="false" placeholder="udp://tracker.opentrackr.org:1337/announce..." style="flex:1;width:100%;min-height:0;box-sizing:border-box;background:#000000;color:#58a6ff;border:1px solid #30363d;border-radius:8px;padding:8px;font-family:monospace;font-size:11px;line-height:1.35;resize:none;white-space:pre;overflow:auto;"></textarea>
+            </div>
+
+            <div style="padding:8px 10px;background:#0d1117;border-top:1px solid #21262d;display:flex;gap:6px;flex-shrink:0;">
+                <button type="button" onclick="document.getElementById('torTrackersTextareaV110').value=''" style="padding:6px 8px;font-size:10.5px;background:#161b22;color:#ff7b72;border:1px solid rgba(248,81,73,0.4);border-radius:7px;">🧹 Очистить</button>
+                <button type="button" onclick="window.resetTrackersToFludBaseV110()" style="padding:6px 8px;font-size:10.5px;background:#161b22;color:#e3b341;border:1px solid rgba(227,179,65,0.4);border-radius:7px;">🔄 База Flud</button>
+                <button type="button" onclick="window.saveCustomTrackersListV110()" style="flex:1;padding:6px 10px;font-size:11px;background:#238636;color:#fff;border:none;border-radius:7px;font-weight:bold;">💾 Сохранить список</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(m);
+    await window.loadTrackersFromDiskV110(false);
+};
+
+// 5. Расширяем renderSourcesSettingsSectionV91: монтируем под галочками источников 2 раскрывающихся меню
+const _origRenderSourcesSettingsV91 = window.renderSourcesSettingsSectionV91;
+window.renderSourcesSettingsSectionV91 = function() {
+    _origRenderSourcesSettingsV91.apply(this, arguments);
+    const sm = document.getElementById('settingsModal');
+    const srcBox = document.getElementById('jennySourcesSettingsBoxV91');
+    if (!sm || !srcBox) return;
+
+    // Меню 1: Поля авторизации для сервисов с кнопками 📥 и 💾
+    let authBox = document.getElementById('jennyServiceAuthSettingsBoxV110');
+    if (!authBox) {
+        authBox = document.createElement('details');
+        authBox.id = 'jennyServiceAuthSettingsBoxV110';
+        authBox.className = 'setting-group';
+        srcBox.insertAdjacentElement('afterend', authBox);
+    }
+
+    const authFields = [
+        { key: 'sc_oauth_token', label: '☁️ SoundCloud (OAuth / Cookie):', ph: 'oauth_token=... или 2-12345...' },
+        { key: 'sc_client_id',   label: '☁️ SoundCloud (client_id):',      ph: '32 символа (необязательно)' },
+        { key: 'ia_s3_keys',     label: '🏛️ Archive.org (S3 access:secret):', ph: 'access_key:secret_key' },
+        { key: 'ia_cookie',      label: '🏛️ Archive.org (Cookie):',        ph: 'logged-in-user=...; logged-in-sig=...' },
+        { key: 'tor_passkey',    label: '🧲 P2P Торрент (Passkey / Ключ):', ph: 'passkey для приватных трекеров' }
+    ];
+
+    authBox.innerHTML = `
+        <summary>🔑 Авторизация сервисов (SoundCloud / Archive / P2P)</summary>
+        <div class="group-content">
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <button type="button" onclick="window.loadServiceAuthFromDiskV110(null, this)" style="flex:1;padding:7px;font-size:11.5px;background:#1f6feb;color:#fff;border:none;border-radius:6px;font-weight:bold;">📥 ЗАГРУЗИТЬ КЛЮЧИ</button>
+                <button type="button" onclick="window.saveServiceAuthToDiskV110(null, this)" style="flex:1;padding:7px;font-size:11.5px;background:#238636;color:#fff;border:none;border-radius:6px;font-weight:bold;">💾 СОХРАНИТЬ КЛЮЧИ</button>
+            </div>
+            ${authFields.map(f => `
+                <div class="setting-row" style="border:none;padding:5px 0;gap:6px;flex-wrap:wrap;">
+                    <span style="color:#c9d1d9;font-size:12px;min-width:140px;flex:1;">${f.label}</span>
+                    <div style="display:flex;gap:4px;align-items:center;flex:1.4;min-width:170px;">
+                        <button type="button" class="io-btn" onclick="window.loadServiceAuthFromDiskV110('${f.key}', this)" title="Загрузить поле">📥</button>
+                        <input type="text" id="inp_auth_${f.key}_v110" placeholder="${f.ph}" style="flex:1;min-width:0;padding:5px 7px;font-size:11.5px;text-align:left !important;">
+                        <button type="button" class="io-btn" onclick="window.saveServiceAuthToDiskV110('${f.key}', this)" title="Сохранить поле">💾</button>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+
+    // Меню 2: Управление списком трекеров и автообновлением
+    let trkBox = document.getElementById('jennyTrackersSettingsBoxV110');
+    if (!trkBox) {
+        trkBox = document.createElement('details');
+        trkBox.id = 'jennyTrackersSettingsBoxV110';
+        trkBox.className = 'setting-group';
+        authBox.insertAdjacentElement('afterend', trkBox);
+    }
+
+    trkBox.innerHTML = `
+        <summary>🕸️ Трекеры P2P (Список 70% и Автообновление)</summary>
+        <div class="group-content">
+            <div class="setting-row" style="border:none;padding:4px 0 8px 0;">
+                <label class="toggle-label" style="color:#e6edf3;font-size:12.5px;font-weight:bold;">
+                    <input type="checkbox" id="chkAutoSyncTrackersSettingsV110" checked onchange="window.toggleAutoSyncTrackersV110(this.checked)">
+                    🔄 Автообновлять трекеры из сети (раз в 24ч по клику на 🕸️)
+                </label>
+            </div>
+            <div class="setting-row" style="border:none;padding:4px 0 8px 0;">
+                <span style="color:#8b949e;font-size:12px;">Активных трекеров в базе:</span>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button type="button" class="io-btn" onclick="window.loadTrackersFromDiskV110(true)" title="Загрузить список с диска">📥</button>
+                    <span id="lblTrackersCntSettingsV110" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:bold;color:#3fb950;">75 шт.</span>
+                    <button type="button" class="io-btn" onclick="window.saveCustomTrackersListV110()" title="Сохранить список на диск">💾</button>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:4px;">
+                <button type="button" onclick="window.openTrackersManagerWindowV110(event)" style="flex:1.2;padding:9px;font-size:12px;background:#161b22;border:1px solid #58a6ff;color:#58a6ff;border-radius:8px;font-weight:bold;">📋 Список трекеров (Окно 70%)</button>
+                <button type="button" onclick="window.manualUpdateTrackersNowV110(this)" style="flex:1;padding:9px;font-size:12px;background:linear-gradient(135deg,#1f6feb,#238636);color:#fff;border:none;border-radius:8px;font-weight:bold;">🔄 Обновить сейчас</button>
+            </div>
+            <div id="torTrackersDiffReportSettingsV110" style="display:none;margin-top:8px;background:#090d14;border:1px solid #30363d;border-radius:8px;padding:8px;"></div>
+        </div>
+    `;
+
+    window.loadServiceAuthFromDiskV110(null, null);
+    window.loadTrackersFromDiskV110(false);
+};
+
+setTimeout(() => {
+    if (typeof window.renderSourcesSettingsSectionV91 === 'function') {
+        window.renderSourcesSettingsSectionV91();
+    }
+}, 350);

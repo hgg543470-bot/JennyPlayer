@@ -2481,8 +2481,120 @@ def api_torrent_search_v105():
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
-# === 🌐 JENNY V109: SPIDERWEB-TRIGGERED TRACKERS SYNC (MAX ONCE PER 24 HOURS) ===
+# === 🌐 JENNY V110: SERVICE AUTH STORAGE + TRACKERS MANAGER (DIFF REPORT & 24H AUTO-SYNC) ===
+import socket
+from concurrent.futures import ThreadPoolExecutor
+
 TRACKERS_CACHE_FILE_V109 = os.path.join(DEFAULT_MUSIC_DIR, "jenny_trackers_cache.json")
+SOURCES_AUTH_FILE_V110 = os.path.join(DEFAULT_MUSIC_DIR, "jenny_sources_auth.json")
+
+_DEFAULT_SOURCES_AUTH_V110 = {
+    "sc_oauth_token": "",
+    "sc_client_id": "",
+    "ia_s3_keys": "",
+    "ia_cookie": "",
+    "tor_passkey": ""
+}
+
+def load_sources_auth_v110():
+    data = dict(_DEFAULT_SOURCES_AUTH_V110)
+    if os.path.exists(SOURCES_AUTH_FILE_V110):
+        try:
+            with open(SOURCES_AUTH_FILE_V110, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                for k in _DEFAULT_SOURCES_AUTH_V110:
+                    if k in loaded and loaded[k] is not None:
+                        data[k] = str(loaded[k]).strip()
+        except Exception:
+            pass
+    return data
+
+def save_sources_auth_v110(new_data: dict):
+    cur = load_sources_auth_v110()
+    for k in _DEFAULT_SOURCES_AUTH_V110:
+        if k in new_data and new_data[k] is not None:
+            cur[k] = str(new_data[k]).strip()
+    try:
+        os.makedirs(os.path.dirname(SOURCES_AUTH_FILE_V110), exist_ok=True)
+        with open(SOURCES_AUTH_FILE_V110, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    # Если задан пользовательский client_id для SoundCloud — сразу активируем его
+    if cur.get("sc_client_id"):
+        global _SC_CLIENT_ID_V92
+        _SC_CLIENT_ID_V92 = cur["sc_client_id"]
+    return cur
+
+# Подключаем сохранённую авторизацию к заголовкам SoundCloud и Archive.org
+def _sc_headers_v93():
+    auth = load_sources_auth_v110()
+    hdrs = {
+        "User-Agent": _SC_DESKTOP_UA_V95,
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+        "Referer": "https://soundcloud.com/",
+        "Origin": "https://soundcloud.com"
+    }
+    tok = auth.get("sc_oauth_token", "").strip()
+    if tok:
+        if "=" in tok or ";" in tok:
+            hdrs["Cookie"] = tok
+            m_tok = re.search(r'oauth_token=([^;\s]+)', tok)
+            if m_tok:
+                hdrs["Authorization"] = f"OAuth {m_tok.group(1)}"
+        else:
+            clean_t = tok.replace("OAuth ", "").strip()
+            hdrs["Authorization"] = f"OAuth {clean_t}"
+            hdrs["Cookie"] = f"oauth_token={clean_t}"
+    return hdrs
+
+def _ost_headers_with_auth_v110():
+    auth = load_sources_auth_v110()
+    hdrs = dict(OST_HEADERS)
+    s3 = auth.get("ia_s3_keys", "").strip()
+    iac = auth.get("ia_cookie", "").strip()
+    if s3:
+        hdrs["Authorization"] = f"LOW {s3}" if not s3.lower().startswith("low ") else s3
+    if iac:
+        hdrs["Cookie"] = iac
+    return hdrs
+
+def _ost_fetch_json_v88(url: str, timeout: int = 18):
+    req = urllib.request.Request(url, headers=_ost_headers_with_auth_v110())
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+@route('/api/sources/auth', method=['GET', 'POST'])
+def api_sources_auth_v110():
+    response.content_type = 'application/json'
+    if request.method == 'GET':
+        return json.dumps({"status": "ok", "auth": load_sources_auth_v110()}, ensure_ascii=False)
+    try:
+        req = json.loads(request.body.read().decode("utf-8") or "{}")
+        if "key" in req and "value" in req:
+            saved = save_sources_auth_v110({req["key"]: req["value"]})
+        elif "auth" in req and isinstance(req["auth"], dict):
+            saved = save_sources_auth_v110(req["auth"])
+        else:
+            saved = save_sources_auth_v110(req)
+        return json.dumps({"status": "ok", "auth": saved}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+@post('/api/soundcloud/save_auth')
+def api_sc_save_auth_compat_v110():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode("utf-8") or "{}")
+        upd = {}
+        if "cookie" in req: upd["sc_oauth_token"] = req["cookie"]
+        if "client_id" in req: upd["sc_client_id"] = req["client_id"]
+        saved = save_sources_auth_v110(upd)
+        return json.dumps({"status": "ok", "auth": saved})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
 
 _FLUD_BASE_TRACKERS_V109 = [
     "udp://tracker.opentrackr.org:1337/announce",
@@ -2570,88 +2682,234 @@ _LIVE_TRACKERS_URLS_V109 = [
     "https://cdn.jsdelivr.net/gh/ngosang/trackerslist@master/trackers_all.txt"
 ]
 
-_TRACKERS_MEM_V109 = {"list": None, "last_sync": 0.0, "lock": threading.Lock()}
+_TRACKERS_MEM_V109 = {
+    "list": None,
+    "last_sync": 0.0,
+    "auto_update": True,
+    "lock": threading.Lock()
+}
 
-def _load_trackers_cache_from_disk_v109():
+def _load_trackers_state_v110():
     if _TRACKERS_MEM_V109["list"] is not None:
-        return _TRACKERS_MEM_V109["list"], _TRACKERS_MEM_V109["last_sync"]
+        return _TRACKERS_MEM_V109["list"], _TRACKERS_MEM_V109["last_sync"], _TRACKERS_MEM_V109["auto_update"]
     if os.path.exists(TRACKERS_CACHE_FILE_V109):
         try:
             with open(TRACKERS_CACHE_FILE_V109, "r", encoding="utf-8") as f:
                 d = json.load(f)
             t_list = d.get("trackers")
             last_s = float(d.get("last_sync") or 0.0)
-            if isinstance(t_list, list) and len(t_list) >= len(_FLUD_BASE_TRACKERS_V109):
+            auto_u = bool(d.get("auto_update", True))
+            if isinstance(t_list, list) and len(t_list) > 0:
                 _TRACKERS_MEM_V109["list"] = t_list
                 _TRACKERS_MEM_V109["last_sync"] = last_s
-                return t_list, last_s
+                _TRACKERS_MEM_V109["auto_update"] = auto_u
+                return t_list, last_s, auto_u
         except Exception:
             pass
     _TRACKERS_MEM_V109["list"] = list(_FLUD_BASE_TRACKERS_V109)
     _TRACKERS_MEM_V109["last_sync"] = 0.0
-    return _TRACKERS_MEM_V109["list"], 0.0
+    _TRACKERS_MEM_V109["auto_update"] = True
+    return _TRACKERS_MEM_V109["list"], 0.0, True
 
-def sync_trackers_once_per_day_v109():
+def _save_trackers_state_v110(t_list, last_sync, auto_update):
+    _TRACKERS_MEM_V109["list"] = list(t_list)
+    _TRACKERS_MEM_V109["last_sync"] = float(last_sync)
+    _TRACKERS_MEM_V109["auto_update"] = bool(auto_update)
+    try:
+        os.makedirs(os.path.dirname(TRACKERS_CACHE_FILE_V109), exist_ok=True)
+        with open(TRACKERS_CACHE_FILE_V109, "w", encoding="utf-8") as f:
+            json.dump({
+                "last_sync": _TRACKERS_MEM_V109["last_sync"],
+                "auto_update": _TRACKERS_MEM_V109["auto_update"],
+                "trackers": _TRACKERS_MEM_V109["list"]
+            }, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _check_tracker_host_alive_v110(tr_url: str) -> bool:
+    try:
+        p = urllib.parse.urlparse(tr_url)
+        host = p.hostname
+        port = p.port or (443 if p.scheme == "https" else 80)
+        if not host:
+            return False
+        # Проверяем DNS-разрешение (мёртвые домены .xyz/.top/.icu сразу отсеиваются)
+        ips = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_DGRAM if p.scheme == "udp" else socket.SOCK_STREAM)
+        if not ips:
+            return False
+        if p.scheme in ("http", "https"):
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.2)
+            try:
+                s.connect((ips[0][4][0], port))
+            finally:
+                s.close()
+        return True
+    except Exception:
+        return False
+
+def perform_trackers_update_with_diff_v110(force=False):
     with _TRACKERS_MEM_V109["lock"]:
-        cur_list, last_sync = _load_trackers_cache_from_disk_v109()
+        old_list, last_sync, auto_update = _load_trackers_state_v110()
         now = time.time()
-        # Строго не чаще 1 раза в сутки (86400 секунд)
-        if last_sync > 0 and (now - last_sync) < 86400:
-            rem_h = round((86400 - (now - last_sync)) / 3600.0, 1)
-            return {"status": "ok", "updated": False, "count": len(cur_list), "next_in_hours": rem_h}
 
-        merged = []
-        seen = set()
-        fetched_online = 0
+        if not force:
+            if not auto_update:
+                return {
+                    "status": "ok", "updated": False, "auto_update": False,
+                    "count": len(old_list), "trackers": old_list, "added": [], "outdated": []
+                }
+            if last_sync > 0 and (now - last_sync) < 86400:
+                rem_h = round((86400 - (now - last_sync)) / 3600.0, 1)
+                return {
+                    "status": "ok", "updated": False, "auto_update": auto_update,
+                    "count": len(old_list), "next_in_hours": rem_h,
+                    "trackers": old_list, "added": [], "outdated": []
+                }
+
+        # 1. Загружаем свежие списки из ngosang и newTrackon
+        online_live = []
+        online_set = set()
         for u in _LIVE_TRACKERS_URLS_V109:
             try:
                 req = urllib.request.Request(u, headers=OST_HEADERS)
-                with urllib.request.urlopen(req, timeout=4) as r:
+                with urllib.request.urlopen(req, timeout=5) as r:
                     txt = r.read().decode("utf-8", errors="ignore")
                 for line in txt.splitlines():
                     tr = line.strip()
-                    if tr and tr.startswith(("udp://", "http://", "https://")) and tr not in seen:
-                        seen.add(tr)
-                        merged.append(tr)
-                        fetched_online += 1
+                    if tr and tr.startswith(("udp://", "http://", "https://")) and tr not in online_set:
+                        online_set.add(tr)
+                        online_live.append(tr)
             except Exception:
                 pass
 
-        for tr in _FLUD_BASE_TRACKERS_V109:
-            if tr not in seen:
-                seen.add(tr)
-                merged.append(tr)
+        if not online_live:
+            return {
+                "status": "error",
+                "error": "Не удалось связаться с серверами списков трекеров (проверь сеть)",
+                "trackers": old_list, "count": len(old_list), "added": [], "outdated": []
+            }
 
-        _TRACKERS_MEM_V109["list"] = merged
-        # Если интернет был доступен и подтянулись онлайн-списки — фиксируем таймер на 24 часа
-        if fetched_online > 0:
-            _TRACKERS_MEM_V109["last_sync"] = now
-            try:
-                os.makedirs(os.path.dirname(TRACKERS_CACHE_FILE_V109), exist_ok=True)
-                with open(TRACKERS_CACHE_FILE_V109, "w", encoding="utf-8") as f:
-                    json.dump({"last_sync": now, "trackers": merged}, f, ensure_ascii=False)
-            except Exception:
-                pass
-        return {"status": "ok", "updated": fetched_online > 0, "count": len(merged), "online_added": fetched_online}
+        old_set = set(old_list)
+        added_trackers = [tr for tr in online_live if tr not in old_set]
+
+        # 2. Проверяем трекеры из старого списка, которых нет в свежих онлайн-радарах:
+        # если домен/порт больше не резолвится или не отвечает — помечаем как устаревший!
+        candidates_to_check = [tr for tr in old_list if tr not in online_set]
+        outdated_set = set()
+        if candidates_to_check:
+            with ThreadPoolExecutor(max_workers=20) as ex:
+                results = list(ex.map(_check_tracker_host_alive_v110, candidates_to_check))
+            for tr, is_alive in zip(candidates_to_check, results):
+                if not is_alive:
+                    outdated_set.add(tr)
+
+        outdated_trackers = [tr for tr in old_list if tr in outdated_set]
+
+        # 3. Формируем обновлённый список: живые из старого списка + новые из онлайн-баз
+        new_merged = []
+        seen_new = set()
+        for tr in old_list:
+            if tr not in outdated_set and tr not in seen_new:
+                seen_new.add(tr)
+                new_merged.append(tr)
+        for tr in added_trackers:
+            if tr not in seen_new:
+                seen_new.add(tr)
+                new_merged.append(tr)
+
+        _save_trackers_state_v110(new_merged, now, auto_update)
+        return {
+            "status": "ok",
+            "updated": True,
+            "auto_update": auto_update,
+            "last_sync": now,
+            "count": len(new_merged),
+            "trackers": new_merged,
+            "added": added_trackers,
+            "outdated": outdated_trackers
+        }
 
 def enrich_magnet_with_cached_trackers_v109(magnet_uri: str) -> str:
     if not magnet_uri or not magnet_uri.lower().startswith("magnet:?"):
         return magnet_uri
-    cur_list, _ = _load_trackers_cache_from_disk_v109()
+    cur_list, _, _ = _load_trackers_state_v110()
+    auth = load_sources_auth_v110()
+    passkey = auth.get("tor_passkey", "").strip()
     existing_low = magnet_uri.lower()
     extra = []
     for tr in cur_list:
-        q_tr = urllib.parse.quote(tr)
-        if q_tr.lower() not in existing_low and tr.lower() not in existing_low:
+        final_tr = f"{tr}?passkey={urllib.parse.quote(passkey)}" if (passkey and "?" not in tr) else tr
+        q_tr = urllib.parse.quote(final_tr)
+        if q_tr.lower() not in existing_low and final_tr.lower() not in existing_low:
             extra.append(f"&tr={q_tr}")
     return magnet_uri + "".join(extra)
+
+@route('/api/torrent/trackers', method=['GET', 'POST'])
+def api_torrent_trackers_manage_v110():
+    response.content_type = 'application/json'
+    if request.method == 'GET':
+        t_list, last_s, auto_u = _load_trackers_state_v110()
+        return json.dumps({
+            "status": "ok",
+            "trackers": t_list,
+            "count": len(t_list),
+            "last_sync": last_s,
+            "auto_update": auto_u
+        }, ensure_ascii=False)
+    try:
+        req = json.loads(request.body.read().decode("utf-8") or "{}")
+        act = (req.get("action") or "save").strip()
+        t_list, last_s, auto_u = _load_trackers_state_v110()
+
+        if "auto_update" in req:
+            auto_u = bool(req["auto_update"])
+
+        if act == "reset_flud":
+            _save_trackers_state_v110(list(_FLUD_BASE_TRACKERS_V109), last_s, auto_u)
+            return json.dumps({
+                "status": "ok",
+                "trackers": _FLUD_BASE_TRACKERS_V109,
+                "count": len(_FLUD_BASE_TRACKERS_V109),
+                "auto_update": auto_u
+            }, ensure_ascii=False)
+
+        if "trackers" in req:
+            raw_in = req["trackers"]
+            if isinstance(raw_in, str):
+                lines = raw_in.splitlines()
+            elif isinstance(raw_in, list):
+                lines = [str(x) for x in raw_in]
+            else:
+                lines = []
+            cleaned = []
+            seen = set()
+            for ln in lines:
+                s = ln.strip()
+                if s and s.startswith(("udp://", "http://", "https://")) and s not in seen:
+                    seen.add(s)
+                    cleaned.append(s)
+            t_list = cleaned
+
+        _save_trackers_state_v110(t_list, last_s, auto_u)
+        return json.dumps({
+            "status": "ok",
+            "trackers": t_list,
+            "count": len(t_list),
+            "last_sync": last_s,
+            "auto_update": auto_u
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
 
 @post('/api/torrent/sync_trackers')
 def api_torrent_sync_trackers_v109():
     response.content_type = 'application/json'
     try:
-        res = sync_trackers_once_per_day_v109()
-        return json.dumps(res)
+        req = json.loads(request.body.read().decode("utf-8") or "{}")
+        force_now = bool(req.get("force", False))
+        res = perform_trackers_update_with_diff_v110(force=force_now)
+        return json.dumps(res, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
