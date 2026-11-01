@@ -2423,13 +2423,20 @@ def api_torrent_add_v96():
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
+_JTORRENT_ACTIVE_FILES_V106 = {}
+
 @post('/api/torrent/download')
 def api_torrent_download_v96():
     response.content_type = 'application/json'
     try:
         ensure_jtorrent_daemon_v96()
-        body = request.body.read()
-        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download", data=body, headers={"Content-Type": "application/json"})
+        raw_body = request.body.read()
+        req_obj = json.loads(raw_body.decode("utf-8") or "{}")
+        h = (req_obj.get("hash") or "").strip().lower()
+        flist = [int(x) for x in (req_obj.get("files") or [])]
+        if h:
+            _JTORRENT_ACTIVE_FILES_V106[h] = set(flist)
+        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download", data=raw_body, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.read().decode("utf-8")
     except Exception as e:
@@ -2477,14 +2484,16 @@ def api_torrent_import_track_v105():
         return json.dumps({"status": "error", "error": "Файл ещё не докачан"})
 
     base_nm = os.path.splitext(os.path.basename(full_p))[0]
+    ext = os.path.splitext(full_p)[1].lower()
+    xf_map = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15}
+    need_xflac = (fmt in xf_map and ext in ('.flac', '.wav'))
+
     try:
         with _TOR_IMPORT_LOCK_V98:
-            _TOR_ENC_PROGRESS_V99.update({"active": True, "current_key": key, "current_track": base_nm, "track_pct": 8})
-            _recalc_tor_enc_overall_v99()
             load_multi_dirs_v71()
-            ext = os.path.splitext(full_p)[1].lower()
-            xf_map = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15}
-            if fmt in xf_map and ext in ('.flac', '.wav'):
+            if need_xflac:
+                _TOR_ENC_PROGRESS_V99.update({"active": True, "current_key": key, "current_track": base_nm, "track_pct": 8})
+                _recalc_tor_enc_overall_v99()
                 xf_mode = xf_map[fmt]
                 suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac"}[xf_mode]
                 final_name = f"{base_nm}{suf}"
@@ -2518,6 +2527,7 @@ def api_torrent_import_track_v105():
                             try: os.remove(fp)
                             except Exception: pass
             else:
+                # Прямой перенос MP3 / OGG / M4A / AAC без пережатия в xFLAC!
                 final_name = os.path.basename(full_p)
                 final_path = os.path.join(MUSIC_DIR, final_name)
                 shutil.copy2(full_p, final_path)
@@ -2531,35 +2541,52 @@ def api_torrent_import_track_v105():
             save_custom_tags_db_v74(db)
             TRACK_META_CACHE_V71.pop(final_path, None)
             sz_mb = round(os.path.getsize(final_path) / (1024 * 1024), 2)
-            return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb})
+            return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb, "direct": not need_xflac})
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
     finally:
-        if _TOR_ENC_PROGRESS_V99.get("done_count", 0) >= _TOR_ENC_PROGRESS_V99.get("total_count", 0):
-            _TOR_ENC_PROGRESS_V99["active"] = False
-            _TOR_ENC_PROGRESS_V99["current_key"] = ""
-            _TOR_ENC_PROGRESS_V99["track_pct"] = 0
+        # Всегда сбрасываем active=False, когда текущий файл обработан, чтобы UI никогда не зависал в ожидании остальных!
+        _TOR_ENC_PROGRESS_V99["active"] = False
+        _TOR_ENC_PROGRESS_V99["current_key"] = ""
+        _TOR_ENC_PROGRESS_V99["track_pct"] = 0
 
 @route('/api/torrent/stream/<hash_str>/<file_idx:int>', method='GET')
 def api_torrent_stream_proxy_v97(hash_str, file_idx):
     ensure_jtorrent_daemon_v96()
-    try:
-        dl_req = urllib.request.Request(
-            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
-            data=json.dumps({"hash": hash_str, "files": [file_idx]}).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
-        )
-        urllib.request.urlopen(dl_req, timeout=2).read()
-    except Exception:
-        pass
-    u = f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={hash_str}&file={file_idx}"
+    h_low = hash_str.strip().lower()
+    # Добавляем прослушиваемый файл к уже качающемуся списку, НЕ отменяя загрузку остальных выбранных треков!
+    cur_set = set(_JTORRENT_ACTIVE_FILES_V106.get(h_low, set()))
+    if file_idx not in cur_set:
+        cur_set.add(int(file_idx))
+        _JTORRENT_ACTIVE_FILES_V106[h_low] = cur_set
+        try:
+            dl_req = urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                data=json.dumps({"hash": h_low, "files": sorted(list(cur_set))}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(dl_req, timeout=2).read()
+        except Exception:
+            pass
+
+    u = f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={file_idx}"
     hdrs = {"Range": request.headers.get("Range")} if request.headers.get("Range") else {}
     r = urllib.request.urlopen(urllib.request.Request(u, headers=hdrs), timeout=20)
-    response.status = r.status
+    resp_hdrs = {}
     for k in ("Content-Type", "Content-Length", "Accept-Ranges", "Content-Range"):
         if r.headers.get(k):
-            response.set_header(k, r.headers.get(k))
-    return r
+            resp_hdrs[k] = r.headers.get(k)
+    def _chunk_gen():
+        try:
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try: r.close()
+            except Exception: pass
+    return bottle.HTTPResponse(body=_chunk_gen(), status=r.status, headers=resp_hdrs)
 
 @route('/api/sources/live_badges', method='GET')
 def api_sources_live_badges_v99():
