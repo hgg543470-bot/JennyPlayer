@@ -2410,6 +2410,263 @@ def api_torrent_stream_proxy_v97(hash_str, file_idx):
             response.set_header(k, r.headers.get(k))
     return r
 
+# ==============================================================================
+# 📊 JENNY V99: LIVE BADGES FOR ALL ICONS + XFLAC ENCODE PROGRESS + EXACT TORRENT SEARCH
+# ==============================================================================
+_SC_DL_STATE_V99 = {"active": False, "pct": 0, "title": ""}
+_TOR_ENC_PROGRESS_V99 = {
+    "active": False, "current_key": "", "current_track": "",
+    "track_pct": 0, "done_count": 0, "total_count": 0, "overall_pct": 0
+}
+
+def _recalc_tor_enc_overall_v99():
+    tot = max(1, _TOR_ENC_PROGRESS_V99.get("total_count", 0))
+    done = _TOR_ENC_PROGRESS_V99.get("done_count", 0)
+    tp = _TOR_ENC_PROGRESS_V99.get("track_pct", 0)
+    ov = min(100, int(((done * 100) + tp) / tot))
+    _TOR_ENC_PROGRESS_V99["overall_pct"] = ov
+
+@post('/api/torrent/queue_plan')
+def api_torrent_queue_plan_v99():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        tot = int(req.get("total") or 0)
+        done = int(req.get("done") or 0)
+        _TOR_ENC_PROGRESS_V99["total_count"] = tot
+        _TOR_ENC_PROGRESS_V99["done_count"] = done
+        _recalc_tor_enc_overall_v99()
+        return json.dumps({"status": "ok"})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+# Переопределяем поиск торрентов: сортировка по сидам, фильтр 0 сидов и точный поиск
+@post('/api/torrent/search')
+def api_torrent_search_v99():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        q = (req.get("query") or "").strip()
+        only_flac = bool(req.get("only_flac", True))
+        exact_match = bool(req.get("exact", False))
+        hide_zero = bool(req.get("hide_zero", True))
+        if not q:
+            return json.dumps({"status": "error", "error": "Пустой запрос"})
+
+        q_words = [w.lower() for w in re.split(r'\s+', q) if w]
+        sq = f"{q} FLAC" if (only_flac and "flac" not in q.lower()) else q
+        raw_rows = []
+        try:
+            u = f"https://apibay.org/q.php?q={urllib.parse.quote(sq)}&cat=100"
+            raw_rows = _ost_fetch_json_v88(u, timeout=8) or []
+        except Exception:
+            pass
+
+        # Если с добавленным словом FLAC ничего не нашлось, пробуем чистый запрос в аудио-категории
+        if (not raw_rows or (len(raw_rows) == 1 and raw_rows[0].get("name") == "No results returned")) and sq != q:
+            try:
+                u2 = f"https://apibay.org/q.php?q={urllib.parse.quote(q)}&cat=100"
+                raw_rows = _ost_fetch_json_v88(u2, timeout=8) or []
+            except Exception:
+                pass
+
+        results = []
+        hidden_zero_cnt = 0
+        for r in raw_rows:
+            ih = (r.get("info_hash") or "").strip()
+            nm = (r.get("name") or "").strip()
+            if not ih or ih == "0000000000000000000000000000000000000000" or nm == "No results returned":
+                continue
+            seeds = int(r.get("seeders") or 0)
+            peers = int(r.get("leechers") or 0)
+            sz_mb = round(int(r.get("size") or 0) / (1024 * 1024), 1)
+            nm_low = nm.lower()
+
+            if exact_match and not all(w in nm_low for w in q_words):
+                continue
+            if hide_zero and seeds <= 0:
+                hidden_zero_cnt += 1
+                continue
+
+            tr_list = "&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://open.stealth.si:80/announce&tr=udp://exodus.desync.com:6969/announce"
+            mag = f"magnet:?xt=urn:btih:{ih}&dn={urllib.parse.quote(nm)}{tr_list}"
+            results.append({"title": nm, "size_mb": sz_mb, "seeders": seeds, "peers": peers, "magnet": mag})
+
+        results.sort(key=lambda x: (x["seeders"], x["peers"]), reverse=True)
+        return json.dumps({"status": "ok", "results": results[:40], "hidden_zero": hidden_zero_cnt}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+# Переопределяем скачивание SoundCloud с пошаговым процентом сегментов для иконки в шапке
+@post('/api/soundcloud/download_track')
+def api_soundcloud_download_track_v99():
+    response.content_type = 'application/json'
+    tmp_raw = os.path.join(MUSIC_DIR, f"temp_final_sc_{os.getpid()}.stream")
+    tmp_mp3 = os.path.join(MUSIC_DIR, f"temp_final_sc_enc_{os.getpid()}.mp3")
+    try:
+        load_multi_dirs_v71()
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        page_path = (req.get("page_path") or "").strip()
+        track_title = (req.get("track_title") or "Track").strip()
+        track_num = int(req.get("track_num") or 1)
+        _SC_DL_STATE_V99.update({"active": True, "pct": 3, "title": track_title})
+
+        stream_u = _sc_resolve_direct_url_v92(page_path)
+        if not stream_u:
+            return json.dumps({"status": "error", "error": "SoundCloud не отдал поток"})
+
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        with _sc_urlopen_v95(stream_u, timeout=20) as r:
+            first_b = r.read(16384)
+            if first_b.lstrip().startswith(b"#EXTM3U") or ".m3u8" in stream_u.lower():
+                m3u8_txt = (first_b + r.read()).decode("utf-8", errors="ignore")
+                seg_urls = [ln.strip() for ln in m3u8_txt.splitlines() if ln.strip().startswith("http")]
+                tot_s = max(1, len(seg_urls))
+                with open(tmp_raw, "wb") as out_f:
+                    for idx_s, su in enumerate(seg_urls, 1):
+                        with _sc_urlopen_v95(su, timeout=15) as sr:
+                            out_f.write(sr.read())
+                        _SC_DL_STATE_V99["pct"] = min(82, max(5, int((idx_s * 80) / tot_s)))
+            else:
+                tot_b = int(r.headers.get("Content-Length") or 0)
+                done_b = len(first_b)
+                with open(tmp_raw, "wb") as out_f:
+                    out_f.write(first_b)
+                    while True:
+                        chunk = r.read(65536)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+                        done_b += len(chunk)
+                        if tot_b > 0:
+                            _SC_DL_STATE_V99["pct"] = min(82, int((done_b * 80) / tot_b))
+
+        _SC_DL_STATE_V99["pct"] = 88
+        safe_t = re.sub(r'[\\/:*?"<>|\[\]]+', '_', track_title).strip()[:65]
+        final_name = f"SoundCloud - {track_num:02d}. {safe_t}.mp3"
+        final_path = os.path.join(MUSIC_DIR, final_name)
+
+        ff_bin = find_ffmpeg_binary()
+        subprocess.run([ff_bin, '-y', '-i', tmp_raw, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '192k', '-write_xing', '1', tmp_mp3], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+        _SC_DL_STATE_V99["pct"] = 96
+        if os.path.isfile(tmp_mp3) and os.path.getsize(tmp_mp3) >= 16384:
+            shutil.move(tmp_mp3, final_path)
+            tmp_mp3 = ""
+        else:
+            shutil.move(tmp_raw, final_path)
+            tmp_raw = ""
+
+        db = load_custom_tags_db_v74()
+        db[final_name] = {"TITLE": track_title, "ARTIST": "SoundCloud", "ALBUM": "SoundCloud Stream", "GENRE": "SoundCloud"}
+        save_custom_tags_db_v74(db)
+        TRACK_META_CACHE_V71.pop(final_path, None)
+        sz_mb = round(os.path.getsize(final_path) / (1024.0 * 1024.0), 2)
+        _SC_DL_STATE_V99["pct"] = 100
+        return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb, "ext": "MP3"})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+    finally:
+        _SC_DL_STATE_V99["active"] = False
+        _SC_DL_STATE_V99["pct"] = 0
+        for fp in (tmp_raw, tmp_mp3):
+            if fp and os.path.exists(fp):
+                try: os.remove(fp)
+                except Exception: pass
+
+# Переопределяем сжатие трека торрента в xFLAC с плавным тикером процентов (0% -> 100%)
+@post('/api/torrent/import_track')
+def api_torrent_import_track_v99():
+    response.content_type = 'application/json'
+    req = json.loads(request.body.read().decode('utf-8') or "{}")
+    full_p = (req.get("full_path") or "").strip()
+    tor_name = (req.get("torrent_name") or "Torrent").strip()
+    fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
+    key = f"{req.get('hash')}_{req.get('index')}"
+    if key in _JTORRENT_CONVERTED_V96:
+        return json.dumps({"status": "ok", "filename": _JTORRENT_CONVERTED_V96[key], "size_mb": 0})
+    if not full_p or not os.path.isfile(full_p):
+        return json.dumps({"status": "error", "error": "Файл ещё не докачан"})
+
+    base_nm = os.path.splitext(os.path.basename(full_p))[0]
+    try:
+        with _TOR_IMPORT_LOCK_V98:
+            _TOR_ENC_PROGRESS_V99.update({"active": True, "current_key": key, "current_track": base_nm, "track_pct": 8})
+            _recalc_tor_enc_overall_v99()
+            load_multi_dirs_v71()
+            ext = os.path.splitext(full_p)[1].lower()
+            xf_map = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15}
+            if fmt in xf_map and ext in ('.flac', '.wav'):
+                xf_mode = xf_map[fmt]
+                suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac"}[xf_mode]
+                final_name = f"{base_nm}{suf}"
+                final_path = os.path.join(MUSIC_DIR, final_name)
+                tmp_xf = os.path.join(MUSIC_DIR, f"temp_final_torxf_{os.getpid()}_{threading.get_ident()}.tmp")
+                twav = os.path.join(MUSIC_DIR, f"temp_final_tor_{os.getpid()}_{threading.get_ident()}.wav")
+                stop_ticker = False
+                def _pct_ticker():
+                    while not stop_ticker:
+                        time.sleep(0.18)
+                        cur = _TOR_ENC_PROGRESS_V99.get("track_pct", 8)
+                        if cur < 92:
+                            _TOR_ENC_PROGRESS_V99["track_pct"] = min(92, cur + 7)
+                            _recalc_tor_enc_overall_v99()
+                t_tick = threading.Thread(target=_pct_ticker, daemon=True)
+                t_tick.start()
+                try:
+                    subprocess.run([find_ffmpeg_binary(), '-y', '-i', full_p, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', twav], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+                    _TOR_ENC_PROGRESS_V99["track_pct"] = max(_TOR_ENC_PROGRESS_V99.get("track_pct", 0), 42)
+                    _recalc_tor_enc_overall_v99()
+                    with open(twav, "rb") as wf:
+                        xfc_b = _encode_wav_to_xflac_bytes_v85(wf.read(), xf_mode)
+                    _TOR_ENC_PROGRESS_V99["track_pct"] = 95
+                    _recalc_tor_enc_overall_v99()
+                    with open(tmp_xf, "wb") as of:
+                        of.write(xfc_b)
+                    shutil.move(tmp_xf, final_path)
+                finally:
+                    stop_ticker = True
+                    for fp in (twav, tmp_xf):
+                        if os.path.exists(fp):
+                            try: os.remove(fp)
+                            except Exception: pass
+            else:
+                final_name = os.path.basename(full_p)
+                final_path = os.path.join(MUSIC_DIR, final_name)
+                shutil.copy2(full_p, final_path)
+
+            _JTORRENT_CONVERTED_V96[key] = final_name
+            _TOR_ENC_PROGRESS_V99["track_pct"] = 100
+            _TOR_ENC_PROGRESS_V99["done_count"] = _TOR_ENC_PROGRESS_V99.get("done_count", 0) + 1
+            _recalc_tor_enc_overall_v99()
+            db = load_custom_tags_db_v74()
+            db[final_name] = {"TITLE": base_nm, "ARTIST": tor_name[:40], "ALBUM": tor_name[:50], "GENRE": "Torrent P2P"}
+            save_custom_tags_db_v74(db)
+            TRACK_META_CACHE_V71.pop(final_path, None)
+            sz_mb = round(os.path.getsize(final_path) / (1024 * 1024), 2)
+            return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+    finally:
+        if _TOR_ENC_PROGRESS_V99.get("done_count", 0) >= _TOR_ENC_PROGRESS_V99.get("total_count", 0):
+            _TOR_ENC_PROGRESS_V99["active"] = False
+            _TOR_ENC_PROGRESS_V99["current_key"] = ""
+            _TOR_ENC_PROGRESS_V99["track_pct"] = 0
+
+# Единый быстрый эндпоинт для бейджей процентов на всех значках в шапке и в Торрент-студии
+@route('/api/sources/live_badges', method='GET')
+def api_sources_live_badges_v99():
+    response.content_type = 'application/json'
+    ost_st = globals().get("_OST_PROGRESS_V89", {})
+    rad_st = globals().get("_RADIO_REC_V91", {})
+    rad_sec = max(0, int(time.time() - (rad_st.get("start_ts") or time.time()))) if rad_st.get("active") else 0
+    return json.dumps({
+        "ost": {"active": bool(ost_st.get("active")), "pct": int(ost_st.get("percent") or 0)},
+        "radio": {"active": bool(rad_st.get("active")), "sec": rad_sec},
+        "soundcloud": {"active": bool(_SC_DL_STATE_V99.get("active")), "pct": int(_SC_DL_STATE_V99.get("pct") or 0)},
+        "torrent_enc": _TOR_ENC_PROGRESS_V99
+    }, ensure_ascii=False)
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
