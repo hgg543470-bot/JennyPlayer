@@ -22,7 +22,13 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
+import android.database.Cursor;
+import android.provider.OpenableColumns;
+import android.util.Base64;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
+import org.json.JSONObject;
 
 public class MainActivity extends AppCompatActivity {
     private static final int REQ_PERM_STORAGE = 1;
@@ -31,6 +37,82 @@ public class MainActivity extends AppCompatActivity {
     private static MainActivity instance;
     private static WebView webView;
     private static boolean isPageLoaded = false;
+    private static String pendingTorrentPayload = null;
+    private static String pendingTorrentName = null;
+
+    private void handleIncomingTorrentIntent(Intent intent) {
+        if (intent == null) return;
+        try {
+            String action = intent.getAction();
+            if (Intent.ACTION_VIEW.equals(action)) {
+                Uri data = intent.getData();
+                if (data != null) {
+                    String scheme = data.getScheme();
+                    if ("magnet".equalsIgnoreCase(scheme)) {
+                        pendingTorrentPayload = data.toString();
+                        pendingTorrentName = "Magnet Link";
+                    } else {
+                        readTorrentUriToPending(data);
+                    }
+                }
+            } else if (Intent.ACTION_SEND.equals(action)) {
+                String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
+                if (sharedText != null && sharedText.contains("magnet:?")) {
+                    int idx = sharedText.indexOf("magnet:?");
+                    String mag = sharedText.substring(idx).trim().split("\\s+")[0];
+                    pendingTorrentPayload = mag;
+                    pendingTorrentName = "Shared Magnet";
+                } else {
+                    Uri streamUri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                    if (streamUri != null) {
+                        readTorrentUriToPending(streamUri);
+                    }
+                }
+            }
+            if (pendingTorrentPayload != null && webView != null) {
+                webView.postDelayed(() -> evalJs("if(window.checkAndroidPendingTorrentV114) window.checkAndroidPendingTorrentV114();"), 250);
+                webView.postDelayed(() -> evalJs("if(window.checkAndroidPendingTorrentV114) window.checkAndroidPendingTorrentV114();"), 1800);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void readTorrentUriToPending(Uri uri) {
+        try {
+            String displayName = "external.torrent";
+            if ("content".equalsIgnoreCase(uri.getScheme())) {
+                try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+                    if (cursor != null && cursor.moveToFirst()) {
+                        int nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                        if (nameIdx >= 0) {
+                            String n = cursor.getString(nameIdx);
+                            if (n != null && !n.isEmpty()) displayName = n;
+                        }
+                    }
+                } catch (Exception ignored) {}
+            } else if (uri.getLastPathSegment() != null) {
+                displayName = uri.getLastPathSegment();
+            }
+
+            try (InputStream is = getContentResolver().openInputStream(uri)) {
+                if (is == null) return;
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                byte[] chunk = new byte[16384];
+                int nRead;
+                while ((nRead = is.read(chunk, 0, chunk.length)) != -1) {
+                    buffer.write(chunk, 0, nRead);
+                }
+                byte[] rawBytes = buffer.toByteArray();
+                if (rawBytes.length > 0) {
+                    pendingTorrentPayload = "B64TOR:" + Base64.encodeToString(rawBytes, Base64.NO_WRAP);
+                    pendingTorrentName = displayName;
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 
     public static void evalJs(final String script) {
         if (instance != null && instance.webView != null) {
@@ -42,6 +124,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
+
+        handleIncomingTorrentIntent(getIntent());
 
         // 1. Сразу регистрируем канал уведомлений при старте!
         // Это мгновенно разблокирует серый тумблер в настройках Android 13-16
@@ -60,6 +144,7 @@ public class MainActivity extends AppCompatActivity {
             }
             setContentView(webView);
             evalJs("if(window.syncAndroidNotification) window.syncAndroidNotification(true);");
+            evalJs("if(window.checkAndroidPendingTorrentV114) window.checkAndroidPendingTorrentV114();");
             return;
         }
         webView = new WebView(getApplicationContext()) {
@@ -86,6 +171,23 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public class WebAppInterface {
+        @JavascriptInterface
+        public String consumePendingTorrent() {
+            try {
+                if (pendingTorrentPayload == null || pendingTorrentPayload.isEmpty()) {
+                    return "";
+                }
+                JSONObject obj = new JSONObject();
+                obj.put("payload", pendingTorrentPayload);
+                obj.put("name", pendingTorrentName != null ? pendingTorrentName : "file.torrent");
+                pendingTorrentPayload = null;
+                pendingTorrentName = null;
+                return obj.toString();
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
         @JavascriptInterface
         public void pickFolder() {
             runOnUiThread(() -> {
@@ -210,7 +312,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        handleIncomingTorrentIntent(intent);
         evalJs("if(window.syncAndroidNotification) window.syncAndroidNotification(true);");
+        evalJs("if(window.checkAndroidPendingTorrentV114) window.checkAndroidPendingTorrentV114();");
     }
 
     @Override

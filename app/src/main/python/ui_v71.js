@@ -8302,3 +8302,96 @@ window.backToTorrentSearchListV97 = function() {
     }
     return _origBackV112.apply(this, arguments);
 };
+
+// === 📲 JENNY V114: ANDROID SYSTEM .TORRENT & MAGNET INTENT RECEIVER ===
+window.checkAndroidPendingTorrentV114 = async function() {
+    if (!window.AndroidBridge || typeof window.AndroidBridge.consumePendingTorrent !== 'function') return;
+    let rawJson = '';
+    try {
+        rawJson = window.AndroidBridge.consumePendingTorrent();
+    } catch (e) {
+        return;
+    }
+    if (!rawJson) return;
+
+    let data = null;
+    try {
+        data = JSON.parse(rawJson);
+    } catch (e) {
+        return;
+    }
+    if (!data || !data.payload) return;
+
+    // Скрываем другие окна и поднимаем Торрент-студию
+    ['jennyKhinsiderModalV88', 'jennyFlacRadioModalV91', 'jennySoundCloudModalV93'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.setProperty('display', 'none', 'important');
+    });
+    const torModal = document.getElementById('jennyTorrentModalV91');
+    if (!torModal) {
+        window.openTorrentHubPreviewModalV91();
+    } else {
+        torModal.style.setProperty('display', 'flex', 'important');
+    }
+
+    const payload = String(data.payload);
+    const fileName = String(data.name || 'external.torrent');
+
+    // Сценарий 1: Пришла magnet:? ссылка (из браузера или через "Поделиться" из Flud)
+    if (payload.toLowerCase().startsWith('magnet:?')) {
+        const inp = document.getElementById('torMagnetInpV91');
+        if (inp) inp.value = payload;
+        if (typeof window.showToast === 'function') {
+            window.showToast('🧲 Magnet-ссылка перехвачена из системы');
+        }
+        await window.openMagnetInGoEngineV96(payload);
+        return;
+    }
+
+    // Сценарий 2: Пришёл .torrent файл из файлового менеджера / браузера / мессенджера
+    if (payload.startsWith('B64TOR:')) {
+        const b64 = payload.slice(7);
+        window._torScreenModeV112 = 'files';
+        window._torViewSessionV112++;
+        const stEl = document.getElementById('torStatusLineV96');
+        const body = document.getElementById('torBodyListV96');
+        if (stEl) stEl.innerText = `📂 Открытие системного файла: ${fileName}...`;
+        if (body) body.innerHTML = `<div style="color:#3fb950;text-align:center;padding:25px 10px;">⚡ Мгновенная распаковка ${fileName}...</div>`;
+
+        try {
+            const binStr = atob(b64);
+            const bytes = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) {
+                bytes[i] = binStr.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: 'application/x-bittorrent' });
+            const fd = new FormData();
+            fd.append('torrent_file', blob, fileName);
+
+            const res = await fetch('/api/torrent/add_file', { method: 'POST', body: fd });
+            const d = await res.json();
+            if (d.status !== 'ok') throw new Error(d.error || 'Ошибка чтения .torrent');
+
+            const job = window.ensureTorrentJobMapV112(d.hash, d.name, d.files || [], '');
+            window.mountTorrentJobToScreenV112(job);
+            if (typeof window.showToast === 'function') {
+                window.showToast(`📂 Открыт торрент: ${d.name} (${job.files.length} треков)`);
+            }
+        } catch (e) {
+            if (body) {
+                body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 12px;font-size:12px;">❌ ${e.message || e}<br><br><button type="button" onclick="window.backToTorrentSearchListV97()" style="padding:7px 14px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;font-weight:bold;">⬅ Вернуться к списку раздач</button></div>`;
+            }
+        }
+    }
+};
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        window.checkAndroidPendingTorrentV114();
+    }
+});
+window.addEventListener('focus', () => {
+    window.checkAndroidPendingTorrentV114();
+});
+setTimeout(() => window.checkAndroidPendingTorrentV114(), 700);
+setTimeout(() => window.checkAndroidPendingTorrentV114(), 2000);

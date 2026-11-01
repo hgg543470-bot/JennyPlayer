@@ -30,6 +30,47 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- V114: Открытие magnet:? ссылок из браузера и системы -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="magnet" />
+            </intent-filter>
+
+            <!-- V114: Открытие .torrent файлов по MIME-типу -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-bittorrent" />
+            </intent-filter>
+
+            <!-- V114: Открытие .torrent файлов из любых файловых менеджеров по расширению -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\.torrent" />
+                <data android:pathPattern=".*\..*\.torrent" />
+                <data android:pathPattern=".*\..*\..*\.torrent" />
+                <data android:pathPattern=".*\..*\..*\..*\.torrent" />
+            </intent-filter>
+
+            <!-- V114: Приём magnet-ссылок и .torrent через системное меню "Поделиться" (Flud / Telegram / Chrome) -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-bittorrent" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <service
