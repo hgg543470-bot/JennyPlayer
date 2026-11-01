@@ -5241,7 +5241,7 @@ window.runKhSearchV88 = async function() {
     try {
         const res = await fetch('/api/khinsider/search', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: q, mode: mode })
+            body: JSON.stringify({ query: q, mode: mode, format_mode: window._khStateV88.formatMode || 'xflac_psycho' })
         });
         const data = await res.json();
         if (!res.ok || data.status !== 'ok') throw new Error(data.error || 'Ошибка поиска');
@@ -5294,4 +5294,241 @@ window.openSoundCloudModalV92 = function(ev) {
             <button type="button" onclick="window.saveScAuthCookieV93()" style="padding:6px;background:#1f6feb;color:#fff;border:none;border-radius:6px;font-weight:bold;font-size:11px;">💾 Сохранить и обновить поиск</button>
         `;
     }
+};
+
+// === 🧲 JENNY V96: FULL P2P TORRENT STUDIO UI (SEARCH + MAGNET + ENDGAME + AUTO XFLAC) ===
+window._torStateV96 = {
+    onlyFlac: true, formatMode: 'xflac_psycho', currentHash: '', currentName: '',
+    files: [], selectedFiles: new Set(), pollTimer: null, importedSet: new Set()
+};
+
+// При смене формата между MP3 и FLAC/xFLAC сразу обновляем выдачу альбомов
+const _origSelectKhFmtV88 = window.selectKhFormatV88;
+window.selectKhFormatV88 = function(fmt) {
+    const prev = window._khStateV88 ? window._khStateV88.formatMode : '';
+    _origSelectKhFmtV88.call(this, fmt);
+    if ((prev === 'mp3') !== (fmt === 'mp3') && !window._khStateV88.currentAlbum) {
+        window.runKhSearchV88();
+    }
+};
+
+window.previewScTrackV96 = async function(idx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const t = (window._scDedicatedTracksV96 || []).find(x => x.index === idx);
+    if (!t) return;
+    const savedAlb = window._khStateV88.currentAlbum;
+    window._khStateV88.currentAlbum = { slug: 'sc_isolated', album_title: 'SoundCloud', tracks: window._scDedicatedTracksV96 };
+    await window.previewKhTrackV88(idx, btnEl, ev);
+    window._khStateV88.currentAlbum = savedAlb;
+};
+
+window.downloadScTrackV96 = async function(idx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const t = (window._scDedicatedTracksV96 || []).find(x => x.index === idx);
+    if (!t) return;
+    if (btnEl) btnEl.innerText = '⏳';
+    try {
+        const res = await fetch('/api/soundcloud/download_track', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page_path: t.page_path, track_title: t.title, track_num: t.index })
+        });
+        const d = await res.json();
+        if (!res.ok || d.status !== 'ok') throw new Error(d.error || 'Ошибка скачивания');
+        if (btnEl) btnEl.innerText = '✅';
+        if (typeof window.fetchData === 'function') window.fetchData();
+        if (typeof window.showToast === 'function') window.showToast(`✅ Скачано: ${d.filename} (${d.size_mb} MB)`);
+    } catch (e) {
+        if (btnEl) btnEl.innerText = '⬇️';
+        if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+    }
+};
+
+window.runScDedicatedSearchV93 = async function() {
+    const inp = document.getElementById('scDedicatedInpV93');
+    const body = document.getElementById('scDedicatedBodyV93');
+    if (!inp || !body) return;
+    const q = inp.value.trim() || 'Synthwave';
+    body.innerHTML = `<div style="color:#ff8c42;text-align:center;padding:30px 10px;">⏳ Поиск «${q}» в SoundCloud...</div>`;
+    try {
+        const res = await fetch('/api/soundcloud/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) });
+        const d = await res.json();
+        const tracks = d.tracks || [];
+        window._scDedicatedTracksV96 = tracks;
+        if (!tracks.length) {
+            body.innerHTML = `<div style="color:#e3b341;text-align:center;padding:20px 10px;font-size:12px;">Ничего не найдено.<br><br><button type="button" onclick="window.openScAuthBoxV93()" style="padding:7px 12px;background:#ff8c42;color:#000;border:none;border-radius:7px;font-weight:bold;">🔑 Куки / Вход</button></div>`;
+            return;
+        }
+        body.innerHTML = tracks.map(t => `<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid ${t.downloaded ? 'rgba(63,185,80,0.6)' : '#21262d'};border-radius:8px;">
+            <div style="flex:1;min-width:0;">
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.index}. ${t.title}</div>
+                <div style="color:#8b949e;font-size:10px;margin-top:2px;">⏱ ${t.duration} • Полный MP3 поток ${t.downloaded ? '• ✅ В плеере' : ''}</div>
+            </div>
+            <button type="button" class="kh-prev-btn-v88" onclick="window.previewScTrackV96(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
+            <button type="button" onclick="window.downloadScTrackV96(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:rgba(255,140,66,0.18);color:#ff8c42;border:1px solid #ff8c42;">${t.downloaded ? '✅' : '⬇️'}</button>
+        </div>`).join('');
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 10px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+const _origApplyThemeV95 = window.applyKhModalModeThemeV95;
+window.applyKhModalModeThemeV95 = function(mode) {
+    const prev = window._khStateV88.currentSourceMode;
+    _origApplyThemeV95.call(this, mode);
+    if (prev !== mode) {
+        window._khStateV88.currentAlbum = null;
+        window._khStateV88.lastAlbums = [];
+        const ftr = document.getElementById('khFooterBarV88');
+        if (ftr) ftr.style.display = 'none';
+        const inp = document.getElementById('khSearchInpV88');
+        if (inp) inp.value = (mode === 'archive') ? 'Pink Floyd' : 'Doom';
+        window.runKhSearchV88();
+    }
+};
+
+window.openTorrentHubPreviewModalV91 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const ex = document.getElementById('jennyTorrentModalV91');
+    if (ex) {
+        const isHid = (ex.style.display === 'none' || getComputedStyle(ex).display === 'none');
+        ex.style.setProperty('display', isHid ? 'flex' : 'none', 'important');
+        return;
+    }
+    const m = document.createElement('div');
+    m.id = 'jennyTorrentModalV91';
+    m.className = 'jenny-modal-backdrop-v71';
+    m.onclick = (e) => { if (e.target === m) m.style.setProperty('display', 'none', 'important'); };
+    m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:460px;max-height:88vh;display:flex;flex-direction:column;">
+        <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(210,168,255,0.22),rgba(31,111,235,0.22));">
+            <span style="color:#d2a8ff;font-weight:900;font-size:13px;display:flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.torrent}<span>ТОРРЕНТ-СТУДИЯ (GO ENGINE)</span></span>
+            <button type="button" onclick="document.getElementById('jennyTorrentModalV91').style.setProperty('display','none','important')" style="padding:4px 10px;font-size:11px;border-radius:7px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>
+        </div>
+        <div style="padding:9px 12px;background:#090d14;border-bottom:1px solid #21262d;display:flex;flex-direction:column;gap:6px;">
+            <div style="display:flex;gap:6px;">
+                <input type="text" id="torMagnetInpV91" value="Doom Eternal FLAC" placeholder="Поиск FLAC-раздачи или вставь magnet:?xt=..." onkeydown="if(event.key==='Enter') window.runTorrentActionV96()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
+                <button type="button" onclick="window.runTorrentActionV96()" style="padding:7px 12px;background:#8957e5;color:#fff;border:none;border-radius:8px;font-weight:bold;">🔍 / 🧲</button>
+            </div>
+            <div id="torStatusLineV96" style="font-size:11px;color:#d2a8ff;font-weight:bold;">⚡ Введи название альбома/игры или вставь Magnet-ссылку</div>
+        </div>
+        <div id="torBodyListV96" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-height:230px;"></div>
+        <div id="torFooterBarV96" style="display:none;padding:10px 12px;border-top:1px solid #21262d;background:#090c10;gap:8px;">
+            <button type="button" onclick="window.startSelectedTorrentDownloadV96()" style="flex:1;padding:8px 12px;background:linear-gradient(135deg,#8957e5,#238636);color:#fff;border:none;border-radius:8px;font-weight:bold;">⬇️ Качать выбранные файлы (Endgame ➔ xFLAC)</button>
+        </div>
+    </div>`;
+    document.body.appendChild(m);
+    window.runTorrentActionV96();
+};
+
+window.runTorrentActionV96 = async function() {
+    const inp = document.getElementById('torMagnetInpV91');
+    const body = document.getElementById('torBodyListV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    if (!inp || !body) return;
+    const val = inp.value.trim();
+    if (!val) return;
+    if (val.toLowerCase().startsWith('magnet:?')) {
+        await window.openMagnetInGoEngineV96(val);
+        return;
+    }
+    if (ftr) ftr.style.display = 'none';
+    body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Поиск раздач «${val}»...</div>`;
+    try {
+        const res = await fetch('/api/torrent/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: val, only_flac: true }) });
+        const d = await res.json();
+        const list = d.results || [];
+        if (!list.length) {
+            body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;">Раздачи не найдены. Можно вставить прямую magnet:? ссылку.</div>`;
+            return;
+        }
+        window._torSearchResultsV96 = list;
+        body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
+            <div style="flex:1;min-width:0;">
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:#3fb950;font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+            </div>
+            <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
+        </div>`).join('');
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:20px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+window.openMagnetInGoEngineV96 = async function(magnetUrl) {
+    const body = document.getElementById('torBodyListV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    if (body) body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:35px 10px;">🧲 Подключение к DHT и получение списка файлов от пиров (до 25с)...</div>`;
+    try {
+        const res = await fetch('/api/torrent/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ magnet: magnetUrl }) });
+        const d = await res.json();
+        if (d.status !== 'ok') throw new Error(d.error || 'Ошибка чтения Magnet');
+        window._torStateV96.currentHash = d.hash;
+        window._torStateV96.currentName = d.name;
+        const audioExts = ['.flac', '.wav', '.mp3', '.ogg', '.opus', '.m4a', '.mp4', '.mkv'];
+        window._torStateV96.files = (d.files || []).filter(f => audioExts.some(ext => f.path.toLowerCase().endsWith(ext)));
+        if (!window._torStateV96.files.length) window._torStateV96.files = d.files || [];
+        window._torStateV96.selectedFiles = new Set(window._torStateV96.files.map(f => f.index));
+        if (stEl) stEl.innerText = `💿 ${d.name} (файлов: ${window._torStateV96.files.length})`;
+        if (ftr) ftr.style.display = 'flex';
+        window.renderTorrentFilesListV96();
+    } catch (e) {
+        if (body) body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+window.renderTorrentFilesListV96 = function() {
+    const body = document.getElementById('torBodyListV96');
+    if (!body) return;
+    body.innerHTML = window._torStateV96.files.map(f => {
+        const chk = window._torStateV96.selectedFiles.has(f.index) ? 'checked' : '';
+        const mb = (f.length / (1024 * 1024)).toFixed(1);
+        return `<div id="torFileRowV96_${f.index}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;">
+            <input type="checkbox" ${chk} onchange="if(this.checked) window._torStateV96.selectedFiles.add(${f.index}); else window._torStateV96.selectedFiles.delete(${f.index});">
+            <div style="flex:1;min-width:0;">
+                <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.path}</div>
+                <div id="torFileProgV96_${f.index}" style="color:#8b949e;font-size:10px;margin-top:2px;">💾 ${mb} MB • Ожидание</div>
+            </div>
+        </div>`;
+    }).join('');
+};
+
+window.startSelectedTorrentDownloadV96 = async function() {
+    const hash = window._torStateV96.currentHash;
+    const files = Array.from(window._torStateV96.selectedFiles);
+    if (!hash || !files.length) return;
+    await fetch('/api/torrent/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hash, files }) });
+    if (window._torStateV96.pollTimer) clearInterval(window._torStateV96.pollTimer);
+    window._torStateV96.pollTimer = setInterval(async () => {
+        try {
+            const d = await (await fetch('/api/torrent/status')).json();
+            const tor = (d.torrents || []).find(x => x.hash === hash);
+            if (!tor) return;
+            const stEl = document.getElementById('torStatusLineV96');
+            if (stEl) stEl.innerText = `🧲 Сидов: ${tor.seeders} • Пиров: ${tor.peers} • Качаем выбранные...`;
+            for (const f of (tor.files || [])) {
+                const pEl = document.getElementById('torFileProgV96_' + f.index);
+                const doneMb = (f.completed / (1024 * 1024)).toFixed(1);
+                const totMb = (f.length / (1024 * 1024)).toFixed(1);
+                if (pEl) {
+                    pEl.innerText = f.xflac_file
+                        ? `✅ В плеере: ${f.xflac_file}`
+                        : `⬇️ ${doneMb} / ${totMb} MB (${f.percent}%)`;
+                }
+                const impKey = `${hash}_${f.index}`;
+                if (f.done && !f.xflac_file && !window._torStateV96.importedSet.has(impKey)) {
+                    window._torStateV96.importedSet.add(impKey);
+                    if (pEl) pEl.innerText = `🧬 Сжатие в .xFLAC...`;
+                    fetch('/api/torrent/import_track', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ hash, index: f.index, full_path: f.full_path, torrent_name: tor.name, format_mode: 'xflac_psycho' })
+                    }).then(r => r.json()).then(res => {
+                        if (res.status === 'ok') {
+                            if (pEl) pEl.innerText = `✅ В плеере: ${res.filename} (${res.size_mb} MB)`;
+                            if (typeof window.fetchData === 'function') window.fetchData();
+                        }
+                    });
+                }
+            }
+        } catch (e) {}
+    }, 1000);
 };

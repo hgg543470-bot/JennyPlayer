@@ -1620,10 +1620,12 @@ def api_khinsider_search_v88():
         if not query:
             return json.dumps({"status": "error", "error": "Введите название игры"})
         mode = (req.get('mode') or 'ost').strip().lower()
+        fmt_mode = (req.get('format_mode') or 'xflac_psycho').strip().lower()
+        fmt_filter = 'AND format:("VBR MP3" OR MP3)' if fmt_mode == 'mp3' else 'AND format:(Flac OR "24bit Flac" OR Wave)'
         if mode == 'archive':
-            q_expr = f'({query}) AND mediatype:(audio) AND NOT collection:(podcasts)'
+            q_expr = f'({query}) AND mediatype:(audio) {fmt_filter} AND NOT collection:(podcasts)'
         else:
-            q_expr = f'(title:({query}) AND (soundtrack OR ost OR music OR score)) AND mediatype:(audio)'
+            q_expr = f'(title:({query}) AND (soundtrack OR ost OR music OR score)) AND mediatype:(audio) {fmt_filter}'
         u1 = f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q_expr)}&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
         docs = _ost_fetch_json_v88(u1).get("response", {}).get("docs", [])
         if len(docs) < 3:
@@ -2127,6 +2129,231 @@ def api_sources_kill_all_v94():
             _OST_PROGRESS_V89.update({"active": False, "stage": "idle", "percent": 0, "message": ""})
         cleanup_stale_temps(MUSIC_DIR)
         return json.dumps({"status": "ok"})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+@post('/api/soundcloud/download_track')
+def api_soundcloud_download_track_v96():
+    response.content_type = 'application/json'
+    tmp_raw = os.path.join(MUSIC_DIR, f"temp_final_sc_{os.getpid()}.stream")
+    try:
+        load_multi_dirs_v71()
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        page_path = (req.get("page_path") or "").strip()
+        track_title = (req.get("track_title") or "Track").strip()
+        track_num = int(req.get("track_num") or 1)
+        if not page_path.startswith("sc:"):
+            return json.dumps({"status": "error", "error": "Неверный идентификатор трека SoundCloud"})
+
+        stream_u = _sc_resolve_direct_url_v92(page_path)
+        if not stream_u:
+            return json.dumps({"status": "error", "error": "SoundCloud не отдал поток"})
+
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        with _sc_urlopen_v95(stream_u, timeout=20) as r:
+            first_b = r.read(16384)
+            if first_b.lstrip().startswith(b"#EXTM3U") or ".m3u8" in stream_u.lower():
+                m3u8_txt = (first_b + r.read()).decode("utf-8", errors="ignore")
+                seg_urls = [ln.strip() for ln in m3u8_txt.splitlines() if ln.strip().startswith("http")]
+                if not seg_urls:
+                    return json.dumps({"status": "error", "error": "Пустой HLS-плейлист SoundCloud"})
+                with open(tmp_raw, "wb") as out_f:
+                    for su in seg_urls:
+                        with _sc_urlopen_v95(su, timeout=15) as sr:
+                            out_f.write(sr.read())
+            else:
+                with open(tmp_raw, "wb") as out_f:
+                    out_f.write(first_b)
+                    while True:
+                        chunk = r.read(65536)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+
+        safe_t = re.sub(r'[\\/:*?"<>|\[\]]+', '_', track_title).strip()[:65]
+        final_name = f"SoundCloud - {track_num:02d}. {safe_t}.mp3"
+        final_path = os.path.join(MUSIC_DIR, final_name)
+
+        ff_bin = find_ffmpeg_binary()
+        subprocess.run([ff_bin, '-y', '-i', tmp_raw, '-vn', '-c:a', 'libmp3lame', '-q:a', '2', final_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+        if not os.path.isfile(final_path) or os.path.getsize(final_path) < 16384:
+            shutil.move(tmp_raw, final_path)
+            tmp_raw = ""
+
+        db = load_custom_tags_db_v74()
+        db[final_name] = {"TITLE": track_title, "ARTIST": "SoundCloud", "ALBUM": "SoundCloud Stream", "GENRE": "SoundCloud"}
+        save_custom_tags_db_v74(db)
+        TRACK_META_CACHE_V71.pop(final_path, None)
+        sz_mb = round(os.path.getsize(final_path) / (1024.0 * 1024.0), 2)
+        return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb, "ext": "MP3"})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+    finally:
+        if tmp_raw and os.path.exists(tmp_raw):
+            try: os.remove(tmp_raw)
+            except Exception: pass
+
+
+# ==============================================================================
+# 🧲 JENNY V96: GO TORRENT ENGINE BRIDGE (libjtorrent.so + SEARCH + AUTO XFLAC)
+# ==============================================================================
+_JTORRENT_PROC_V96 = None
+_JTORRENT_PORT_V96 = "18081"
+_JTORRENT_CONVERTED_V96 = {}
+
+def find_jtorrent_binary_v96():
+    ff_dir = os.path.dirname(find_ffmpeg_binary())
+    if ff_dir:
+        cand = os.path.join(ff_dir, "libjtorrent.so")
+        if os.path.isfile(cand):
+            return cand
+    for env_k in ("PATH", "LD_LIBRARY_PATH"):
+        for d in os.environ.get(env_k, "").split(":"):
+            if d and os.path.isfile(os.path.join(d, "libjtorrent.so")):
+                return os.path.join(d, "libjtorrent.so")
+    local_so = os.path.join(BASE_DIR, "..", "jniLibs", "arm64-v8a", "libjtorrent.so")
+    if os.path.isfile(local_so):
+        return os.path.abspath(local_so)
+    return "libjtorrent.so"
+
+def ensure_jtorrent_daemon_v96():
+    global _JTORRENT_PROC_V96
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.8) as r:
+            if r.status == 200:
+                return True
+    except Exception:
+        pass
+    bin_p = find_jtorrent_binary_v96()
+    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    os.makedirs(tor_dir, exist_ok=True)
+    _JTORRENT_PROC_V96 = subprocess.Popen([bin_p, "-port", _JTORRENT_PORT_V96, "-dir", tor_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    for _ in range(25):
+        time.sleep(0.15)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.5) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+    return False
+
+@post('/api/torrent/search')
+def api_torrent_search_v96():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        q = (req.get("query") or "").strip()
+        only_flac = bool(req.get("only_flac", True))
+        if not q:
+            return json.dumps({"status": "error", "error": "Пустой запрос"})
+        sq = f"{q} FLAC" if (only_flac and "flac" not in q.lower()) else q
+        results = []
+        try:
+            u = f"https://apibay.org/q.php?q={urllib.parse.quote(sq)}&cat=100"
+            rows = _ost_fetch_json_v88(u, timeout=8)
+            for r in (rows or [])[:25]:
+                ih = (r.get("info_hash") or "").strip()
+                nm = (r.get("name") or "").strip()
+                if not ih or ih == "0000000000000000000000000000000000000000" or nm == "No results returned":
+                    continue
+                sz_mb = round(int(r.get("size") or 0) / (1024 * 1024), 1)
+                seeds = int(r.get("seeders") or 0)
+                peers = int(r.get("leechers") or 0)
+                tr_list = "&tr=udp://tracker.opentrackr.org:1337/announce&tr=udp://open.stealth.si:80/announce&tr=udp://exodus.desync.com:6969/announce"
+                mag = f"magnet:?xt=urn:btih:{ih}&dn={urllib.parse.quote(nm)}{tr_list}"
+                results.append({"title": nm, "size_mb": sz_mb, "seeders": seeds, "peers": peers, "magnet": mag})
+        except Exception:
+            pass
+        return json.dumps({"status": "ok", "results": results}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+@post('/api/torrent/add')
+def api_torrent_add_v96():
+    response.content_type = 'application/json'
+    try:
+        if not ensure_jtorrent_daemon_v96():
+            return json.dumps({"status": "error", "error": "Не удалось запустить демон libjtorrent.so"})
+        body = request.body.read()
+        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add", data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=32) as r:
+            return r.read().decode("utf-8")
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+@post('/api/torrent/download')
+def api_torrent_download_v96():
+    response.content_type = 'application/json'
+    try:
+        ensure_jtorrent_daemon_v96()
+        body = request.body.read()
+        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download", data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.read().decode("utf-8")
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+@route('/api/torrent/status', method='GET')
+def api_torrent_status_v96():
+    response.content_type = 'application/json'
+    try:
+        if not ensure_jtorrent_daemon_v96():
+            return json.dumps({"status": "ok", "torrents": []})
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=3) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        for t in (data.get("torrents") or []):
+            for f in (t.get("files") or []):
+                key = f"{t.get('hash')}_{f.get('index')}"
+                f["xflac_file"] = _JTORRENT_CONVERTED_V96.get(key, "")
+        return json.dumps(data, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+@post('/api/torrent/import_track')
+def api_torrent_import_track_v96():
+    response.content_type = 'application/json'
+    try:
+        load_multi_dirs_v71()
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        full_p = (req.get("full_path") or "").strip()
+        tor_name = (req.get("torrent_name") or "Torrent").strip()
+        fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
+        key = f"{req.get('hash')}_{req.get('index')}"
+        if not full_p or not os.path.isfile(full_p):
+            return json.dumps({"status": "error", "error": "Файл ещё не докачан"})
+        base_nm = os.path.splitext(os.path.basename(full_p))[0]
+        ext = os.path.splitext(full_p)[1].lower()
+        xf_map = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15}
+        if fmt in xf_map and ext in ('.flac', '.wav'):
+            xf_mode = xf_map[fmt]
+            suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac"}[xf_mode]
+            final_name = f"{base_nm}{suf}"
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            twav = os.path.join(MUSIC_DIR, f"temp_final_tor_{os.getpid()}.wav")
+            try:
+                subprocess.run([find_ffmpeg_binary(), '-y', '-i', full_p, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', twav], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+                with open(twav, "rb") as wf:
+                    xfc_b = _encode_wav_to_xflac_bytes_v85(wf.read(), xf_mode)
+                with open(final_path, "wb") as of:
+                    of.write(xfc_b)
+            finally:
+                if os.path.exists(twav):
+                    try: os.remove(twav)
+                    except Exception: pass
+        else:
+            final_name = os.path.basename(full_p)
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            shutil.copy2(full_p, final_path)
+        _JTORRENT_CONVERTED_V96[key] = final_name
+        db = load_custom_tags_db_v74()
+        db[final_name] = {"TITLE": base_nm, "ARTIST": tor_name[:40], "ALBUM": tor_name[:50], "GENRE": "Torrent P2P"}
+        save_custom_tags_db_v74(db)
+        TRACK_META_CACHE_V71.pop(final_path, None)
+        sz_mb = round(os.path.getsize(final_path) / (1024 * 1024), 2)
+        return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb})
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
