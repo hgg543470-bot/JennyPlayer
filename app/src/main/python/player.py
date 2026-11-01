@@ -2416,12 +2416,13 @@ def ensure_jtorrent_daemon_v96():
 threading.Thread(target=ensure_jtorrent_daemon_v96, daemon=True).start()
 
 # ==============================================================================
-# 🧠 JENNY V119: MULTI-VARIANT SEARCH MICRO-KERNEL (UP TO 5 COLLAPSIBLE GROUPS)
+# 🧠 JENNY V120: SMART SONG->ARTIST RESOLVER + CYRILLIC RUTOR/BITSEARCH INDEXER
 # ==============================================================================
 from concurrent.futures import ThreadPoolExecutor
 
 _RU_EN_PHONETIC_DICT_V118 = {
     "риана": "Rihanna", "рианна": "Rihanna", "рихана": "Rihanna", "риханна": "Rihanna",
+    "зиверт": "Zivert", "зеленые волны": "Zivert", "зелёные волны": "Zivert",
     "продиджи": "The Prodigy", "металлика": "Metallica", "металика": "Metallica",
     "рамштайн": "Rammstein", "раммштайн": "Rammstein", "нирвана": "Nirvana",
     "эминем": "Eminem", "еминем": "Eminem", "линкин парк": "Linkin Park",
@@ -2430,7 +2431,7 @@ _RU_EN_PHONETIC_DICT_V118 = {
     "дип перпл": "Deep Purple", "лед зеппелин": "Led Zeppelin", "оззи": "Ozzy Osbourne",
     "корн": "Korn", "слипкнот": "Slipknot", "систем оф а даун": "System of a Down",
     "ред хот": "Red Hot Chili Peppers", "дафт панк": "Daft Punk", "скриллекс": "Skrillex",
-    "кельвин харрис": "Calvin Harris", "дэвид гетта": "David Guetta", "тимати": "Тимати",
+    "кельвин харрис": "Calvin Harris", "дэвид гетта": "David Guetta",
     "король и шут": "Король и Шут", "киш": "Король и Шут", "цой": "Кино Виктор Цой"
 }
 
@@ -2440,7 +2441,7 @@ _EN_TO_RU_KBD_V118 = str.maketrans(
 )
 
 _RU_TO_EN_PHONETIC_MAP_V118 = {
-    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
     'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
     'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
     'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch',
@@ -2448,7 +2449,7 @@ _RU_TO_EN_PHONETIC_MAP_V118 = {
 }
 
 def _phonetic_skeleton_v118(text: str) -> str:
-    s = re.sub(r'[^a-zа-я0-9\s]', '', text.lower())
+    s = re.sub(r'[^a-zа-яё0-9\s]', '', text.lower()).replace('ё', 'е')
     s = "".join(_RU_TO_EN_PHONETIC_MAP_V118.get(ch, ch) for ch in s)
     s = s.replace("ph", "f").replace("ck", "k").replace("qu", "kw").replace("x", "ks")
     s = re.sub(r'(?<![sctp])h', '', s)
@@ -2474,86 +2475,114 @@ def _trigram_similarity_v118(a: str, b: str) -> float:
     return (2.0 * len(grams_a & grams_b)) / (len(grams_a) + len(grams_b))
 
 def _kernel_resolve_multi_variants_v119(raw_q: str, max_candidates: int = 7):
-    """Возвращает упорядоченный список валидных поисковых вариантов (основной + альтернативы)."""
+    """Находит исполнителя по названию песни (включая кириллицу), исправляет опечатки и собирает до 7 вариантов."""
     q_clean = re.sub(r'\s+', ' ', raw_q.strip())
-    q_low = q_clean.lower()
+    q_low = q_clean.lower().replace('ё', 'е')
+    has_cyrillic = bool(re.search(r'[а-яё]', q_low))
+    translit_q = "".join(_RU_TO_EN_PHONETIC_MAP_V118.get(c, c) for c in q_low).strip()
 
     scored_map = {} # norm_key -> (score, display_query)
 
-    def _add_cand(name_str: str, bonus: float = 0.0):
+    def _add_cand(name_str: str, forced_score: float = None, bonus: float = 0.0):
         c = re.sub(r'\s+', ' ', (name_str or '').strip())
         if len(c) < 2:
             return
         k = c.lower()
-        sim = _trigram_similarity_v118(probe_q, c) + bonus
+        if forced_score is not None:
+            sim = forced_score
+        else:
+            sim = max(
+                _trigram_similarity_v118(q_clean, c),
+                _trigram_similarity_v118(translit_q, c) if translit_q else 0.0
+            ) + bonus
         if k not in scored_map or sim > scored_map[k][0]:
             scored_map[k] = (sim, c)
 
-    translit_q = "".join(_RU_TO_EN_PHONETIC_MAP_V118.get(c, c) for c in q_low).strip()
-    probe_q = translit_q if (re.search(r'[а-я]', q_low) and len(translit_q) >= 3) else q_clean
-
-    # 1. Словарь прямых совпадений и раскладки
     if q_low in _RU_EN_PHONETIC_DICT_V118:
-        _add_cand(_RU_EN_PHONETIC_DICT_V118[q_low], 0.35)
-    if re.search(r'[\[\];\x27,.]', q_low) and not re.search(r'[а-я]', q_low):
+        _add_cand(_RU_EN_PHONETIC_DICT_V118[q_low], forced_score=1.25)
+
+    if re.search(r'[\[\];\x27,.]', q_low) and not has_cyrillic:
         ru_try = q_low.translate(_EN_TO_RU_KBD_V118)
         if ru_try in _RU_EN_PHONETIC_DICT_V118:
-            _add_cand(_RU_EN_PHONETIC_DICT_V118[ru_try], 0.35)
+            _add_cand(_RU_EN_PHONETIC_DICT_V118[ru_try], forced_score=1.25)
         else:
-            _add_cand(ru_try, 0.1)
+            _add_cand(ru_try, forced_score=0.75)
 
+    # Передаём в iTunes и Deezer ОРИГИНАЛЬНЫЙ запрос (на русском/английском), чтобы они находили русские песни!
     def _probe_itunes():
         try:
-            u = f"https://itunes.apple.com/search?term={urllib.parse.quote(probe_q)}&media=music&limit=10"
+            country = "RU" if has_cyrillic else "US"
+            u = f"https://itunes.apple.com/search?term={urllib.parse.quote(q_clean)}&country={country}&media=music&limit=10"
             req = urllib.request.Request(u, headers=OST_HEADERS)
-            with urllib.request.urlopen(req, timeout=2.2) as r:
+            with urllib.request.urlopen(req, timeout=2.4) as r:
                 data = json.loads(r.read().decode("utf-8", errors="ignore"))
-            for it in (data.get("results") or []):
+            for idx_it, it in enumerate(data.get("results") or []):
                 art = (it.get("artistName") or "").strip()
                 trk = (it.get("trackName") or "").strip()
                 alb = re.sub(r'\s*\([^)]*\)', '', (it.get("collectionName") or "")).strip()
-                if art:
-                    _add_cand(art, 0.12 if len(probe_q.split()) == 1 else 0.02)
-                if art and alb and len(alb) < 35:
-                    _add_cand(f"{art} {alb}", 0.04)
-                if art and trk and len(probe_q.split()) > 1:
-                    _add_cand(f"{art} {trk}", 0.08)
+                alb = re.sub(r'\s*-\s*(Single|EP)$', '', alb, flags=re.I).strip()
+                if not art:
+                    continue
+                trk_sim = _trigram_similarity_v118(q_clean, trk)
+                art_sim = _trigram_similarity_v118(q_clean, art)
+                rank_decay = idx_it * 0.03
+                # Если запрос совпал с названием песни (например, "зеленые волны") — вытаскиваем Артиста (Zivert) на 1-е место!
+                if trk_sim >= 0.55:
+                    _add_cand(art, forced_score=1.10 - rank_decay)
+                    _add_cand(f"{art} {trk}", forced_score=1.05 - rank_decay)
+                    if alb and alb.lower() != trk.lower() and len(alb) < 32:
+                        _add_cand(f"{art} {alb}", forced_score=0.92 - rank_decay)
+                elif art_sim >= 0.45:
+                    _add_cand(art, forced_score=1.08 - rank_decay)
+                    if alb and len(alb) < 32:
+                        _add_cand(f"{art} {alb}", forced_score=0.85 - rank_decay)
+                elif idx_it < 2:
+                    # Топ-2 результата каталога всегда берём как кандидатов
+                    _add_cand(art, forced_score=0.80 - rank_decay)
         except Exception:
             pass
 
     def _probe_deezer():
         try:
-            u = f"https://api.deezer.com/search?q={urllib.parse.quote(probe_q)}&limit=10"
+            u = f"https://api.deezer.com/search?q={urllib.parse.quote(q_clean)}&limit=10"
             req = urllib.request.Request(u, headers=OST_HEADERS)
-            with urllib.request.urlopen(req, timeout=2.2) as r:
+            with urllib.request.urlopen(req, timeout=2.4) as r:
                 data = json.loads(r.read().decode("utf-8", errors="ignore"))
-            for it in (data.get("data") or []):
+            for idx_it, it in enumerate(data.get("data") or []):
                 art = ((it.get("artist") or {}).get("name") or "").strip()
                 trk = (it.get("title_short") or it.get("title") or "").strip()
                 alb = re.sub(r'\s*\([^)]*\)', '', ((it.get("album") or {}).get("title") or "")).strip()
-                if art:
-                    _add_cand(art, 0.14 if len(probe_q.split()) == 1 else 0.03)
-                if art and alb and len(alb) < 35:
-                    _add_cand(f"{art} {alb}", 0.05)
-                if art and trk and len(probe_q.split()) > 1:
-                    _add_cand(f"{art} {trk}", 0.08)
+                if not art:
+                    continue
+                trk_sim = _trigram_similarity_v118(q_clean, trk)
+                art_sim = _trigram_similarity_v118(q_clean, art)
+                rank_decay = idx_it * 0.03
+                if trk_sim >= 0.55:
+                    _add_cand(art, forced_score=1.12 - rank_decay)
+                    _add_cand(f"{art} {trk}", forced_score=1.06 - rank_decay)
+                    if alb and alb.lower() != trk.lower() and len(alb) < 32:
+                        _add_cand(f"{art} {alb}", forced_score=0.94 - rank_decay)
+                elif art_sim >= 0.45:
+                    _add_cand(art, forced_score=1.10 - rank_decay)
+                elif idx_it < 2:
+                    _add_cand(art, forced_score=0.82 - rank_decay)
         except Exception:
             pass
 
     def _probe_suggest():
         try:
-            u = f"https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q={urllib.parse.quote(probe_q)}"
+            u = f"https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q={urllib.parse.quote(q_clean)}"
             req = urllib.request.Request(u, headers=OST_HEADERS)
             with urllib.request.urlopen(req, timeout=1.8) as r:
                 arr = json.loads(r.read().decode("utf-8", errors="ignore"))
             if isinstance(arr, list) and len(arr) >= 2 and arr[1]:
-                for idx_s, sug in enumerate(arr[1][:5]):
-                    s_clean = re.sub(r'\b(music|lyrics|official|video|audio|hd|клип|песни|слушать)\b', '', str(sug), flags=re.I).strip()
+                for idx_s, sug in enumerate(arr[1][:4]):
+                    s_clean = re.sub(r'\b(music|lyrics|official|video|audio|hd|клип|песни|слушать|текст)\b', '', str(sug), flags=re.I).strip()
                     s_clean = re.sub(r'\s+', ' ', s_clean)
                     if s_clean:
-                        _add_cand(s_clean, 0.06 - idx_s * 0.01)
-                        if len(probe_q.split()) == 1 and len(s_clean.split()) > 1 and len(s_clean.split()[0]) >= 3:
-                            _add_cand(s_clean.split()[0], 0.10)
+                        _add_cand(s_clean, bonus=0.08 - idx_s * 0.01)
+                        if len(q_clean.split()) == 1 and len(s_clean.split()) > 1 and len(s_clean.split()[0]) >= 3:
+                            _add_cand(s_clean.split()[0], bonus=0.12)
         except Exception:
             pass
 
@@ -2562,17 +2591,16 @@ def _kernel_resolve_multi_variants_v119(raw_q: str, max_candidates: int = 7):
         f2 = ex.submit(_probe_deezer)
         f3 = ex.submit(_probe_suggest)
         for fut in (f1, f2, f3):
-            try: fut.result(timeout=2.5)
+            try: fut.result(timeout=2.6)
             except Exception: pass
 
-    # Всегда добавляем и сам исходный ввод пользователя
-    _add_cand(q_clean, 0.05)
+    _add_cand(q_clean, forced_score=0.70)
 
     ordered = sorted(scored_map.values(), key=lambda x: x[0], reverse=True)
     out_variants = []
     seen_low = set()
     for sc, name in ordered:
-        if sc < 0.25 and name.lower() != q_low:
+        if sc < 0.30 and name.lower() != q_low:
             continue
         if name.lower() not in seen_low:
             seen_low.add(name.lower())
@@ -2611,7 +2639,7 @@ def _scrape_apibay_v118(search_str: str):
 def _scrape_bitsearch_v118(search_str: str):
     out = []
     try:
-        u = f"https://bitsearch.to/search?q={urllib.parse.quote(search_str)}&category=1&subcat=7&sort=seeders"
+        u = f"https://bitsearch.to/search?q={urllib.parse.quote(search_str)}&sort=seeders"
         req = urllib.request.Request(u, headers=OST_HEADERS)
         with urllib.request.urlopen(req, timeout=5) as r:
             html_txt = r.read().decode("utf-8", errors="ignore")
@@ -2648,6 +2676,50 @@ def _scrape_bitsearch_v118(search_str: str):
             })
     except Exception:
         pass
+    return out
+
+def _scrape_rutor_v120(search_str: str):
+    """Индекс Rutor для русскоязычных и мировых музыкальных раздач."""
+    out = []
+    for domain in ("https://rutor.info", "https://rutor.is", "http://rutor.info"):
+        try:
+            u = f"{domain}/search/0/2/000/2/{urllib.parse.quote(search_str)}"
+            req = urllib.request.Request(u, headers=OST_HEADERS)
+            with urllib.request.urlopen(req, timeout=4.5) as r:
+                html_txt = r.read().decode("utf-8", errors="ignore")
+            rows = re.findall(r'<tr class="(?:gai|tum)">(.*?)</tr>', html_txt, re.S)
+            if not rows:
+                continue
+            for row in rows[:25]:
+                m_mag = re.search(r'href="(magnet:\?xt=urn:btih:([a-fA-F0-9]{40})[^"]*)"', row)
+                if not m_mag:
+                    continue
+                ih = m_mag.group(2).lower()
+                links = re.findall(r'<a[^>]+href="/torrent/[^"]+"[^>]*>(.*?)</a>', row, re.S)
+                if not links:
+                    continue
+                clean_t = re.sub(r'<[^>]+>', '', links[-1]).strip()
+                m_sz = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:GB|MB|ГБ|МБ)', row, re.I)
+                sz_mb = 0.0
+                if m_sz:
+                    val = float(m_sz.group(1))
+                    is_gb = any(g in m_sz.group(0).upper() for g in ('GB', 'ГБ'))
+                    sz_mb = round(val * 1024 if is_gb else val, 1)
+                m_up = re.search(r'class="green"[^>]*>.*?([0-9]+)', row, re.S)
+                m_dn = re.search(r'class="red"[^>]*>.*?([0-9]+)', row, re.S)
+                seeds = int(m_up.group(1)) if m_up else 1
+                peers = int(m_dn.group(1)) if m_dn else 0
+                out.append({
+                    "info_hash": ih,
+                    "name": clean_t,
+                    "seeders": seeds,
+                    "leechers": peers,
+                    "size_mb": sz_mb
+                })
+            if out:
+                break
+        except Exception:
+            continue
     return out
 
 @post('/api/torrent/search')
@@ -2690,6 +2762,15 @@ def api_torrent_search_v105():
 
             raw_items = []
             seen_ih = set()
+            is_cyr = bool(re.search(r'[а-яё]', var_query.lower()))
+
+            # Для кириллических запросов сразу подключаем Rutor + ApiBay + BitSearch
+            if is_cyr and not exact_match:
+                for r in _scrape_rutor_v120(var_query):
+                    if r["info_hash"] not in seen_ih:
+                        seen_ih.add(r["info_hash"])
+                        raw_items.append(r)
+
             for sq in sub_queries[:1 if exact_match else 2]:
                 for r in _scrape_apibay_v118(sq):
                     if r["info_hash"] not in seen_ih:
@@ -2698,7 +2779,11 @@ def api_torrent_search_v105():
                 if len(raw_items) >= 20:
                     break
 
-            if not raw_items and not exact_match:
+            if len(raw_items) < 5 and not exact_match:
+                for r in _scrape_rutor_v120(var_query):
+                    if r["info_hash"] not in seen_ih:
+                        seen_ih.add(r["info_hash"])
+                        raw_items.append(r)
                 for r in _scrape_bitsearch_v118(sub_queries[0]):
                     if r["info_hash"] not in seen_ih:
                         seen_ih.add(r["info_hash"])
@@ -2748,7 +2833,6 @@ def api_torrent_search_v105():
                 it.pop("_rank", None)
             return var_query, group_res[:35]
 
-        # Запрашиваем все кандидаты параллельно и отбираем до 5 непустых валидных групп
         with ThreadPoolExecutor(max_workers=6) as ex:
             fetched_groups = list(ex.map(_fetch_variant_group, candidate_variants))
 

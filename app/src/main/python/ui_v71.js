@@ -8741,8 +8741,15 @@ window.runTorrentActionV96 = async function() {
         const seedFilterLbl = ts.minTwoSeeds ? '<2 сидов' : '0 сидов';
 
         if (!groups.length && !flatList.length) {
-            if (stEl) stEl.innerText = `📋 [${fmtLabel}] Живых раздач: 0`;
-            body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;">В формате <b>${fmtLabel}</b> раздач не найдено${hidCnt > 0 ? ` (скрыто ${hidCnt} раздач с ${seedFilterLbl})` : ''}. Попробуй снять галочку <b>👥 >= 2 сидов</b> или выбрать <b>🌐 ВСЕ</b>.</div>`;
+            if (stEl) stEl.innerText = `📋 Живых раздач: 0` + (hidCnt > 0 ? ` (скрыто с ${seedFilterLbl}: ${hidCnt})` : '');
+            const tips = [];
+            if (ts.exactSearch) tips.push('выключить <b>🎯 Точный поиск</b>');
+            if (ts.minTwoSeeds) tips.push('снять галочку <b>👥 >= 2 сидов</b>');
+            else if (ts.hideZeroSeeds && hidCnt > 0) tips.push('снять галочку <b>🚫 Скрыть 0 сидов</b>');
+            if (ts.formatTag && ts.formatTag !== 'all') tips.push('выбрать фильтр <b>🌐 ВСЕ</b>');
+            const tipStr = tips.length ? `Попробуй ${tips.join(' или ')}.` : 'Попробуй ввести имя исполнителя или открыть готовый <b>📂 .torrent</b> файл.';
+            const fmtWhere = (ts.formatTag && ts.formatTag !== 'all') ? ` в формате <b>${fmtLabel}</b>` : '';
+            body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;line-height:1.45;">По запросу «<b>${val}</b>»${fmtWhere} живых раздач не найдено${hidCnt > 0 ? ` (скрыто ${hidCnt} раздач с ${seedFilterLbl})` : ''}.<br><br>${tipStr}</div>`;
             return;
         }
 
