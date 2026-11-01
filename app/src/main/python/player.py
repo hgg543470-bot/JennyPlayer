@@ -1556,21 +1556,60 @@ def save_test_slices():
 
 
 # ==============================================================================
-# 🎮 JENNY V88.2: HYBRID GAME OST ENGINE (ARCHIVE.ORG LOSSLESS + KHINSIDER PROXY)
+# 🎮 JENNY V88.3: HYBRID GAME OST ENGINE (LIVE PROGRESS + ALREADY-DOWNLOADED CHECK)
 # ==============================================================================
 import urllib.request
 import urllib.parse
-from html import unescape as _html_unescape
+import base64
 
 OST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "Accept": "application/json,text/html,application/xhtml+xml,*/*;q=0.8"
 }
 
+_OST_PROGRESS_V89 = {
+    "active": False, "track_num": 0, "track_title": "",
+    "stage": "idle", "downloaded_mb": 0.0, "total_mb": 0.0,
+    "percent": 0, "message": ""
+}
+
 def _ost_fetch_json_v88(url: str, timeout: int = 18):
     req = urllib.request.Request(url, headers=OST_HEADERS)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+def _ost_make_stem_v89(album_title: str, track_num: int, track_title: str):
+    safe_alb = re.sub(r'[\\/:*?"<>|]+', '_', (album_title or 'Game OST')).strip()[:42]
+    safe_trk = re.sub(r'[\\/:*?"<>|]+', '_', (track_title or 'Track')).strip()[:68]
+    return f"{safe_alb} - {int(track_num):02d}. {safe_trk}", safe_alb
+
+def _ost_find_existing_track_v89(album_title: str, track_num: int, track_title: str):
+    load_multi_dirs_v71()
+    stem, _ = _ost_make_stem_v89(album_title, track_num, track_title)
+    stem_low = stem.lower()
+    dirs = list(ACTIVE_MUSIC_DIRS) if ACTIVE_MUSIC_DIRS else [MUSIC_DIR]
+    if MUSIC_DIR not in dirs:
+        dirs.insert(0, MUSIC_DIR)
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        try:
+            for fn in os.listdir(d):
+                fl = fn.lower()
+                if fl.startswith(stem_low) and not fl.startswith("temp_final_"):
+                    fp = os.path.join(d, fn)
+                    if os.path.isfile(fp) and os.path.getsize(fp) > 1024:
+                        sz_mb = round(os.path.getsize(fp) / (1024.0 * 1024.0), 2)
+                        ext = os.path.splitext(fn)[1].upper().lstrip('.')
+                        return {"exists": True, "filename": fn, "size_mb": sz_mb, "ext": ext}
+        except Exception:
+            pass
+    return {"exists": False, "filename": "", "size_mb": 0.0, "ext": ""}
+
+@route('/api/khinsider/progress', method='GET')
+def api_khinsider_progress_v89():
+    response.content_type = 'application/json'
+    return json.dumps(_OST_PROGRESS_V89, ensure_ascii=False)
 
 @post('/api/khinsider/search')
 def api_khinsider_search_v88():
@@ -1579,43 +1618,27 @@ def api_khinsider_search_v88():
         req = json.loads(request.body.read().decode('utf-8'))
         query = (req.get('query') or '').strip()
         if not query:
-            return json.dumps({"status": "error", "error": "Введите название игры или саундтрека"})
-
-        # Ищем игровые саундтреки в открытой базе Archive.org (FLAC / MP3 без блокировок Cloudflare)
+            return json.dumps({"status": "error", "error": "Введите название игры"})
         q_expr = f'(title:({query}) AND (soundtrack OR ost OR music OR score)) AND mediatype:(audio)'
-        api_url = (
-            f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q_expr)}"
-            f"&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
-        )
-        data = _ost_fetch_json_v88(api_url)
-        docs = data.get("response", {}).get("docs", [])
-
-        # Если строгий фильтр дал мало результатов — расширяем поиск по аудио-разделу
+        u1 = f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q_expr)}&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
+        docs = _ost_fetch_json_v88(u1).get("response", {}).get("docs", [])
         if len(docs) < 3:
-            q_broad = f'({query} AND (ost OR soundtrack)) AND mediatype:(audio)'
-            api_url2 = (
-                f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q_broad)}"
-                f"&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
-            )
-            docs = _ost_fetch_json_v88(api_url2).get("response", {}).get("docs", [])
-
+            q2 = f'({query} AND (ost OR soundtrack)) AND mediatype:(audio)'
+            u2 = f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q2)}&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
+            docs = _ost_fetch_json_v88(u2).get("response", {}).get("docs", [])
         albums = []
         for d in docs:
             ident = (d.get("identifier") or "").strip()
-            title = (d.get("title") or ident).strip()
             if not ident:
                 continue
-            yr = str(d.get("year") or "")
-            dls = d.get("downloads") or 0
             albums.append({
                 "slug": f"ia:{ident}",
-                "title": title,
+                "title": (d.get("title") or ident).strip(),
                 "thumb": f"https://archive.org/services/img/{ident}",
                 "platforms": "Archive.org Lossless/MP3",
-                "type": f"⬇ {dls}",
-                "year": yr
+                "type": f"⬇ {d.get('downloads') or 0}",
+                "year": str(d.get("year") or "")
             })
-
         return json.dumps({"status": "ok", "albums": albums})
     except Exception as e:
         response.status = 500
@@ -1627,107 +1650,77 @@ def api_khinsider_album_v88():
     try:
         req = json.loads(request.body.read().decode('utf-8'))
         slug = (req.get('slug') or '').strip()
-        if not slug:
-            return json.dumps({"status": "error", "error": "Не указан идентификатор альбома"})
-
         ident = slug[3:] if slug.startswith("ia:") else slug
         meta = _ost_fetch_json_v88(f"https://archive.org/metadata/{urllib.parse.quote(ident)}")
         m_info = meta.get("metadata") or {}
         album_title = m_info.get("title") or ident
-        if isinstance(album_title, list):
+        if isinstance(album_title, list) and album_title:
             album_title = album_title[0]
+        album_title = str(album_title)
 
-        files = meta.get("files") or []
         by_stem = {}
-        has_flac = False
-        has_mp3 = False
-
-        for fobj in files:
+        has_flac, has_mp3 = False, False
+        for fobj in (meta.get("files") or []):
             fn = fobj.get("name") or ""
             low = fn.lower()
             if not low.endswith((".flac", ".mp3", ".wav", ".ogg")):
                 continue
-            # Пропускаем 64kbps превью, если есть нормальные файлы
-            stem = os.path.splitext(fn)[0]
-            stem = re.sub(r"_vbr$", "", stem, flags=re.I)
-            rec = by_stem.setdefault(stem, {"title": fobj.get("title") or os.path.basename(stem), "duration": "", "flac_fn": "", "mp3_fn": "", "flac_size": "", "mp3_size": "", "track_no": fobj.get("track")})
-            if not rec["title"]:
-                rec["title"] = os.path.basename(stem)
-
+            stem = re.sub(r"_vbr$", "", os.path.splitext(fn)[0], flags=re.I)
+            rec = by_stem.setdefault(stem, {"title": fobj.get("title") or os.path.basename(stem), "duration": "", "flac_fn": "", "mp3_fn": "", "flac_size": "", "mp3_size": ""})
             length_raw = str(fobj.get("length") or "")
             if length_raw and not rec["duration"]:
                 if ":" in length_raw:
                     rec["duration"] = length_raw.split(".")[0]
                 else:
                     try:
-                        sec_i = int(float(length_raw))
-                        rec["duration"] = f"{sec_i // 60}:{sec_i % 60:02d}"
+                        s_i = int(float(length_raw))
+                        rec["duration"] = f"{s_i // 60}:{s_i % 60:02d}"
                     except Exception:
                         pass
-
             sz_b = int(fobj.get("size") or 0)
-            sz_str = f"{sz_b / (1024*1024):.1f} MB" if sz_b > 0 else ""
-
-            if low.endswith(".flac") or low.endswith(".wav"):
-                has_flac = True
-                rec["flac_fn"] = fn
-                rec["flac_size"] = sz_str
-            elif low.endswith(".mp3") or low.endswith(".ogg"):
+            sz_s = f"{sz_b / (1024*1024):.1f} MB" if sz_b > 0 else ""
+            if low.endswith((".flac", ".wav")):
+                has_flac = True; rec["flac_fn"] = fn; rec["flac_size"] = sz_s
+            else:
                 has_mp3 = True
                 if not rec["mp3_fn"]:
-                    rec["mp3_fn"] = fn
-                    rec["mp3_size"] = sz_str
+                    rec["mp3_fn"] = fn; rec["mp3_size"] = sz_s
 
         tracks = []
         for idx, (stem, rec) in enumerate(sorted(by_stem.items(), key=lambda x: x[0]), 1):
-            dl_pack = json.dumps({
-                "ident": ident,
-                "flac": rec["flac_fn"],
-                "mp3": rec["mp3_fn"]
-            }, ensure_ascii=False)
+            t_title = str(rec["title"] or os.path.basename(stem)).strip()
+            raw_j = json.dumps({"ident": ident, "flac": rec["flac_fn"], "mp3": rec["mp3_fn"]}, ensure_ascii=False)
+            b64_p = "b64:" + base64.urlsafe_b64encode(raw_j.encode("utf-8")).decode("ascii")
+            ex = _ost_find_existing_track_v89(album_title, idx, t_title)
             tracks.append({
-                "index": idx,
-                "title": str(rec["title"]).strip(),
-                "duration": rec["duration"] or "—",
-                "mp3_size": rec["mp3_size"],
-                "flac_size": rec["flac_size"],
-                "page_path": dl_pack
+                "index": idx, "title": t_title, "duration": rec["duration"] or "—",
+                "mp3_size": rec["mp3_size"], "flac_size": rec["flac_size"], "page_path": b64_p,
+                "downloaded": ex["exists"], "local_file": ex["filename"],
+                "local_size_mb": ex["size_mb"], "local_ext": ex["ext"]
             })
-
-        return json.dumps({
-            "status": "ok",
-            "slug": slug,
-            "album_title": str(album_title),
-            "cover_url": f"https://archive.org/services/img/{ident}",
-            "has_flac": has_flac,
-            "has_mp3": has_mp3,
-            "tracks": tracks
-        })
+        return json.dumps({"status": "ok", "slug": slug, "album_title": album_title, "cover_url": f"https://archive.org/services/img/{ident}", "has_flac": has_flac, "has_mp3": has_mp3, "tracks": tracks})
     except Exception as e:
         response.status = 500
-        return json.dumps({"status": "error", "error": f"Не удалось загрузить альбом: {e}"})
+        return json.dumps({"status": "error", "error": f"Ошибка альбома: {e}"})
 
 def _ost_resolve_urls_from_pack_v88(page_path: str):
-    info = json.loads(page_path)
-    ident = info.get("ident") or ""
-    flac_fn = info.get("flac") or ""
-    mp3_fn = info.get("mp3") or ""
-    base_dl = f"https://archive.org/download/{urllib.parse.quote(ident)}/"
-    flac_url = (base_dl + urllib.parse.quote(flac_fn)) if flac_fn else ""
-    mp3_url = (base_dl + urllib.parse.quote(mp3_fn)) if mp3_fn else ""
-    return {"flac_url": flac_url, "mp3_url": mp3_url}
+    if page_path.startswith("b64:"):
+        info = json.loads(base64.urlsafe_b64decode(page_path[4:].encode("ascii")).decode("utf-8"))
+    else:
+        info = json.loads(page_path)
+    base_dl = f"https://archive.org/download/{urllib.parse.quote(info.get('ident') or '')}/"
+    fl = info.get("flac") or ""
+    mp = info.get("mp3") or ""
+    return {"flac_url": (base_dl + urllib.parse.quote(fl)) if fl else "", "mp3_url": (base_dl + urllib.parse.quote(mp)) if mp else ""}
 
 @post('/api/khinsider/resolve_stream')
 def api_khinsider_resolve_stream_v88():
     response.content_type = 'application/json'
     try:
         req = json.loads(request.body.read().decode('utf-8'))
-        page_path = (req.get('page_path') or '').strip()
-        urls = _ost_resolve_urls_from_pack_v88(page_path)
-        stream_url = urls["mp3_url"] or urls["flac_url"]
-        if not stream_url:
-            return json.dumps({"status": "error", "error": "Прямая ссылка на поток не найдена"})
-        return json.dumps({"status": "ok", "stream_url": stream_url, "urls": urls})
+        urls = _ost_resolve_urls_from_pack_v88((req.get('page_path') or '').strip())
+        su = urls["mp3_url"] or urls["flac_url"]
+        return json.dumps({"status": "ok", "stream_url": su, "urls": urls}) if su else json.dumps({"status": "error", "error": "Нет потока"})
     except Exception as e:
         response.status = 500
         return json.dumps({"status": "error", "error": str(e)})
@@ -1746,46 +1739,46 @@ def api_khinsider_download_track_v88():
         fmt_mode = (req.get('format_mode') or 'xflac_psycho').strip().lower()
 
         urls = _ost_resolve_urls_from_pack_v88(page_path)
-        want_mp3_only = (fmt_mode == 'mp3')
-        dl_url = (urls["mp3_url"] or urls["flac_url"]) if want_mp3_only else (urls["flac_url"] or urls["mp3_url"])
+        dl_url = (urls["mp3_url"] or urls["flac_url"]) if fmt_mode == 'mp3' else (urls["flac_url"] or urls["mp3_url"])
         if not dl_url:
             response.status = 404
-            return json.dumps({"status": "error", "error": "Ссылка на скачивание не найдена"})
+            return json.dumps({"status": "error", "error": "Ссылка не найдена"})
 
         src_ext = ".flac" if ".flac" in dl_url.lower() else ".mp3"
-        safe_alb = re.sub(r'[\\/:*?"<>|]+', '_', album_title).strip()[:42]
-        safe_trk = re.sub(r'[\\/:*?"<>|]+', '_', track_title).strip()[:68]
-        stem_name = f"{safe_alb} - {track_num:02d}. {safe_trk}"
-
+        stem_name, safe_alb = _ost_make_stem_v89(album_title, track_num, track_title)
         os.makedirs(MUSIC_DIR, exist_ok=True)
         tmp_dl = os.path.join(MUSIC_DIR, f"temp_final_khdl_{os.getpid()}{src_ext}")
 
+        _OST_PROGRESS_V89.update({"active": True, "track_num": track_num, "track_title": track_title, "stage": "downloading", "downloaded_mb": 0.0, "total_mb": 0.0, "percent": 2, "message": f"⬇️ Соединение ({src_ext.upper()})..."})
         dl_req = urllib.request.Request(dl_url, headers=OST_HEADERS)
-        with urllib.request.urlopen(dl_req, timeout=120) as r_in, open(tmp_dl, "wb") as f_out:
-            shutil.copyfileobj(r_in, f_out)
+        with urllib.request.urlopen(dl_req, timeout=180) as r_in, open(tmp_dl, "wb") as f_out:
+            tot_b = int(r_in.headers.get("Content-Length") or 0)
+            tot_mb = round(tot_b / (1024.0 * 1024.0), 2) if tot_b > 0 else 0.0
+            _OST_PROGRESS_V89["total_mb"] = tot_mb
+            read_b = 0
+            while True:
+                chunk = r_in.read(65536)
+                if not chunk:
+                    break
+                f_out.write(chunk)
+                read_b += len(chunk)
+                cur_mb = round(read_b / (1024.0 * 1024.0), 2)
+                pct = min(90, int((read_b * 90) // tot_b)) if tot_b > 0 else 50
+                _OST_PROGRESS_V89.update({"downloaded_mb": cur_mb, "percent": pct, "message": f"⬇️ Загрузка {src_ext.upper()}: {cur_mb:.1f} / {tot_mb:.1f} MB ({pct}%)" if tot_mb > 0 else f"⬇️ Загрузка: {cur_mb:.1f} MB..."})
 
-        xflac_map = {
-            'xflac_lossless': (0, '_bitperfect.xflac'),
-            'xflac_psycho':   (25, '_psycho.xflac'),
-            'xflac_ultra':    (15, '_ultra.xflac'),
-            'xflac_hifi':     (45, '_hifi.xflac')
-        }
-
+        xflac_map = {'xflac_lossless': (0, '_bitperfect.xflac'), 'xflac_psycho': (25, '_psycho.xflac'), 'xflac_ultra': (15, '_ultra.xflac'), 'xflac_hifi': (45, '_hifi.xflac')}
         if fmt_mode in xflac_map:
             xf_mode, xf_suf = xflac_map[fmt_mode]
             final_name = f"{stem_name}{xf_suf}"
             final_path = os.path.join(MUSIC_DIR, final_name)
             tmp_wav = os.path.join(MUSIC_DIR, f"temp_final_khwav_{os.getpid()}.wav")
+            _OST_PROGRESS_V89.update({"stage": "converting", "percent": 94, "message": f"🧬 Сжатие в xFLAC (режим {xf_mode})..."})
             ff_bin = find_ffmpeg_binary()
-            r_ff = subprocess.run(
-                [ff_bin, '-y', '-i', tmp_dl, '-vn', '-ac', '2', '-c:a', 'pcm_s16le', tmp_wav],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
+            r_ff = subprocess.run([ff_bin, '-y', '-i', tmp_dl, '-vn', '-ac', '2', '-c:a', 'pcm_s16le', tmp_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if r_ff.returncode != 0 or not os.path.isfile(tmp_wav) or os.path.getsize(tmp_wav) < 44:
-                raise RuntimeError("Ошибка FFmpeg при декодировании в PCM WAV")
+                raise RuntimeError("Ошибка FFmpeg при декодировании в WAV")
             with open(tmp_wav, "rb") as wf:
-                wav_bytes = wf.read()
-            xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_bytes, xf_mode)
+                xfc_bytes = _encode_wav_to_xflac_bytes_v85(wf.read(), xf_mode)
             with open(final_path, "wb") as xf_out:
                 xf_out.write(xfc_bytes)
         else:
@@ -1795,23 +1788,15 @@ def api_khinsider_download_track_v88():
             tmp_dl = None
 
         db = load_custom_tags_db_v74()
-        db[final_name] = {
-            "TITLE": track_title,
-            "ARTIST": safe_alb,
-            "ALBUM": album_title,
-            "GENRE": "Game OST"
-        }
+        db[final_name] = {"TITLE": track_title, "ARTIST": safe_alb, "ALBUM": album_title, "GENRE": "Game OST"}
         save_custom_tags_db_v74(db)
         TRACK_META_CACHE_V71.pop(final_path, None)
-
-        sz_mb = os.path.getsize(final_path) / (1024.0 * 1024.0)
-        return json.dumps({
-            "status": "ok",
-            "filename": final_name,
-            "size_mb": round(sz_mb, 2),
-            "folder": MUSIC_DIR
-        })
+        sz_mb = round(os.path.getsize(final_path) / (1024.0 * 1024.0), 2)
+        ext_lbl = os.path.splitext(final_name)[1].upper().lstrip('.')
+        _OST_PROGRESS_V89.update({"active": False, "stage": "done", "percent": 100, "message": f"✅ Готово: {final_name} ({sz_mb} MB)"})
+        return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb, "ext": ext_lbl, "folder": MUSIC_DIR})
     except Exception as e:
+        _OST_PROGRESS_V89.update({"active": False, "stage": "error", "message": f"❌ {e}"})
         response.status = 500
         return json.dumps({"status": "error", "error": str(e)})
     finally:
@@ -1820,7 +1805,6 @@ def api_khinsider_download_track_v88():
                 try: os.remove(p)
                 except Exception: pass
 
-
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
@@ -1828,7 +1812,6 @@ def start_server():
         cleanup_stale_temps(MUSIC_DIR)
     print("🎧 АВТОНОМНЫЙ ПЛЕЕР ЗАПУЩЕН НА ПОРТУ 8080")
     run(host='127.0.0.1', port=8080, quiet=True, server='waitress')
-
 
 if __name__ == "__main__":
     start_server()
