@@ -2317,55 +2317,87 @@ def api_torrent_status_v96():
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
+_TOR_IMPORT_LOCK_V98 = threading.Lock()
+_TOR_ENCODING_STATE_V98 = {"pending": 0, "current_track": ""}
+
+@route('/api/torrent/encoding_state', method='GET')
+def api_torrent_encoding_state_v98():
+    response.content_type = 'application/json'
+    return json.dumps(_TOR_ENCODING_STATE_V98, ensure_ascii=False)
+
 @post('/api/torrent/import_track')
 def api_torrent_import_track_v96():
     response.content_type = 'application/json'
+    req = json.loads(request.body.read().decode('utf-8') or "{}")
+    full_p = (req.get("full_path") or "").strip()
+    tor_name = (req.get("torrent_name") or "Torrent").strip()
+    fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
+    key = f"{req.get('hash')}_{req.get('index')}"
+    if key in _JTORRENT_CONVERTED_V96:
+        fn = _JTORRENT_CONVERTED_V96[key]
+        return json.dumps({"status": "ok", "filename": fn, "size_mb": 0})
+    if not full_p or not os.path.isfile(full_p):
+        return json.dumps({"status": "error", "error": "Файл ещё не докачан"})
+
+    base_nm = os.path.splitext(os.path.basename(full_p))[0]
+    _TOR_ENCODING_STATE_V98["pending"] = max(0, _TOR_ENCODING_STATE_V98.get("pending", 0)) + 1
     try:
-        load_multi_dirs_v71()
-        req = json.loads(request.body.read().decode('utf-8') or "{}")
-        full_p = (req.get("full_path") or "").strip()
-        tor_name = (req.get("torrent_name") or "Torrent").strip()
-        fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
-        key = f"{req.get('hash')}_{req.get('index')}"
-        if not full_p or not os.path.isfile(full_p):
-            return json.dumps({"status": "error", "error": "Файл ещё не докачан"})
-        base_nm = os.path.splitext(os.path.basename(full_p))[0]
-        ext = os.path.splitext(full_p)[1].lower()
-        xf_map = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15}
-        if fmt in xf_map and ext in ('.flac', '.wav'):
-            xf_mode = xf_map[fmt]
-            suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac"}[xf_mode]
-            final_name = f"{base_nm}{suf}"
-            final_path = os.path.join(MUSIC_DIR, final_name)
-            twav = os.path.join(MUSIC_DIR, f"temp_final_tor_{os.getpid()}.wav")
-            try:
-                subprocess.run([find_ffmpeg_binary(), '-y', '-i', full_p, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', twav], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
-                with open(twav, "rb") as wf:
-                    xfc_b = _encode_wav_to_xflac_bytes_v85(wf.read(), xf_mode)
-                with open(final_path, "wb") as of:
-                    of.write(xfc_b)
-            finally:
-                if os.path.exists(twav):
-                    try: os.remove(twav)
-                    except Exception: pass
-        else:
-            final_name = os.path.basename(full_p)
-            final_path = os.path.join(MUSIC_DIR, final_name)
-            shutil.copy2(full_p, final_path)
-        _JTORRENT_CONVERTED_V96[key] = final_name
-        db = load_custom_tags_db_v74()
-        db[final_name] = {"TITLE": base_nm, "ARTIST": tor_name[:40], "ALBUM": tor_name[:50], "GENRE": "Torrent P2P"}
-        save_custom_tags_db_v74(db)
-        TRACK_META_CACHE_V71.pop(final_path, None)
-        sz_mb = round(os.path.getsize(final_path) / (1024 * 1024), 2)
-        return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb})
+        with _TOR_IMPORT_LOCK_V98:
+            _TOR_ENCODING_STATE_V98["current_track"] = base_nm
+            load_multi_dirs_v71()
+            ext = os.path.splitext(full_p)[1].lower()
+            xf_map = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15}
+            if fmt in xf_map and ext in ('.flac', '.wav'):
+                xf_mode = xf_map[fmt]
+                suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac"}[xf_mode]
+                final_name = f"{base_nm}{suf}"
+                final_path = os.path.join(MUSIC_DIR, final_name)
+                tmp_xf = os.path.join(MUSIC_DIR, f"temp_final_torxf_{os.getpid()}_{threading.get_ident()}.tmp")
+                twav = os.path.join(MUSIC_DIR, f"temp_final_tor_{os.getpid()}_{threading.get_ident()}.wav")
+                try:
+                    subprocess.run([find_ffmpeg_binary(), '-y', '-i', full_p, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', twav], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+                    with open(twav, "rb") as wf:
+                        xfc_b = _encode_wav_to_xflac_bytes_v85(wf.read(), xf_mode)
+                    with open(tmp_xf, "wb") as of:
+                        of.write(xfc_b)
+                    # Атомарное переименование: трек появляется в плеере только когда он на 100% готов!
+                    shutil.move(tmp_xf, final_path)
+                finally:
+                    for fp in (twav, tmp_xf):
+                        if os.path.exists(fp):
+                            try: os.remove(fp)
+                            except Exception: pass
+            else:
+                final_name = os.path.basename(full_p)
+                final_path = os.path.join(MUSIC_DIR, final_name)
+                shutil.copy2(full_p, final_path)
+
+            _JTORRENT_CONVERTED_V96[key] = final_name
+            db = load_custom_tags_db_v74()
+            db[final_name] = {"TITLE": base_nm, "ARTIST": tor_name[:40], "ALBUM": tor_name[:50], "GENRE": "Torrent P2P"}
+            save_custom_tags_db_v74(db)
+            TRACK_META_CACHE_V71.pop(final_path, None)
+            sz_mb = round(os.path.getsize(final_path) / (1024 * 1024), 2)
+            return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb})
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
-
+    finally:
+        _TOR_ENCODING_STATE_V98["pending"] = max(0, _TOR_ENCODING_STATE_V98.get("pending", 1) - 1)
+        if _TOR_ENCODING_STATE_V98["pending"] == 0:
+            _TOR_ENCODING_STATE_V98["current_track"] = ""
 
 @route('/api/torrent/stream/<hash_str>/<file_idx:int>', method='GET')
 def api_torrent_stream_proxy_v97(hash_str, file_idx):
     ensure_jtorrent_daemon_v96()
+    try:
+        dl_req = urllib.request.Request(
+            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+            data=json.dumps({"hash": hash_str, "files": [file_idx]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        urllib.request.urlopen(dl_req, timeout=2).read()
+    except Exception:
+        pass
     u = f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={hash_str}&file={file_idx}"
     hdrs = {}
     if request.headers.get("Range"):
