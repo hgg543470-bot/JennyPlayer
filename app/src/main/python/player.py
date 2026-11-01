@@ -2931,6 +2931,146 @@ def api_torrent_add_v96():
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
+# === 📂 JENNY V113: INSTANT .TORRENT FILE PARSER + BACKGROUND DAEMON SYNC ===
+def _bdecode_with_info_slice_v113(data: bytes):
+    info_slice = [0, 0]
+    def _parse( idx):
+        c = data[idx:idx+1]
+        if c == b'i':
+            end_i = data.index(b'e', idx + 1)
+            return int(data[idx+1:end_i]), end_i + 1
+        elif c == b'l':
+            idx += 1
+            arr = []
+            while data[idx:idx+1] != b'e':
+                val, idx = _parse(idx)
+                arr.append(val)
+            return arr, idx + 1
+        elif c == b'd':
+            idx += 1
+            d_out = {}
+            while data[idx:idx+1] != b'e':
+                k, idx = _parse(idx)
+                v_start = idx
+                v, idx = _parse(idx)
+                v_end = idx
+                if k == b'info' and info_slice[1] == 0:
+                    info_slice[0], info_slice[1] = v_start, v_end
+                d_out[k] = v
+            return d_out, idx + 1
+        elif c.isdigit():
+            colon = data.index(b':', idx)
+            length = int(data[idx:colon])
+            s_start = colon + 1
+            s_end = s_start + length
+            return data[s_start:s_end], s_end
+        else:
+            raise ValueError(f"Invalid bencode byte at {idx}")
+    root, _ = _parse(0)
+    return root, tuple(info_slice)
+
+@post('/api/torrent/add_file')
+def api_torrent_add_file_v113():
+    response.content_type = 'application/json'
+    try:
+        upload = request.files.get('torrent_file')
+        if not upload:
+            return json.dumps({"status": "error", "error": "Файл .torrent не передан"})
+        raw_bytes = upload.file.read()
+        meta, (i_start, i_end) = _bdecode_with_info_slice_v113(raw_bytes)
+        if i_end <= i_start or b'info' not in meta:
+            return json.dumps({"status": "error", "error": "Повреждённый .torrent файл (нет секции info)"})
+
+        info_hash = hashlib.sha1(raw_bytes[i_start:i_end]).hexdigest().lower()
+        info_dict = meta[b'info']
+        raw_name = info_dict.get(b'name.utf-8') or info_dict.get(b'name') or b'Torrent'
+        tor_name = raw_name.decode('utf-8', errors='replace').strip() or "Torrent"
+
+        # Собираем трекеры из самого .torrent файла
+        file_trackers = []
+        if b'announce' in meta and isinstance(meta[b'announce'], bytes):
+            u_tr = meta[b'announce'].decode('utf-8', errors='ignore').strip()
+            if u_tr:
+                file_trackers.append(u_tr)
+        if b'announce-list' in meta and isinstance(meta[b'announce-list'], list):
+            for tier in meta[b'announce-list']:
+                if isinstance(tier, list):
+                    for item in tier:
+                        if isinstance(item, bytes):
+                            u_tr = item.decode('utf-8', errors='ignore').strip()
+                            if u_tr and u_tr not in file_trackers:
+                                file_trackers.append(u_tr)
+
+        tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+        files_out = []
+        if b'files' in info_dict and isinstance(info_dict[b'files'], list):
+            for idx, f_item in enumerate(info_dict[b'files']):
+                f_len = int(f_item.get(b'length') or 0)
+                p_list = f_item.get(b'path.utf-8') or f_item.get(b'path') or []
+                parts = [x.decode('utf-8', errors='replace') for x in p_list if isinstance(x, bytes)]
+                rel_p = "/".join(parts) if parts else f"track_{idx}.mp3"
+                full_p = os.path.join(tor_dir, tor_name, *parts) if parts else os.path.join(tor_dir, tor_name, rel_p)
+                files_out.append({
+                    "index": idx,
+                    "path": rel_p,
+                    "length": f_len,
+                    "completed": 0,
+                    "percent": 0,
+                    "done": False,
+                    "full_path": full_p
+                })
+        else:
+            f_len = int(info_dict.get(b'length') or 0)
+            full_p = os.path.join(tor_dir, tor_name)
+            files_out.append({
+                "index": 0,
+                "path": tor_name,
+                "length": f_len,
+                "completed": 0,
+                "percent": 0,
+                "done": False,
+                "full_path": full_p
+            })
+
+        # Строим обогащённую magnet-ссылку и в фоновом потоке регистрируем её в Go-демоне libjtorrent.so
+        tr_tail = "".join(f"&tr={urllib.parse.quote(t)}" for t in file_trackers)
+        base_mag = f"magnet:?xt=urn:btih:{info_hash}&dn={urllib.parse.quote(tor_name)}{tr_tail}"
+        full_mag = enrich_magnet_with_cached_trackers_v109(base_mag)
+
+        def _bg_register_in_daemon():
+            try:
+                if not ensure_jtorrent_daemon_v96():
+                    return
+                add_req = urllib.request.Request(
+                    f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add",
+                    data=json.dumps({"magnet": full_mag}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(add_req, timeout=45) as r:
+                    r.read()
+                # Если пользователь уже нажал "Качать" или "▶", пока демон подключался к пирам — сразу передаём список файлов!
+                wanted = sorted(list(_JTORRENT_ACTIVE_FILES_V106.get(info_hash, set())))
+                if wanted:
+                    dl_req = urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                        data=json.dumps({"hash": info_hash, "files": wanted}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    )
+                    urllib.request.urlopen(dl_req, timeout=10).read()
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg_register_in_daemon, daemon=True).start()
+        return json.dumps({
+            "status": "ok",
+            "hash": info_hash,
+            "name": tor_name,
+            "files": files_out,
+            "from_torrent_file": True
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": f"Ошибка чтения .torrent: {e}"})
+
 _JTORRENT_ACTIVE_FILES_V106 = {}
 
 @post('/api/torrent/download')

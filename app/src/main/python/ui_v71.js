@@ -8136,3 +8136,169 @@ window.ensureMultiTorrentWorkerV112 = function() {
         } catch (e) {}
     }, 750);
 };
+
+// === 📂⬅️ JENNY V113: INSTANT BACK ON LOADING + .TORRENT FILE OPENER ===
+window.ensureTorrentFileInputV113 = function() {
+    let inp = document.getElementById('jennyTorrentFileInputV113');
+    if (!inp) {
+        inp = document.createElement('input');
+        inp.type = 'file';
+        inp.id = 'jennyTorrentFileInputV113';
+        inp.accept = '.torrent,application/x-bittorrent';
+        inp.style.display = 'none';
+        inp.onchange = (e) => window.handleTorrentFilePickedV113(e);
+        document.body.appendChild(inp);
+    }
+    return inp;
+};
+
+window.triggerPickTorrentFileV113 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const inp = window.ensureTorrentFileInputV113();
+    inp.value = '';
+    inp.click();
+};
+
+window.handleTorrentFilePickedV113 = async function(ev) {
+    const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null;
+    if (!file) return;
+
+    window._torScreenModeV112 = 'files';
+    window._torViewSessionV112++;
+    const stEl = document.getElementById('torStatusLineV96');
+    const body = document.getElementById('torBodyListV96');
+    if (stEl) stEl.innerText = `📂 Чтение файла ${file.name}...`;
+    if (body) body.innerHTML = `<div style="color:#3fb950;text-align:center;padding:25px 10px;">⚡ Мгновенная распаковка .torrent оглавления...</div>`;
+
+    try {
+        const fd = new FormData();
+        fd.append('torrent_file', file, file.name);
+        const res = await fetch('/api/torrent/add_file', { method: 'POST', body: fd });
+        const d = await res.json();
+        if (d.status !== 'ok') throw new Error(d.error || 'Не удалось прочитать .torrent');
+
+        const job = window.ensureTorrentJobMapV112(d.hash, d.name, d.files || [], '');
+        window.mountTorrentJobToScreenV112(job);
+        if (typeof window.showToast === 'function') {
+            window.showToast(`⚡ Список открыт из .torrent (${job.files.length} треков)`);
+        }
+    } catch (e) {
+        if (body) body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 12px;font-size:12px;">❌ ${e.message || e}<br><br><button type="button" onclick="window.backToTorrentSearchListV97()" style="padding:7px 14px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;font-weight:bold;">⬅ Вернуться к списку раздач</button></div>`;
+    }
+};
+
+// Добавляем кнопку 📂 рядом с кнопкой поиска в шапке Торрент-студии
+window.injectTorrentFileBtnInHeaderV113 = function() {
+    const inp = document.getElementById('torMagnetInpV91');
+    if (!inp || !inp.parentElement) return;
+    const row = inp.parentElement;
+    if (row.querySelector('.btn-pick-tor-file-v113')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-pick-tor-file-v113';
+    btn.title = 'Открыть готовый .torrent файл без ожидания пиров';
+    btn.onclick = (e) => window.triggerPickTorrentFileV113(e);
+    btn.style.cssText = 'padding:7px 10px;background:#161b22;color:#3fb950;border:1px solid #3fb950;border-radius:8px;font-weight:bold;font-size:12px;flex-shrink:0;';
+    btn.innerHTML = '📂';
+    row.appendChild(btn);
+};
+
+const _origOpenTorModalV113 = window.openTorrentHubPreviewModalV91;
+window.openTorrentHubPreviewModalV91 = function(ev) {
+    _origOpenTorModalV113.apply(this, arguments);
+    window.injectTorrentFileBtnInHeaderV113();
+};
+
+// Обновляем экран ожидания списка файлов: дружелюбная подсказка + кнопки "⬅ Назад к раздачам" и "📂 Открыть .torrent" СРАЗУ без ожидания таймаута!
+window.openMagnetInGoEngineV96 = async function(magnetUrl) {
+    window.injectTorrentFileBtnInHeaderV113();
+    window._torScreenModeV112 = 'files';
+    const mySession = ++window._torViewSessionV112;
+    const preHash = window.extractBtihFromMagnetV112(magnetUrl);
+
+    if (preHash && window._torMapV112[preHash] && window._torMapV112[preHash].files.length > 0) {
+        window.mountTorrentJobToScreenV112(window._torMapV112[preHash]);
+        return;
+    }
+
+    const body = document.getElementById('torBodyListV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    if (ftr) ftr.style.display = 'none';
+    if (stEl) stEl.innerText = '🧲 Опрос DHT и трекеров...';
+    if (body) {
+        body.innerHTML = `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px 12px;gap:12px;background:#0b0f17;border:1px dashed #30363d;border-radius:12px;margin-top:6px;">
+                <div style="color:#d2a8ff;font-size:13px;font-weight:900;">
+                    🧲 Не уходи, я загружаю список файлов от пиров (до 25с)...
+                </div>
+                <div style="color:#8b949e;font-size:11.5px;line-height:1.45;max-width:360px;">
+                    Если не хочешь ждать отклика пиров — открой готовый <b style="color:#3fb950;">.torrent</b> файл (список откроется мгновенно), или вернись назад, если ткнул не туда.
+                </div>
+                <div style="display:flex;gap:8px;width:100%;max-width:360px;margin-top:4px;">
+                    <button type="button" onclick="window.backToTorrentSearchListV97()" style="flex:1;padding:9px 10px;background:#161b22;color:#e6edf3;border:1px solid #58a6ff;border-radius:8px;font-weight:bold;font-size:11.5px;">
+                        ⬅ Назад к раздачам
+                    </button>
+                    <button type="button" onclick="window.triggerPickTorrentFileV113(event)" style="flex:1;padding:9px 10px;background:rgba(63,185,80,0.18);color:#3fb950;border:1px solid #3fb950;border-radius:8px;font-weight:bold;font-size:11.5px;">
+                        📂 Открыть .torrent
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    try {
+        const res = await fetch('/api/torrent/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ magnet: magnetUrl })
+        });
+        const d = await res.json();
+        if (d.status !== 'ok') throw new Error(d.error || 'Пиры не отдали оглавление');
+
+        const job = window.ensureTorrentJobMapV112(d.hash, d.name, d.files || [], magnetUrl);
+
+        if (mySession === window._torViewSessionV112 && window._torScreenModeV112 === 'files') {
+            window.mountTorrentJobToScreenV112(job);
+        } else if (window._torScreenModeV112 === 'search') {
+            window.updateSearchCardsWithLiveMapBadgesV112();
+        }
+    } catch (e) {
+        if (mySession === window._torViewSessionV112 && window._torScreenModeV112 === 'files') {
+            if (stEl) stEl.innerText = '⚠️ Раздача не ответила';
+            if (body) {
+                body.innerHTML = `
+                    <div style="color:#ff7b72;text-align:center;padding:22px 12px;font-size:12px;display:flex;flex-direction:column;gap:10px;align-items:center;">
+                        <div>❌ ${e.message || e}</div>
+                        <div style="display:flex;gap:8px;width:100%;max-width:340px;">
+                            <button type="button" onclick="window.backToTorrentSearchListV97()" style="flex:1;padding:8px 12px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;font-weight:bold;">⬅ К раздачам</button>
+                            <button type="button" onclick="window.triggerPickTorrentFileV113(event)" style="flex:1;padding:8px 12px;background:rgba(63,185,80,0.18);color:#3fb950;border:1px solid #3fb950;border-radius:8px;font-weight:bold;">📂 Открыть .torrent</button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+    }
+};
+
+// Защита в backToTorrentSearchListV97: если в строке поиска стояла прямая magnet:? ссылка и списка поиска ещё не было, не открываем магнит повторно
+const _origBackV112 = window.backToTorrentSearchListV97;
+window.backToTorrentSearchListV97 = function() {
+    const inp = document.getElementById('torMagnetInpV91');
+    const list = window._torSearchResultsV96 || [];
+    if (!list.length && inp && inp.value.trim().toLowerCase().startsWith('magnet:?')) {
+        inp.value = '';
+        window._torScreenModeV112 = 'search';
+        window._torViewSessionV112++;
+        const ftr = document.getElementById('torFooterBarV96');
+        if (ftr) ftr.style.display = 'none';
+        const stEl = document.getElementById('torStatusLineV96');
+        if (stEl) stEl.innerText = '⚡ Введи название альбома, вставь Magnet или открой 📂 .torrent';
+        const body = document.getElementById('torBodyListV96');
+        if (body) {
+            body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px 12px;font-size:12px;">Введи поисковый запрос выше или нажми <b style="color:#3fb950;">📂</b> для открытия готового .torrent файла.</div>`;
+        }
+        return;
+    }
+    return _origBackV112.apply(this, arguments);
+};
