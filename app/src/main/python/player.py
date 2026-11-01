@@ -2065,6 +2065,32 @@ def _sc_get_client_id_v92(force_refresh: bool = False):
     _SC_CLIENT_ID_V92 = _SC_FALLBACK_IDS_V105[0]
     return _SC_CLIENT_ID_V92
 
+def _sc_sort_transcodings_v107(trans_list):
+    ordered = []
+    for tr in (trans_list or []):
+        if tr.get("snipped"):
+            continue
+        tu = (tr.get("url") or "").strip()
+        fmt = tr.get("format") or {}
+        proto = (fmt.get("protocol") or "").lower()
+        mime = (fmt.get("mime_type") or "").lower()
+        preset = (tr.get("preset") or "").lower()
+        quality = (tr.get("quality") or "").lower()
+        if not tu or "encrypted" in proto:
+            continue
+        # Приоритет: 1) HQ потока, 2) MP3 (audio/mpeg), 3) Progressive (единый файл без сегментов), 4) AAC/MP4, 5) Opus только в крайнем случае
+        is_opus = ("opus" in mime or "ogg" in mime or "opus" in preset)
+        is_mp3 = ("mpeg" in mime or "mp3" in preset)
+        score = (
+            1 if is_opus else 0,
+            0 if quality == "hq" else 1,
+            0 if is_mp3 else 1,
+            0 if proto == "progressive" else 1
+        )
+        ordered.append((score, tu))
+    ordered.sort(key=lambda x: x[0])
+    return [x[1] for x in ordered]
+
 @post('/api/soundcloud/search')
 def api_soundcloud_search_v105():
     response.content_type = 'application/json'
@@ -2087,17 +2113,7 @@ def api_soundcloud_search_v105():
         tracks = []
         for item in (data.get("collection") or []):
             trans = (item.get("media") or {}).get("transcodings") or []
-            ordered_urls = []
-            for tr in trans:
-                tu = (tr.get("url") or "").strip()
-                proto = ((tr.get("format") or {}).get("protocol") or "").lower()
-                mime = ((tr.get("format") or {}).get("mime_type") or "").lower()
-                if not tu or "encrypted" in proto:
-                    continue
-                score = (0 if proto == "progressive" else 1, 0 if "mpeg" in mime else 1)
-                ordered_urls.append((score, tu))
-            ordered_urls.sort(key=lambda x: x[0])
-            urls_list = [x[1] for x in ordered_urls]
+            urls_list = _sc_sort_transcodings_v107(trans)
             if not urls_list:
                 continue
 
@@ -2146,10 +2162,10 @@ def _sc_resolve_direct_url_v92(page_path: str) -> str:
                     with _sc_urlopen_v95(info_ep, timeout=7) as r_tr:
                         tr_obj = json.loads(r_tr.read().decode("utf-8", errors="replace"))
                     t_auth = tr_obj.get("track_authorization") or t_auth
-                    fresh_tr = (tr_obj.get("media") or {}).get("transcodings") or []
-                    for x in fresh_tr:
-                        xu = x.get("url")
-                        if xu and xu not in urls_to_try and "encrypted" not in ((x.get("format") or {}).get("protocol") or ""):
+                    fresh_sorted = _sc_sort_transcodings_v107((tr_obj.get("media") or {}).get("transcodings") or [])
+                    # Ставим отсортированные MP3-потоки в начало списка
+                    for xu in fresh_sorted:
+                        if xu not in urls_to_try:
                             urls_to_try.append(xu)
                 except Exception:
                     pass
@@ -2189,16 +2205,45 @@ def _clean_concatenated_hls_mp3_bytes_v102(raw_bytes: bytes) -> bytes:
         i = idx + 3
     return bytes(out)
 
+def _strip_first_xing_frame_v107(mp3_bytes: bytes) -> bytes:
+    # Если в начале сегмента сидит старый Xing/Info фрейм от 10-секундного чанка, вырезаем его, чтобы FFmpeg записал новый Xing на всю длину трека
+    head = mp3_bytes[:1024]
+    if b'Xing' in head or b'Info' in head:
+        # Ищем второй синхро-заголовок MP3-фрейма (0xFF 0xFB / 0xFF 0xFA / 0xFF 0xF3 / 0xFF 0xF2)
+        first_sync = -1
+        for pos in range(0, min(len(mp3_bytes) - 4, 1500)):
+            if mp3_bytes[pos] == 0xFF and (mp3_bytes[pos+1] & 0xE0) == 0xE0:
+                if first_sync == -1:
+                    first_sync = pos
+                elif pos - first_sync >= 100:
+                    return mp3_bytes[pos:]
+    return mp3_bytes
+
 def _mux_clean_sc_mp3_v102(src_file: str, dst_file: str):
     with open(src_file, "rb") as f:
         raw_b = f.read()
-    clean_b = _clean_concatenated_hls_mp3_bytes_v102(raw_b)
-    with open(src_file, "wb") as f:
-        f.write(clean_b)
+
+    is_ogg_or_mp4 = (raw_b[:4] == b'OggS' or b'ftyp' in raw_b[:32] or b'moov' in raw_b[:64])
+    if not is_ogg_or_mp4:
+        clean_b = _strip_first_xing_frame_v107(_clean_concatenated_hls_mp3_bytes_v102(raw_b))
+        with open(src_file, "wb") as f:
+            f.write(clean_b)
+
     ff_bin = find_ffmpeg_binary()
     tmp_out = dst_file + f".tmp_{os.getpid()}.mp3"
     try:
-        subprocess.run([ff_bin, '-y', '-i', src_file, '-vn', '-c:a', 'copy', '-write_xing', '1', tmp_out], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        if not is_ogg_or_mp4:
+            # 1. Пробуем чистый ремукс MP3-фреймов без перекодирования с принудительным пересчётом заголовка Xing
+            subprocess.run(
+                [ff_bin, '-y', '-f', 'mp3', '-i', src_file, '-vn', '-c:a', 'copy', '-write_xing', '1', '-id3v2_version', '3', tmp_out],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60
+            )
+        # 2. Если поток пришёл в Ogg/Opus/AAC или ремукс не прошёл — кодируем в честный MP3 192 kbps
+        if not os.path.isfile(tmp_out) or os.path.getsize(tmp_out) < 16384:
+            subprocess.run(
+                [ff_bin, '-y', '-i', src_file, '-vn', '-ar', '44100', '-ac', '2', '-b:a', '192k', '-write_xing', '1', tmp_out],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90
+            )
         if os.path.isfile(tmp_out) and os.path.getsize(tmp_out) >= 16384:
             shutil.move(tmp_out, dst_file)
         elif src_file != dst_file:
@@ -2226,12 +2271,24 @@ def api_soundcloud_download_track_v105():
             first_b = r.read(16384)
             if first_b.lstrip().startswith(b"#EXTM3U") or ".m3u8" in stream_u.lower():
                 m3u8_txt = (first_b + r.read()).decode("utf-8", errors="ignore")
-                seg_urls = [ln.strip() for ln in m3u8_txt.splitlines() if ln.strip().startswith("http")]
+                seg_urls = []
+                for ln in m3u8_txt.splitlines():
+                    s_ln = ln.strip()
+                    if s_ln.startswith("#EXT-X-MAP:"):
+                        m_map = re.search(r'URI="([^"]+)"', s_ln)
+                        if m_map and m_map.group(1).startswith("http"):
+                            seg_urls.append(m_map.group(1))
+                    elif s_ln.startswith("http"):
+                        seg_urls.append(s_ln)
                 tot_s = max(1, len(seg_urls))
                 with open(tmp_raw, "wb") as out_f:
                     for idx_s, su in enumerate(seg_urls, 1):
                         with _sc_urlopen_v95(su, timeout=15) as sr:
-                            out_f.write(_clean_concatenated_hls_mp3_bytes_v102(sr.read()))
+                            seg_data = sr.read()
+                            if idx_s == 1 and (seg_data[:4] == b'OggS' or b'ftyp' in seg_data[:32]):
+                                out_f.write(seg_data)
+                            else:
+                                out_f.write(_clean_concatenated_hls_mp3_bytes_v102(seg_data))
                         _SC_DL_STATE_V99["pct"] = min(88, max(5, int((idx_s * 85) / tot_s)))
             else:
                 tot_b = int(r.headers.get("Content-Length") or 0)

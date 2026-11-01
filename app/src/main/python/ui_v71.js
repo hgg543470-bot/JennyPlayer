@@ -6699,7 +6699,7 @@ window.openMagnetInGoEngineV96 = async function(magnetUrl) {
 setInterval(() => {
     const btn = document.getElementById('btnTorStartDlV97');
     const ts = window._torStateV96;
-    if (!btn || !ts || !ts.dlActive) return;
+    if (true || !btn || !ts || !ts.dlActive) return;
     const encLbl = document.getElementById('torXflacProgLabelV99');
     const encTxt = encLbl ? encLbl.innerText : '';
     const netPct = ts.dlOverallPct || 0;
