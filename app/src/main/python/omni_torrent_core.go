@@ -39,8 +39,15 @@ type TorrentResult struct {
   Peers      int     `json:"peers"`
   Source     string  `json:"source"`
   Category   string  `json:"category,omitempty"`
+  MatchedVia string  `json:"matched_via,omitempty"`
   MatchScore float64 `json:"match_score"`
   FinalRank  float64 `json:"final_rank"`
+}
+
+type ResolvedTrackInfo struct {
+  Artist string `json:"artist"`
+  Track  string `json:"track"`
+  Album  string `json:"album"`
 }
 
 type VariantGroup struct {
@@ -50,15 +57,16 @@ type VariantGroup struct {
 }
 
 type SearchResponse struct {
-  Status         string          `json:"status"`
-  OriginalQuery  string          `json:"original_query"`
-  CorrectedQuery string          `json:"corrected_query"`
-  ExpandedTerms  []string        `json:"expanded_terms"`
-  ElapsedMs      int64           `json:"elapsed_ms"`
-  TotalFound     int             `json:"total_found"`
-  HiddenZero     int             `json:"hidden_zero"`
-  Groups         []VariantGroup  `json:"groups"`
-  Results        []TorrentResult `json:"results"`
+  Status         string              `json:"status"`
+  OriginalQuery  string              `json:"original_query"`
+  CorrectedQuery string              `json:"corrected_query"`
+  ResolvedTracks []ResolvedTrackInfo `json:"resolved_tracks,omitempty"`
+  ExpandedTerms  []string            `json:"expanded_terms"`
+  ElapsedMs      int64               `json:"elapsed_ms"`
+  TotalFound     int                 `json:"total_found"`
+  HiddenZero     int                 `json:"hidden_zero"`
+  Groups         []VariantGroup      `json:"groups"`
+  Results        []TorrentResult     `json:"results"`
 }
 
 type EngineConfig struct {
@@ -400,8 +408,9 @@ type catalogEntity struct {
   score float64
 }
 
-func fetchCatalogEntities(ctx context.Context, query string) []catalogEntity {
+func fetchCatalogEntities(ctx context.Context, query string) ([]catalogEntity, []ResolvedTrackInfo) {
   var out []catalogEntity
+  var tracks []ResolvedTrackInfo
   var mu sync.Mutex
   var wg sync.WaitGroup
 
@@ -412,6 +421,18 @@ func fetchCatalogEntities(ctx context.Context, query string) []catalogEntity {
     }
     mu.Lock()
     out = append(out, catalogEntity{text: txt, score: sc})
+    mu.Unlock()
+  }
+
+  addTrack := func(art, trk, alb string) {
+    art = strings.TrimSpace(art)
+    trk = strings.TrimSpace(trk)
+    alb = strings.TrimSpace(alb)
+    if art == "" {
+      return
+    }
+    mu.Lock()
+    tracks = append(tracks, ResolvedTrackInfo{Artist: art, Track: trk, Album: alb})
     mu.Unlock()
   }
 
@@ -457,6 +478,7 @@ func fetchCatalogEntities(ctx context.Context, query string) []catalogEntity {
       artSim := computeFuzzyScore(query, art)
 
       if trkSim >= 0.55 {
+        addTrack(art, trk, alb)
         addEnt(art, 1.22-decay)
         addEnt(art+" "+trk, 1.08-decay)
         if alb != "" && !strings.EqualFold(alb, trk) && len([]rune(alb)) < 32 {
@@ -468,6 +490,7 @@ func fetchCatalogEntities(ctx context.Context, query string) []catalogEntity {
           addEnt(art+" "+alb, 0.90-decay)
         }
       } else if idx < 2 {
+        addTrack(art, trk, alb)
         addEnt(art, 0.84-decay)
       }
     }
@@ -518,6 +541,7 @@ func fetchCatalogEntities(ctx context.Context, query string) []catalogEntity {
       artSim := computeFuzzyScore(query, art)
 
       if trkSim >= 0.55 {
+        addTrack(art, trk, alb)
         addEnt(art, 1.24-decay)
         addEnt(art+" "+trk, 1.09-decay)
         if alb != "" && !strings.EqualFold(alb, trk) && len([]rune(alb)) < 32 {
@@ -526,22 +550,23 @@ func fetchCatalogEntities(ctx context.Context, query string) []catalogEntity {
       } else if artSim >= 0.45 {
         addEnt(art, 1.20-decay)
       } else if idx < 2 {
+        addTrack(art, trk, alb)
         addEnt(art, 0.85-decay)
       }
     }
   }()
 
   wg.Wait()
-  return out
+  return out, tracks
 }
 
-func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (string, []string) {
+func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (string, []string, []ResolvedTrackInfo) {
   rawQuery = strings.Join(strings.Fields(strings.TrimSpace(rawQuery)), " ")
   if rawQuery == "" {
-    return "", nil
+    return "", nil, nil
   }
   if exact {
-    return rawQuery, []string{rawQuery}
+    return rawQuery, []string{rawQuery}, nil
   }
 
   type scoredTerm struct {
@@ -549,6 +574,8 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (str
     score   float64
   }
   scoredMap := make(map[string]scoredTerm)
+  var resolvedTracks []ResolvedTrackInfo
+  var topSuggest string
   var mu sync.Mutex
 
   addCandidate := func(term string, score float64) {
@@ -590,7 +617,7 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (str
     addCandidate(enToRuTranslit.Replace(strings.ToLower(probeQuery)), 0.76)
   }
 
-  subCtx, cancel := context.WithTimeout(ctx, 2100*time.Millisecond)
+  subCtx, cancel := context.WithTimeout(ctx, 2000*time.Millisecond)
   defer cancel()
 
   var wg sync.WaitGroup
@@ -598,7 +625,11 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (str
 
   go func() {
     defer wg.Done()
-    for _, ent := range fetchCatalogEntities(subCtx, probeQuery) {
+    ents, trks := fetchCatalogEntities(subCtx, probeQuery)
+    mu.Lock()
+    resolvedTracks = append(resolvedTracks, trks...)
+    mu.Unlock()
+    for _, ent := range ents {
       addCandidate(ent.text, ent.score)
       if hasCyrillic(ent.text) {
         addCandidate(ruToEnTranslit.Replace(strings.ToLower(ent.text)), ent.score-0.12)
@@ -609,9 +640,14 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (str
   go func() {
     defer wg.Done()
     sugs := fetchGoogleSuggest(subCtx, probeQuery, "ru")
+    if len(sugs) > 0 {
+      mu.Lock()
+      topSuggest = sugs[0]
+      mu.Unlock()
+    }
     for idx, s := range sugs {
       sim := computeFuzzyScore(probeQuery, s)
-      addCandidate(s, 0.88+sim*0.25-float64(idx)*0.03)
+      addCandidate(s, 0.90+sim*0.25-float64(idx)*0.03)
       if len(strings.Fields(probeQuery)) == 1 && len(strings.Fields(s)) > 1 {
         firstWord := strings.Fields(s)[0]
         if len([]rune(firstWord)) >= 3 {
@@ -630,6 +666,31 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (str
   }()
 
   wg.Wait()
+
+  // Двухступенчатый пробой из v2.0: если в названии песни была жесткая опечатка ("зиленые валны"),
+  // которую исправил Google Suggest ("зеленые волны"), пробиваем исправленную строку по каталогам!
+  if topSuggest != "" && !strings.EqualFold(topSuggest, probeQuery) && len(resolvedTracks) == 0 {
+    fixCtx, fixCancel := context.WithTimeout(ctx, 1100*time.Millisecond)
+    ents2, trks2 := fetchCatalogEntities(fixCtx, topSuggest)
+    fixCancel()
+    resolvedTracks = append(resolvedTracks, trks2...)
+    for _, ent := range ents2 {
+      addCandidate(ent.text, ent.score+0.02)
+      if hasCyrillic(ent.text) {
+        addCandidate(ruToEnTranslit.Replace(strings.ToLower(ent.text)), ent.score-0.10)
+      }
+    }
+  }
+
+  seenTrackKey := make(map[string]bool)
+  var uniqueTracks []ResolvedTrackInfo
+  for _, rt := range resolvedTracks {
+    key := strings.ToLower(rt.Artist) + "|" + strings.ToLower(rt.Album)
+    if !seenTrackKey[key] {
+      seenTrackKey[key] = true
+      uniqueTracks = append(uniqueTracks, rt)
+    }
+  }
 
   tokens := tokenize(strings.ToLower(probeQuery))
   if len(tokens) == 1 && len([]rune(tokens[0])) >= 5 {
@@ -650,9 +711,9 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (str
     ordered = append(ordered, item.display)
   }
   if len(ordered) == 0 {
-    return rawQuery, []string{rawQuery}
+    return rawQuery, []string{rawQuery}, uniqueTracks
   }
-  return ordered[0], ordered
+  return ordered[0], ordered, uniqueTracks
 }
 
 var (
@@ -667,6 +728,27 @@ var (
   bitTitleRe  = regexp.MustCompile(`(?s)class="title[^"]*"[^>]*>\s*<a[^>]*>(.*?)</a>`)
   bitSizeRe   = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*(GB|MB|KB)`)
   bitSeedsRe  = regexp.MustCompile(`(?i)(?:color:\s*#039e03|text-green)[^>]*>\s*([0-9,]+)`)
+
+  dohHTTPClient = &http.Client{
+    Timeout: 4200 * time.Millisecond,
+    Transport: &http.Transport{
+      TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+      DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+        host, port, err := net.SplitHostPort(addr)
+        if err != nil {
+          return nil, err
+        }
+        if strings.Contains(host, "rutor.") {
+          resolvedIP := resolveRutorIP(ctx)
+          if resolvedIP != "" {
+            addr = net.JoinHostPort(resolvedIP, port)
+          }
+        }
+        dialer := &net.Dialer{Timeout: 3 * time.Second}
+        return dialer.DialContext(ctx, network, addr)
+      },
+    },
+  }
 )
 
 func resolveRutorIP(ctx context.Context) string {
@@ -678,7 +760,9 @@ func resolveRutorIP(ctx context.Context) string {
   }
   rutorCacheMu.RUnlock()
 
-  req, err := http.NewRequestWithContext(ctx, "GET", "https://dns.google/resolve?name=rutor.info&type=A", nil)
+  dohCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
+  defer cancel()
+  req, err := http.NewRequestWithContext(dohCtx, "GET", "https://dns.google/resolve?name=rutor.info&type=A", nil)
   if err == nil {
     req.Header.Set("User-Agent", "Mozilla/5.0")
     if resp, err := httpClient.Do(req); err == nil {
@@ -691,7 +775,7 @@ func resolveRutorIP(ctx context.Context) string {
       }
       if json.NewDecoder(resp.Body).Decode(&doh) == nil {
         for _, ans := range doh.Answer {
-          if ans.Type == 1 && ans.Data != "" {
+          if ans.Type == 1 && net.ParseIP(ans.Data) != nil {
             rutorCacheMu.Lock()
             rutorCachedIP = ans.Data
             rutorCacheTS = time.Now()
@@ -714,8 +798,7 @@ func resolveRutorIP(ctx context.Context) string {
 }
 
 func searchRutorDoH(ctx context.Context, query string) []TorrentResult {
-  ip := resolveRutorIP(ctx)
-  u := fmt.Sprintf("http://%s/search/0/0/000/2/%s", ip, url.PathEscape(query))
+  u := "http://rutor.info/search/0/0/000/2/" + url.PathEscape(query)
   req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
   if err != nil {
     return nil
@@ -724,19 +807,19 @@ func searchRutorDoH(ctx context.Context, query string) []TorrentResult {
   req.Header.Set("Host", "rutor.info")
   req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36")
 
-  resp, err := httpClient.Do(req)
+  resp, err := dohHTTPClient.Do(req)
   if err != nil {
     return nil
   }
   defer resp.Body.Close()
 
-  bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 600*1024))
+  bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 650*1024))
   if err != nil {
     return nil
   }
   html := string(bodyBytes)
 
-  rows := rutorRowRe.FindAllStringSubmatch(html, 40)
+  rows := rutorRowRe.FindAllStringSubmatch(html, 45)
   var results []TorrentResult
 
   for _, rowMatch := range rows {
@@ -799,7 +882,7 @@ func searchRutorDoH(ctx context.Context, query string) []TorrentResult {
 }
 
 func searchBitsearch(ctx context.Context, query string) []TorrentResult {
-  u := "https://bitsearch.to/search?q=" + url.QueryEscape(query)
+  u := "https://bitsearch.to/search?q=" + url.QueryEscape(query) + "&sort=seeders"
   req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
   if err != nil {
     return nil
@@ -947,14 +1030,21 @@ func searchApiBay(ctx context.Context, query string) []TorrentResult {
   return results
 }
 
+var udpTrackers = []string{
+  "tracker.opentrackr.org:1337",
+  "open.stealth.si:80",
+  "exodus.desync.com:6969",
+  "tracker.torrent.eu.org:451",
+}
+
 func udpScrapeSingleTracker(trackerAddr string, validHashes []string, rawBinHashes [][]byte) map[string][2]int {
   out := make(map[string][2]int)
-  conn, err := net.DialTimeout("udp", trackerAddr, 1400*time.Millisecond)
+  conn, err := net.DialTimeout("udp", trackerAddr, 550*time.Millisecond)
   if err != nil {
     return out
   }
   defer conn.Close()
-  _ = conn.SetDeadline(time.Now().Add(1400 * time.Millisecond))
+  _ = conn.SetDeadline(time.Now().Add(550 * time.Millisecond))
 
   tid1 := uint32(rand.Int31())
   var reqConnect [16]byte
@@ -1012,17 +1102,17 @@ func udpScrapeSingleTracker(trackerAddr string, validHashes []string, rawBinHash
   return out
 }
 
+// Пакетный BEP-15 UDP Scrape до 74 хешей в чанке сразу по 4 UDP-трекерам
 func udpScrapeBatch(hashes []string) map[string][2]int {
   var validHashes []string
   var rawBinHashes [][]byte
+  seen := make(map[string]bool)
   for _, h := range hashes {
-    if len(h) == 40 {
+    if len(h) == 40 && !seen[h] {
       if b, err := hex.DecodeString(h); err == nil && len(b) == 20 {
+        seen[h] = true
         validHashes = append(validHashes, h)
         rawBinHashes = append(rawBinHashes, b)
-        if len(validHashes) >= 45 {
-          break
-        }
       }
     }
   }
@@ -1031,30 +1121,35 @@ func udpScrapeBatch(hashes []string) map[string][2]int {
     return merged
   }
 
-  trackers := []string{
-    "tracker.opentrackr.org:1337",
-    "open.stealth.si:80",
-  }
   var mu sync.Mutex
   var wg sync.WaitGroup
-  for _, tr := range trackers {
-    wg.Add(1)
-    go func(addr string) {
-      defer wg.Done()
-      res := udpScrapeSingleTracker(addr, validHashes, rawBinHashes)
-      mu.Lock()
-      for h, sl := range res {
-        prev := merged[h]
-        if sl[0] > prev[0] {
-          prev[0] = sl[0]
+  for start := 0; start < len(validHashes); start += 72 {
+    end := start + 72
+    if end > len(validHashes) {
+      end = len(validHashes)
+    }
+    chHex := validHashes[start:end]
+    chBin := rawBinHashes[start:end]
+
+    for _, tr := range udpTrackers {
+      wg.Add(1)
+      go func(addr string, hSlice []string, bSlice [][]byte) {
+        defer wg.Done()
+        res := udpScrapeSingleTracker(addr, hSlice, bSlice)
+        mu.Lock()
+        for h, sl := range res {
+          prev := merged[h]
+          if sl[0] > prev[0] {
+            prev[0] = sl[0]
+          }
+          if sl[1] > prev[1] {
+            prev[1] = sl[1]
+          }
+          merged[h] = prev
         }
-        if sl[1] > prev[1] {
-          prev[1] = sl[1]
-        }
-        merged[h] = prev
-      }
-      mu.Unlock()
-    }(tr)
+        mu.Unlock()
+      }(tr, chHex, chBin)
+    }
   }
   wg.Wait()
   return merged
@@ -1067,6 +1162,19 @@ var fmtKeywordsMap = map[string][]string{
   "m4a":  {"m4a", "alac", "itunes", "aac"},
   "aac":  {"aac", "m4a", "mp4"},
   "ogg":  {"ogg", "vorbis", "opus"},
+}
+
+func isDiscographyOrCollection(titleLow string) bool {
+  keywords := []string{
+    "discography", "дискография", "collection", "коллекция", "anthology", "антология",
+    "complete", "полное собрание", "альбомы", "albums", "flac", "lossless", "mp3", "320",
+  }
+  for _, kw := range keywords {
+    if strings.Contains(titleLow, kw) {
+      return true
+    }
+  }
+  return false
 }
 
 func matchesFormatFilter(title string, fmtTag string, exact bool) bool {
@@ -1169,31 +1277,13 @@ func searchSingleVariantAcrossIndexers(ctx context.Context, variantQuery string,
   wg.Wait()
 
   var list []TorrentResult
-  var hashes []string
   for _, v := range dedup {
     list = append(list, v)
-    if len(v.InfoHash) == 40 {
-      hashes = append(hashes, v.InfoHash)
-    }
-  }
-
-  if len(hashes) > 0 {
-    liveMap := udpScrapeBatch(hashes)
-    for i := range list {
-      if sl, ok := liveMap[list[i].InfoHash]; ok {
-        if sl[0] > list[i].Seeds {
-          list[i].Seeds = sl[0]
-        }
-        if sl[1] > list[i].Peers {
-          list[i].Peers = sl[1]
-        }
-      }
-    }
   }
   return list
 }
 
-func rankAndFilter(results []TorrentResult, matchTerms []string, origQuery string, cfg EngineConfig, maxResults int) ([]TorrentResult, int) {
+func rankAndFilter(results []TorrentResult, matchTerms []string, resolvedTracks []ResolvedTrackInfo, origQuery string, cfg EngineConfig, maxResults int) ([]TorrentResult, int) {
   var filtered []TorrentResult
   hiddenZero := 0
   minReqSeeds := 0
@@ -1226,10 +1316,29 @@ func rankAndFilter(results []TorrentResult, matchTerms []string, origQuery strin
     }
 
     bestMatch := 0.0
+    matchedVia := ""
     for _, term := range matchTerms {
       s := computeFuzzyScore(term, item.Title)
       if s > bestMatch {
         bestMatch = s
+      }
+    }
+
+    // Буст альбомов и дискографий по найденной песне (из v2.0)
+    for _, rt := range resolvedTracks {
+      artScore := computeFuzzyScore(rt.Artist, item.Title)
+      if artScore >= 0.80 {
+        if rt.Album != "" && computeFuzzyScore(rt.Album, item.Title) >= 0.75 {
+          if bestMatch < 0.92 {
+            bestMatch = 0.92
+            matchedVia = fmt.Sprintf("track->album: %s - %s", rt.Artist, rt.Album)
+          }
+        } else if isDiscographyOrCollection(lowTitle) {
+          if bestMatch < 0.86 {
+            bestMatch = 0.86
+            matchedVia = fmt.Sprintf("track->discography: %s", rt.Artist)
+          }
+        }
       }
     }
 
@@ -1243,10 +1352,17 @@ func rankAndFilter(results []TorrentResult, matchTerms []string, origQuery strin
     }
 
     item.MatchScore = math.Round(bestMatch*1000) / 1000
-    seedBoost := math.Log10(float64(item.Seeds+1)) * 0.16
+    item.MatchedVia = matchedVia
+
+    seedBoost := 0.0
+    if item.Seeds > 0 {
+      seedBoost = math.Log10(float64(item.Seeds+1)) * 0.16
+    } else {
+      seedBoost = -0.25
+    }
 
     audioBoost := 0.0
-    if cfg.PreferAudio && audioGoodRegex.MatchString(item.Title) {
+    if cfg.PreferAudio && (audioGoodRegex.MatchString(item.Title) || isDiscographyOrCollection(lowTitle)) {
       audioBoost = 0.14
     }
     if tokens, ok := fmtKeywordsMap[cfg.FormatTag]; ok {
@@ -1263,7 +1379,10 @@ func rankAndFilter(results []TorrentResult, matchTerms []string, origQuery strin
   }
 
   sort.Slice(filtered, func(i, j int) bool {
-    if math.Abs(filtered[i].FinalRank-filtered[j].FinalRank) > 0.06 {
+    if (filtered[i].Seeds > 0) != (filtered[j].Seeds > 0) {
+      return filtered[i].Seeds > 0
+    }
+    if math.Abs(filtered[i].FinalRank-filtered[j].FinalRank) > 0.05 {
       return filtered[i].FinalRank > filtered[j].FinalRank
     }
     return filtered[i].Seeds > filtered[j].Seeds
@@ -1287,7 +1406,7 @@ func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig, maxResults i
   ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutMs)*time.Millisecond)
   defer cancel()
 
-  corrected, expandedTerms := buildExpandedQueries(ctx, rawQuery, cfg.ExactMatch)
+  corrected, expandedTerms, resolvedTracks := buildExpandedQueries(ctx, rawQuery, cfg.ExactMatch)
   if len(expandedTerms) == 0 {
     return SearchResponse{
       Status:        "error",
@@ -1302,49 +1421,63 @@ func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig, maxResults i
     candidateVariants = candidateVariants[:5]
   }
 
-  type groupResult struct {
-    idx     int
-    query   string
-    items   []TorrentResult
-    hidZero int
-  }
-
-  groupChan := make(chan groupResult, len(candidateVariants))
+  rawGroups := make([][]TorrentResult, len(candidateVariants))
   var wg sync.WaitGroup
 
   for idx, vq := range candidateVariants {
     wg.Add(1)
     go func(i int, qStr string) {
       defer wg.Done()
-      rawItems := searchSingleVariantAcrossIndexers(ctx, qStr, cfg.FormatTag, cfg.ExactMatch)
-      ranked, hid := rankAndFilter(rawItems, []string{qStr, corrected}, rawQuery, cfg, 35)
-      groupChan <- groupResult{idx: i, query: qStr, items: ranked, hidZero: hid}
+      rawGroups[i] = searchSingleVariantAcrossIndexers(ctx, qStr, cfg.FormatTag, cfg.ExactMatch)
     }(idx, vq)
   }
   wg.Wait()
-  close(groupChan)
 
-  orderedGroups := make([]groupResult, len(candidateVariants))
-  totalHiddenZero := 0
-  for gr := range groupChan {
-    orderedGroups[gr.idx] = gr
-    totalHiddenZero += gr.hidZero
+  // Единый пакетный UDP-Scrape сразу для всех уникальных info_hash из всех групп по 4 трекерам
+  var allHashes []string
+  seenHash := make(map[string]bool)
+  for _, grpItems := range rawGroups {
+    for _, it := range grpItems {
+      if len(it.InfoHash) == 40 && !seenHash[it.InfoHash] {
+        seenHash[it.InfoHash] = true
+        allHashes = append(allHashes, it.InfoHash)
+      }
+    }
+  }
+
+  if len(allHashes) > 0 {
+    liveMap := udpScrapeBatch(allHashes)
+    for gIdx := range rawGroups {
+      for i := range rawGroups[gIdx] {
+        if sl, ok := liveMap[rawGroups[gIdx][i].InfoHash]; ok {
+          if sl[0] > rawGroups[gIdx][i].Seeds {
+            rawGroups[gIdx][i].Seeds = sl[0]
+          }
+          if sl[1] > rawGroups[gIdx][i].Peers {
+            rawGroups[gIdx][i].Peers = sl[1]
+          }
+        }
+      }
+    }
   }
 
   var validGroups []VariantGroup
   var flatResults []TorrentResult
   seenFlat := make(map[string]bool)
+  totalHiddenZero := 0
 
-  for _, gr := range orderedGroups {
-    if len(gr.items) == 0 {
+  for idx, vq := range candidateVariants {
+    ranked, hid := rankAndFilter(rawGroups[idx], []string{vq, corrected}, resolvedTracks, rawQuery, cfg, 35)
+    totalHiddenZero += hid
+    if len(ranked) == 0 {
       continue
     }
     validGroups = append(validGroups, VariantGroup{
-      Query:   gr.query,
-      Count:   len(gr.items),
-      Results: gr.items,
+      Query:   vq,
+      Count:   len(ranked),
+      Results: ranked,
     })
-    for _, it := range gr.items {
+    for _, it := range ranked {
       if !seenFlat[it.InfoHash] {
         seenFlat[it.InfoHash] = true
         flatResults = append(flatResults, it)
@@ -1368,6 +1501,7 @@ func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig, maxResults i
     Status:         "ok",
     OriginalQuery:  rawQuery,
     CorrectedQuery: usedCorrected,
+    ResolvedTracks: resolvedTracks,
     ExpandedTerms:  expandedTerms,
     ElapsedMs:      time.Since(start).Milliseconds(),
     TotalFound:     len(flatResults),
@@ -1472,15 +1606,9 @@ func extractNameFromMagnet(magnet string) string {
 }
 
 func buildMagnet(hash, title string) string {
-  trackers := []string{
-    "udp://tracker.opentrackr.org:1337/announce",
-    "udp://open.stealth.si:80/announce",
-    "udp://exodus.desync.com:6969/announce",
-    "udp://tracker.torrent.eu.org:451/announce",
-  }
   var trParams strings.Builder
-  for _, tr := range trackers {
-    trParams.WriteString("&tr=" + url.QueryEscape(tr))
+  for _, tr := range udpTrackers {
+    trParams.WriteString("&tr=" + url.QueryEscape("udp://"+tr+"/announce"))
   }
   return fmt.Sprintf("magnet:?xt=urn:btih:%s&dn=%s%s", hash, url.QueryEscape(title), trParams.String())
 }
