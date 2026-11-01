@@ -1830,7 +1830,7 @@ FLAC_RADIO_PRESETS_V91 = [
     {"id": "swiss_jazz", "title": "Radio Swiss Jazz", "genre": "Jazz", "codec": "MP3 128k", "lossless": False, "url": "http://stream.srg-ssr.ch/m/rsj/mp3_128"}
 ]
 
-_RADIO_REC_V91 = {"active": False, "stop_flag": False, "thread": None, "tmp_raw": "", "station": "", "start_ts": 0.0, "bytes": 0, "xf_mode": 25, "err": ""}
+_RADIO_REC_V91 = {"active": False, "stop_flag": False, "thread": None, "tmp_raw": "", "station": "", "start_ts": 0.0, "bytes": 0, "xf_mode": 25, "lossless": True, "err": ""}
 
 def _map_radio_genre_v91(tags_str: str) -> str:
     t = (tags_str or "").lower()
@@ -1907,11 +1907,12 @@ def api_radio_rec_start_v91():
         req = json.loads(request.body.read().decode('utf-8'))
         s_url = (req.get("url") or "").strip()
         s_title = (req.get("title") or "Radio").strip()
+        is_ll = bool(req.get("lossless", True))
         fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
         xf_mode = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15, 'xflac_hifi': 45}.get(fmt, 25)
         os.makedirs(MUSIC_DIR, exist_ok=True)
         tmp_raw = os.path.join(MUSIC_DIR, f"temp_final_radraw_{os.getpid()}.stream")
-        _RADIO_REC_V91.update({"active": True, "stop_flag": False, "tmp_raw": tmp_raw, "station": s_title, "start_ts": time.time(), "bytes": 0, "xf_mode": xf_mode, "err": ""})
+        _RADIO_REC_V91.update({"active": True, "stop_flag": False, "tmp_raw": tmp_raw, "station": s_title, "start_ts": time.time(), "bytes": 0, "xf_mode": xf_mode, "lossless": is_ll, "err": ""})
         t = threading.Thread(target=_radio_stream_worker_v91, args=(s_url, tmp_raw), daemon=True)
         _RADIO_REC_V91["thread"] = t
         t.start()
@@ -1943,22 +1944,27 @@ def api_radio_rec_stop_v91():
             err_detail = _RADIO_REC_V91.get("err") or "Поток станции не отдал аудиоданных"
             return json.dumps({"status": "error", "error": f"Мало данных ({err_detail})"})
 
-        ff_bin = find_ffmpeg_binary()
-        subprocess.run([ff_bin, '-y', '-i', traw, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', twav], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        if not os.path.isfile(twav) or os.path.getsize(twav) < 4096:
-            return json.dumps({"status": "error", "error": "FFmpeg не смог декодировать кусок эфира"})
-
-        with open(twav, "rb") as f:
-            wav_b = f.read()
-        xf_mode = _RADIO_REC_V91.get("xf_mode", 25)
-        suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac", 45: "_hifi.xflac"}.get(xf_mode, "_psycho.xflac")
         safe_st = re.sub(r'[\\/:*?"<>|\[\]]+', '_', _RADIO_REC_V91.get("station") or "Radio").strip()[:34]
         stamp = time.strftime("%H%M%S")
-        final_name = f"Radio - {safe_st}_{stamp}{suf}"
-        final_path = os.path.join(MUSIC_DIR, final_name)
-        xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_b, xf_mode)
-        with open(final_path, "wb") as out_f:
-            out_f.write(xfc_bytes)
+        if not _RADIO_REC_V91.get("lossless", True):
+            final_name = f"Radio - {safe_st}_{stamp}.mp3"
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            shutil.move(traw, final_path)
+            traw = ""
+        else:
+            ff_bin = find_ffmpeg_binary()
+            subprocess.run([ff_bin, '-y', '-i', traw, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', twav], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            if not os.path.isfile(twav) or os.path.getsize(twav) < 4096:
+                return json.dumps({"status": "error", "error": "FFmpeg не смог декодировать кусок эфира"})
+            with open(twav, "rb") as f:
+                wav_b = f.read()
+            xf_mode = _RADIO_REC_V91.get("xf_mode", 25)
+            suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac", 45: "_hifi.xflac"}.get(xf_mode, "_psycho.xflac")
+            final_name = f"Radio - {safe_st}_{stamp}{suf}"
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_b, xf_mode)
+            with open(final_path, "wb") as out_f:
+                out_f.write(xfc_bytes)
 
         db = load_custom_tags_db_v74()
         db[final_name] = {"TITLE": f"{safe_st} ({stamp})", "ARTIST": "Radio Stream", "ALBUM": "Записи радиоэфира", "GENRE": "Radio"}
@@ -1975,73 +1981,121 @@ def api_radio_rec_stop_v91():
                 try: os.remove(fp)
                 except Exception: pass
 
-# ☁️ JENNY V92: SOUNDCLOUD ENGINE (AUTO CLIENT_ID + STREAM + XFLAC DOWNLOAD)
+# ☁️ JENNY V92: SOUNDCLOUD ENGINE (FALLBACK KEYS + COOKIE/AUTH + ARCHIVE FALLBACK)
+SC_AUTH_FILE_V93 = os.path.join(DEFAULT_MUSIC_DIR, "jenny_sc_auth.json")
 _SC_CLIENT_ID_V92 = None
+_SC_FALLBACK_IDS_V93 = [
+    "iZIs9mchVcX5lhVRyQGGAYlNPVldzAoX",
+    "a3e059563d7fd3372b49b37f00a00bcf",
+    "2t9loNQH90kzJcsFCODdigxfp325aq4z"
+]
+
+def _sc_load_auth_v93():
+    if os.path.isfile(SC_AUTH_FILE_V93):
+        try:
+            with open(SC_AUTH_FILE_V93, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"cookie": "", "client_id": ""}
+
+@post('/api/soundcloud/save_auth')
+def api_sc_save_auth_v93():
+    global _SC_CLIENT_ID_V92
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        cookie_str = (req.get("cookie") or "").strip()
+        cid_str = (req.get("client_id") or "").strip()
+        os.makedirs(DEFAULT_MUSIC_DIR, exist_ok=True)
+        with open(SC_AUTH_FILE_V93, "w", encoding="utf-8") as f:
+            json.dump({"cookie": cookie_str, "client_id": cid_str}, f, ensure_ascii=False)
+        if cid_str:
+            _SC_CLIENT_ID_V92 = cid_str
+        return json.dumps({"status": "ok"})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+
+def _sc_headers_v93():
+    h = dict(OST_HEADERS)
+    auth = _sc_load_auth_v93()
+    if auth.get("cookie"):
+        h["Cookie"] = auth["cookie"]
+        m_oauth = re.search(r'oauth_token=([^;\s]+)', auth["cookie"])
+        if m_oauth:
+            h["Authorization"] = f"OAuth {m_oauth.group(1)}"
+    return h
 
 def _sc_get_client_id_v92():
     global _SC_CLIENT_ID_V92
+    auth = _sc_load_auth_v93()
+    if auth.get("client_id"):
+        return auth["client_id"]
     if _SC_CLIENT_ID_V92:
         return _SC_CLIENT_ID_V92
-    req = urllib.request.Request("https://soundcloud.com", headers=OST_HEADERS)
-    with urllib.request.urlopen(req, timeout=12) as r:
-        html = r.read().decode("utf-8", errors="ignore")
-    scripts = re.findall(r'<script[^>]+src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"', html)
-    for s_url in reversed(scripts[-8:]):
+    try:
+        req = urllib.request.Request("https://soundcloud.com/discover", headers=_sc_headers_v93())
+        with urllib.request.urlopen(req, timeout=8) as r:
+            html = r.read().decode("utf-8", errors="ignore")
+        scripts = re.findall(r'src="(https://[^"]+sndcdn\.com/assets/[^"]+\.js)"', html)
+        for s_url in reversed(scripts[-6:]):
+            try:
+                sr = urllib.request.Request(s_url, headers=_sc_headers_v93())
+                with urllib.request.urlopen(sr, timeout=6) as resp:
+                    js_txt = resp.read().decode("utf-8", errors="ignore")
+                m = re.search(r'client_id\s*[:=]\s*"([a-zA-Z0-9]{32})"', js_txt)
+                if m:
+                    _SC_CLIENT_ID_V92 = m.group(1)
+                    return _SC_CLIENT_ID_V92
+            except Exception:
+                pass
+    except Exception:
+        pass
+    for cand in _SC_FALLBACK_IDS_V93:
         try:
-            sr = urllib.request.Request(s_url, headers=OST_HEADERS)
-            with urllib.request.urlopen(sr, timeout=10) as resp:
-                js_txt = resp.read().decode("utf-8", errors="ignore")
-            m = re.search(r'client_id\s*:\s*"([a-zA-Z0-9]{32})"', js_txt) or re.search(r'client_id="([a-zA-Z0-9]{32})"', js_txt)
-            if m:
-                _SC_CLIENT_ID_V92 = m.group(1)
-                return _SC_CLIENT_ID_V92
+            tu = f"https://api-v2.soundcloud.com/search/tracks?q=test&client_id={cand}&limit=1"
+            r = urllib.request.Request(tu, headers=_sc_headers_v93())
+            with urllib.request.urlopen(r, timeout=5) as resp:
+                if resp.status == 200:
+                    _SC_CLIENT_ID_V92 = cand
+                    return cand
         except Exception:
             pass
-    raise RuntimeError("Не удалось получить client_id SoundCloud")
+    return _SC_FALLBACK_IDS_V93[0]
 
 @post('/api/soundcloud/search')
 def api_soundcloud_search_v92():
-    global _SC_CLIENT_ID_V92
     response.content_type = 'application/json'
     try:
         req = json.loads(request.body.read().decode('utf-8') or "{}")
         q = (req.get("query") or "").strip()
         if not q:
             return json.dumps({"status": "error", "error": "Введите запрос"})
-        cid = _sc_get_client_id_v92()
-        u = f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit=30"
-        try:
-            data = _ost_fetch_json_v88(u, timeout=12)
-        except Exception:
-            _SC_CLIENT_ID_V92 = None
-            cid = _sc_get_client_id_v92()
-            data = _ost_fetch_json_v88(f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit=30", timeout=12)
-
         tracks = []
-        for idx, item in enumerate(data.get("collection") or [], 1):
-            trans = (item.get("media") or {}).get("transcodings") or []
-            prog_u = ""
-            for tr in trans:
-                if (tr.get("format") or {}).get("protocol") == "progressive":
-                    prog_u = tr.get("url") or ""
-                    break
-            if not prog_u and trans:
-                prog_u = trans[0].get("url") or ""
-            if not prog_u:
-                continue
-            dur_ms = int(item.get("duration") or 0)
-            dur_s = dur_ms // 1000
-            art = (item.get("user") or {}).get("username") or "SoundCloud"
-            title = item.get("title") or f"Track {idx}"
-            full_t = f"{art} — {title}" if art.lower() not in title.lower() else title
-            b64_p = "sc:" + base64.urlsafe_b64encode(prog_u.encode("utf-8")).decode("ascii")
-            ex = _ost_find_existing_track_v89("SoundCloud", idx, full_t)
-            tracks.append({
-                "index": idx, "title": full_t, "duration": f"{dur_s // 60}:{dur_s % 60:02d}",
-                "page_path": b64_p, "downloaded": ex["exists"],
-                "local_ext": ex["ext"], "local_size_mb": ex["size_mb"]
-            })
-        return json.dumps({"status": "ok", "tracks": tracks}, ensure_ascii=False)
+        try:
+            cid = _sc_get_client_id_v92()
+            u = f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit=30"
+            r = urllib.request.Request(u, headers=_sc_headers_v93())
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            for idx, item in enumerate(data.get("collection") or [], 1):
+                trans = (item.get("media") or {}).get("transcodings") or []
+                prog_u = next((tr.get("url") for tr in trans if (tr.get("format") or {}).get("protocol") == "progressive"), "")
+                if not prog_u and trans:
+                    prog_u = trans[0].get("url") or ""
+                if not prog_u:
+                    continue
+                dur_s = int(item.get("duration") or 0) // 1000
+                art = (item.get("user") or {}).get("username") or "SoundCloud"
+                title = item.get("title") or f"Track {idx}"
+                full_t = f"{art} — {title}" if art.lower() not in title.lower() else title
+                b64_p = "sc:" + base64.urlsafe_b64encode(prog_u.encode("utf-8")).decode("ascii")
+                ex = _ost_find_existing_track_v89("SoundCloud", idx, full_t)
+                tracks.append({"index": idx, "title": full_t, "duration": f"{dur_s // 60}:{dur_s % 60:02d}", "mp3_size": "SC Stream", "page_path": b64_p, "downloaded": ex["exists"], "local_ext": ex["ext"], "local_size_mb": ex["size_mb"]})
+        except Exception:
+            pass
+        return json.dumps({"status": "ok", "tracks": tracks, "need_auth": len(tracks) == 0}, ensure_ascii=False)
     except Exception as e:
         response.status = 500
         return json.dumps({"status": "error", "error": str(e)})
@@ -2050,7 +2104,9 @@ def _sc_resolve_direct_url_v92(page_path: str) -> str:
     api_u = base64.urlsafe_b64decode(page_path[3:].encode("ascii")).decode("utf-8")
     cid = _sc_get_client_id_v92()
     sep = "&" if "?" in api_u else "?"
-    j = _ost_fetch_json_v88(f"{api_u}{sep}client_id={cid}", timeout=10)
+    r = urllib.request.Request(f"{api_u}{sep}client_id={cid}", headers=_sc_headers_v93())
+    with urllib.request.urlopen(r, timeout=10) as resp:
+        j = json.loads(resp.read().decode("utf-8", errors="replace"))
     return j.get("url") or ""
 
 def start_server():

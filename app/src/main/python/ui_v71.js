@@ -4576,14 +4576,18 @@ window.triggerSourceActionV91 = function(srcId, ev) {
     if (ev && ev.stopPropagation) ev.stopPropagation();
     const menu = document.getElementById('jennySourcesDropMenuV91');
     if (menu) menu.style.display = 'none';
-    if (srcId === 'ost') window.openKhinsiderModalV88(ev);
-    else if (srcId === 'radio') window.openFlacRadioModalV91(ev);
-    else if (srcId === 'soundcloud') window.openSoundCloudModalV92(ev);
-    else if (srcId === 'torrent') window.openTorrentHubPreviewModalV91(ev);
-    else if (srcId === 'archive') {
-        window.openKhinsiderModalV88(ev);
-        const inp = document.getElementById('khSearchInpV88');
-        if (inp) { inp.value = 'Live Concert FLAC'; window.runKhSearchV88(); }
+    if (srcId === 'ost') {
+        window._scModeActiveV92 = false;
+        window.openKhinsiderModalV88(ev, 'ost');
+    } else if (srcId === 'archive') {
+        window._scModeActiveV92 = false;
+        window.openKhinsiderModalV88(ev, 'archive');
+    } else if (srcId === 'soundcloud') {
+        window.openSoundCloudModalV92(ev);
+    } else if (srcId === 'radio') {
+        window.openFlacRadioModalV91(ev);
+    } else if (srcId === 'torrent') {
+        window.openTorrentHubPreviewModalV91(ev);
     }
 };
 
@@ -4712,40 +4716,49 @@ window.renderRadioFiltersAndStationsV92 = function() {
     const qInp = document.getElementById('radSearchInpV91');
     const txtQ = (qInp ? qInp.value.trim().toLowerCase() : '');
 
-    const byQual = all.filter(s => {
-        if (st.qualityFilter === 'lossless' && !s.lossless) return false;
-        if (st.qualityFilter === 'lossy' && s.lossless) return false;
-        return true;
-    });
-
+    // 1-й ГЛАВНЫЙ ФИЛЬТР (Верхняя строка): «ВСЕ (N)» первой кнопкой + все жанры во всех форматах
     const genreCounts = {};
-    byQual.forEach(s => { const g = s.genre || 'Pop / Misc'; genreCounts[g] = (genreCounts[g] || 0) + 1; });
+    all.forEach(s => {
+        const g = s.genre || 'Pop / Misc';
+        genreCounts[g] = (genreCounts[g] || 0) + 1;
+    });
     const genres = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a]);
     if (st.selectedGenre && !genreCounts[st.selectedGenre]) st.selectedGenre = null;
 
     const gBar = document.getElementById('radGenreStripV92');
     if (gBar) {
-        gBar.innerHTML = genres.map(g => {
+        const allChip = `<div class="jenny-pl-chip-v71 ${!st.selectedGenre ? 'active-pl-chip' : ''}" onclick="window._radioStateV91.selectedGenre=null;window.renderRadioFiltersAndStationsV92();"><span>ВСЕ</span><span class="jenny-pl-chip-count-v71">${all.length}</span></div>`;
+        const gChips = genres.map(g => {
             const isSel = (st.selectedGenre === g);
             return `<div class="jenny-pl-chip-v71 ${isSel ? 'active-pl-chip' : ''}" onclick="window.toggleRadioGenreFilterV92('${g}')"><span>${g}</span><span class="jenny-pl-chip-count-v71">${genreCounts[g]}</span></div>`;
         }).join('');
+        gBar.innerHTML = allChip + gChips;
     }
 
+    // Фильтруем по выбранной категории 1-й строки
+    const byCategory = st.selectedGenre
+        ? all.filter(s => (s.genre || 'Pop / Misc') === st.selectedGenre)
+        : all;
+
+    // 2-й ФИЛЬТР (Нижняя подстрока): только качество HIGH (Lossless) и LOW (Обычное) внутри выбранной категории!
     const qBar = document.getElementById('radQualitySubStripV92');
     if (qBar) {
-        const llCnt = all.filter(x => x.lossless).length;
-        const lsCnt = all.filter(x => !x.lossless).length;
+        const llCnt = byCategory.filter(x => x.lossless).length;
+        const lsCnt = byCategory.filter(x => !x.lossless).length;
         const svgs = window.JENNY_NEON_SVGS_V92;
         const qItems = [
-            { id: 'all',      html: `<span>ВСЕ (${all.length})</span>` },
             { id: 'lossless', html: `${svgs.badgeHigh} <span style="color:#3fb950;">Lossless (${llCnt})</span>` },
             { id: 'lossy',    html: `${svgs.badgeLow} <span style="color:#e3b341;">Обычное (${lsCnt})</span>` }
         ];
-        qBar.innerHTML = qItems.map(qi => `<div class="jenny-pl-chip-v71 ${st.qualityFilter === qi.id ? 'active-pl-chip' : ''}" onclick="window.setRadioQualityFilterV92('${qi.id}')" style="padding:3px 9px;font-size:11px;display:inline-flex;align-items:center;gap:5px;">${qi.html}</div>`).join('');
+        qBar.innerHTML = qItems.map(qi => {
+            const act = (st.qualityFilter === qi.id);
+            return `<div class="jenny-pl-chip-v71 ${act ? 'active-pl-chip' : ''}" onclick="window.setRadioQualityFilterV92(window._radioStateV91.qualityFilter==='${qi.id}'?'all':'${qi.id}')" style="padding:3px 10px;font-size:11px;display:inline-flex;align-items:center;gap:5px;">${qi.html}</div>`;
+        }).join('');
     }
 
-    const filtered = byQual.filter(s => {
-        if (st.selectedGenre && (s.genre || 'Pop / Misc') !== st.selectedGenre) return false;
+    const filtered = byCategory.filter(s => {
+        if (st.qualityFilter === 'lossless' && !s.lossless) return false;
+        if (st.qualityFilter === 'lossy' && s.lossless) return false;
         if (txtQ && !(s.title.toLowerCase().includes(txtQ) || (s.genre || '').toLowerCase().includes(txtQ))) return false;
         return true;
     });
@@ -4791,6 +4804,10 @@ window.playFlacRadioStationV91 = async function(idx, btnEl) {
     aud.volume = (typeof window.getKhPreviewVolumeV90 === 'function') ? window.getKhPreviewVolumeV90() : 0.7;
     window._radioStateV91.audio = aud;
     const infoEl = document.getElementById('radNowPlayingTitleV91');
+    const recBtn = document.getElementById('btnRadioRecV91');
+    if (recBtn && !window._radioStateV91.isRecording) {
+        recBtn.innerText = st.lossless ? '⏺ Записать эфир в .xFLAC (Lossless)' : '⏺ Сохранить прямой эфир в .MP3 (без пережатия)';
+    }
     try {
         await aud.play();
         if (infoEl) infoEl.innerHTML = `${st.lossless ? window.JENNY_NEON_SVGS_V92.badgeHigh : window.JENNY_NEON_SVGS_V92.badgeLow} В эфире: ${st.title}`;
@@ -4809,28 +4826,32 @@ window.toggleRadioRecordToXflacV91 = async function() {
         if (!st) return;
         const r = await (await fetch('/api/radio/record_start', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: st.url, title: st.title, format_mode: window._radioStateV91.formatMode })
+            body: JSON.stringify({ url: st.url, title: st.title, lossless: Boolean(st.lossless), format_mode: window._radioStateV91.formatMode })
         })).json();
         if (r.status === 'ok') {
             window._radioStateV91.isRecording = true;
-            if (btn) { btn.innerText = '⏹ Стоп и сжать в xFLAC (0с • 0 МБ)'; btn.style.background = '#da3633'; }
+            const targetFmt = st.lossless ? 'xFLAC' : 'прямой MP3';
+            if (btn) { btn.innerText = `⏹ Стоп (${targetFmt} • 0с • 0 МБ)`; btn.style.background = '#da3633'; }
             window._radioStateV91.recTimer = setInterval(async () => {
                 try {
                     const stData = await (await fetch('/api/radio/record_status')).json();
-                    if (stData.active && btn) btn.innerText = `⏹ Стоп и сжать в xFLAC (${stData.sec}с • ${stData.wav_mb} МБ)`;
+                    if (stData.active && btn) btn.innerText = `⏹ Стоп (${targetFmt} • ${stData.sec}с • ${stData.wav_mb} МБ)`;
                 } catch (e) {}
             }, 600);
         }
     } else {
         clearInterval(window._radioStateV91.recTimer);
         window._radioStateV91.isRecording = false;
-        if (btn) { btn.innerText = '🧬 Декодируем и жмём в xFLAC...'; btn.style.background = '#7341be'; }
+        if (btn) { btn.innerText = '⏳ Сохраняем запись...'; btn.style.background = '#7341be'; }
         const r = await (await fetch('/api/radio/record_stop', { method: 'POST' })).json();
-        if (btn) { btn.innerText = '⏺ Записать эфир станции в .xFLAC'; btn.style.background = '#238636'; }
+        if (btn) {
+            btn.innerText = (st && !st.lossless) ? '⏺ Сохранить прямой эфир в .MP3 (без пережатия)' : '⏺ Записать эфир в .xFLAC (Lossless)';
+            btn.style.background = '#238636';
+        }
         if (r.status === 'ok') {
             if (statusEl) statusEl.innerText = `✅ Сохранено: ${r.filename} (${r.size_mb} MB)`;
             if (typeof window.fetchData === 'function') window.fetchData();
-            if (typeof window.showToast === 'function') window.showToast(`✅ Эфир сжат: ${r.filename} (${r.size_mb} MB)`);
+            if (typeof window.showToast === 'function') window.showToast(`✅ Записано: ${r.filename} (${r.size_mb} MB)`);
         } else if (statusEl) statusEl.innerText = `❌ ${r.error || 'Ошибка записи'}`;
     }
 };
@@ -4869,7 +4890,7 @@ window.openFlacRadioModalV91 = function(ev) {
     m.onclick = (e) => { if (e.target === m) window.minimizeFlacRadioModalV91(); };
     m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:450px;max-height:88vh;display:flex;flex-direction:column;">
         <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(88,166,255,0.22),rgba(63,185,80,0.22));">
-            <span style="color:#58a6ff;font-weight:900;font-size:13px;display:flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.radio}<span>РАДИОЭФИР ➔ XFLAC</span></span>
+            <span style="color:#58a6ff;font-weight:900;font-size:13px;display:flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.radio}<span>РАДИОЭФИР (HIGH ➔ XFLAC / LOW ➔ MP3)</span></span>
             <button type="button" onclick="window.minimizeFlacRadioModalV91()" style="padding:4px 10px;font-size:11px;border-radius:7px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>
         </div>
         <div style="padding:9px 12px;background:#090d14;border-bottom:1px solid #21262d;display:flex;flex-direction:column;gap:6px;">
@@ -4880,7 +4901,7 @@ window.openFlacRadioModalV91 = function(ev) {
             <div id="radGenreStripV92" class="jenny-pl-scroll-strip-v71" style="padding-bottom:2px;"></div>
             <div id="radQualitySubStripV92" class="jenny-subfilter-bar-v71" style="margin-bottom:0;padding-bottom:4px;"></div>
             <div id="radNowPlayingTitleV91" style="font-size:11px;color:#3fb950;font-weight:bold;padding:1px 0;display:flex;align-items:center;gap:6px;">Выбери станцию (${window.JENNY_NEON_SVGS_V92.badgeHigh} / ${window.JENNY_NEON_SVGS_V92.badgeLow})</div>
-            <button type="button" id="btnRadioRecV91" onclick="window.toggleRadioRecordToXflacV91()" style="width:100%;padding:8px;background:#238636;color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:12px;">⏺ Записать эфир станции в .xFLAC</button>
+            <button type="button" id="btnRadioRecV91" onclick="window.toggleRadioRecordToXflacV91()" style="width:100%;padding:8px;background:#238636;color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:12px;">⏺ Записать эфир станции</button>
         </div>
         <div id="radStationsListV91" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-height:220px;"></div>
     </div>`;
@@ -4888,33 +4909,86 @@ window.openFlacRadioModalV91 = function(ev) {
     window.loadFlacRadioStationsV91();
 };
 
-// === ☁️ SOUNDCLOUD СТУДИЯ (ПОИСК, ПОТОК -30% С SEEK И СКАЧИВАНИЕ В .XFLAC) ===
-window.openSoundCloudModalV92 = function(ev) {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    window.openKhinsiderModalV88(ev);
-    const hdrTitle = document.querySelector('#jennyKhinsiderModalV88 .jenny-modal-hdr-v71 span');
-    if (hdrTitle) hdrTitle.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;color:#ff8c42;">${window.JENNY_NEON_SVGS_V92.soundcloud}<span>SOUNDCLOUD ➔ XFLAC</span></span>`;
-    const inp = document.getElementById('khSearchInpV88');
-    if (inp) inp.placeholder = 'Трек или артист в SoundCloud (Phonk, Synthwave, Remix...)';
-    window._scModeActiveV92 = true;
+// === ☁️ ИЗОЛИРОВАННОЕ ОКНО SOUNDCLOUD + АВТОРИЗАЦИЯ КУКИ / ВХОД ===
+window.openScAuthBoxV93 = function() {
+    const box = document.getElementById('scAuthDropBoxV93');
+    if (box) box.style.display = (box.style.display === 'none') ? 'flex' : 'none';
 };
 
-const _origRunKhSearchV88 = window.runKhSearchV88;
-window.runKhSearchV88 = async function() {
-    if (!window._scModeActiveV92) return _origRunKhSearchV88.apply(this, arguments);
-    const inp = document.getElementById('khSearchInpV88');
-    const body = document.getElementById('khBodyContentV88');
+window.saveScAuthCookieV93 = async function() {
+    const cInp = document.getElementById('scCookieInpV93');
+    const idInp = document.getElementById('scClientIdInpV93');
+    await fetch('/api/soundcloud/save_auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookie: cInp ? cInp.value : '', client_id: idInp ? idInp.value : '' })
+    });
+    if (typeof window.showToast === 'function') window.showToast('✅ Данные SoundCloud сохранены');
+    window.openScAuthBoxV93();
+    window.runScDedicatedSearchV93();
+};
+
+window.openSoundCloudModalV92 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const ex = document.getElementById('jennySoundCloudModalV93');
+    if (ex) {
+        const isHid = (ex.style.display === 'none' || getComputedStyle(ex).display === 'none');
+        ex.style.setProperty('display', isHid ? 'flex' : 'none', 'important');
+        return;
+    }
+    const m = document.createElement('div');
+    m.id = 'jennySoundCloudModalV93';
+    m.className = 'jenny-modal-backdrop-v71';
+    m.onclick = (e) => { if (e.target === m) m.style.setProperty('display', 'none', 'important'); };
+    m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:450px;max-height:88vh;display:flex;flex-direction:column;">
+        <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(255,140,66,0.22),rgba(115,65,190,0.22));">
+            <span style="color:#ff8c42;font-weight:900;font-size:13px;display:flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.soundcloud}<span>SOUNDCLOUD СТУДИЯ</span></span>
+            <div style="display:flex;gap:5px;">
+                <button type="button" onclick="window.openScAuthBoxV93()" style="padding:4px 8px;font-size:10.5px;border-radius:7px;background:rgba(255,140,66,0.18);border:1px solid #ff8c42;color:#ff8c42;font-weight:bold;">🔑 Куки / Вход</button>
+                <button type="button" onclick="document.getElementById('jennySoundCloudModalV93').style.setProperty('display','none','important')" style="padding:4px 10px;font-size:11px;border-radius:7px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>
+            </div>
+        </div>
+        <div id="scAuthDropBoxV93" style="display:none;flex-direction:column;gap:6px;padding:10px 12px;background:#11161f;border-bottom:1px solid #ff8c42;">
+            <div style="font-size:11px;color:#e6edf3;line-height:1.35;">1. Нажми <b>«🌐 Открыть SoundCloud»</b>, прими куки или войди в аккаунт.<br>2. Если регион блокирует API, вставь <code style="color:#ff8c42;">oauth_token</code> или Cookie ниже:</div>
+            <div style="display:flex;gap:6px;">
+                <button type="button" onclick="window.open('https://soundcloud.com/signin','_blank')" style="flex:1;padding:6px;background:#ff8c42;color:#000;border:none;border-radius:6px;font-weight:bold;font-size:11px;">🌐 Открыть SoundCloud (ОК / Вход)</button>
+            </div>
+            <input type="text" id="scCookieInpV93" placeholder="Cookie / oauth_token (необязательно)..." style="padding:6px 8px;font-size:11px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:6px;text-align:left !important;">
+            <input type="text" id="scClientIdInpV93" placeholder="Свой client_id (необязательно)..." style="padding:6px 8px;font-size:11px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:6px;text-align:left !important;">
+            <button type="button" onclick="window.saveScAuthCookieV93()" style="padding:6px;background:#238636;color:#fff;border:none;border-radius:6px;font-weight:bold;font-size:11px;">💾 Сохранить и переподключить</button>
+        </div>
+        <div style="padding:9px 12px;background:#090d14;border-bottom:1px solid #21262d;display:flex;gap:6px;">
+            <input type="text" id="scDedicatedInpV93" value="Synthwave" placeholder="Трек или артист в SoundCloud..." onkeydown="if(event.key==='Enter') window.runScDedicatedSearchV93()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
+            <button type="button" onclick="window.runScDedicatedSearchV93()" style="padding:7px 12px;background:#ff8c42;color:#000;border:none;border-radius:8px;font-weight:bold;">🔍 Найти</button>
+        </div>
+        <div id="scDedicatedBodyV93" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-height:220px;"></div>
+    </div>`;
+    document.body.appendChild(m);
+    window.runScDedicatedSearchV93();
+};
+
+window.runScDedicatedSearchV93 = async function() {
+    const inp = document.getElementById('scDedicatedInpV93');
+    const body = document.getElementById('scDedicatedBodyV93');
     if (!inp || !body) return;
     const q = inp.value.trim() || 'Synthwave';
-    body.innerHTML = `<div style="color:#ff8c42;text-align:center;padding:35px 10px;">⏳ Поиск «${q}» в SoundCloud...</div>`;
+    body.innerHTML = `<div style="color:#ff8c42;text-align:center;padding:30px 10px;">⏳ Поиск «${q}» в SoundCloud...</div>`;
     try {
         const res = await fetch('/api/soundcloud/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) });
         const d = await res.json();
-        if (!res.ok || d.status !== 'ok') throw new Error(d.error || 'Ошибка SoundCloud');
-        const alb = { slug: 'sc_search', album_title: `SoundCloud: ${q}`, has_flac: false, tracks: d.tracks || [] };
-        window._khStateV88.currentAlbum = alb;
-        window._khStateV88.selectedTracks = new Set((alb.tracks || []).filter(t => !t.downloaded).map(t => t.index));
-        window.renderKhAlbumTracksV88(alb);
+        const tracks = d.tracks || [];
+        if (!tracks.length) {
+            body.innerHTML = `<div style="color:#e3b341;text-align:center;padding:20px 10px;font-size:12px;">⚠️ SoundCloud запросил подтверждение куки.<br><br><button type="button" onclick="window.openScAuthBoxV93()" style="padding:7px 12px;background:#ff8c42;color:#000;border:none;border-radius:7px;font-weight:bold;">🔑 Открыть окно Куки / Входа</button></div>`;
+            return;
+        }
+        window._khStateV88.currentAlbum = { slug: 'sc_search', album_title: 'SoundCloud', has_flac: false, tracks };
+        body.innerHTML = tracks.map(t => `<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;">
+            <div style="flex:1;min-width:0;">
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.index}. ${t.title}</div>
+                <div style="color:#8b949e;font-size:10px;margin-top:2px;">⏱ ${t.duration} • SoundCloud Stream</div>
+            </div>
+            <button type="button" class="kh-prev-btn-v88" onclick="window.previewKhTrackV88(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
+            <button type="button" onclick="window._khStateV88.formatMode='mp3';window.downloadSingleKhTrackV88(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:rgba(255,140,66,0.18);color:#ff8c42;border:1px solid #ff8c42;">⬇️</button>
+        </div>`).join('');
     } catch (e) {
         body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 10px;">❌ ${e.message || e}</div>`;
     }
