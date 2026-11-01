@@ -2179,7 +2179,7 @@ def api_soundcloud_download_track_v96():
 
         ff_bin = find_ffmpeg_binary()
         tmp_mp3 = os.path.join(MUSIC_DIR, f"temp_final_sc_enc_{os.getpid()}.mp3")
-        subprocess.run([ff_bin, '-y', '-i', tmp_raw, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '192k', '-write_xing', '1', tmp_mp3], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+        subprocess.run([ff_bin, '-y', '-i', tmp_raw, '-vn', '-c:a', 'copy', '-write_xing', '1', tmp_mp3], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
         if os.path.isfile(tmp_mp3) and os.path.getsize(tmp_mp3) >= 16384:
             shutil.move(tmp_mp3, final_path)
         if not os.path.isfile(final_path) or os.path.getsize(final_path) < 16384:
@@ -2547,7 +2547,7 @@ def api_soundcloud_download_track_v99():
         final_path = os.path.join(MUSIC_DIR, final_name)
 
         ff_bin = find_ffmpeg_binary()
-        subprocess.run([ff_bin, '-y', '-i', tmp_raw, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '192k', '-write_xing', '1', tmp_mp3], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+        subprocess.run([ff_bin, '-y', '-i', tmp_raw, '-vn', '-c:a', 'copy', '-write_xing', '1', tmp_mp3], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
         _SC_DL_STATE_V99["pct"] = 96
         if os.path.isfile(tmp_mp3) and os.path.getsize(tmp_mp3) >= 16384:
             shutil.move(tmp_mp3, final_path)
@@ -2666,6 +2666,47 @@ def api_sources_live_badges_v99():
         "soundcloud": {"active": bool(_SC_DL_STATE_V99.get("active")), "pct": int(_SC_DL_STATE_V99.get("pct") or 0)},
         "torrent_enc": _TOR_ENC_PROGRESS_V99
     }, ensure_ascii=False)
+
+
+# ==============================================================================
+# 🔍 JENNY V100: INSPECTOR AUTO-PROBE FOR STREAM MP3 (BITRATE / DURATION / SAMPLES)
+# ==============================================================================
+_ORIG_INSPECT_FN_V100 = globals().get("api_inspect_track_v76") or globals().get("api_inspect_track")
+
+@post('/api/inspect_track')
+def api_inspect_track_v100():
+    res_raw = _ORIG_INSPECT_FN_V100() if _ORIG_INSPECT_FN_V100 else "{}"
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else res_raw
+        if not isinstance(d, dict) or d.get("status") != "ok":
+            return res_raw
+        fp = d.get("full_path") or ""
+        dur_str = str(d.get("duration") or "").strip()
+        br_str = str(d.get("bitrate") or "").strip()
+        if fp and os.path.isfile(fp) and (dur_str in ("", "-", "N/A") or br_str in ("", "-", "N/A")):
+            ff_bin = find_ffmpeg_binary()
+            pr = subprocess.run([ff_bin, "-i", fp, "-vn", "-c:a", "copy", "-f", "null", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+            err_txt = pr.stderr.decode("utf-8", errors="ignore")
+            t_matches = re.findall(r"time=(\d{2}):(\d{2}):(\d{2}\.\d+)", err_txt)
+            if t_matches:
+                hh, mm, ss = t_matches[-1]
+                total_sec = int(hh) * 3600 + int(mm) * 60 + float(ss)
+                if total_sec > 0:
+                    if dur_str in ("", "-", "N/A"):
+                        d["duration"] = f"{hh}:{mm}:{ss[:5]}"
+                    if br_str in ("", "-", "N/A"):
+                        sz_b = os.path.getsize(fp)
+                        kbps = int(round((sz_b * 8) / (total_sec * 1000.0)))
+                        d["bitrate"] = f"{kbps} kb/s"
+                    smp_str = str(d.get("total_samples") or "").strip()
+                    if smp_str in ("", "-", "N/A") or smp_str.startswith("-"):
+                        sr_m = re.search(r"(\d+)\s*Hz", str(d.get("sample_rate") or "48000"))
+                        sr_val = int(sr_m.group(1)) if sr_m else 48000
+                        tot_frames = int(round(total_sec * sr_val))
+                        d["total_samples"] = f"{tot_frames:,}".replace(",", " ") + " PCM frames"
+        return json.dumps(d, ensure_ascii=False)
+    except Exception:
+        return res_raw
 
 def start_server():
     load_saved_music_dir()
