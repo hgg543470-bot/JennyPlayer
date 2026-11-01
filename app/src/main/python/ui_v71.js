@@ -4435,7 +4435,7 @@ window.renderKhAlbumTracksV88 = function(alb) {
 
     const rows = tracks.map(t => {
         const isChk = window._khStateV88.selectedTracks.has(t.index);
-        const sz = [t.flac_size ? `FLAC: ${t.flac_size}` : '', t.mp3_size ? `MP3: ${t.mp3_size}` : ''].filter(Boolean).join(' | ');
+        const isMp3Mode = (window._khStateV88 && window._khStateV88.formatMode === 'mp3'); const sz = isMp3Mode ? (t.mp3_size ? `🎵 MP3: ${t.mp3_size}` : '') : (t.flac_size ? `💎 FLAC: ${t.flac_size}` : (t.mp3_size ? `🎵 MP3: ${t.mp3_size}` : ''));
         const isDl = Boolean(t.downloaded);
         const bHtml = isDl
             ? `<span id="khTrackBadgeV89_${t.index}" style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:5px;font-size:9.5px;font-weight:bold;background:rgba(63,185,80,0.18);color:#3fb950;border:1px solid #3fb950;">✅ СКАЧАН (${t.local_ext || 'OK'} • ${t.local_size_mb || ''} MB)</span>`
@@ -5531,4 +5531,282 @@ window.startSelectedTorrentDownloadV96 = async function() {
             }
         } catch (e) {}
     }, 1000);
+};
+
+// === 🛡️ JENNY V97: SINGLE-STREAM LOCK + TORRENT LIVE STREAM & FILL BAR + BACK BUTTONS ===
+window._previewReqIdV97 = 0;
+window._scDownloadingLockV97 = false;
+
+window.stopAllExternalStreamsV97 = function() {
+    window._previewReqIdV97++;
+    if (window._khStateV88 && window._khStateV88.previewAudio) {
+        try {
+            window._khStateV88.previewAudio.onended = null;
+            window._khStateV88.previewAudio.ontimeupdate = null;
+            window._khStateV88.previewAudio.pause();
+            window._khStateV88.previewAudio.src = '';
+        } catch (e) {}
+        window._khStateV88.previewAudio = null;
+    }
+    if (typeof window.stopFlacRadioStreamV91 === 'function') window.stopFlacRadioStreamV91();
+    document.querySelectorAll('.kh-prev-btn-v88, .tor-prev-btn-v97').forEach(b => { b.innerText = '▶'; });
+    const mpBtn = document.getElementById('khMiniPlayBtnV90');
+    if (mpBtn) mpBtn.innerText = '▶';
+};
+
+window.stopKhPreviewV88 = window.stopAllExternalStreamsV97;
+
+// Надёжная предпрослушка без гонки промисов и без ошибки "interrupted by a call to pause()"
+window.previewKhTrackV88 = async function(trackIdx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const alb = window._khStateV88.currentAlbum;
+    const t = alb && alb.tracks ? alb.tracks.find(x => x.index === trackIdx) : null;
+    if (!t) return;
+
+    const curAud = window._khStateV88.previewAudio;
+    if (curAud && curAud._pagePath === t.page_path) {
+        if (!curAud.paused) {
+            window.stopAllExternalStreamsV97();
+        } else {
+            window.pauseMainPlayerForOstV90();
+            curAud.volume = window.getKhPreviewVolumeV90();
+            try { await curAud.play(); if (btnEl) btnEl.innerText = '⏹'; } catch (e) {}
+        }
+        return;
+    }
+
+    window.stopAllExternalStreamsV97();
+    window.pauseMainPlayerForOstV90();
+    const myReqId = ++window._previewReqIdV97;
+    if (btnEl) btnEl.innerText = '⏳';
+    window._khStateV88.previewBtn = btnEl;
+
+    try {
+        const res = await fetch('/api/khinsider/resolve_stream', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page_path: t.page_path })
+        });
+        const data = await res.json();
+        if (myReqId !== window._previewReqIdV97) return;
+        if (!res.ok || !data.stream_url) throw new Error(data.error || 'Нет потока');
+
+        const aud = new Audio(data.stream_url);
+        aud._pagePath = t.page_path;
+        aud.volume = window.getKhPreviewVolumeV90();
+        window._khStateV88.previewAudio = aud;
+
+        const bar = document.getElementById('khMiniPlayerBarV90');
+        const tEl = document.getElementById('khMiniTitleV90');
+        const curEl = document.getElementById('khMiniCurV90');
+        const durEl = document.getElementById('khMiniDurV90');
+        const seekEl = document.getElementById('khMiniSeekV90');
+        const mpBtn = document.getElementById('khMiniPlayBtnV90');
+        if (bar) bar.style.display = 'flex';
+        if (tEl) tEl.innerText = `🎧 ${t.index}. ${t.title}`;
+        if (mpBtn) mpBtn.innerText = '⏸';
+
+        aud.ontimeupdate = () => {
+            if (curEl) curEl.innerText = window.fmtKhSecV90(aud.currentTime);
+            if (durEl && isFinite(aud.duration)) durEl.innerText = window.fmtKhSecV90(aud.duration);
+            if (seekEl && isFinite(aud.duration) && aud.duration > 0) {
+                seekEl.value = Math.round((aud.currentTime / aud.duration) * 1000);
+            }
+        };
+        aud.onended = () => {
+            if (btnEl) btnEl.innerText = '▶';
+            if (mpBtn) mpBtn.innerText = '▶';
+        };
+        await aud.play();
+        if (myReqId !== window._previewReqIdV97) {
+            aud.pause();
+            return;
+        }
+        if (btnEl) btnEl.innerText = '⏹';
+    } catch (e) {
+        if (myReqId === window._previewReqIdV97) {
+            if (btnEl) btnEl.innerText = '▶';
+            if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+        }
+    }
+};
+
+// Защита от дурака при скачивании с SoundCloud: ждём полной сборки MP3 и показываем статус
+window.downloadScTrackV96 = async function(idx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (window._scDownloadingLockV97) {
+        if (typeof window.showToast === 'function') window.showToast('⏳ Подожди завершения текущей загрузки SoundCloud...');
+        return;
+    }
+    const t = (window._scDedicatedTracksV96 || []).find(x => x.index === idx);
+    if (!t) return;
+    window._scDownloadingLockV97 = true;
+    if (btnEl) { btnEl.innerText = '⏳ Сборка...'; btnEl.disabled = true; }
+    try {
+        const res = await fetch('/api/soundcloud/download_track', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page_path: t.page_path, track_title: t.title, track_num: t.index })
+        });
+        const d = await res.json();
+        if (!res.ok || d.status !== 'ok') throw new Error(d.error || 'Ошибка скачивания');
+        t.downloaded = true;
+        if (btnEl) { btnEl.innerText = `✅ ${d.size_mb}M`; btnEl.disabled = false; }
+        if (typeof window.fetchData === 'function') window.fetchData();
+        if (typeof window.showToast === 'function') window.showToast(`✅ Готов полный трек: ${d.filename} (${d.size_mb} MB)`);
+    } catch (e) {
+        if (btnEl) { btnEl.innerText = '⬇️'; btnEl.disabled = false; }
+        if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+    } finally {
+        window._scDownloadingLockV97 = false;
+    }
+};
+
+// 🧲 ОБНОВЛЁННАЯ ТОРРЕНТ-СТУДИЯ: Кнопка ⬅ Назад к раздачам, Потоковый ▶ на лету, Общий прогресс-бар и Заливка фона названия трека
+window.backToTorrentSearchListV97 = function() {
+    if (window._torStateV96 && window._torStateV96.pollTimer) {
+        clearInterval(window._torStateV96.pollTimer);
+        window._torStateV96.pollTimer = null;
+    }
+    const ftr = document.getElementById('torFooterBarV96');
+    if (ftr) ftr.style.display = 'none';
+    const list = window._torSearchResultsV96 || [];
+    if (list.length) {
+        const body = document.getElementById('torBodyListV96');
+        const stEl = document.getElementById('torStatusLineV96');
+        if (stEl) stEl.innerText = `📋 Найдено раздач: ${list.length}`;
+        if (body) {
+            body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
+                <div style="flex:1;min-width:0;">
+                    <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
+                    <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:#3fb950;font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                </div>
+                <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
+            </div>`).join('');
+        }
+    } else {
+        window.runTorrentActionV96();
+    }
+};
+
+window.previewTorrentFileStreamV97 = async function(fileIdx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const hash = window._torStateV96.currentHash;
+    if (!hash) return;
+    const streamUrl = `/api/torrent/stream/${hash}/${fileIdx}`;
+    const curAud = window._khStateV88.previewAudio;
+    if (curAud && curAud._pagePath === streamUrl) {
+        window.stopAllExternalStreamsV97();
+        return;
+    }
+    window.stopAllExternalStreamsV97();
+    window.pauseMainPlayerForOstV90();
+    const myReqId = ++window._previewReqIdV97;
+    if (btnEl) btnEl.innerText = '⏳';
+
+    const aud = new Audio(streamUrl);
+    aud._pagePath = streamUrl;
+    aud.volume = window.getKhPreviewVolumeV90();
+    window._khStateV88.previewAudio = aud;
+    const stEl = document.getElementById('torStatusLineV96');
+    const fObj = (window._torStateV96.files || []).find(x => x.index === fileIdx);
+    if (stEl && fObj) stEl.innerText = `🎧 Поток из торрента: ${fObj.path}`;
+    aud.onended = () => { if (btnEl) btnEl.innerText = '▶'; };
+    try {
+        await aud.play();
+        if (myReqId !== window._previewReqIdV97) { aud.pause(); return; }
+        if (btnEl) btnEl.innerText = '⏹';
+    } catch (e) {
+        if (btnEl) btnEl.innerText = '▶';
+        if (typeof window.showToast === 'function') window.showToast('⏳ Подожди пару секунд, пиры подгружают начало трека...');
+    }
+};
+
+window.renderTorrentFilesListV96 = function() {
+    const body = document.getElementById('torBodyListV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    if (!body) return;
+    if (ftr) {
+        ftr.style.flexDirection = 'column';
+        ftr.innerHTML = `
+            <div id="torTotalProgWrapV97" style="display:none;width:100%;height:8px;background:#161b22;border-radius:6px;overflow:hidden;border:1px solid #30363d;">
+                <div id="torTotalProgFillV97" style="width:0%;height:100%;background:linear-gradient(90deg,#8957e5,#3fb950);transition:width 0.3s ease;"></div>
+            </div>
+            <div style="display:flex;gap:8px;width:100%;">
+                <button type="button" onclick="window.backToTorrentSearchListV97()" style="padding:8px 12px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:8px;font-weight:bold;">⬅ Раздачи</button>
+                <button type="button" id="btnTorStartDlV97" onclick="window.startSelectedTorrentDownloadV96()" style="flex:1;padding:8px 12px;background:linear-gradient(135deg,#8957e5,#238636);color:#fff;border:none;border-radius:8px;font-weight:bold;">⬇️ Качать выбранные (➔ xFLAC)</button>
+            </div>
+        `;
+    }
+    body.innerHTML = window._torStateV96.files.map(f => {
+        const chk = window._torStateV96.selectedFiles.has(f.index) ? 'checked' : '';
+        const mb = (f.length / (1024 * 1024)).toFixed(1);
+        return `<div id="torFileRowV96_${f.index}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;transition:background 0.25s ease;">
+            <input type="checkbox" ${chk} onchange="if(this.checked) window._torStateV96.selectedFiles.add(${f.index}); else window._torStateV96.selectedFiles.delete(${f.index});">
+            <div style="flex:1;min-width:0;">
+                <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.path}</div>
+                <div id="torFileProgV96_${f.index}" style="color:#8b949e;font-size:10px;margin-top:2px;">💾 ${mb} MB • Нажми ▶ для потока или ⬇️ для закачки</div>
+            </div>
+            <button type="button" class="tor-prev-btn-v97" onclick="window.previewTorrentFileStreamV97(${f.index}, this, event)" title="Слушать в потоке прямо сейчас" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
+        </div>`;
+    }).join('');
+};
+
+window.startSelectedTorrentDownloadV96 = async function() {
+    const hash = window._torStateV96.currentHash;
+    const files = Array.from(window._torStateV96.selectedFiles);
+    if (!hash || !files.length) return;
+    const totWrap = document.getElementById('torTotalProgWrapV97');
+    const totFill = document.getElementById('torTotalProgFillV97');
+    if (totWrap) totWrap.style.display = 'block';
+
+    await fetch('/api/torrent/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hash, files }) });
+    if (window._torStateV96.pollTimer) clearInterval(window._torStateV96.pollTimer);
+    window._torStateV96.pollTimer = setInterval(async () => {
+        try {
+            const d = await (await fetch('/api/torrent/status')).json();
+            const tor = (d.torrents || []).find(x => x.hash === hash);
+            if (!tor) return;
+            let sumLen = 0, sumDone = 0;
+            for (const f of (tor.files || [])) {
+                sumLen += (f.length || 0);
+                sumDone += (f.completed || 0);
+                const rowEl = document.getElementById('torFileRowV96_' + f.index);
+                const pEl = document.getElementById('torFileProgV96_' + f.index);
+                const pct = Math.max(0, Math.min(100, f.percent || 0));
+                const doneMb = (f.completed / (1024 * 1024)).toFixed(1);
+                const totMb = (f.length / (1024 * 1024)).toFixed(1);
+
+                // Визуальная заливка карточки трека по мере прогресса!
+                if (rowEl) {
+                    const clr = f.xflac_file ? 'rgba(63,185,80,0.28)' : 'rgba(137,87,229,0.32)';
+                    rowEl.style.background = `linear-gradient(90deg, ${clr} ${pct}%, #0b0f16 ${pct}%)`;
+                    if (f.done) rowEl.style.borderColor = 'rgba(63,185,80,0.65)';
+                }
+                if (pEl) {
+                    pEl.innerText = f.xflac_file
+                        ? `✅ В плеере: ${f.xflac_file}`
+                        : `⬇️ ${doneMb} / ${totMb} MB (${pct}%)`;
+                }
+                const impKey = `${hash}_${f.index}`;
+                if (f.done && !f.xflac_file && !window._torStateV96.importedSet.has(impKey)) {
+                    window._torStateV96.importedSet.add(impKey);
+                    if (pEl) pEl.innerText = `🧬 Сжатие в .xFLAC...`;
+                    fetch('/api/torrent/import_track', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ hash, index: f.index, full_path: f.full_path, torrent_name: tor.name, format_mode: 'xflac_psycho' })
+                    }).then(r => r.json()).then(res => {
+                        if (res.status === 'ok') {
+                            if (pEl) pEl.innerText = `✅ В плеере: ${res.filename} (${res.size_mb} MB)`;
+                            if (typeof window.fetchData === 'function') window.fetchData();
+                        }
+                    });
+                }
+            }
+            const totalPct = sumLen > 0 ? Math.round((sumDone * 100) / sumLen) : 0;
+            const sumDoneMb = (sumDone / (1024 * 1024)).toFixed(1);
+            const sumTotMb = (sumLen / (1024 * 1024)).toFixed(1);
+            if (totFill) totFill.style.width = totalPct + '%';
+            const stEl = document.getElementById('torStatusLineV96');
+            if (stEl) stEl.innerText = `🧲 Сидов: ${tor.seeders} • Пиров: ${tor.peers} • Общий прогресс: ${sumDoneMb}/${sumTotMb} MB (${totalPct}%)`;
+        } catch (e) {}
+    }, 900);
 };

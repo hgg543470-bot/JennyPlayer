@@ -1621,11 +1621,13 @@ def api_khinsider_search_v88():
             return json.dumps({"status": "error", "error": "Введите название игры"})
         mode = (req.get('mode') or 'ost').strip().lower()
         fmt_mode = (req.get('format_mode') or 'xflac_psycho').strip().lower()
+        words = [w for w in re.split(r'\s+', query) if w and w.lower() not in ('flac', 'mp3', 'wav', 'ost')]
+        strict_q = ' AND '.join(words) if words else query
         fmt_filter = 'AND format:("VBR MP3" OR MP3)' if fmt_mode == 'mp3' else 'AND format:(Flac OR "24bit Flac" OR Wave)'
         if mode == 'archive':
-            q_expr = f'({query}) AND mediatype:(audio) {fmt_filter} AND NOT collection:(podcasts)'
+            q_expr = f'({strict_q}) AND mediatype:(audio) {fmt_filter} AND NOT collection:(podcasts)'
         else:
-            q_expr = f'(title:({query}) AND (soundtrack OR ost OR music OR score)) AND mediatype:(audio) {fmt_filter}'
+            q_expr = f'(title:({strict_q}) AND (soundtrack OR ost OR music OR score)) AND mediatype:(audio) {fmt_filter}'
         u1 = f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q_expr)}&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
         docs = _ost_fetch_json_v88(u1).get("response", {}).get("docs", [])
         if len(docs) < 3:
@@ -2176,7 +2178,10 @@ def api_soundcloud_download_track_v96():
         final_path = os.path.join(MUSIC_DIR, final_name)
 
         ff_bin = find_ffmpeg_binary()
-        subprocess.run([ff_bin, '-y', '-i', tmp_raw, '-vn', '-c:a', 'libmp3lame', '-q:a', '2', final_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+        tmp_mp3 = os.path.join(MUSIC_DIR, f"temp_final_sc_enc_{os.getpid()}.mp3")
+        subprocess.run([ff_bin, '-y', '-i', tmp_raw, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '192k', '-write_xing', '1', tmp_mp3], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+        if os.path.isfile(tmp_mp3) and os.path.getsize(tmp_mp3) >= 16384:
+            shutil.move(tmp_mp3, final_path)
         if not os.path.isfile(final_path) or os.path.getsize(final_path) < 16384:
             shutil.move(tmp_raw, final_path)
             tmp_raw = ""
@@ -2356,6 +2361,22 @@ def api_torrent_import_track_v96():
         return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb})
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
+
+
+@route('/api/torrent/stream/<hash_str>/<file_idx:int>', method='GET')
+def api_torrent_stream_proxy_v97(hash_str, file_idx):
+    ensure_jtorrent_daemon_v96()
+    u = f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={hash_str}&file={file_idx}"
+    hdrs = {}
+    if request.headers.get("Range"):
+        hdrs["Range"] = request.headers.get("Range")
+    req = urllib.request.Request(u, headers=hdrs)
+    r = urllib.request.urlopen(req, timeout=20)
+    response.status = r.status
+    for k in ("Content-Type", "Content-Length", "Accept-Ranges", "Content-Range"):
+        if r.headers.get(k):
+            response.set_header(k, r.headers.get(k))
+    return r
 
 def start_server():
     load_saved_music_dir()
