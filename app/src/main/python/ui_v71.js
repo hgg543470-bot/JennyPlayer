@@ -8396,3 +8396,124 @@ window.addEventListener('focus', () => {
 });
 setTimeout(() => window.checkAndroidPendingTorrentV114(), 700);
 setTimeout(() => window.checkAndroidPendingTorrentV114(), 2000);
+
+// === 📂☑️ JENNY V117: NATIVE TORRENT FILE PICKER + TOGGLE SELECT ALL / DESELECT ALL ===
+
+// 1. Вызов нативного системного проводника Android при нажатии на значок папки 📂 или кнопку "📂 Открыть .torrent"
+window.triggerPickTorrentFileV113 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (window.AndroidBridge && typeof window.AndroidBridge.pickTorrentFile === 'function') {
+        window.AndroidBridge.pickTorrentFile();
+        return;
+    }
+    const inp = window.ensureTorrentFileInputV113();
+    inp.value = '';
+    inp.click();
+};
+
+// 2. Синхронизация кнопки "Снять все" <-> "Выбрать все" с картой текущей раздачи
+window.getActiveTorrentSelectSetV117 = function() {
+    const ts = window._torStateV96 || {};
+    const h = ts.currentHash;
+    const job = (h && window._torMapV112) ? window._torMapV112[h] : null;
+    if (job) {
+        if (!job.selectedFiles) job.selectedFiles = new Set();
+        ts.selectedFiles = job.selectedFiles;
+        return job.selectedFiles;
+    }
+    if (!ts.selectedFiles) ts.selectedFiles = new Set();
+    return ts.selectedFiles;
+};
+
+window.updateTorrentSelectAllBtnUIV117 = function() {
+    const btn = document.getElementById('btnTorToggleAllV117');
+    if (!btn) return;
+    const selSet = window.getActiveTorrentSelectSetV117();
+    const hasSelected = selSet.size > 0;
+    if (hasSelected) {
+        btn.innerText = '☐ Снять все';
+        btn.style.color = '#8b949e';
+        btn.style.borderColor = '#30363d';
+        btn.style.background = '#161b22';
+    } else {
+        btn.innerText = '☑️ Выбрать все';
+        btn.style.color = '#3fb950';
+        btn.style.borderColor = '#3fb950';
+        btn.style.background = 'rgba(63, 185, 80, 0.16)';
+    }
+};
+
+window.onTorrentFileCheckboxChangeV117 = function(fileIdx, isChecked) {
+    const selSet = window.getActiveTorrentSelectSetV117();
+    const cleanIdx = Number(fileIdx);
+    if (isChecked) selSet.add(cleanIdx);
+    else selSet.delete(cleanIdx);
+    window.updateTorrentSelectAllBtnUIV117();
+};
+
+window.toggleSelectAllTorrentFilesV117 = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const ts = window._torStateV96 || {};
+    const h = ts.currentHash;
+    const job = (h && window._torMapV112) ? window._torMapV112[h] : null;
+    const files = (job && job.files) ? job.files : (ts.files || []);
+    const selSet = window.getActiveTorrentSelectSetV117();
+
+    if (selSet.size > 0) {
+        // Снимаем все галочки на месте (не затирая ссылку на Set в карте раздачи!)
+        selSet.clear();
+    } else {
+        // Выбираем все файлы раздачи
+        files.forEach(f => selSet.add(Number(f.index)));
+    }
+
+    document.querySelectorAll('#torBodyListV96 input[type="checkbox"]').forEach(chk => {
+        chk.checked = (selSet.size > 0);
+    });
+    window.updateTorrentSelectAllBtnUIV117();
+};
+
+// Переопределяем отрисовку списка файлов раздачи с привязкой к новой кнопке "Снять все / Выбрать все"
+const _origRenderTorFilesV112 = window.renderTorrentFilesListV96;
+window.renderTorrentFilesListV96 = function() {
+    _origRenderTorFilesV112.apply(this, arguments);
+    const ftr = document.getElementById('torFooterBarV96');
+    if (ftr) {
+        const oldClearBtn = Array.from(ftr.querySelectorAll('button')).find(b =>
+            b.innerText.includes('Снять все') || b.innerText.includes('Выбрать все')
+        );
+        if (oldClearBtn) {
+            oldClearBtn.id = 'btnTorToggleAllV117';
+            oldClearBtn.onclick = (e) => window.toggleSelectAllTorrentFilesV117(e);
+        }
+    }
+    const ts = window._torStateV96 || {};
+    const files = ts.files || [];
+    const selSet = window.getActiveTorrentSelectSetV117();
+    files.forEach(f => {
+        const fIdx = Number(f.index);
+        const chk = document.querySelector(`#torFileRowV96_${fIdx} input[type="checkbox"]`);
+        if (chk) {
+            chk.checked = selSet.has(fIdx);
+            chk.onchange = function() {
+                window.onTorrentFileCheckboxChangeV117(fIdx, this.checked);
+            };
+        }
+    });
+    window.updateTorrentSelectAllBtnUIV117();
+};
+
+// Защита при нажатии "Качать выбранные": если сняты все галочки, подсказываем выбрать трек
+const _origStartSelDlV112 = window.startSelectedTorrentDownloadV96;
+window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
+    if (!Array.isArray(explicitFiles) || explicitFiles.length === 0) {
+        const selSet = window.getActiveTorrentSelectSetV117();
+        if (selSet.size === 0) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('⚠️ Отметь галочкой хотя бы один трек или нажми «☑️ Выбрать все»');
+            }
+            return;
+        }
+    }
+    return await _origStartSelDlV112.apply(this, arguments);
+};

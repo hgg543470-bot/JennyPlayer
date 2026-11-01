@@ -34,6 +34,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_PERM_STORAGE = 1;
     private static final int REQ_PERM_NOTIF = 2;
     private static final int REQ_PICK_FOLDER = 42;
+    private static final int REQ_PICK_TORRENT = 43;
     private static MainActivity instance;
     private static WebView webView;
     private static boolean isPageLoaded = false;
@@ -189,6 +190,21 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @JavascriptInterface
+        public void pickTorrentFile() {
+            runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivityForResult(intent, REQ_PICK_TORRENT);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        @JavascriptInterface
         public void pickFolder() {
             runOnUiThread(() -> {
                 try {
@@ -221,6 +237,16 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_TORRENT && resultCode == Activity.RESULT_OK && data != null) {
+            Uri uri = data.getData();
+            if (uri != null) {
+                readTorrentUriToPending(uri);
+                if (pendingTorrentPayload != null && webView != null) {
+                    webView.post(() -> evalJs("if(window.checkAndroidPendingTorrentV114) window.checkAndroidPendingTorrentV114();"));
+                }
+            }
+            return;
+        }
         if (requestCode == REQ_PICK_FOLDER && resultCode == Activity.RESULT_OK && data != null) {
             Uri treeUri = data.getData();
             if (treeUri != null) {
