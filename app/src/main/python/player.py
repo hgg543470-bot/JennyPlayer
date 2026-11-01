@@ -1,3 +1,4 @@
+import threading
 import ctypes
 import lzma
 import hashlib
@@ -195,6 +196,44 @@ def _decode_xflac_bytes_to_wav_v85(xfc_bytes: bytes) -> bytes:
         return ctypes.string_at(out_ptr, out_sz.value)
     finally:
         lib.xflac_free(ctypes.cast(out_ptr, ctypes.c_void_p))
+
+
+_XFLAC_CACHE_LOCK_V87 = threading.Lock()
+
+def _get_xflac_fast_header_info_v87(full_p: str):
+    try:
+        with open(full_p, 'rb') as f:
+            hdr = f.read(25)
+        if len(hdr) >= 25 and hdr[:4] == b'XFC3':
+            flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack('<BIIIII', hdr[4:25])
+            wav_sz = int(nf) * 4 + 44
+            dur_s = float(nf) / 44100.0
+            return dur_s, wav_sz
+    except Exception:
+        pass
+    return 0.0, 0
+
+def _ensure_xflac_wav_cache_v87(full_xf: str) -> str:
+    cache_dir = os.path.dirname(full_xf)
+    cache_path = os.path.join(cache_dir, "temp_final_xflac_stream_cache.wav")
+    meta_tag_path = os.path.join(cache_dir, "temp_final_xflac_stream_cache.tag")
+    st = os.stat(full_xf)
+    cur_sig = f"{full_xf}|{st.st_size}|{int(st.st_mtime)}"
+    with _XFLAC_CACHE_LOCK_V87:
+        if os.path.isfile(cache_path) and os.path.isfile(meta_tag_path) and os.path.getsize(cache_path) > 44:
+            try:
+                with open(meta_tag_path, 'r', encoding='utf-8') as tf:
+                    if tf.read().strip() == cur_sig:
+                        return cache_path
+            except Exception:
+                pass
+        with open(full_xf, 'rb') as f_in:
+            wav_bytes = _decode_xflac_bytes_to_wav_v85(f_in.read())
+        with open(cache_path, 'wb') as f_out:
+            f_out.write(wav_bytes)
+        with open(meta_tag_path, 'w', encoding='utf-8') as tf:
+            tf.write(cur_sig)
+        return cache_path
 
 def _pack_xflac_pocket_v84(wav_bytes: bytes, mode: int, password: str = "") -> bytes:
     lib = _get_xflac_lib_v84()
@@ -449,10 +488,15 @@ def quick_parse_artist_album_v71(filename, full_p):
                 custom_only[str(tk).strip()] = str(tv).strip()
     ext = os.path.splitext(filename)[1].lower()
     kbps = 128.0 if ext in ('.opus', '.ogg', '.m4a', '.aac') else (320.0 if ext == '.mp3' else 900.0)
+    est_dur = round(max(1.0, (st_size * 8.0) / (kbps * 1000.0)), 1)
+    if ext == '.xflac':
+        xf_dur, _ = _get_xflac_fast_header_info_v87(full_p)
+        if xf_dur > 0:
+            est_dur = round(xf_dur, 1)
     meta = {
         "mtime": round(st_mtime, 2),
         "size": st_size,
-        "dur": round(max(1.0, (st_size * 8.0) / (kbps * 1000.0)), 1),
+        "dur": est_dur,
         "artist": artist,
         "album": album,
         "user_tags": db_tags if isinstance(db_tags, dict) else {},
@@ -691,6 +735,14 @@ def get_pcm_meta_v71(filename):
     response.content_type = 'application/json'
     if not fp or not os.path.isfile(fp):
         return json.dumps({"duration": 0, "size": 0})
+    if filename.lower().endswith('.xflac'):
+        try:
+            wav_cache_fp = _ensure_xflac_wav_cache_v87(fp)
+            xf_dur, _ = _get_xflac_fast_header_info_v87(fp)
+            return json.dumps({"duration": xf_dur, "size": os.path.getsize(wav_cache_fp)})
+        except Exception:
+            xf_dur, xf_wav_sz = _get_xflac_fast_header_info_v87(fp)
+            return json.dumps({"duration": xf_dur, "size": xf_wav_sz})
     tr = read_jenny_rev_trailer(fp)
     if tr:
         dur_sec, _, _, _ = calc_jrev_audio_stats(fp, tr)
@@ -705,15 +757,9 @@ def serve_media(filename):
         if not os.path.isfile(full_xf):
             response.status = 404
             return "File not found"
-        cache_dir = os.path.dirname(full_xf)
-        cache_name = ".jenny_xflac_stream_cache.wav"
-        cache_path = os.path.join(cache_dir, cache_name)
         try:
-            with open(full_xf, 'rb') as f_in:
-                wav_bytes = _decode_xflac_bytes_to_wav_v85(f_in.read())
-            with open(cache_path, 'wb') as f_out:
-                f_out.write(wav_bytes)
-            return static_file(cache_name, root=cache_dir, mimetype='audio/wav')
+            cache_path = _ensure_xflac_wav_cache_v87(full_xf)
+            return static_file(os.path.basename(cache_path), root=os.path.dirname(cache_path), mimetype='audio/wav')
         except Exception as e:
             response.status = 500
             return str(e)

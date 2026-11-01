@@ -95,12 +95,14 @@ static void apply_dynamic_noise_floor_gate(int16_t* ch, size_t n, double gate_di
         double rms = sqrt(sum_sq / (double)(e - s));
         if (rms > gate_div * 1.15) {
             int tz = (int)floor(log2(rms / gate_div));
-            if (tz < 0) tz = 0; else if (tz > 7) tz = 7;
+            int max_tz = (gate_div <= 16.0) ? 9 : ((gate_div <= 26.0) ? 8 : 7);
+            if (tz < 0) tz = 0; else if (tz > max_tz) tz = max_tz;
             if (tz > 0) {
                 int32_t half = 1 << (tz - 1), mask = ~((1 << tz) - 1);
+                int32_t max_pos = 32767 & mask;
                 for (size_t i = s; i < e; ++i) {
                     int32_t v = ((int32_t)ch[i] + half) & mask;
-                    ch[i] = (int16_t)(v < -32768 ? -32768 : (v > 32767 ? 32767 : v));
+                    ch[i] = (int16_t)(v < -32768 ? -32768 : (v > max_pos ? max_pos : v));
                 }
             }
         }
