@@ -7226,3 +7226,25 @@ window.openPlayingTorrentFromMiniPlayerV108 = async function(ev) {
         }
     }, 60);
 };
+
+// === 🕸️ JENNY V109: SPIDERWEB CLICK 24H TRACKER SYNC ===
+window.triggerDailyTrackerSyncOnSpiderwebV109 = function() {
+    fetch('/api/torrent/sync_trackers', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d && d.updated && typeof window.showToast === 'function') {
+                window.showToast(`🕸️ База трекеров обновлена на 24ч (${d.count} шт.)`);
+            }
+        })
+        .catch(() => {});
+};
+
+const _origOpenTorModalV109 = window.openTorrentHubPreviewModalV91;
+window.openTorrentHubPreviewModalV91 = function(ev) {
+    const ex = document.getElementById('jennyTorrentModalV91');
+    const willOpen = !ex || ex.style.display === 'none' || getComputedStyle(ex).display === 'none';
+    _origOpenTorModalV109.apply(this, arguments);
+    if (willOpen) {
+        window.triggerDailyTrackerSyncOnSpiderwebV109();
+    }
+};

@@ -2481,14 +2481,193 @@ def api_torrent_search_v105():
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
+# === 🌐 JENNY V109: SPIDERWEB-TRIGGERED TRACKERS SYNC (MAX ONCE PER 24 HOURS) ===
+TRACKERS_CACHE_FILE_V109 = os.path.join(DEFAULT_MUSIC_DIR, "jenny_trackers_cache.json")
+
+_FLUD_BASE_TRACKERS_V109 = [
+    "udp://tracker.opentrackr.org:1337/announce",
+    "http://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
+    "udp://tracker.skynetcloud.site:6969/announce",
+    "udp://tracker.qu.ax:6969/announce",
+    "http://tracker.qu.ax:6969/announce",
+    "udp://tracker.tryhackx.org:6969/announce",
+    "udp://explodie.org:6969/announce",
+    "udp://tracker.nyaa.vc:6969/announce",
+    "udp://tracker.corpscorp.online:80/announce",
+    "udp://tracker.bittor.pw:1337/announce",
+    "udp://retracker01-msk-virt.corbina.net:80/announce",
+    "udp://tracker-udp.gbitt.info:80/announce",
+    "udp://tracker2.dler.org:80/announce",
+    "http://tracker2.dler.org:80/announce",
+    "http://tracker.dler.org:6969/announce",
+    "http://tracker.dler.com:6969/announce",
+    "udp://tracker.gmi.gd:6969/announce",
+    "udp://tracker.dler.org:6969/announce",
+    "udp://tracker.ducks.party:1984/announce",
+    "http://tracker.renfei.net:8080/announce",
+    "udp://tracker.farted.net:6969/announce",
+    "udp://tracker.peerfect.org:6969/announce",
+    "udp://tracker.opentrackr.com:6969/announce",
+    "udp://tracker.ilibr.org:6969/announce",
+    "udp://mail.segso.net:6969/announce",
+    "udp://bittorrent-tracker.e-n-c-r-y-p-t.net:1337/announce",
+    "http://bittorrent-tracker.e-n-c-r-y-p-t.net:1337/announce",
+    "udp://t.overflow.biz:6969/announce",
+    "http://t.overflow.biz:6969/announce",
+    "https://tracker.pmman.tech:443/announce",
+    "udp://ipv4announce.sktorrent.eu:6969/announce",
+    "http://ipv4announce.sktorrent.eu:6969/announce",
+    "udp://tracker.004430.xyz:1337/announce",
+    "https://tracker.nekomi.cn:443/announce",
+    "https://004430.xyz:443/announce",
+    "http://004430.xyz:80/announce",
+    "udp://evan.im:6969/announce",
+    "udp://tr4ck3r.duckdns.org:6969/announce",
+    "udp://tracker.wildkat.net:6969/announce",
+    "udp://tracker.filemail.com:6969/announce",
+    "udp://ns575949.ip-51-222-82.net:6969/announce",
+    "udp://martin-gebhardt.eu:25/announce",
+    "https://tracker.zhuqiy.com:443/announce",
+    "http://tracker.mywaifu.best:6969/announce",
+    "http://tracker.dhitechnical.com:6969/announce",
+    "http://open.tracker.cl:1337/announce",
+    "udp://seedpeer.net:6969/announce",
+    "udp://open.ftorrent.com:443/announce",
+    "https://tracker.7471.top:443/announce",
+    "https://tr.nyacat.pw:443/announce",
+    "http://tracker.waaa.moe:6969/announce",
+    "http://tr.nyacat.pw:80/announce",
+    "udp://admin.52ywp.com:6969/announce",
+    "https://open.ftorrent.com:443/announce",
+    "udp://tracker.nyaa.net:6969/announce",
+    "udp://tracker.cn.nyaa.net:6969/announce",
+    "udp://tracker.aruku.ovh:8081/announce",
+    "udp://tr3.ysagin.top:2715/announce",
+    "udp://anime-tracker.aruku.kro.kr:8081/announce",
+    "https://tracker.foreverpirates.co:443/announce",
+    "udp://tracker.torrents.observer:80/announce",
+    "udp://tracker.k.vu:6969/announce",
+    "udp://tr.btube3.com:2010/announce",
+    "udp://kolankoalastree.newtrackon.co.nz:1337/announce",
+    "http://tracker.zhuqiy.dgj055.icu:80/announce",
+    "http://1337.abcvg.info:80/announce",
+    "udp://yuptracker-eu.gaijinent.com:27022/announce",
+    "udp://tracker.playground.ru:6969/announce",
+    "udp://tracker.ddunlimited.net:6969/announce",
+    "udp://edgev.duckdns.org:6969/announce",
+    "udp://archive.torrentonline.cc:42069/announce",
+    "https://t.213891.xyz:443/announce"
+]
+
+_LIVE_TRACKERS_URLS_V109 = [
+    "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt",
+    "https://newtrackon.com/api/stable",
+    "https://cdn.jsdelivr.net/gh/ngosang/trackerslist@master/trackers_all.txt"
+]
+
+_TRACKERS_MEM_V109 = {"list": None, "last_sync": 0.0, "lock": threading.Lock()}
+
+def _load_trackers_cache_from_disk_v109():
+    if _TRACKERS_MEM_V109["list"] is not None:
+        return _TRACKERS_MEM_V109["list"], _TRACKERS_MEM_V109["last_sync"]
+    if os.path.exists(TRACKERS_CACHE_FILE_V109):
+        try:
+            with open(TRACKERS_CACHE_FILE_V109, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            t_list = d.get("trackers")
+            last_s = float(d.get("last_sync") or 0.0)
+            if isinstance(t_list, list) and len(t_list) >= len(_FLUD_BASE_TRACKERS_V109):
+                _TRACKERS_MEM_V109["list"] = t_list
+                _TRACKERS_MEM_V109["last_sync"] = last_s
+                return t_list, last_s
+        except Exception:
+            pass
+    _TRACKERS_MEM_V109["list"] = list(_FLUD_BASE_TRACKERS_V109)
+    _TRACKERS_MEM_V109["last_sync"] = 0.0
+    return _TRACKERS_MEM_V109["list"], 0.0
+
+def sync_trackers_once_per_day_v109():
+    with _TRACKERS_MEM_V109["lock"]:
+        cur_list, last_sync = _load_trackers_cache_from_disk_v109()
+        now = time.time()
+        # Строго не чаще 1 раза в сутки (86400 секунд)
+        if last_sync > 0 and (now - last_sync) < 86400:
+            rem_h = round((86400 - (now - last_sync)) / 3600.0, 1)
+            return {"status": "ok", "updated": False, "count": len(cur_list), "next_in_hours": rem_h}
+
+        merged = []
+        seen = set()
+        fetched_online = 0
+        for u in _LIVE_TRACKERS_URLS_V109:
+            try:
+                req = urllib.request.Request(u, headers=OST_HEADERS)
+                with urllib.request.urlopen(req, timeout=4) as r:
+                    txt = r.read().decode("utf-8", errors="ignore")
+                for line in txt.splitlines():
+                    tr = line.strip()
+                    if tr and tr.startswith(("udp://", "http://", "https://")) and tr not in seen:
+                        seen.add(tr)
+                        merged.append(tr)
+                        fetched_online += 1
+            except Exception:
+                pass
+
+        for tr in _FLUD_BASE_TRACKERS_V109:
+            if tr not in seen:
+                seen.add(tr)
+                merged.append(tr)
+
+        _TRACKERS_MEM_V109["list"] = merged
+        # Если интернет был доступен и подтянулись онлайн-списки — фиксируем таймер на 24 часа
+        if fetched_online > 0:
+            _TRACKERS_MEM_V109["last_sync"] = now
+            try:
+                os.makedirs(os.path.dirname(TRACKERS_CACHE_FILE_V109), exist_ok=True)
+                with open(TRACKERS_CACHE_FILE_V109, "w", encoding="utf-8") as f:
+                    json.dump({"last_sync": now, "trackers": merged}, f, ensure_ascii=False)
+            except Exception:
+                pass
+        return {"status": "ok", "updated": fetched_online > 0, "count": len(merged), "online_added": fetched_online}
+
+def enrich_magnet_with_cached_trackers_v109(magnet_uri: str) -> str:
+    if not magnet_uri or not magnet_uri.lower().startswith("magnet:?"):
+        return magnet_uri
+    cur_list, _ = _load_trackers_cache_from_disk_v109()
+    existing_low = magnet_uri.lower()
+    extra = []
+    for tr in cur_list:
+        q_tr = urllib.parse.quote(tr)
+        if q_tr.lower() not in existing_low and tr.lower() not in existing_low:
+            extra.append(f"&tr={q_tr}")
+    return magnet_uri + "".join(extra)
+
+@post('/api/torrent/sync_trackers')
+def api_torrent_sync_trackers_v109():
+    response.content_type = 'application/json'
+    try:
+        res = sync_trackers_once_per_day_v109()
+        return json.dumps(res)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
 @post('/api/torrent/add')
 def api_torrent_add_v96():
     response.content_type = 'application/json'
     try:
         if not ensure_jtorrent_daemon_v96():
             return json.dumps({"status": "error", "error": "Не удалось запустить демон libjtorrent.so"})
-        body = request.body.read()
-        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add", data=body, headers={"Content-Type": "application/json"})
+        raw_body = request.body.read().decode("utf-8") or "{}"
+        req_obj = json.loads(raw_body)
+        mag = (req_obj.get("magnet") or "").strip()
+        if mag:
+            req_obj["magnet"] = enrich_magnet_with_cached_trackers_v109(mag)
+        out_body = json.dumps(req_obj).encode("utf-8")
+        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add", data=out_body, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=32) as r:
             return r.read().decode("utf-8")
     except Exception as e:
