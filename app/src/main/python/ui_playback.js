@@ -45,19 +45,39 @@ window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMe
         return window.studioBuffer;
     }
 
-    // Берём длительность строго из серверного FFmpeg-проба preMeta, чтобы не захватить старый player.duration от прошлой песни!
     let dur = (preMeta && preMeta.duration) ? parseFloat(preMeta.duration) : 0;
     if (!dur) {
-        const mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
-        const md = await mr.json();
-        dur = parseFloat(md.duration) || 0;
+        try {
+            const mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
+            const md = await mr.json();
+            dur = parseFloat(md.duration) || 0;
+        } catch (e) {}
     }
-    if (!dur && player && isFinite(player.duration) && player.duration > 0) dur = player.duration;
+    if (!dur && window.lastData && window.lastData.track_meta && window.lastData.track_meta[filename]) {
+        dur = parseFloat(window.lastData.track_meta[filename].dur) || 0;
+    }
+    if (!dur && player) {
+        for (let w = 0; w < 25; w++) {
+            if (isFinite(player.duration) && player.duration > 0) { dur = player.duration; break; }
+            await new Promise(r => setTimeout(r, 100));
+        }
+    }
     if (dur <= 0) return null;
 
-    const sr = (dur > 2400) ? 32000 : 44100;
-    const totalFrames = Math.floor(dur * sr);
-    const audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
+    // Подбираем частоту дискретизации так, чтобы 3-4 часовой буфер гарантированно поместился в память Android WebView
+    const srCandidates = (dur > 5400) ? [16000, 12000, 8000] : ((dur > 2400) ? [24000, 16000, 12000] : [44100, 32000, 24000]);
+    let sr = srCandidates[0];
+    let totalFrames = Math.floor(dur * sr);
+    let audioBuf = null;
+    for (const candSr of srCandidates) {
+        try {
+            sr = candSr;
+            totalFrames = Math.floor(dur * sr);
+            audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
+            if (audioBuf) break;
+        } catch (allocErr) {}
+    }
+    if (!audioBuf) return null;
     const chL = audioBuf.getChannelData(0);
     const chR = audioBuf.getChannelData(1);
 

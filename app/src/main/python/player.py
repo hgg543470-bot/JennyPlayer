@@ -807,6 +807,7 @@ def calc_jrev_audio_stats(full_path, trailer):
 
 @route('/api/pcm_meta_v71/<filename:path>')
 def get_pcm_meta_v71(filename):
+    import re
     fp = resolve_track_full_path_v71(filename)
     response.content_type = 'application/json'
     if not fp or not os.path.isfile(fp):
@@ -817,8 +818,19 @@ def get_pcm_meta_v71(filename):
     tr = read_jenny_rev_trailer(fp)
     if tr:
         dur_sec, _, _, _ = calc_jrev_audio_stats(fp, tr)
-        return json.dumps({"duration": dur_sec, "size": tr["audio_end"]})
-    return json.dumps({"duration": 0, "size": os.path.getsize(fp)})
+        if dur_sec > 0:
+            return json.dumps({"duration": dur_sec, "size": tr["audio_end"]})
+    dur_sec = 0.0
+    try:
+        ff_bin = find_ffmpeg_binary()
+        pr = subprocess.run([ff_bin, '-hide_banner', '-i', fp], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6)
+        raw = (pr.stderr or "") + (pr.stdout or "")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+        if m:
+            dur_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+    return json.dumps({"duration": dur_sec, "size": os.path.getsize(fp)})
 
 
 @route('/api/pcm_chunk_v71/<filename:path>')
@@ -1544,94 +1556,21 @@ def save_test_slices():
 
 
 # ==============================================================================
-# 🎮 JENNY V88: KHINSIDER GAME OST DOWNLOADER + DIRECT XFLAC CONVERTER
+# 🎮 JENNY V88.2: HYBRID GAME OST ENGINE (ARCHIVE.ORG LOSSLESS + KHINSIDER PROXY)
 # ==============================================================================
 import urllib.request
 import urllib.parse
 from html import unescape as _html_unescape
 
-KHINSIDER_BASE_URL = "https://downloads.khinsider.com"
-KHINSIDER_HEADERS = {
+OST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
+    "Accept": "application/json,text/html,application/xhtml+xml,*/*;q=0.8"
 }
 
-def _kh_fetch_html_v88(url: str, timeout: int = 20):
-    req = urllib.request.Request(url, headers=KHINSIDER_HEADERS)
+def _ost_fetch_json_v88(url: str, timeout: int = 18):
+    req = urllib.request.Request(url, headers=OST_HEADERS)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        final_url = resp.geturl()
-        raw = resp.read().decode("utf-8", errors="replace")
-    return raw, final_url
-
-def _kh_strip_tags_v88(s: str) -> str:
-    return re.sub(r"\s+", " ", _html_unescape(re.sub(r"<[^>]+>", "", s or ""))).strip()
-
-def _kh_parse_album_page_v88(html_text: str, slug: str):
-    title_m = re.search(r"<h2>([^<]+)</h2>", html_text, re.I)
-    album_title = _kh_strip_tags_v88(title_m.group(1)) if title_m else slug.replace("-", " ").title()
-
-    cover_url = ""
-    cov_m = re.search(r'<div[^>]+class="albumImage"[^>]*>\s*<a[^>]+href="([^"]+)"', html_text, re.I)
-    if cov_m:
-        cover_url = cov_m.group(1).strip()
-        if cover_url.startswith("/"):
-            cover_url = KHINSIDER_BASE_URL + cover_url
-
-    tbl_m = re.search(r'<table[^>]+id="songlist"[^>]*>(.*?)</table>', html_text, re.I | re.S)
-    table_html = tbl_m.group(1) if tbl_m else html_text
-    has_flac = bool(re.search(r">\s*FLAC\s*<", table_html, re.I))
-    has_mp3 = bool(re.search(r">\s*MP3\s*<", table_html, re.I)) or True
-
-    tracks = []
-    seen_paths = set()
-    for tr_m in re.finditer(r"<tr[^>]*>(.*?)</tr>", table_html, re.I | re.S):
-        row = tr_m.group(1)
-        if "songlist_header" in row or "songlist_footer" in row:
-            continue
-        link_m = re.search(r'<td[^>]+class="clickable-row"[^>]*>\s*<a[^>]+href="(/game-soundtracks/album/[^"]+\.mp3)"[^>]*>(.*?)</a>', row, re.I | re.S)
-        if not link_m:
-            link_m = re.search(r'<a[^>]+href="(/game-soundtracks/album/[^"]+\.mp3)"[^>]*>(.*?)</a>', row, re.I | re.S)
-        if not link_m:
-            continue
-        page_path = link_m.group(1).strip()
-        if page_path in seen_paths:
-            continue
-        seen_paths.add(page_path)
-        t_title = _kh_strip_tags_v88(link_m.group(2))
-        if not t_title:
-            continue
-
-        all_tds = [_kh_strip_tags_v88(x) for x in re.findall(r"<td[^>]*>(.*?)</td>", row, re.I | re.S)]
-        dur_str = ""
-        sizes = []
-        for cell in all_tds:
-            if re.match(r"^\d+:\d{2}$", cell):
-                dur_str = cell
-            elif re.match(r"^[\d.,]+\s*(?:MB|KB)$", cell, re.I):
-                sizes.append(cell)
-
-        mp3_sz = sizes[0] if len(sizes) >= 1 else ""
-        flac_sz = sizes[1] if len(sizes) >= 2 else ""
-
-        tracks.append({
-            "index": len(tracks) + 1,
-            "title": t_title,
-            "duration": dur_str,
-            "mp3_size": mp3_sz,
-            "flac_size": flac_sz,
-            "page_path": page_path
-        })
-
-    return {
-        "status": "ok",
-        "slug": slug,
-        "album_title": album_title,
-        "cover_url": cover_url,
-        "has_flac": has_flac,
-        "has_mp3": has_mp3,
-        "tracks": tracks
-    }
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 @post('/api/khinsider/search')
 def api_khinsider_search_v88():
@@ -1642,69 +1581,45 @@ def api_khinsider_search_v88():
         if not query:
             return json.dumps({"status": "error", "error": "Введите название игры или саундтрека"})
 
-        # Если вставлена прямая ссылка на альбом KHInsider
-        direct_m = re.search(r"/game-soundtracks/album/([a-zA-Z0-9_\-]+)", query)
-        if direct_m:
-            slug = direct_m.group(1)
-            html_text, _ = _kh_fetch_html_v88(f"{KHINSIDER_BASE_URL}/game-soundtracks/album/{slug}")
-            alb = _kh_parse_album_page_v88(html_text, slug)
-            return json.dumps({"status": "ok", "direct_album": alb, "albums": []})
+        # Ищем игровые саундтреки в открытой базе Archive.org (FLAC / MP3 без блокировок Cloudflare)
+        q_expr = f'(title:({query}) AND (soundtrack OR ost OR music OR score)) AND mediatype:(audio)'
+        api_url = (
+            f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q_expr)}"
+            f"&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
+        )
+        data = _ost_fetch_json_v88(api_url)
+        docs = data.get("response", {}).get("docs", [])
 
-        search_url = f"{KHINSIDER_BASE_URL}/search?search={urllib.parse.quote_plus(query)}"
-        html_text, final_url = _kh_fetch_html_v88(search_url)
-
-        # Если поиск сразу перенаправил на страницу единственного альбома
-        redir_m = re.search(r"/game-soundtracks/album/([a-zA-Z0-9_\-]+)$", final_url)
-        if redir_m:
-            slug = redir_m.group(1)
-            alb = _kh_parse_album_page_v88(html_text, slug)
-            return json.dumps({"status": "ok", "direct_album": alb, "albums": []})
+        # Если строгий фильтр дал мало результатов — расширяем поиск по аудио-разделу
+        if len(docs) < 3:
+            q_broad = f'({query} AND (ost OR soundtrack)) AND mediatype:(audio)'
+            api_url2 = (
+                f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q_broad)}"
+                f"&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
+            )
+            docs = _ost_fetch_json_v88(api_url2).get("response", {}).get("docs", [])
 
         albums = []
-        seen_slugs = set()
-        for tr_m in re.finditer(r"<tr[^>]*>(.*?)</tr>", html_text, re.I | re.S):
-            row = tr_m.group(1)
-            links = re.findall(r'<a[^>]+href="/game-soundtracks/album/([a-zA-Z0-9_\-]+)"[^>]*>(.*?)</a>', row, re.I | re.S)
-            if not links:
+        for d in docs:
+            ident = (d.get("identifier") or "").strip()
+            title = (d.get("title") or ident).strip()
+            if not ident:
                 continue
-            slug = links[0][0].strip()
-            if slug in seen_slugs:
-                continue
-            title = ""
-            for _, ltxt in links:
-                clean_t = _kh_strip_tags_v88(ltxt)
-                if clean_t:
-                    title = clean_t
-                    break
-            if not title:
-                continue
-            seen_slugs.add(slug)
-
-            img_m = re.search(r'<img[^>]+src="([^"]+)"', row, re.I)
-            thumb = img_m.group(1).strip() if img_m else ""
-            if thumb.startswith("/"):
-                thumb = KHINSIDER_BASE_URL + thumb
-
-            tds = [_kh_strip_tags_v88(x) for x in re.findall(r"<td[^>]*>(.*?)</td>", row, re.I | re.S)]
-            platforms = tds[2] if len(tds) > 2 else ""
-            alb_type = tds[3] if len(tds) > 3 else ""
-            year = tds[4] if len(tds) > 4 else ""
-
+            yr = str(d.get("year") or "")
+            dls = d.get("downloads") or 0
             albums.append({
-                "slug": slug,
+                "slug": f"ia:{ident}",
                 "title": title,
-                "thumb": thumb,
-                "platforms": platforms,
-                "type": alb_type,
-                "year": year
+                "thumb": f"https://archive.org/services/img/{ident}",
+                "platforms": "Archive.org Lossless/MP3",
+                "type": f"⬇ {dls}",
+                "year": yr
             })
-            if len(albums) >= 45:
-                break
 
         return json.dumps({"status": "ok", "albums": albums})
     except Exception as e:
         response.status = 500
-        return json.dumps({"status": "error", "error": f"Ошибка KHInsider: {e}"})
+        return json.dumps({"status": "error", "error": f"Ошибка поиска OST: {e}"})
 
 @post('/api/khinsider/album')
 def api_khinsider_album_v88():
@@ -1713,27 +1628,93 @@ def api_khinsider_album_v88():
         req = json.loads(request.body.read().decode('utf-8'))
         slug = (req.get('slug') or '').strip()
         if not slug:
-            return json.dumps({"status": "error", "error": "Не указан slug альбома"})
-        html_text, _ = _kh_fetch_html_v88(f"{KHINSIDER_BASE_URL}/game-soundtracks/album/{slug}")
-        return json.dumps(_kh_parse_album_page_v88(html_text, slug))
+            return json.dumps({"status": "error", "error": "Не указан идентификатор альбома"})
+
+        ident = slug[3:] if slug.startswith("ia:") else slug
+        meta = _ost_fetch_json_v88(f"https://archive.org/metadata/{urllib.parse.quote(ident)}")
+        m_info = meta.get("metadata") or {}
+        album_title = m_info.get("title") or ident
+        if isinstance(album_title, list):
+            album_title = album_title[0]
+
+        files = meta.get("files") or []
+        by_stem = {}
+        has_flac = False
+        has_mp3 = False
+
+        for fobj in files:
+            fn = fobj.get("name") or ""
+            low = fn.lower()
+            if not low.endswith((".flac", ".mp3", ".wav", ".ogg")):
+                continue
+            # Пропускаем 64kbps превью, если есть нормальные файлы
+            stem = os.path.splitext(fn)[0]
+            stem = re.sub(r"_vbr$", "", stem, flags=re.I)
+            rec = by_stem.setdefault(stem, {"title": fobj.get("title") or os.path.basename(stem), "duration": "", "flac_fn": "", "mp3_fn": "", "flac_size": "", "mp3_size": "", "track_no": fobj.get("track")})
+            if not rec["title"]:
+                rec["title"] = os.path.basename(stem)
+
+            length_raw = str(fobj.get("length") or "")
+            if length_raw and not rec["duration"]:
+                if ":" in length_raw:
+                    rec["duration"] = length_raw.split(".")[0]
+                else:
+                    try:
+                        sec_i = int(float(length_raw))
+                        rec["duration"] = f"{sec_i // 60}:{sec_i % 60:02d}"
+                    except Exception:
+                        pass
+
+            sz_b = int(fobj.get("size") or 0)
+            sz_str = f"{sz_b / (1024*1024):.1f} MB" if sz_b > 0 else ""
+
+            if low.endswith(".flac") or low.endswith(".wav"):
+                has_flac = True
+                rec["flac_fn"] = fn
+                rec["flac_size"] = sz_str
+            elif low.endswith(".mp3") or low.endswith(".ogg"):
+                has_mp3 = True
+                if not rec["mp3_fn"]:
+                    rec["mp3_fn"] = fn
+                    rec["mp3_size"] = sz_str
+
+        tracks = []
+        for idx, (stem, rec) in enumerate(sorted(by_stem.items(), key=lambda x: x[0]), 1):
+            dl_pack = json.dumps({
+                "ident": ident,
+                "flac": rec["flac_fn"],
+                "mp3": rec["mp3_fn"]
+            }, ensure_ascii=False)
+            tracks.append({
+                "index": idx,
+                "title": str(rec["title"]).strip(),
+                "duration": rec["duration"] or "—",
+                "mp3_size": rec["mp3_size"],
+                "flac_size": rec["flac_size"],
+                "page_path": dl_pack
+            })
+
+        return json.dumps({
+            "status": "ok",
+            "slug": slug,
+            "album_title": str(album_title),
+            "cover_url": f"https://archive.org/services/img/{ident}",
+            "has_flac": has_flac,
+            "has_mp3": has_mp3,
+            "tracks": tracks
+        })
     except Exception as e:
         response.status = 500
         return json.dumps({"status": "error", "error": f"Не удалось загрузить альбом: {e}"})
 
-def _kh_resolve_track_audio_urls_v88(page_path: str):
-    full_url = page_path if page_path.startswith("http") else (KHINSIDER_BASE_URL + page_path)
-    html_text, _ = _kh_fetch_html_v88(full_url)
-    flac_url, mp3_url = "", ""
-    for m in re.finditer(r'<a[^>]+href="(https?://[^"]+\.(flac|mp3))"[^>]*>', html_text, re.I):
-        u, ext = m.group(1), m.group(2).lower()
-        if ext == "flac" and not flac_url:
-            flac_url = u
-        elif ext == "mp3" and not mp3_url:
-            mp3_url = u
-    if not mp3_url:
-        aud_m = re.search(r'<audio[^>]+src="(https?://[^"]+)"', html_text, re.I)
-        if aud_m:
-            mp3_url = aud_m.group(1)
+def _ost_resolve_urls_from_pack_v88(page_path: str):
+    info = json.loads(page_path)
+    ident = info.get("ident") or ""
+    flac_fn = info.get("flac") or ""
+    mp3_fn = info.get("mp3") or ""
+    base_dl = f"https://archive.org/download/{urllib.parse.quote(ident)}/"
+    flac_url = (base_dl + urllib.parse.quote(flac_fn)) if flac_fn else ""
+    mp3_url = (base_dl + urllib.parse.quote(mp3_fn)) if mp3_fn else ""
     return {"flac_url": flac_url, "mp3_url": mp3_url}
 
 @post('/api/khinsider/resolve_stream')
@@ -1742,10 +1723,10 @@ def api_khinsider_resolve_stream_v88():
     try:
         req = json.loads(request.body.read().decode('utf-8'))
         page_path = (req.get('page_path') or '').strip()
-        urls = _kh_resolve_track_audio_urls_v88(page_path)
+        urls = _ost_resolve_urls_from_pack_v88(page_path)
         stream_url = urls["mp3_url"] or urls["flac_url"]
         if not stream_url:
-            return json.dumps({"status": "error", "error": "Прямая ссылка на аудио не найдена"})
+            return json.dumps({"status": "error", "error": "Прямая ссылка на поток не найдена"})
         return json.dumps({"status": "ok", "stream_url": stream_url, "urls": urls})
     except Exception as e:
         response.status = 500
@@ -1759,19 +1740,19 @@ def api_khinsider_download_track_v88():
         load_multi_dirs_v71()
         req = json.loads(request.body.read().decode('utf-8'))
         page_path = (req.get('page_path') or '').strip()
-        album_title = (req.get('album_title') or 'KHInsider OST').strip()
+        album_title = (req.get('album_title') or 'Game OST').strip()
         track_title = (req.get('track_title') or 'Track').strip()
         track_num = int(req.get('track_num') or 1)
         fmt_mode = (req.get('format_mode') or 'xflac_psycho').strip().lower()
 
-        urls = _kh_resolve_track_audio_urls_v88(page_path)
+        urls = _ost_resolve_urls_from_pack_v88(page_path)
         want_mp3_only = (fmt_mode == 'mp3')
         dl_url = (urls["mp3_url"] or urls["flac_url"]) if want_mp3_only else (urls["flac_url"] or urls["mp3_url"])
         if not dl_url:
             response.status = 404
-            return json.dumps({"status": "error", "error": "Ссылка на скачивание трека не найдена"})
+            return json.dumps({"status": "error", "error": "Ссылка на скачивание не найдена"})
 
-        src_ext = ".flac" if dl_url.lower().endswith(".flac") else ".mp3"
+        src_ext = ".flac" if ".flac" in dl_url.lower() else ".mp3"
         safe_alb = re.sub(r'[\\/:*?"<>|]+', '_', album_title).strip()[:42]
         safe_trk = re.sub(r'[\\/:*?"<>|]+', '_', track_title).strip()[:68]
         stem_name = f"{safe_alb} - {track_num:02d}. {safe_trk}"
@@ -1779,8 +1760,8 @@ def api_khinsider_download_track_v88():
         os.makedirs(MUSIC_DIR, exist_ok=True)
         tmp_dl = os.path.join(MUSIC_DIR, f"temp_final_khdl_{os.getpid()}{src_ext}")
 
-        dl_req = urllib.request.Request(dl_url, headers=KHINSIDER_HEADERS)
-        with urllib.request.urlopen(dl_req, timeout=90) as r_in, open(tmp_dl, "wb") as f_out:
+        dl_req = urllib.request.Request(dl_url, headers=OST_HEADERS)
+        with urllib.request.urlopen(dl_req, timeout=120) as r_in, open(tmp_dl, "wb") as f_out:
             shutil.copyfileobj(r_in, f_out)
 
         xflac_map = {
@@ -1813,13 +1794,12 @@ def api_khinsider_download_track_v88():
             shutil.move(tmp_dl, final_path)
             tmp_dl = None
 
-        # Записываем теги в базу Jenny, чтобы трек сразу попал в «💿 По альбомам»
         db = load_custom_tags_db_v74()
         db[final_name] = {
             "TITLE": track_title,
             "ARTIST": safe_alb,
             "ALBUM": album_title,
-            "GENRE": "Game OST (KHInsider)"
+            "GENRE": "Game OST"
         }
         save_custom_tags_db_v74(db)
         TRACK_META_CACHE_V71.pop(final_path, None)
