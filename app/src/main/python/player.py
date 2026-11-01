@@ -1619,7 +1619,11 @@ def api_khinsider_search_v88():
         query = (req.get('query') or '').strip()
         if not query:
             return json.dumps({"status": "error", "error": "Введите название игры"})
-        q_expr = f'(title:({query}) AND (soundtrack OR ost OR music OR score)) AND mediatype:(audio)'
+        mode = (req.get('mode') or 'ost').strip().lower()
+        if mode == 'archive':
+            q_expr = f'({query}) AND mediatype:(audio) AND NOT collection:(podcasts)'
+        else:
+            q_expr = f'(title:({query}) AND (soundtrack OR ost OR music OR score)) AND mediatype:(audio)'
         u1 = f"https://archive.org/advancedsearch.php?q={urllib.parse.quote_plus(q_expr)}&fl[]=identifier,title,year,downloads&sort[]=downloads+desc&rows=35&page=1&output=json"
         docs = _ost_fetch_json_v88(u1).get("response", {}).get("docs", [])
         if len(docs) < 3:
@@ -1770,7 +1774,7 @@ def api_khinsider_download_track_v88():
                 _OST_PROGRESS_V89.update({"downloaded_mb": cur_mb, "percent": pct, "message": f"⬇️ Загрузка {src_ext.upper()}: {cur_mb:.1f} / {tot_mb:.1f} MB ({pct}%)" if tot_mb > 0 else f"⬇️ Загрузка: {cur_mb:.1f} MB..."})
 
         xflac_map = {'xflac_lossless': (0, '_bitperfect.xflac'), 'xflac_psycho': (25, '_psycho.xflac'), 'xflac_ultra': (15, '_ultra.xflac'), 'xflac_hifi': (45, '_hifi.xflac')}
-        if fmt_mode in xflac_map:
+        if fmt_mode in xflac_map and src_ext in ('.flac', '.wav'):
             xf_mode, xf_suf = xflac_map[fmt_mode]
             final_name = f"{stem_name}{xf_suf}"
             final_path = os.path.join(MUSIC_DIR, final_name)
@@ -1981,14 +1985,13 @@ def api_radio_rec_stop_v91():
                 try: os.remove(fp)
                 except Exception: pass
 
-# ☁️ JENNY V92: SOUNDCLOUD ENGINE (FALLBACK KEYS + COOKIE/AUTH + ARCHIVE FALLBACK)
+# ☁️ JENNY V92: SOUNDCLOUD ENGINE (DESKTOP UA SCRAPER + COOKIE JAR + CHROME EXTRACTOR)
+import http.cookiejar
+
 SC_AUTH_FILE_V93 = os.path.join(DEFAULT_MUSIC_DIR, "jenny_sc_auth.json")
 _SC_CLIENT_ID_V92 = None
-_SC_FALLBACK_IDS_V93 = [
-    "iZIs9mchVcX5lhVRyQGGAYlNPVldzAoX",
-    "a3e059563d7fd3372b49b37f00a00bcf",
-    "2t9loNQH90kzJcsFCODdigxfp325aq4z"
-]
+_SC_COOKIE_JAR_V95 = http.cookiejar.CookieJar()
+_SC_DESKTOP_UA_V95 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 def _sc_load_auth_v93():
     if os.path.isfile(SC_AUTH_FILE_V93):
@@ -2010,15 +2013,20 @@ def api_sc_save_auth_v93():
         os.makedirs(DEFAULT_MUSIC_DIR, exist_ok=True)
         with open(SC_AUTH_FILE_V93, "w", encoding="utf-8") as f:
             json.dump({"cookie": cookie_str, "client_id": cid_str}, f, ensure_ascii=False)
-        if cid_str:
-            _SC_CLIENT_ID_V92 = cid_str
+        _SC_CLIENT_ID_V92 = cid_str if cid_str else None
         return json.dumps({"status": "ok"})
     except Exception as e:
         response.status = 500
         return json.dumps({"status": "error", "error": str(e)})
 
 def _sc_headers_v93():
-    h = dict(OST_HEADERS)
+    h = {
+        "User-Agent": _SC_DESKTOP_UA_V95,
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+        "Referer": "https://soundcloud.com/",
+        "Origin": "https://soundcloud.com"
+    }
     auth = _sc_load_auth_v93()
     if auth.get("cookie"):
         h["Cookie"] = auth["cookie"]
@@ -2027,42 +2035,36 @@ def _sc_headers_v93():
             h["Authorization"] = f"OAuth {m_oauth.group(1)}"
     return h
 
-def _sc_get_client_id_v92():
+def _sc_urlopen_v95(url: str, timeout: int = 10):
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_SC_COOKIE_JAR_V95))
+    req = urllib.request.Request(url, headers=_sc_headers_v93())
+    return opener.open(req, timeout=timeout)
+
+def _sc_get_client_id_v92(force_refresh: bool = False):
     global _SC_CLIENT_ID_V92
     auth = _sc_load_auth_v93()
-    if auth.get("client_id"):
+    if auth.get("client_id") and not force_refresh:
         return auth["client_id"]
-    if _SC_CLIENT_ID_V92:
+    if _SC_CLIENT_ID_V92 and not force_refresh:
         return _SC_CLIENT_ID_V92
-    try:
-        req = urllib.request.Request("https://soundcloud.com/discover", headers=_sc_headers_v93())
-        with urllib.request.urlopen(req, timeout=8) as r:
-            html = r.read().decode("utf-8", errors="ignore")
-        scripts = re.findall(r'src="(https://[^"]+sndcdn\.com/assets/[^"]+\.js)"', html)
-        for s_url in reversed(scripts[-6:]):
-            try:
-                sr = urllib.request.Request(s_url, headers=_sc_headers_v93())
-                with urllib.request.urlopen(sr, timeout=6) as resp:
-                    js_txt = resp.read().decode("utf-8", errors="ignore")
-                m = re.search(r'client_id\s*[:=]\s*"([a-zA-Z0-9]{32})"', js_txt)
-                if m:
-                    _SC_CLIENT_ID_V92 = m.group(1)
-                    return _SC_CLIENT_ID_V92
-            except Exception:
-                pass
-    except Exception:
-        pass
-    for cand in _SC_FALLBACK_IDS_V93:
+    for page_u in ("https://soundcloud.com/discover", "https://soundcloud.com"):
         try:
-            tu = f"https://api-v2.soundcloud.com/search/tracks?q=test&client_id={cand}&limit=1"
-            r = urllib.request.Request(tu, headers=_sc_headers_v93())
-            with urllib.request.urlopen(r, timeout=5) as resp:
-                if resp.status == 200:
-                    _SC_CLIENT_ID_V92 = cand
-                    return cand
+            with _sc_urlopen_v95(page_u, timeout=10) as r:
+                html = r.read().decode("utf-8", errors="ignore")
+            scripts = re.findall(r'src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"', html)
+            for s_url in reversed(scripts[-8:]):
+                try:
+                    with _sc_urlopen_v95(s_url, timeout=8) as sr:
+                        js_txt = sr.read().decode("utf-8", errors="ignore")
+                    m = re.search(r'client_id\s*[:=]\s*"([a-zA-Z0-9]{32})"', js_txt)
+                    if m:
+                        _SC_CLIENT_ID_V92 = m.group(1)
+                        return _SC_CLIENT_ID_V92
+                except Exception:
+                    pass
         except Exception:
             pass
-    return _SC_FALLBACK_IDS_V93[0]
+    raise RuntimeError("SoundCloud не отдал client_id (проверь соединение или вставь куки)")
 
 @post('/api/soundcloud/search')
 def api_soundcloud_search_v92():
@@ -2072,42 +2074,61 @@ def api_soundcloud_search_v92():
         q = (req.get("query") or "").strip()
         if not q:
             return json.dumps({"status": "error", "error": "Введите запрос"})
-        tracks = []
+        cid = _sc_get_client_id_v92(False)
+        u = f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit=30"
         try:
-            cid = _sc_get_client_id_v92()
-            u = f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit=30"
-            r = urllib.request.Request(u, headers=_sc_headers_v93())
-            with urllib.request.urlopen(r, timeout=10) as resp:
+            with _sc_urlopen_v95(u, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8", errors="replace"))
-            for idx, item in enumerate(data.get("collection") or [], 1):
-                trans = (item.get("media") or {}).get("transcodings") or []
-                prog_u = next((tr.get("url") for tr in trans if (tr.get("format") or {}).get("protocol") == "progressive"), "")
-                if not prog_u and trans:
-                    prog_u = trans[0].get("url") or ""
-                if not prog_u:
-                    continue
-                dur_s = int(item.get("duration") or 0) // 1000
-                art = (item.get("user") or {}).get("username") or "SoundCloud"
-                title = item.get("title") or f"Track {idx}"
-                full_t = f"{art} — {title}" if art.lower() not in title.lower() else title
-                b64_p = "sc:" + base64.urlsafe_b64encode(prog_u.encode("utf-8")).decode("ascii")
-                ex = _ost_find_existing_track_v89("SoundCloud", idx, full_t)
-                tracks.append({"index": idx, "title": full_t, "duration": f"{dur_s // 60}:{dur_s % 60:02d}", "mp3_size": "SC Stream", "page_path": b64_p, "downloaded": ex["exists"], "local_ext": ex["ext"], "local_size_mb": ex["size_mb"]})
         except Exception:
-            pass
-        return json.dumps({"status": "ok", "tracks": tracks, "need_auth": len(tracks) == 0}, ensure_ascii=False)
+            cid = _sc_get_client_id_v92(True)
+            u2 = f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit=30"
+            with _sc_urlopen_v95(u2, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+
+        tracks = []
+        for idx, item in enumerate(data.get("collection") or [], 1):
+            trans = (item.get("media") or {}).get("transcodings") or []
+            prog_u = next((tr.get("url") for tr in trans if (tr.get("format") or {}).get("protocol") == "progressive"), "")
+            if not prog_u and trans:
+                prog_u = trans[0].get("url") or ""
+            if not prog_u:
+                continue
+            dur_s = int(item.get("duration") or 0) // 1000
+            art = (item.get("user") or {}).get("username") or "SoundCloud"
+            title = item.get("title") or f"Track {idx}"
+            full_t = f"{art} — {title}" if art.lower() not in title.lower() else title
+            b64_p = "sc:" + base64.urlsafe_b64encode(prog_u.encode("utf-8")).decode("ascii")
+            ex = _ost_find_existing_track_v89("SoundCloud", idx, full_t)
+            tracks.append({"index": idx, "title": full_t, "duration": f"{dur_s // 60}:{dur_s % 60:02d}", "mp3_size": "MP3 Stream", "page_path": b64_p, "downloaded": ex["exists"], "local_ext": ex["ext"], "local_size_mb": ex["size_mb"]})
+        return json.dumps({"status": "ok", "tracks": tracks}, ensure_ascii=False)
     except Exception as e:
-        response.status = 500
-        return json.dumps({"status": "error", "error": str(e)})
+        return json.dumps({"status": "ok", "tracks": [], "err": str(e)}, ensure_ascii=False)
 
 def _sc_resolve_direct_url_v92(page_path: str) -> str:
     api_u = base64.urlsafe_b64decode(page_path[3:].encode("ascii")).decode("utf-8")
-    cid = _sc_get_client_id_v92()
+    cid = _sc_get_client_id_v92(False)
     sep = "&" if "?" in api_u else "?"
-    r = urllib.request.Request(f"{api_u}{sep}client_id={cid}", headers=_sc_headers_v93())
-    with urllib.request.urlopen(r, timeout=10) as resp:
+    with _sc_urlopen_v95(f"{api_u}{sep}client_id={cid}", timeout=10) as resp:
         j = json.loads(resp.read().decode("utf-8", errors="replace"))
     return j.get("url") or ""
+
+@post('/api/sources/kill_all')
+def api_sources_kill_all_v94():
+    response.content_type = 'application/json'
+    try:
+        if "_RADIO_REC_V91" in globals():
+            _RADIO_REC_V91["stop_flag"] = True
+            _RADIO_REC_V91["active"] = False
+            proc = _RADIO_REC_V91.get("proc")
+            if proc and hasattr(proc, "poll") and proc.poll() is None:
+                try: proc.kill()
+                except Exception: pass
+        if "_OST_PROGRESS_V89" in globals():
+            _OST_PROGRESS_V89.update({"active": False, "stage": "idle", "percent": 0, "message": ""})
+        cleanup_stale_temps(MUSIC_DIR)
+        return json.dumps({"status": "ok"})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
 
 def start_server():
     load_saved_music_dir()

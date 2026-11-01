@@ -5023,3 +5023,275 @@ setTimeout(() => {
     window.renderHeaderSourcesHubV91();
     window.renderSourcesSettingsSectionV91();
 }, 250);
+
+// === 🔌 JENNY V94: MASTER KILL SWITCH ДЛЯ ВСЕХ ИСТОЧНИКОВ И ФОНОВЫХ ПОТОКОВ ===
+window.killAllSourceModulesV94 = async function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+
+    // 1. Останавливаем все звуки и таймеры на клиенте
+    if (typeof window.stopKhPreviewV88 === 'function') window.stopKhPreviewV88();
+    if (typeof window.stopFlacRadioStreamV91 === 'function') window.stopFlacRadioStreamV91();
+    if (typeof window.stopKhProgressPollV89 === 'function') window.stopKhProgressPollV89();
+
+    if (window._khStateV88) {
+        window._khStateV88.abortDownload = true;
+        window._khStateV88.isDownloading = false;
+    }
+    if (window._radioStateV91) {
+        if (window._radioStateV91.recTimer) clearInterval(window._radioStateV91.recTimer);
+        window._radioStateV91.isRecording = false;
+        window._radioStateV91.currentStation = null;
+    }
+
+    // 2. Жёстко сносим все окна модулей из DOM (не скрываем, а полностью выгружаем)
+    [
+        'jennyKhinsiderModalV88',
+        'jennyFlacRadioModalV91',
+        'jennySoundCloudModalV93',
+        'jennyTorrentModalV91'
+    ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    });
+
+    const menu = document.getElementById('jennySourcesDropMenuV91');
+    if (menu) menu.style.display = 'none';
+
+    // 3. Гасим серверные потоки записи/закачки
+    try { await fetch('/api/sources/kill_all', { method: 'POST' }); } catch (e) {}
+
+    if (typeof window.showToast === 'function') {
+        window.showToast('🔌 Все внешние модули и потоки жёстко выгружены');
+    }
+};
+
+(function hookDropdownKillSwitchV94() {
+    const origToggle = window.toggleSourcesDropdownMenuV91;
+    if (typeof origToggle !== 'function' || window._killSwitchHookedV94) return;
+    window._killSwitchHookedV94 = true;
+
+    window.toggleSourcesDropdownMenuV91 = function(ev) {
+        const res = origToggle.apply(this, arguments);
+        const menu = document.getElementById('jennySourcesDropMenuV91');
+        if (menu && menu.style.display === 'flex' && !document.getElementById('btnKillAllSourcesV94')) {
+            const activeDomCnt = [
+                'jennyKhinsiderModalV88',
+                'jennyFlacRadioModalV91',
+                'jennySoundCloudModalV93',
+                'jennyTorrentModalV91'
+            ].filter(id => Boolean(document.getElementById(id))).length;
+
+            const isPlayingStream = Boolean(
+                (window._khStateV88 && window._khStateV88.previewAudio && !window._khStateV88.previewAudio.paused) ||
+                (window._radioStateV91 && window._radioStateV91.audio && !window._radioStateV91.audio.paused) ||
+                (window._khStateV88 && window._khStateV88.isDownloading) ||
+                (window._radioStateV91 && window._radioStateV91.isRecording)
+            );
+
+            const statusLabel = (activeDomCnt > 0 || isPlayingStream)
+                ? `В фоне: ${activeDomCnt}${isPlayingStream ? ' • 🔊 АКТИВЕН' : ''}`
+                : 'Всё чисто';
+
+            const killBtn = document.createElement('button');
+            killBtn.type = 'button';
+            killBtn.id = 'btnKillAllSourcesV94';
+            killBtn.onclick = (e) => window.killAllSourceModulesV94(e);
+            killBtn.style.cssText = 'margin-top:4px;width:100%;padding:8px 10px;border-radius:8px;background:linear-gradient(90deg,rgba(218,54,51,0.25),rgba(115,65,190,0.2));border:1px solid #ff7b72;color:#ff7b72;font-size:11.5px;font-weight:900;display:flex;justify-content:space-between;align-items:center;cursor:pointer;';
+            killBtn.innerHTML = `<span>🔌 ВЫРУБИТЬ ВСЕ МОДУЛИ</span><span style="font-size:10px;color:#e6edf3;background:rgba(0,0,0,0.45);padding:2px 6px;border-radius:5px;">${statusLabel}</span>`;
+            menu.appendChild(killBtn);
+        }
+        return res;
+    };
+})();
+
+// === 🎮🏛️ JENNY V95: SEPARATE OST & ARCHIVE MODES + CUSTOM '+' CHIPS + CHROME COOKIE GRABBER ===
+window._khStateV88 = window._khStateV88 || {};
+window._khStateV88.currentSourceMode = 'ost'; // 'ost' | 'archive'
+
+window.DEFAULT_OST_CHIPS_V95 = ['Gothic', 'Fallout', 'Silent Hill', 'Doom', 'Need for Speed', 'Witcher', 'Heroes III', 'GTA'];
+window.DEFAULT_ARCHIVE_CHIPS_V95 = ['Pink Floyd', 'Linkin Park', 'Eminem', 'The Prodigy', 'Metallica', 'Depeche Mode', 'Synthwave FLAC', 'Live Concert'];
+
+window.getCustomSourceChipsV95 = function(mode) {
+    window.appConfig = window.appConfig || {};
+    const key = (mode === 'archive') ? 'customArchiveChipsV95' : 'customOstChipsV95';
+    const def = (mode === 'archive') ? window.DEFAULT_ARCHIVE_CHIPS_V95 : window.DEFAULT_OST_CHIPS_V95;
+    if (!Array.isArray(window.appConfig[key]) || window.appConfig[key].length === 0) {
+        window.appConfig[key] = [...def];
+    }
+    return window.appConfig[key];
+};
+
+window.addCustomSourceChipV95 = function() {
+    const mode = window._khStateV88.currentSourceMode || 'ost';
+    const key = (mode === 'archive') ? 'customArchiveChipsV95' : 'customOstChipsV95';
+    const inp = document.getElementById('khSearchInpV88');
+    let val = prompt(
+        mode === 'archive' ? 'Добавить исполнителя / тег в быстрый список:' : 'Добавить свою игру в быстрый список:',
+        (inp && inp.value.trim()) ? inp.value.trim() : ''
+    );
+    if (!val || !val.trim()) return;
+    val = val.trim();
+    const list = window.getCustomSourceChipsV95(mode);
+    if (!list.includes(val)) {
+        list.unshift(val);
+        window.appConfig[key] = list;
+        localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    }
+    window.renderKhQuickChipsStripV95();
+    if (inp) {
+        inp.value = val;
+        window.runKhSearchV88();
+    }
+};
+
+window.removeCustomSourceChipV95 = function(name, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const mode = window._khStateV88.currentSourceMode || 'ost';
+    const key = (mode === 'archive') ? 'customArchiveChipsV95' : 'customOstChipsV95';
+    if (!confirm(`Удалить кнопку «${name}» из быстрого списка?`)) return;
+    window.appConfig[key] = window.getCustomSourceChipsV95(mode).filter(x => x !== name);
+    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.renderKhQuickChipsStripV95();
+};
+
+window.renderKhQuickChipsStripV95 = function() {
+    const strip = document.getElementById('khQuickChipsBarV95');
+    if (!strip) return;
+    const mode = window._khStateV88.currentSourceMode || 'ost';
+    const icon = (mode === 'archive') ? '🏛️' : '🎮';
+    const accent = (mode === 'archive') ? '#79c0ff' : '#3fb950';
+    const list = window.getCustomSourceChipsV95(mode);
+
+    const addBtn = `<button type="button" onclick="window.addCustomSourceChipV95()" title="Добавить свою кнопку в список" style="padding:3px 9px;font-size:11.5px;border-radius:12px;background:rgba(63,185,80,0.2);border:1px solid ${accent};color:${accent};font-weight:900;flex-shrink:0;">➕</button>`;
+    const chipsHtml = list.map(g => {
+        const safeG = String(g).replace(/'/g, "\'");
+        return `<div style="display:inline-flex;align-items:center;background:#11161d;border:1px solid #30363d;border-radius:12px;flex-shrink:0;overflow:hidden;">
+            <button type="button" onclick="document.getElementById('khSearchInpV88').value='${safeG}';window.runKhSearchV88();" style="padding:3px 7px;font-size:10.5px;background:transparent;border:none;color:#79c0ff;white-space:nowrap;box-shadow:none;">${icon} ${g}</button>
+            <button type="button" onclick="window.removeCustomSourceChipV95('${safeG}', event)" title="Удалить" style="padding:3px 5px;font-size:9px;background:transparent;border:none;color:#8b949e;box-shadow:none;">✖</button>
+        </div>`;
+    }).join('');
+    strip.innerHTML = addBtn + chipsHtml;
+};
+
+// Переключаем стиль, заголовок, быстрые кнопки и режим поиска между «🎮 GAME OST» и «🏛️ LOSSLESS АРХИВЫ»
+window.applyKhModalModeThemeV95 = function(mode) {
+    window._khStateV88.currentSourceMode = mode || 'ost';
+    const m = document.getElementById('jennyKhinsiderModalV88');
+    if (!m) return;
+    const hdr = m.querySelector('.jenny-modal-hdr-v71');
+    const titleSpan = hdr ? hdr.querySelector('span') : null;
+    const inp = document.getElementById('khSearchInpV88');
+
+    const firstRowWithChips = m.querySelector('div[style*="overflow-x:auto"]');
+    if (firstRowWithChips && !firstRowWithChips.id) {
+        firstRowWithChips.id = 'khQuickChipsBarV95';
+    }
+
+    if (mode === 'archive') {
+        if (hdr) hdr.style.background = 'linear-gradient(90deg, rgba(121,192,255,0.24), rgba(163,113,247,0.24))';
+        if (titleSpan) {
+            titleSpan.style.color = '#79c0ff';
+            titleSpan.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.archive}<span>LOSSLESS АРХИВЫ И КОНЦЕРТЫ</span></span>`;
+        }
+        if (inp) inp.placeholder = 'Артист, альбом, концерт или винил-рип (Pink Floyd, Eminem...)';
+    } else {
+        if (hdr) hdr.style.background = 'linear-gradient(90deg, rgba(63,185,80,0.22), rgba(115,65,190,0.25))';
+        if (titleSpan) {
+            titleSpan.style.color = '#3fb950';
+            titleSpan.innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;">${window.JENNY_NEON_SVGS_V92.ost}<span>GAME OST ➔ XFLAC СТУДИЯ</span></span>`;
+        }
+        if (inp) inp.placeholder = 'Игра (Gothic, Fallout, Silent Hill, Witcher...)';
+    }
+    window.renderKhQuickChipsStripV95();
+};
+
+const _origOpenKhV88 = window.openKhinsiderModalV88;
+window.openKhinsiderModalV88 = function(ev, modeOverride) {
+    const targetMode = modeOverride || window._khStateV88.currentSourceMode || 'ost';
+    const existing = document.getElementById('jennyKhinsiderModalV88');
+    const prevMode = window._khStateV88.currentSourceMode;
+    if (existing) {
+        const isHidden = (existing.style.display === 'none' || getComputedStyle(existing).display === 'none');
+        if (isHidden) {
+            window.closeAllV71Modals();
+            existing.style.setProperty('display', 'flex', 'important');
+            window.applyKhModalModeThemeV95(targetMode);
+        } else if (prevMode !== targetMode) {
+            window.applyKhModalModeThemeV95(targetMode);
+        } else {
+            window.minimizeKhinsiderModalV88();
+        }
+        return;
+    }
+    _origOpenKhV88.call(this, ev);
+    window.applyKhModalModeThemeV95(targetMode);
+};
+
+window.runKhSearchV88 = async function() {
+    const inp = document.getElementById('khSearchInpV88');
+    const body = document.getElementById('khBodyContentV88');
+    const ftr = document.getElementById('khFooterBarV88');
+    if (!inp || !body) return;
+    const q = inp.value.trim();
+    if (!q) return;
+    const mode = window._khStateV88.currentSourceMode || 'ost';
+    window._khStateV88.lastQuery = q;
+    if (ftr) ftr.style.display = 'none';
+    body.innerHTML = `<div style="color:#58a6ff;text-align:center;padding:35px 10px;">⏳ Поиск «${q}» (${mode === 'archive' ? 'Lossless Архивы' : 'Game OST'})...</div>`;
+    try {
+        const res = await fetch('/api/khinsider/search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, mode: mode })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== 'ok') throw new Error(data.error || 'Ошибка поиска');
+        window._khStateV88.lastAlbums = data.albums || [];
+        window._khStateV88.currentAlbum = null;
+        window.renderKhAlbumsListV88();
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 10px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+// Авто-экстрактор куки SoundCloud для Android Chrome без консоли разработчика
+window.copyScChromeBookmarkletV95 = async function() {
+    const code = "javascript:navigator.clipboard.writeText(document.cookie).then(()=>alert('Куки SoundCloud скопированы! Вернись в JennyPlayer'));";
+    if (typeof window.copyTextToClipboard === 'function') await window.copyTextToClipboard(code);
+    if (typeof window.showToast === 'function') window.showToast('📋 Код скопирован! Вставь его в адресную строку Chrome на вкладке SoundCloud');
+};
+
+window.pasteScCookieFromClipboardV95 = async function() {
+    try {
+        const txt = await navigator.clipboard.readText();
+        const inp = document.getElementById('scCookieInpV93');
+        if (inp && txt) {
+            inp.value = txt.trim();
+            await window.saveScAuthCookieV93();
+        }
+    } catch (e) {
+        if (typeof window.showToast === 'function') window.showToast('Вставь скопированные куки в текстовое поле вручную');
+    }
+};
+
+const _origOpenScV92 = window.openSoundCloudModalV92;
+window.openSoundCloudModalV92 = function(ev) {
+    _origOpenScV92.call(this, ev);
+    const authBox = document.getElementById('scAuthDropBoxV93');
+    if (authBox && !authBox.getAttribute('data-v95')) {
+        authBox.setAttribute('data-v95', '1');
+        authBox.innerHTML = `
+            <div style="font-size:11px;color:#e6edf3;line-height:1.35;">
+                <b>Как вытащить куки из Chrome на Android без консоли:</b><br>
+                1. Нажми <b>«📋 Код-экстрактор»</b>.<br>
+                2. Открой <code style="color:#ff8c42;">soundcloud.com</code> в обычном Chrome, вставь код в адресную строку (убедись, что в начале написано <code style="color:#3fb950;">javascript:</code>) и нажми Перейти.<br>
+                3. Вернись сюда и нажми <b>«📥 Вставить куки и подключить»</b>:
+            </div>
+            <div style="display:flex;gap:6px;">
+                <button type="button" onclick="window.copyScChromeBookmarkletV95()" style="flex:1;padding:6px;background:#ff8c42;color:#000;border:none;border-radius:6px;font-weight:bold;font-size:11px;">📋 1. Код-экстрактор</button>
+                <button type="button" onclick="window.pasteScCookieFromClipboardV95()" style="flex:1;padding:6px;background:#238636;color:#fff;border:none;border-radius:6px;font-weight:bold;font-size:11px;">📥 2. Вставить из буфера</button>
+            </div>
+            <input type="text" id="scCookieInpV93" placeholder="Или вставь Cookie / oauth_token сюда..." style="padding:6px 8px;font-size:11px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:6px;text-align:left !important;">
+            <button type="button" onclick="window.saveScAuthCookieV93()" style="padding:6px;background:#1f6feb;color:#fff;border:none;border-radius:6px;font-weight:bold;font-size:11px;">💾 Сохранить и обновить поиск</button>
+        `;
+    }
+};
