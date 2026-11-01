@@ -8517,3 +8517,269 @@ window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
     }
     return await _origStartSelDlV112.apply(this, arguments);
 };
+
+// === 💡 JENNY V118.1: DID-YOU-MEAN ALTERNATIVES BAR IN TORRENT STUDIO ===
+window.applyTorrentAlternativeQueryV118 = function(altQuery, forceExact) {
+    const inp = document.getElementById('torMagnetInpV91');
+    if (!inp) return;
+    inp.value = altQuery;
+    if (forceExact !== undefined && window._torStateV96) {
+        window._torStateV96.exactSearch = Boolean(forceExact);
+        if (typeof window.renderTorrentFilterBarV99 === 'function') {
+            window.renderTorrentFilterBarV99();
+        }
+    }
+    window.runTorrentActionV96();
+};
+
+window.renderDidYouMeanBannerV118 = function(origQuery, correctedQuery, alternatives) {
+    const stLine = document.getElementById('torStatusLineV96');
+    if (!stLine || !stLine.parentNode) return;
+    let box = document.getElementById('torDidYouMeanBoxV118');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'torDidYouMeanBoxV118';
+        box.style.cssText = 'display:none;flex-direction:column;gap:4px;padding:6px 8px;margin-top:2px;background:#0d131f;border:1px solid rgba(88,166,255,0.4);border-radius:8px;font-size:11px;color:#e6edf3;';
+        stLine.parentNode.insertBefore(box, stLine.nextSibling);
+    }
+
+    const activeSearch = correctedQuery || origQuery;
+    const alts = Array.isArray(alternatives) ? alternatives.filter(a => a && a.toLowerCase() !== activeSearch.toLowerCase()) : [];
+    const wasCorrected = Boolean(correctedQuery && correctedQuery.toLowerCase() !== origQuery.toLowerCase());
+
+    if (!wasCorrected && alts.length === 0) {
+        box.style.display = 'none';
+        return;
+    }
+
+    const chips = [];
+    alts.slice(0, 3).forEach(a => {
+        const safeA = String(a).replace(/'/g, "\\'");
+        chips.push(`<button type="button" onclick="window.applyTorrentAlternativeQueryV118('${safeA}', false)" style="padding:2px 7px;font-size:10.5px;border-radius:6px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#79c0ff;font-weight:bold;">🎵 ${a}</button>`);
+    });
+    if (wasCorrected) {
+        const safeOrig = String(origQuery).replace(/'/g, "\\'");
+        chips.push(`<button type="button" onclick="window.applyTorrentAlternativeQueryV118('${safeOrig}', true)" style="padding:2px 7px;font-size:10.5px;border-radius:6px;background:#161b22;border:1px solid #30363d;color:#8b949e;">📝 «${origQuery}» (без испр.)</button>`);
+    }
+
+    box.style.display = 'flex';
+    box.innerHTML = `
+        <div style="color:#c9d1d9;">🔎 Поиск по: <b style="color:#3fb950;">«${activeSearch}»</b></div>
+        ${chips.length > 0 ? `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span style="color:#8b949e;">💡 Возможно, вы имели в виду:</span>${chips.join('<span style="color:#6e7681;font-size:10px;">или</span>')}</div>` : ''}
+    `;
+};
+
+// Перехватываем runTorrentActionV96 для показа плашки "Поиск по ... Возможно, вы имели в виду ..."
+const _origRunTorV118 = window.runTorrentActionV96;
+window.runTorrentActionV96 = async function() {
+    const box = document.getElementById('torDidYouMeanBoxV118');
+    if (box) box.style.display = 'none';
+
+    const inp = document.getElementById('torMagnetInpV91');
+    const body = document.getElementById('torBodyListV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    if (!inp || !body) return;
+    const val = inp.value.trim();
+    if (!val || val.toLowerCase().startsWith('magnet:?')) {
+        return _origRunTorV118.apply(this, arguments);
+    }
+
+    window.renderTorrentFilterBarV99();
+    if (typeof window.injectTorrentFileBtnInHeaderV113 === 'function') {
+        window.injectTorrentFileBtnInHeaderV113();
+    }
+    if (ftr) ftr.style.display = 'none';
+    const ts = window._torStateV96;
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase();
+    body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Поиск раздач «${val}» [${fmtLabel}]...</div>`;
+
+    try {
+        const res = await fetch('/api/torrent/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: val,
+                format_tag: ts.formatTag || 'all',
+                exact: Boolean(ts.exactSearch),
+                hide_zero: Boolean(ts.hideZeroSeeds),
+                min_two_seeds: Boolean(ts.minTwoSeeds)
+            })
+        });
+        const d = await res.json();
+        const list = d.results || [];
+        const hidCnt = d.hidden_zero || 0;
+        const seedFilterLbl = ts.minTwoSeeds ? '<2 сидов' : '0 сидов';
+
+        window.renderDidYouMeanBannerV118(val, d.corrected_query || '', d.alternatives || []);
+
+        if (stEl) {
+            stEl.innerText = `📋 [${fmtLabel}] Живых раздач: ${list.length}` + (hidCnt > 0 ? ` (скрыто с ${seedFilterLbl}: ${hidCnt})` : '');
+        }
+        if (!list.length) {
+            body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;">В формате <b>${fmtLabel}</b> раздач не найдено${hidCnt > 0 ? ` (скрыто ${hidZero} раздач с ${seedFilterLbl})` : ''}. Попробуй выбрать один из вариантов выше, снять галочку <b>👥 >= 2 сидов</b> или нажать <b>🌐 ВСЕ</b>.</div>`;
+            return;
+        }
+        window._torSearchResultsV96 = list;
+        body.innerHTML = list.map((r, i) => {
+            const bh = window.extractBtihFromMagnetV112 ? window.extractBtihFromMagnetV112(r.magnet) : '';
+            return `<div id="torSearchCardV112_${bh}" onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
+                <div style="flex:1;min-width:0;">
+                    <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
+                    <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                    <div class="tor-search-live-badge-v112" style="display:none;font-size:10px;font-weight:bold;margin-top:3px;"></div>
+                </div>
+                <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
+            </div>`;
+        }).join('');
+        if (typeof window.updateSearchCardsWithLiveMapBadgesV112 === 'function') {
+            window.updateSearchCardsWithLiveMapBadgesV112();
+        }
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:20px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+// === 🧠 JENNY V119: MULTI-VARIANT COLLAPSIBLE TORRENT GROUPS RENDERER ===
+window.renderTorrentMultiGroupsHTMLV119 = function(groups, flatResults) {
+    window._torSearchResultsV96 = [];
+    const registerItem = (r) => {
+        const idx = window._torSearchResultsV96.length;
+        window._torSearchResultsV96.push(r);
+        const bh = window.extractBtihFromMagnetV112 ? window.extractBtihFromMagnetV112(r.magnet) : '';
+        return `<div id="torSearchCardV112_${bh}" onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${idx}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;margin-top:6px;">
+            <div style="flex:1;min-width:0;">
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                <div class="tor-search-live-badge-v112" style="display:none;font-size:10px;font-weight:bold;margin-top:3px;"></div>
+            </div>
+            <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
+        </div>`;
+    };
+
+    if (!Array.isArray(groups) || groups.length === 0) {
+        return (flatResults || []).map(r => registerItem(r)).join('');
+    }
+
+    // Если всего 1 вариант — выводим с шапкой "Поиск по: ..."
+    let html = '';
+    const primary = groups[0];
+    const primaryCards = (primary.results || []).map(r => registerItem(r)).join('');
+
+    html += `
+        <details open style="background:#080c14;border:1px solid #3fb950;border-radius:10px;padding:7px 9px;">
+            <summary style="cursor:pointer;color:#3fb950;font-weight:900;font-size:12px;display:flex;justify-content:space-between;align-items:center;outline:none;">
+                <span>🔎 Поиск по: «${primary.query}»</span>
+                <span style="font-size:10.5px;background:rgba(63,185,80,0.18);padding:2px 7px;border-radius:8px;color:#e6edf3;">раздач: ${primary.results.length}</span>
+            </summary>
+            <div style="margin-top:4px;">${primaryCards}</div>
+        </details>
+    `;
+
+    if (groups.length > 1) {
+        html += `<div style="font-size:11px;color:#58a6ff;font-weight:900;padding:4px 4px 0 4px;">💡 Возможно, вы имели в виду (готовые списки):</div>`;
+        for (let i = 1; i < groups.length; i++) {
+            const g = groups[i];
+            const gCards = (g.results || []).map(r => registerItem(r)).join('');
+            const prefixWord = (i > 1) ? '<span style="color:#8b949e;font-weight:normal;margin-right:4px;">или</span>' : '';
+            html += `
+                <details style="background:#080c14;border:1px solid #30363d;border-radius:10px;padding:7px 9px;">
+                    <summary style="cursor:pointer;color:#d2a8ff;font-weight:900;font-size:12px;display:flex;justify-content:space-between;align-items:center;outline:none;">
+                        <span>${prefixWord}✨ «${g.query}»</span>
+                        <span style="font-size:10.5px;background:rgba(210,168,255,0.15);padding:2px 7px;border-radius:8px;color:#e6edf3;">раздач: ${g.results.length}</span>
+                    </summary>
+                    <div style="margin-top:4px;">${gCards}</div>
+                </details>
+            `;
+        }
+    }
+    return html;
+};
+
+window.runTorrentActionV96 = async function() {
+    window.renderTorrentFilterBarV99();
+    if (typeof window.injectTorrentFileBtnInHeaderV113 === 'function') {
+        window.injectTorrentFileBtnInHeaderV113();
+    }
+    const inp = document.getElementById('torMagnetInpV91');
+    const body = document.getElementById('torBodyListV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    if (!inp || !body) return;
+    const val = inp.value.trim();
+    if (!val) return;
+    if (val.toLowerCase().startsWith('magnet:?')) {
+        await window.openMagnetInGoEngineV96(val);
+        return;
+    }
+
+    window._torScreenModeV112 = 'search';
+    const mySession = ++window._torViewSessionV112;
+    if (ftr) ftr.style.display = 'none';
+    const ts = window._torStateV96;
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase();
+    body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Мульти-поиск вариантов «${val}» [${fmtLabel}]...</div>`;
+
+    try {
+        const res = await fetch('/api/torrent/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: val,
+                format_tag: ts.formatTag || 'all',
+                exact: Boolean(ts.exactSearch),
+                hide_zero: Boolean(ts.hideZeroSeeds),
+                min_two_seeds: Boolean(ts.minTwoSeeds)
+            })
+        });
+        const d = await res.json();
+        if (mySession !== window._torViewSessionV112 || window._torScreenModeV112 === 'files') return;
+
+        const groups = d.groups || [];
+        const flatList = d.results || [];
+        const hidCnt = d.hidden_zero || 0;
+        const seedFilterLbl = ts.minTwoSeeds ? '<2 сидов' : '0 сидов';
+
+        if (!groups.length && !flatList.length) {
+            if (stEl) stEl.innerText = `📋 [${fmtLabel}] Живых раздач: 0`;
+            body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;">В формате <b>${fmtLabel}</b> раздач не найдено${hidCnt > 0 ? ` (скрыто ${hidCnt} раздач с ${seedFilterLbl})` : ''}. Попробуй снять галочку <b>👥 >= 2 сидов</b> или выбрать <b>🌐 ВСЕ</b>.</div>`;
+            return;
+        }
+
+        window._torSearchGroupsV119 = groups;
+        if (stEl) {
+            stEl.innerText = `📋 [${fmtLabel}] Вариантов: ${groups.length || 1} • Всего раздач: ${flatList.length}` + (hidCnt > 0 ? ` (скрыто: ${hidCnt})` : '');
+        }
+        body.innerHTML = window.renderTorrentMultiGroupsHTMLV119(groups, flatList);
+        if (typeof window.updateSearchCardsWithLiveMapBadgesV112 === 'function') {
+            window.updateSearchCardsWithLiveMapBadgesV112();
+        }
+    } catch (e) {
+        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:20px;">❌ ${e.message || e}</div>`;
+    }
+};
+
+// При нажатии "⬅ Раздачи" возвращаем все 5 раскрывающихся списков с сохранением статуса закачек
+const _origBackToTorListV113 = window.backToTorrentSearchListV97;
+window.backToTorrentSearchListV97 = function() {
+    if (window._torSearchGroupsV119 && window._torSearchGroupsV119.length > 0) {
+        window._torScreenModeV112 = 'search';
+        window._torViewSessionV112++;
+        const ftr = document.getElementById('torFooterBarV96');
+        if (ftr) ftr.style.display = 'none';
+        const body = document.getElementById('torBodyListV96');
+        const stEl = document.getElementById('torStatusLineV96');
+        const activeJobsCnt = Object.values(window._torMapV112 || {}).filter(j => j.dlActive).length;
+        if (stEl) {
+            stEl.innerText = `📋 Вариантов поиска: ${window._torSearchGroupsV119.length}` + (activeJobsCnt > 0 ? ` • 🔥 Качается в фоне: ${activeJobsCnt}` : '');
+        }
+        if (body) {
+            body.innerHTML = window.renderTorrentMultiGroupsHTMLV119(window._torSearchGroupsV119, []);
+            if (typeof window.updateSearchCardsWithLiveMapBadgesV112 === 'function') {
+                window.updateSearchCardsWithLiveMapBadgesV112();
+            }
+        }
+        return;
+    }
+    return _origBackToTorListV113.apply(this, arguments);
+};
