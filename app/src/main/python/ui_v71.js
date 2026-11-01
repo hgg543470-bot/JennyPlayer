@@ -7039,7 +7039,8 @@ window.runTorrentActionV96 = async function() {
         const hidCnt = d.hidden_zero || 0;
         const seedFilterLbl = ts.minTwoSeeds ? '<2 сидов' : '0 сидов';
         if (stEl) {
-            stEl.innerText = `📋 [${fmtLabel}] Живых раздач: ${list.length}` + (hidCnt > 0 ? ` (скрыто с ${seedFilterLbl}: ${hidCnt})` : '');
+            const corrBadge = d.corrected_query ? `✨ Исправлено: «${d.corrected_query}» • ` : '';
+            stEl.innerText = `${corrBadge}📋 [${fmtLabel}] Живых раздач: ${list.length}` + (hidCnt > 0 ? ` (скрыто с ${seedFilterLbl}: ${hidCnt})` : '');
         }
         if (!list.length) {
             body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;">В формате <b>${fmtLabel}</b> раздач не найдено${hidCnt > 0 ? ` (скрыто ${hidCnt} раздач с ${seedFilterLbl})` : ''}. Попробуй снять галочку <b>👥 >= 2 сидов</b> или выбрать <b>🌐 ВСЕ</b>.</div>`;

@@ -2399,6 +2399,49 @@ def ensure_jtorrent_daemon_v96():
 # Запускаем Go-демон заранее при старте сервера, чтобы DHT-таблица успела набрать пиров!
 threading.Thread(target=ensure_jtorrent_daemon_v96, daemon=True).start()
 
+def _smart_resolve_music_query_v115(raw_q: str) -> str:
+    """Исправляет опечатки (riana / rihana -> Rihanna) и транслит через Deezer API и Google Suggest."""
+    q_clean = raw_q.strip()
+    if len(q_clean) < 2:
+        return q_clean
+
+    # 1. Пробуем музыкальный поиск артистов/треков Deezer (отлично исправляет riana/rihana -> Rihanna)
+    try:
+        dz_u = f"https://api.deezer.com/search/artist?q={urllib.parse.quote(q_clean)}&limit=3"
+        req = urllib.request.Request(dz_u, headers=OST_HEADERS)
+        with urllib.request.urlopen(req, timeout=1.8) as r:
+            dz_data = json.loads(r.read().decode("utf-8", errors="ignore"))
+        artists = dz_data.get("data") or []
+        if artists and artists[0].get("name"):
+            cand = artists[0]["name"].strip()
+            # Если запрос состоял из 1-2 слов и похож на имя артиста
+            if len(q_clean.split()) <= 2 and cand.lower() != q_clean.lower():
+                return cand
+    except Exception:
+        pass
+
+    # 2. Пробуем автокоррекцию поисковых подсказок YouTube/Google
+    try:
+        sg_u = f"https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q={urllib.parse.quote(q_clean)}"
+        req = urllib.request.Request(sg_u, headers=OST_HEADERS)
+        with urllib.request.urlopen(req, timeout=1.5) as r:
+            sg_arr = json.loads(r.read().decode("utf-8", errors="ignore"))
+        if isinstance(sg_arr, list) and len(sg_arr) >= 2 and isinstance(sg_arr[1], list) and sg_arr[1]:
+            top_sug = str(sg_arr[1][0]).strip()
+            # Очищаем мусорные хвосты вроде "lyrics", "official video", "слушать"
+            top_sug = re.sub(r'\b(lyrics|official|video|audio|hd|клип|песни|слушать)\b', '', top_sug, flags=re.I).strip()
+            if top_sug and top_sug.lower() != q_clean.lower():
+                # Если искали одно слово (например, riana), а подсказка дала "rihanna diamonds", берём исправленное первое слово
+                if len(q_clean.split()) == 1 and len(top_sug.split()) > 1:
+                    first_w = top_sug.split()[0]
+                    if len(first_w) >= 3:
+                        return first_w
+                return top_sug
+    except Exception:
+        pass
+
+    return q_clean
+
 @post('/api/torrent/search')
 def api_torrent_search_v105():
     response.content_type = 'application/json'
@@ -2412,72 +2455,124 @@ def api_torrent_search_v105():
         if not q:
             return json.dumps({"status": "error", "error": "Пустой запрос"})
 
-        q_words = [w.lower() for w in re.split(r'\s+', q) if w]
         fmt_keywords = {
-            "flac": ["flac", "lossless"],
-            "wav":  ["wav", "wave", "pcm"],
-            "mp3":  ["mp3", "320", "cbr", "vbr"],
+            "flac": ["flac", "lossless", "24bit", "hi-res", "alac"],
+            "wav":  ["wav", "wave", "pcm", "lossless"],
+            "mp3":  ["mp3", "320", "cbr", "vbr", "mpeg"],
             "m4a":  ["m4a", "alac", "itunes", "aac"],
-            "aac":  ["aac", "m4a"],
-            "ogg":  ["ogg", "vorbis"]
+            "aac":  ["aac", "m4a", "mp4"],
+            "ogg":  ["ogg", "vorbis", "opus"]
         }
-        sq = f"{q} {fmt_tag.upper()}" if (fmt_tag in fmt_keywords and fmt_tag not in q.lower()) else q
-        raw_rows = []
-        try:
-            u = f"https://apibay.org/q.php?q={urllib.parse.quote(sq)}&cat=100"
-            raw_rows = _ost_fetch_json_v88(u, timeout=8) or []
-        except Exception:
-            pass
-        if (not raw_rows or (len(raw_rows) == 1 and raw_rows[0].get("name") == "No results returned")) and sq != q:
-            try:
-                u2 = f"https://apibay.org/q.php?q={urllib.parse.quote(q)}&cat=100"
-                raw_rows = _ost_fetch_json_v88(u2, timeout=8) or []
-            except Exception:
-                pass
 
-        trackers = [
-            "udp://tracker.opentrackr.org:1337/announce",
-            "udp://open.stealth.si:80/announce",
-            "udp://exodus.desync.com:6969/announce",
-            "udp://tracker.torrent.eu.org:451/announce",
-            "udp://explodie.org:6969/announce",
-            "udp://tracker.openbittorrent.com:6969/announce",
-            "udp://open.demonii.com:1337/announce",
-            "udp://tracker.moeking.me:6969/announce",
-            "udp://opentracker.io:6969/announce",
-            "http://tracker.opentrackr.org:1337/announce",
-            "http://open.acgnxtracker.com:80/announce",
-            "https://tracker.bt4g.com:443/announce"
-        ]
-        tr_query = "".join(f"&tr={urllib.parse.quote(t)}" for t in trackers)
+        corrected_q = q
+        if not exact_match:
+            corrected_q = _smart_resolve_music_query_v115(q)
+
+        # Строим список поисковых вариантов для apibay
+        queries_to_run = []
+        base_variants = [corrected_q]
+        if corrected_q.lower() != q.lower():
+            base_variants.append(q)
+
+        for bv in base_variants:
+            if fmt_tag in fmt_keywords and fmt_tag not in bv.lower():
+                queries_to_run.append(f"{bv} {fmt_tag.upper()}")
+            queries_to_run.append(bv)
+
+        # Убираем дубли, сохраняя порядок
+        unique_queries = []
+        for uq in queries_to_run:
+            if uq.lower() not in [x.lower() for x in unique_queries]:
+                unique_queries.append(uq)
+
+        def _fetch_apibay(search_str):
+            try:
+                u = f"https://apibay.org/q.php?q={urllib.parse.quote(search_str)}&cat=100"
+                rows = _ost_fetch_json_v88(u, timeout=7) or []
+                if len(rows) == 1 and rows[0].get("name") == "No results returned":
+                    return []
+                return rows
+            except Exception:
+                return []
+
+        from concurrent.futures import ThreadPoolExecutor
+        raw_rows = []
+        seen_hashes = set()
+
+        # Если включён Точный поиск — ищем строго без расширенных вариантов
+        active_queries = unique_queries[:1] if exact_match else unique_queries[:3]
+        with ThreadPoolExecutor(max_workers=len(active_queries)) as ex:
+            batches = list(ex.map(_fetch_apibay, active_queries))
+
+        for batch in batches:
+            for r in batch:
+                ih = (r.get("info_hash") or "").strip().lower()
+                nm = (r.get("name") or "").strip()
+                if not ih or ih == "0000000000000000000000000000000000000000" or nm == "No results returned":
+                    continue
+                if ih not in seen_hashes:
+                    seen_hashes.add(ih)
+                    raw_rows.append(r)
+
+        q_words_orig = [w.lower() for w in re.split(r'\s+', q) if w]
+        q_words_corr = [w.lower() for w in re.split(r'\s+', corrected_q) if w]
 
         results = []
         hidden_zero_cnt = 0
+        min_req_seeds = 2 if min_two_seeds else (1 if hide_zero else 0)
+
         for r in raw_rows:
-            ih = (r.get("info_hash") or "").strip()
+            ih = (r.get("info_hash") or "").strip().lower()
             nm = (r.get("name") or "").strip()
-            if not ih or ih == "0000000000000000000000000000000000000000" or nm == "No results returned":
-                continue
             seeds = int(r.get("seeders") or 0)
             peers = int(r.get("leechers") or 0)
             sz_mb = round(int(r.get("size") or 0) / (1024 * 1024), 1)
             nm_low = nm.lower()
 
-            if exact_match and not all(w in nm_low for w in q_words):
-                continue
-            if fmt_tag in fmt_keywords and sq == q:
-                if not any(tok in nm_low for tok in fmt_keywords[fmt_tag]):
+            if exact_match:
+                if not all(w in nm_low for w in q_words_orig):
                     continue
-            min_req_seeds = 2 if min_two_seeds else (1 if hide_zero else 0)
+                if fmt_tag in fmt_keywords and not any(tok in nm_low for tok in fmt_keywords[fmt_tag]):
+                    continue
+            else:
+                # В мягком режиме проверяем соответствие выбранному формату (если выбран конкретный тег, например FLAC или MP3)
+                if fmt_tag in fmt_keywords:
+                    has_fmt_tok = any(tok in nm_low for tok in fmt_keywords[fmt_tag])
+                    # Пропускаем раздачи с явно чужим форматом в названии
+                    other_fmts = [k for k in ("flac", "mp3", "wav", "m4a", "aac", "ogg") if k != fmt_tag]
+                    has_other_tok = any(of in nm_low for of in other_fmts)
+                    if not has_fmt_tok and has_other_tok:
+                        continue
+
             if seeds < min_req_seeds:
                 hidden_zero_cnt += 1
                 continue
 
-            mag = f"magnet:?xt=urn:btih:{ih}&dn={urllib.parse.quote(nm)}{tr_query}"
-            results.append({"title": nm, "size_mb": sz_mb, "seeders": seeds, "peers": peers, "magnet": mag})
+            base_mag = f"magnet:?xt=urn:btih:{ih}&dn={urllib.parse.quote(nm)}"
+            mag = enrich_magnet_with_cached_trackers_v109(base_mag) if "enrich_magnet_with_cached_trackers_v109" in globals() else base_mag
 
-        results.sort(key=lambda x: (x["seeders"], x["peers"]), reverse=True)
-        return json.dumps({"status": "ok", "results": results[:40], "hidden_zero": hidden_zero_cnt}, ensure_ascii=False)
+            # Бонус релевантности: раздачи с точным форматом в названии и большим числом сидов идут выше
+            fmt_match_bonus = 1 if (fmt_tag in fmt_keywords and any(tok in nm_low for tok in fmt_keywords[fmt_tag])) else 0
+            results.append({
+                "title": nm,
+                "size_mb": sz_mb,
+                "seeders": seeds,
+                "peers": peers,
+                "magnet": mag,
+                "_rank": (fmt_match_bonus, seeds, peers)
+            })
+
+        results.sort(key=lambda x: x["_rank"], reverse=True)
+        for item in results:
+            item.pop("_rank", None)
+
+        used_corr = corrected_q if corrected_q.lower() != q.lower() else ""
+        return json.dumps({
+            "status": "ok",
+            "results": results[:45],
+            "hidden_zero": hidden_zero_cnt,
+            "corrected_query": used_corr
+        }, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
