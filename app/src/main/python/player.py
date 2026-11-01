@@ -2416,311 +2416,74 @@ def ensure_jtorrent_daemon_v96():
 threading.Thread(target=ensure_jtorrent_daemon_v96, daemon=True).start()
 
 # ==============================================================================
-# 🧠 JENNY V120: SMART SONG->ARTIST RESOLVER + CYRILLIC RUTOR/BITSEARCH INDEXER
+# 🧠 JENNY V122: NATIVE GO OMNITORRENT ENGINE BRIDGE (libomnitorrent.so via ctypes)
 # ==============================================================================
-from concurrent.futures import ThreadPoolExecutor
+import ctypes
 
-_RU_EN_PHONETIC_DICT_V118 = {
-    "риана": "Rihanna", "рианна": "Rihanna", "рихана": "Rihanna", "риханна": "Rihanna",
-    "зиверт": "Zivert", "зеленые волны": "Zivert", "зелёные волны": "Zivert",
-    "продиджи": "The Prodigy", "металлика": "Metallica", "металика": "Metallica",
-    "рамштайн": "Rammstein", "раммштайн": "Rammstein", "нирвана": "Nirvana",
-    "эминем": "Eminem", "еминем": "Eminem", "линкин парк": "Linkin Park",
-    "депеш мод": "Depeche Mode", "пинк флойд": "Pink Floyd", "скорпионс": "Scorpions",
-    "квин": "Queen", "битлз": "The Beatles", "ас дс": "AC/DC", "ац дц": "AC/DC",
-    "дип перпл": "Deep Purple", "лед зеппелин": "Led Zeppelin", "оззи": "Ozzy Osbourne",
-    "корн": "Korn", "слипкнот": "Slipknot", "систем оф а даун": "System of a Down",
-    "ред хот": "Red Hot Chili Peppers", "дафт панк": "Daft Punk", "скриллекс": "Skrillex",
-    "кельвин харрис": "Calvin Harris", "дэвид гетта": "David Guetta",
-    "король и шут": "Король и Шут", "киш": "Король и Шут", "цой": "Кино Виктор Цой"
-}
+_OMNI_LIB_V122 = None
+_OMNI_LOCK_V122 = threading.Lock()
 
-_EN_TO_RU_KBD_V118 = str.maketrans(
-    "qwertyuiop[]asdfghjkl;'zxcvbnm,.",
-    "йцукенгшщзхъфывапролджэячсмитьбю"
-)
+def _get_omnitorrent_lib_v122():
+    global _OMNI_LIB_V122
+    if _OMNI_LIB_V122 is not None:
+        return _OMNI_LIB_V122
+    with _OMNI_LOCK_V122:
+        if _OMNI_LIB_V122 is not None:
+            return _OMNI_LIB_V122
 
-_RU_TO_EN_PHONETIC_MAP_V118 = {
-    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
-    'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
-    'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
-    'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch',
-    'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya'
-}
+        cand_paths = []
+        ff_dir = os.path.dirname(find_ffmpeg_binary())
+        if ff_dir:
+            cand_paths.append(os.path.join(ff_dir, "libomnitorrent.so"))
+        for env_k in ("JENNY_NATIVE_DIR", "LD_LIBRARY_PATH", "PATH"):
+            for d in os.environ.get(env_k, "").split(":"):
+                if d:
+                    cand_paths.append(os.path.join(d, "libomnitorrent.so"))
+        cand_paths.append("/data/data/com.termux/files/home/omnibuild/libomnitorrent.so")
+        cand_paths.append(os.path.abspath(os.path.join(BASE_DIR, "..", "jniLibs", "arm64-v8a", "libomnitorrent.so")))
 
-def _phonetic_skeleton_v118(text: str) -> str:
-    s = re.sub(r'[^a-zа-яё0-9\s]', '', text.lower()).replace('ё', 'е')
-    s = "".join(_RU_TO_EN_PHONETIC_MAP_V118.get(ch, ch) for ch in s)
-    s = s.replace("ph", "f").replace("ck", "k").replace("qu", "kw").replace("x", "ks")
-    s = re.sub(r'(?<![sctp])h', '', s)
-    s = s.replace('y', 'i').replace('w', 'v')
-    s = re.sub(r'(.)\1+', r'\1', s)
-    return s.strip()
-
-def _trigram_similarity_v118(a: str, b: str) -> float:
-    sa = _phonetic_skeleton_v118(a)
-    sb = _phonetic_skeleton_v118(b)
-    if not sa or not sb:
-        return 0.0
-    if sa == sb:
-        return 1.0
-    if sa in sb or sb in sa:
-        return 0.88
-    pa = f"  {sa} "
-    pb = f"  {sb} "
-    grams_a = {pa[i:i+3] for i in range(len(pa) - 2)} | {pa[i:i+2] for i in range(len(pa) - 1)}
-    grams_b = {pb[i:i+3] for i in range(len(pb) - 2)} | {pb[i:i+2] for i in range(len(pb) - 1)}
-    if not grams_a or not grams_b:
-        return 0.0
-    return (2.0 * len(grams_a & grams_b)) / (len(grams_a) + len(grams_b))
-
-def _kernel_resolve_multi_variants_v119(raw_q: str, max_candidates: int = 7):
-    """Находит исполнителя по названию песни (включая кириллицу), исправляет опечатки и собирает до 7 вариантов."""
-    q_clean = re.sub(r'\s+', ' ', raw_q.strip())
-    q_low = q_clean.lower().replace('ё', 'е')
-    has_cyrillic = bool(re.search(r'[а-яё]', q_low))
-    translit_q = "".join(_RU_TO_EN_PHONETIC_MAP_V118.get(c, c) for c in q_low).strip()
-
-    scored_map = {} # norm_key -> (score, display_query)
-
-    def _add_cand(name_str: str, forced_score: float = None, bonus: float = 0.0):
-        c = re.sub(r'\s+', ' ', (name_str or '').strip())
-        if len(c) < 2:
-            return
-        k = c.lower()
-        if forced_score is not None:
-            sim = forced_score
-        else:
-            sim = max(
-                _trigram_similarity_v118(q_clean, c),
-                _trigram_similarity_v118(translit_q, c) if translit_q else 0.0
-            ) + bonus
-        if k not in scored_map or sim > scored_map[k][0]:
-            scored_map[k] = (sim, c)
-
-    if q_low in _RU_EN_PHONETIC_DICT_V118:
-        _add_cand(_RU_EN_PHONETIC_DICT_V118[q_low], forced_score=1.25)
-
-    if re.search(r'[\[\];\x27,.]', q_low) and not has_cyrillic:
-        ru_try = q_low.translate(_EN_TO_RU_KBD_V118)
-        if ru_try in _RU_EN_PHONETIC_DICT_V118:
-            _add_cand(_RU_EN_PHONETIC_DICT_V118[ru_try], forced_score=1.25)
-        else:
-            _add_cand(ru_try, forced_score=0.75)
-
-    # Передаём в iTunes и Deezer ОРИГИНАЛЬНЫЙ запрос (на русском/английском), чтобы они находили русские песни!
-    def _probe_itunes():
-        try:
-            country = "RU" if has_cyrillic else "US"
-            u = f"https://itunes.apple.com/search?term={urllib.parse.quote(q_clean)}&country={country}&media=music&limit=10"
-            req = urllib.request.Request(u, headers=OST_HEADERS)
-            with urllib.request.urlopen(req, timeout=2.4) as r:
-                data = json.loads(r.read().decode("utf-8", errors="ignore"))
-            for idx_it, it in enumerate(data.get("results") or []):
-                art = (it.get("artistName") or "").strip()
-                trk = (it.get("trackName") or "").strip()
-                alb = re.sub(r'\s*\([^)]*\)', '', (it.get("collectionName") or "")).strip()
-                alb = re.sub(r'\s*-\s*(Single|EP)$', '', alb, flags=re.I).strip()
-                if not art:
-                    continue
-                trk_sim = _trigram_similarity_v118(q_clean, trk)
-                art_sim = _trigram_similarity_v118(q_clean, art)
-                rank_decay = idx_it * 0.03
-                # Если запрос совпал с названием песни (например, "зеленые волны") — вытаскиваем Артиста (Zivert) на 1-е место!
-                if trk_sim >= 0.55:
-                    _add_cand(art, forced_score=1.10 - rank_decay)
-                    _add_cand(f"{art} {trk}", forced_score=1.05 - rank_decay)
-                    if alb and alb.lower() != trk.lower() and len(alb) < 32:
-                        _add_cand(f"{art} {alb}", forced_score=0.92 - rank_decay)
-                elif art_sim >= 0.45:
-                    _add_cand(art, forced_score=1.08 - rank_decay)
-                    if alb and len(alb) < 32:
-                        _add_cand(f"{art} {alb}", forced_score=0.85 - rank_decay)
-                elif idx_it < 2:
-                    # Топ-2 результата каталога всегда берём как кандидатов
-                    _add_cand(art, forced_score=0.80 - rank_decay)
-        except Exception:
-            pass
-
-    def _probe_deezer():
-        try:
-            u = f"https://api.deezer.com/search?q={urllib.parse.quote(q_clean)}&limit=10"
-            req = urllib.request.Request(u, headers=OST_HEADERS)
-            with urllib.request.urlopen(req, timeout=2.4) as r:
-                data = json.loads(r.read().decode("utf-8", errors="ignore"))
-            for idx_it, it in enumerate(data.get("data") or []):
-                art = ((it.get("artist") or {}).get("name") or "").strip()
-                trk = (it.get("title_short") or it.get("title") or "").strip()
-                alb = re.sub(r'\s*\([^)]*\)', '', ((it.get("album") or {}).get("title") or "")).strip()
-                if not art:
-                    continue
-                trk_sim = _trigram_similarity_v118(q_clean, trk)
-                art_sim = _trigram_similarity_v118(q_clean, art)
-                rank_decay = idx_it * 0.03
-                if trk_sim >= 0.55:
-                    _add_cand(art, forced_score=1.12 - rank_decay)
-                    _add_cand(f"{art} {trk}", forced_score=1.06 - rank_decay)
-                    if alb and alb.lower() != trk.lower() and len(alb) < 32:
-                        _add_cand(f"{art} {alb}", forced_score=0.94 - rank_decay)
-                elif art_sim >= 0.45:
-                    _add_cand(art, forced_score=1.10 - rank_decay)
-                elif idx_it < 2:
-                    _add_cand(art, forced_score=0.82 - rank_decay)
-        except Exception:
-            pass
-
-    def _probe_suggest():
-        try:
-            u = f"https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q={urllib.parse.quote(q_clean)}"
-            req = urllib.request.Request(u, headers=OST_HEADERS)
-            with urllib.request.urlopen(req, timeout=1.8) as r:
-                arr = json.loads(r.read().decode("utf-8", errors="ignore"))
-            if isinstance(arr, list) and len(arr) >= 2 and arr[1]:
-                for idx_s, sug in enumerate(arr[1][:4]):
-                    s_clean = re.sub(r'\b(music|lyrics|official|video|audio|hd|клип|песни|слушать|текст)\b', '', str(sug), flags=re.I).strip()
-                    s_clean = re.sub(r'\s+', ' ', s_clean)
-                    if s_clean:
-                        _add_cand(s_clean, bonus=0.08 - idx_s * 0.01)
-                        if len(q_clean.split()) == 1 and len(s_clean.split()) > 1 and len(s_clean.split()[0]) >= 3:
-                            _add_cand(s_clean.split()[0], bonus=0.12)
-        except Exception:
-            pass
-
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        f1 = ex.submit(_probe_itunes)
-        f2 = ex.submit(_probe_deezer)
-        f3 = ex.submit(_probe_suggest)
-        for fut in (f1, f2, f3):
-            try: fut.result(timeout=2.6)
-            except Exception: pass
-
-    _add_cand(q_clean, forced_score=0.70)
-
-    ordered = sorted(scored_map.values(), key=lambda x: x[0], reverse=True)
-    out_variants = []
-    seen_low = set()
-    for sc, name in ordered:
-        if sc < 0.30 and name.lower() != q_low:
-            continue
-        if name.lower() not in seen_low:
-            seen_low.add(name.lower())
-            out_variants.append(name)
-        if len(out_variants) >= max_candidates:
-            break
-
-    if not out_variants:
-        out_variants = [q_clean]
-    return out_variants[0], out_variants
-
-def _kernel_resolve_queries_v118(raw_q: str):
-    return _kernel_resolve_multi_variants_v119(raw_q, max_candidates=5)
-
-def _scrape_apibay_v118(search_str: str):
-    out = []
-    try:
-        u = f"https://apibay.org/q.php?q={urllib.parse.quote(search_str)}&cat=100"
-        rows = _ost_fetch_json_v88(u, timeout=6) or []
-        for r in rows:
-            ih = (r.get("info_hash") or "").strip().lower()
-            nm = (r.get("name") or "").strip()
-            if not ih or ih == "0000000000000000000000000000000000000000" or nm == "No results returned":
-                continue
-            out.append({
-                "info_hash": ih,
-                "name": nm,
-                "seeders": int(r.get("seeders") or 0),
-                "leechers": int(r.get("leechers") or 0),
-                "size_mb": round(int(r.get("size") or 0) / (1024 * 1024), 1)
-            })
-    except Exception:
-        pass
-    return out
-
-def _scrape_bitsearch_v118(search_str: str):
-    out = []
-    try:
-        u = f"https://bitsearch.to/search?q={urllib.parse.quote(search_str)}&sort=seeders"
-        req = urllib.request.Request(u, headers=OST_HEADERS)
-        with urllib.request.urlopen(req, timeout=5) as r:
-            html_txt = r.read().decode("utf-8", errors="ignore")
-        cards = html_txt.split('class="card search-result')
-        for card in cards[1:20]:
-            m_mag = re.search(r'href="(magnet:\?xt=urn:btih:([a-fA-F0-9]{40})[^"]*)"', card)
-            if not m_mag:
-                continue
-            ih = m_mag.group(2).lower()
-            m_title = re.search(r'class="title[^"]*"[^>]*>\s*<a[^>]*>(.*?)</a>', card, re.S)
-            raw_t = m_title.group(1) if m_title else ""
-            clean_t = re.sub(r'<[^>]+>', '', raw_t).strip()
-            clean_t = re.sub(r'\s+', ' ', clean_t)
-            if not clean_t:
-                continue
-            m_sz = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(GB|MB|KB)', card, re.I)
-            sz_mb = 0.0
-            if m_sz:
-                val = float(m_sz.group(1))
-                unit = m_sz.group(2).upper()
-                sz_mb = round(val * 1024 if unit == 'GB' else (val / 1024 if unit == 'KB' else val), 1)
-            nums = re.findall(r'color:\s*#039e03[^>]*>\s*([0-9,]+)|class="text-green[^"]*"[^>]*>\s*([0-9,]+)', card)
-            seeds = 0
-            if nums:
-                s_str = (nums[0][0] or nums[0][1]).replace(',', '')
-                if s_str.isdigit():
-                    seeds = int(s_str)
-            out.append({
-                "info_hash": ih,
-                "name": clean_t,
-                "seeders": seeds,
-                "leechers": 0,
-                "size_mb": sz_mb
-            })
-    except Exception:
-        pass
-    return out
-
-def _scrape_rutor_v120(search_str: str):
-    """Индекс Rutor для русскоязычных и мировых музыкальных раздач."""
-    out = []
-    for domain in ("https://rutor.info", "https://rutor.is", "http://rutor.info"):
-        try:
-            u = f"{domain}/search/0/2/000/2/{urllib.parse.quote(search_str)}"
-            req = urllib.request.Request(u, headers=OST_HEADERS)
-            with urllib.request.urlopen(req, timeout=4.5) as r:
-                html_txt = r.read().decode("utf-8", errors="ignore")
-            rows = re.findall(r'<tr class="(?:gai|tum)">(.*?)</tr>', html_txt, re.S)
-            if not rows:
-                continue
-            for row in rows[:25]:
-                m_mag = re.search(r'href="(magnet:\?xt=urn:btih:([a-fA-F0-9]{40})[^"]*)"', row)
-                if not m_mag:
-                    continue
-                ih = m_mag.group(2).lower()
-                links = re.findall(r'<a[^>]+href="/torrent/[^"]+"[^>]*>(.*?)</a>', row, re.S)
-                if not links:
-                    continue
-                clean_t = re.sub(r'<[^>]+>', '', links[-1]).strip()
-                m_sz = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*(?:GB|MB|ГБ|МБ)', row, re.I)
-                sz_mb = 0.0
-                if m_sz:
-                    val = float(m_sz.group(1))
-                    is_gb = any(g in m_sz.group(0).upper() for g in ('GB', 'ГБ'))
-                    sz_mb = round(val * 1024 if is_gb else val, 1)
-                m_up = re.search(r'class="green"[^>]*>.*?([0-9]+)', row, re.S)
-                m_dn = re.search(r'class="red"[^>]*>.*?([0-9]+)', row, re.S)
-                seeds = int(m_up.group(1)) if m_up else 1
-                peers = int(m_dn.group(1)) if m_dn else 0
-                out.append({
-                    "info_hash": ih,
-                    "name": clean_t,
-                    "seeders": seeds,
-                    "leechers": peers,
-                    "size_mb": sz_mb
-                })
-            if out:
+        so_to_load = None
+        for cp in cand_paths:
+            if cp and os.path.isfile(cp):
+                so_to_load = cp
                 break
-        except Exception:
-            continue
-    return out
+
+        # Если файл лежит на /storage/ или /sdcard/ (noexec), копируем во внутренний исполняемый каталог
+        if so_to_load and so_to_load.startswith(("/storage/", "/sdcard/")):
+            for exec_dir in (
+                os.environ.get("JENNY_FILES_DIR", ""),
+                "/data/data/com.termux/files/usr/tmp",
+                os.path.expanduser("~")
+            ):
+                if exec_dir and os.path.isdir(exec_dir):
+                    cached_so = os.path.join(exec_dir, "libomnitorrent_exec.so")
+                    try:
+                        if not os.path.isfile(cached_so) or os.path.getsize(cached_so) != os.path.getsize(so_to_load):
+                            shutil.copy2(so_to_load, cached_so)
+                        os.chmod(cached_so, 0o755)
+                        so_to_load = cached_so
+                        break
+                    except Exception:
+                        continue
+
+        lib = ctypes.CDLL(so_to_load or "libomnitorrent.so")
+        lib.OmniSearchJSON.argtypes = [ctypes.c_char_p]
+        lib.OmniSearchJSON.restype = ctypes.c_void_p
+        lib.OmniFree.argtypes = [ctypes.c_void_p]
+        _OMNI_LIB_V122 = lib
+        return _OMNI_LIB_V122
+
+def _enrich_omni_response_trackers_v122(data_dict: dict) -> dict:
+    if "enrich_magnet_with_cached_trackers_v109" not in globals():
+        return data_dict
+    for item in (data_dict.get("results") or []):
+        if item.get("magnet"):
+            item["magnet"] = enrich_magnet_with_cached_trackers_v109(item["magnet"])
+    for grp in (data_dict.get("groups") or []):
+        for item in (grp.get("results") or []):
+            if item.get("magnet"):
+                item["magnet"] = enrich_magnet_with_cached_trackers_v109(item["magnet"])
+    return data_dict
 
 @post('/api/torrent/search')
 def api_torrent_search_v105():
@@ -2728,141 +2491,30 @@ def api_torrent_search_v105():
     try:
         req = json.loads(request.body.read().decode('utf-8') or "{}")
         q = (req.get("query") or "").strip()
-        fmt_tag = (req.get("format_tag") or "all").strip().lower()
-        exact_match = bool(req.get("exact", False))
-        hide_zero = bool(req.get("hide_zero", True))
-        min_two_seeds = bool(req.get("min_two_seeds", False))
         if not q:
             return json.dumps({"status": "error", "error": "Пустой запрос"})
 
-        fmt_keywords = {
-            "flac": ["flac", "lossless", "24bit", "hi-res", "alac"],
-            "wav":  ["wav", "wave", "pcm", "lossless"],
-            "mp3":  ["mp3", "320", "cbr", "vbr", "mpeg"],
-            "m4a":  ["m4a", "alac", "itunes", "aac"],
-            "aac":  ["aac", "m4a", "mp4"],
-            "ogg":  ["ogg", "vorbis", "opus"]
-        }
+        payload = json.dumps({
+            "query": q,
+            "format_tag": (req.get("format_tag") or "all").strip().lower(),
+            "exact": bool(req.get("exact", False)),
+            "hide_zero": bool(req.get("hide_zero", True)),
+            "min_two_seeds": bool(req.get("min_two_seeds", False)),
+            "max_results": 60
+        }, ensure_ascii=False).encode("utf-8")
 
-        if exact_match:
-            corrected_q = q
-            candidate_variants = [q]
-        else:
-            corrected_q, candidate_variants = _kernel_resolve_multi_variants_v119(q, max_candidates=7)
+        lib = _get_omnitorrent_lib_v122()
+        ptr = lib.OmniSearchJSON(payload)
+        if not ptr:
+            return json.dumps({"status": "error", "error": "OmniSearchJSON returned NULL"})
+        try:
+            raw_json = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8", errors="replace")
+        finally:
+            lib.OmniFree(ptr)
 
-        min_req_seeds = 2 if min_two_seeds else (1 if hide_zero else 0)
-        q_words_orig = [w.lower() for w in re.split(r'\s+', q) if w]
-        total_hidden_zero = [0]
-
-        def _fetch_variant_group(var_query: str):
-            sub_queries = []
-            if fmt_tag in fmt_keywords and fmt_tag not in var_query.lower():
-                sub_queries.append(f"{var_query} {fmt_tag.upper()}")
-            sub_queries.append(var_query)
-
-            raw_items = []
-            seen_ih = set()
-            is_cyr = bool(re.search(r'[а-яё]', var_query.lower()))
-
-            # Для кириллических запросов сразу подключаем Rutor + ApiBay + BitSearch
-            if is_cyr and not exact_match:
-                for r in _scrape_rutor_v120(var_query):
-                    if r["info_hash"] not in seen_ih:
-                        seen_ih.add(r["info_hash"])
-                        raw_items.append(r)
-
-            for sq in sub_queries[:1 if exact_match else 2]:
-                for r in _scrape_apibay_v118(sq):
-                    if r["info_hash"] not in seen_ih:
-                        seen_ih.add(r["info_hash"])
-                        raw_items.append(r)
-                if len(raw_items) >= 20:
-                    break
-
-            if len(raw_items) < 5 and not exact_match:
-                for r in _scrape_rutor_v120(var_query):
-                    if r["info_hash"] not in seen_ih:
-                        seen_ih.add(r["info_hash"])
-                        raw_items.append(r)
-                for r in _scrape_bitsearch_v118(sub_queries[0]):
-                    if r["info_hash"] not in seen_ih:
-                        seen_ih.add(r["info_hash"])
-                        raw_items.append(r)
-
-            group_res = []
-            for r in raw_items:
-                ih = r["info_hash"]
-                nm = r["name"]
-                seeds = r["seeders"]
-                peers = r["leechers"]
-                sz_mb = r["size_mb"]
-                nm_low = nm.lower()
-
-                if exact_match:
-                    if not all(w in nm_low for w in q_words_orig):
-                        continue
-                    if fmt_tag in fmt_keywords and not any(tok in nm_low for tok in fmt_keywords[fmt_tag]):
-                        continue
-                else:
-                    if fmt_tag in fmt_keywords:
-                        has_fmt_tok = any(tok in nm_low for tok in fmt_keywords[fmt_tag])
-                        other_fmts = [k for k in ("flac", "mp3", "wav", "m4a", "aac", "ogg") if k != fmt_tag]
-                        has_other_tok = any(of in nm_low for of in other_fmts)
-                        if not has_fmt_tok and has_other_tok:
-                            continue
-
-                if seeds < min_req_seeds:
-                    total_hidden_zero[0] += 1
-                    continue
-
-                base_mag = f"magnet:?xt=urn:btih:{ih}&dn={urllib.parse.quote(nm)}"
-                mag = enrich_magnet_with_cached_trackers_v109(base_mag) if "enrich_magnet_with_cached_trackers_v109" in globals() else base_mag
-                fmt_bonus = 1 if (fmt_tag in fmt_keywords and any(tok in nm_low for tok in fmt_keywords[fmt_tag])) else 0
-                sim_sc = _trigram_similarity_v118(var_query, nm)
-                group_res.append({
-                    "title": nm,
-                    "size_mb": sz_mb,
-                    "seeders": seeds,
-                    "peers": peers,
-                    "magnet": mag,
-                    "_rank": (fmt_bonus, round(sim_sc, 1), seeds, peers)
-                })
-
-            group_res.sort(key=lambda x: x["_rank"], reverse=True)
-            for it in group_res:
-                it.pop("_rank", None)
-            return var_query, group_res[:35]
-
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            fetched_groups = list(ex.map(_fetch_variant_group, candidate_variants))
-
-        valid_groups = []
-        flat_results = []
-        seen_flat_mag = set()
-
-        for v_name, g_list in fetched_groups:
-            if not g_list:
-                continue
-            valid_groups.append({
-                "query": v_name,
-                "count": len(g_list),
-                "results": g_list
-            })
-            for item in g_list:
-                if item["magnet"] not in seen_flat_mag:
-                    seen_flat_mag.add(item["magnet"])
-                    flat_results.append(item)
-            if len(valid_groups) >= 5:
-                break
-
-        used_corr = valid_groups[0]["query"] if (valid_groups and valid_groups[0]["query"].lower() != q.lower()) else ""
-        return json.dumps({
-            "status": "ok",
-            "results": flat_results[:60],
-            "groups": valid_groups,
-            "hidden_zero": total_hidden_zero[0],
-            "corrected_query": used_corr
-        }, ensure_ascii=False)
+        parsed = json.loads(raw_json)
+        parsed = _enrich_omni_response_trackers_v122(parsed)
+        return json.dumps(parsed, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
