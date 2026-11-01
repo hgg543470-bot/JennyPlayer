@@ -7621,3 +7621,518 @@ setTimeout(() => {
         window.renderSourcesSettingsSectionV91();
     }
 }, 350);
+
+// === 🚀 JENNY V112: MULTI-TORRENT ISOLATED MAPS & MACHINE-GUN DOWNLOAD ENGINE ===
+window._torMapV112 = window._torMapV112 || {};
+window._torImportQueueV112 = window._torImportQueueV112 || [];
+window._torImportWorkerBusyV112 = false;
+window._torGlobalTimerV112 = null;
+window._torViewSessionV112 = 0;
+window._torScreenModeV112 = 'search'; // 'search' | 'files'
+
+window.extractBtihFromMagnetV112 = function(mag) {
+    const m = String(mag || '').match(/xt=urn:btih:([a-fA-F0-9]{40})/i);
+    return m ? m[1].toLowerCase() : '';
+};
+
+// Создаёт или обновляет изолированную карту конкретной раздачи
+window.ensureTorrentJobMapV112 = function(hash, name, rawFiles, magnetUrl) {
+    const h = String(hash || '').toLowerCase();
+    if (!h) return null;
+    const audioExts = ['.flac', '.wav', '.mp3', '.ogg', '.aac', '.m4a', '.opus', '.alac', '.ape', '.wv', '.mp4', '.mkv'];
+    let ex = window._torMapV112[h];
+
+    if (!ex) {
+        const filtered = (rawFiles || []).filter(f => audioExts.some(ext => String(f.path || '').toLowerCase().endsWith(ext)));
+        const baseFiles = (filtered.length ? filtered : (rawFiles || [])).map(f => {
+            const parts = String(f.path || '').split('/');
+            return Object.assign({}, f, { index: Number(f.index), path: parts[parts.length - 1] || f.path });
+        });
+        const validSet = new Set(baseFiles.map(f => Number(f.index)));
+        ex = {
+            hash: h,
+            name: name || 'Torrent',
+            magnet: magnetUrl || '',
+            files: baseFiles,
+            validIdxSet: validSet,
+            selectedFiles: new Set(validSet),
+            targetSet: new Set(),
+            importedSet: new Set(),
+            fileStatusMap: {},
+            dlActive: false,
+            completedAll: false,
+            netPct: 0,
+            readyCnt: 0,
+            seeders: 0,
+            peers: 0,
+            hasLossless: window.torrentHasLosslessFilesV106 ? window.torrentHasLosslessFilesV106(baseFiles) : false
+        };
+        window._torMapV112[h] = ex;
+    } else if (rawFiles && rawFiles.length && (!ex.files || !ex.files.length)) {
+        const filtered = rawFiles.filter(f => audioExts.some(ext => String(f.path || '').toLowerCase().endsWith(ext)));
+        ex.files = (filtered.length ? filtered : rawFiles).map(f => {
+            const parts = String(f.path || '').split('/');
+            return Object.assign({}, f, { index: Number(f.index), path: parts[parts.length - 1] || f.path });
+        });
+        ex.validIdxSet = new Set(ex.files.map(f => Number(f.index)));
+        if (!ex.selectedFiles || ex.selectedFiles.size === 0) {
+            ex.selectedFiles = new Set(ex.validIdxSet);
+        }
+        ex.hasLossless = window.torrentHasLosslessFilesV106 ? window.torrentHasLosslessFilesV106(ex.files) : false;
+    }
+
+    if (window._torSnapshotsByHashV108) {
+        window._torSnapshotsByHashV108[h] = ex;
+    }
+    return ex;
+};
+
+// Переключает экран Торрент-студии на карту конкретной раздачи
+window.mountTorrentJobToScreenV112 = function(job) {
+    if (!job) return;
+    window._torScreenModeV112 = 'files';
+    const ts = window._torStateV96;
+    ts.currentHash = job.hash;
+    ts.currentName = job.name;
+    ts.files = job.files;
+    ts.selectedFiles = job.selectedFiles;
+    ts.activeDlSet = job.targetSet;
+    ts.dlActive = job.dlActive;
+    ts.dlOverallPct = job.netPct;
+
+    const stEl = document.getElementById('torStatusLineV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    if (stEl) stEl.innerText = `💿 ${job.name} (треков: ${job.files.length})`;
+    if (ftr) ftr.style.display = 'flex';
+    window.renderTorrentFilesListV96();
+    window.paintOpenedTorrentJobProgressV112(job, null);
+};
+
+// Открытие раздачи: ничего не отменяет! Если карта уже есть — открывает за 0 мс, если нет — ждёт в фоне и сохраняет в _torMapV112
+window.openMagnetInGoEngineV96 = async function(magnetUrl) {
+    window._torScreenModeV112 = 'files';
+    const mySession = ++window._torViewSessionV112;
+    const preHash = window.extractBtihFromMagnetV112(magnetUrl);
+
+    // Если эта раздача уже открывалась раніше — мгновенно достаём её карту без ожидания!
+    if (preHash && window._torMapV112[preHash] && window._torMapV112[preHash].files.length > 0) {
+        window.mountTorrentJobToScreenV112(window._torMapV112[preHash]);
+        return;
+    }
+
+    const body = document.getElementById('torBodyListV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    if (ftr) ftr.style.display = 'none';
+    if (stEl) stEl.innerText = '🧲 Опрос DHT и трекеров...';
+    if (body) body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:35px 10px;">🧲 Получение списка файлов от пиров (до 25с)...<br><span style="font-size:10.5px;color:#8b949e;">(Запрос идёт в фоне — даже если выйти к списку раздач, карта сохранится автоматически)</span></div>`;
+
+    try {
+        const res = await fetch('/api/torrent/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ magnet: magnetUrl })
+        });
+        const d = await res.json();
+        if (d.status !== 'ok') throw new Error(d.error || 'Пиры не отдали оглавление');
+
+        // 1. Всегда сначала сохраняем карту раздачи в память (даже если пользователь уже ушёл на другой экран!)
+        const job = window.ensureTorrentJobMapV112(d.hash, d.name, d.files || [], magnetUrl);
+
+        // 2. Если пользователь всё ещё ждёт именно эту раздачу на экране — показываем её
+        if (mySession === window._torViewSessionV112 && window._torScreenModeV112 === 'files') {
+            window.mountTorrentJobToScreenV112(job);
+        } else if (window._torScreenModeV112 === 'search') {
+            window.updateSearchCardsWithLiveMapBadgesV112();
+        }
+    } catch (e) {
+        if (mySession === window._torViewSessionV112 && window._torScreenModeV112 === 'files') {
+            if (stEl) stEl.innerText = '⚠️ Раздача не ответила';
+            if (body) body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 12px;font-size:12px;">❌ ${e.message || e}<br><br><button type="button" onclick="window.backToTorrentSearchListV97()" style="padding:7px 14px;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:8px;font-weight:bold;">⬅ Вернуться к списку раздач</button></div>`;
+        }
+    }
+};
+
+// Возврат к списку раздач: НЕ останавливает никакие загрузки и показывает живой статус каждой раздачи прямо на карточках поиска
+window.backToTorrentSearchListV97 = function() {
+    window._torScreenModeV112 = 'search';
+    window._torViewSessionV112++;
+    const ftr = document.getElementById('torFooterBarV96');
+    if (ftr) ftr.style.display = 'none';
+    const list = window._torSearchResultsV96 || [];
+    if (list.length) {
+        const body = document.getElementById('torBodyListV96');
+        const stEl = document.getElementById('torStatusLineV96');
+        const activeJobsCnt = Object.values(window._torMapV112).filter(j => j.dlActive).length;
+        if (stEl) {
+            stEl.innerText = `📋 Найдено раздач: ${list.length}` + (activeJobsCnt > 0 ? ` • 🔥 Качается в фоне: ${activeJobsCnt}` : '');
+        }
+        if (body) {
+            body.innerHTML = list.map((r, i) => {
+                const bh = window.extractBtihFromMagnetV112(r.magnet);
+                return `<div id="torSearchCardV112_${bh}" onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
+                    <div style="flex:1;min-width:0;">
+                        <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
+                        <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                        <div class="tor-search-live-badge-v112" style="display:none;font-size:10px;font-weight:bold;margin-top:3px;"></div>
+                    </div>
+                    <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
+                </div>`;
+            }).join('');
+            window.updateSearchCardsWithLiveMapBadgesV112();
+        }
+    } else {
+        window.runTorrentActionV96();
+    }
+};
+
+window.updateSearchCardsWithLiveMapBadgesV112 = function() {
+    Object.values(window._torMapV112).forEach(job => {
+        const card = document.getElementById('torSearchCardV112_' + job.hash);
+        if (!card) return;
+        const b = card.querySelector('.tor-search-live-badge-v112');
+        if (!b) return;
+        const tot = job.targetSet ? job.targetSet.size : 0;
+        if (job.completedAll && tot > 0) {
+            card.style.borderColor = '#3fb950';
+            b.style.display = 'block';
+            b.style.color = '#3fb950';
+            b.innerText = `✅ В плеере: ${job.readyCnt}/${tot} (100%)`;
+        } else if (job.dlActive && tot > 0) {
+            card.style.borderColor = '#8957e5';
+            b.style.display = 'block';
+            b.style.color = '#58a6ff';
+            b.innerText = `⏳ Качается в фоне: ${job.netPct}% (в плеере: ${job.readyCnt}/${tot})`;
+        } else if (job.files && job.files.length > 0) {
+            b.style.display = 'block';
+            b.style.color = '#d2a8ff';
+            b.innerText = `⚡ Карта загружена (${job.files.length} треков)`;
+        }
+    });
+};
+
+// Привязка чекбоксов строго к карте открытого торрента
+const _origRenderTorFilesV106 = window.renderTorrentFilesListV96;
+window.renderTorrentFilesListV96 = function() {
+    const h = window._torStateV96 && window._torStateV96.currentHash;
+    const job = h ? window._torMapV112[h] : null;
+    if (job) {
+        window._torStateV96.files = job.files;
+        window._torStateV96.selectedFiles = job.selectedFiles;
+    }
+    _origRenderTorFilesV106.apply(this, arguments);
+    if (job) {
+        window.paintOpenedTorrentJobProgressV112(job, null);
+    }
+};
+
+// Одиночная кнопка ⬇️: сначала сохраняет индекс в карту этой раздачи, затем ставит в фоновую загрузку
+window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const h = window._torStateV96 && window._torStateV96.currentHash;
+    const job = h ? window._torMapV112[h] : null;
+    if (!job) return;
+
+    const cleanIdx = Number(fileIdx);
+    if (!job.validIdxSet.has(cleanIdx)) return;
+
+    job.selectedFiles.add(cleanIdx);
+    job.targetSet.add(cleanIdx);
+    job.dlActive = true;
+    job.completedAll = false;
+
+    const chk = document.querySelector(`#torFileRowV96_${cleanIdx} input[type="checkbox"]`);
+    if (chk) chk.checked = true;
+    if (btnEl) { btnEl.innerText = '⏳'; btnEl.style.color = '#3fb950'; }
+
+    await window.launchJobDownloadInDaemonV112(job);
+};
+
+// Кнопка «⬇️ Качать выбранные»: сначала сохраняет все выбранные галочки в карту раздачи, затем качает в фоне
+window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
+    const h = window._torStateV96 && window._torStateV96.currentHash;
+    const job = h ? window._torMapV112[h] : null;
+    if (!job) return;
+
+    if (Array.isArray(explicitFiles) && explicitFiles.length > 0) {
+        explicitFiles.map(Number).filter(x => job.validIdxSet.has(x)).forEach(x => job.targetSet.add(x));
+    } else {
+        const sel = Array.from(job.selectedFiles || []).map(Number).filter(x => job.validIdxSet.has(x));
+        const finalTargets = sel.length > 0 ? sel : Array.from(job.validIdxSet);
+        finalTargets.forEach(x => job.targetSet.add(x));
+    }
+    if (job.targetSet.size === 0) return;
+
+    job.dlActive = true;
+    job.completedAll = false;
+    await window.launchJobDownloadInDaemonV112(job);
+};
+
+window.launchJobDownloadInDaemonV112 = async function(job) {
+    const targetArr = Array.from(job.targetSet);
+    job.hasLossless = window.torrentHasLosslessFilesV106(
+        job.files.filter(f => job.targetSet.has(Number(f.index)))
+    );
+
+    const totWrap = document.getElementById('torTotalProgWrapV97');
+    if (totWrap && window._torStateV96.currentHash === job.hash) {
+        totWrap.style.display = 'block';
+    }
+    window.paintOpenedTorrentJobProgressV112(job, null);
+    window.ensureMultiTorrentWorkerV112();
+
+    // Отправляем команду демону без блокировки интерфейса
+    fetch('/api/torrent/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hash: job.hash, files: targetArr })
+    }).catch(() => {});
+};
+
+// Последовательная очередь импорта треков из ВСЕХ параллельно качающихся раздач
+window.enqueueTorrentTrackImportV112 = function(job, fObj, torName) {
+    const impKey = `${job.hash}_${fObj.index}`;
+    if (job.importedSet.has(impKey)) return;
+    job.importedSet.add(impKey);
+    window._torImportQueueV112.push({
+        job: job,
+        hash: job.hash,
+        index: Number(fObj.index),
+        full_path: fObj.full_path,
+        torrent_name: torName || job.name,
+        impKey: impKey
+    });
+    window.processNextTorrentImportV112();
+};
+
+window.processNextTorrentImportV112 = async function() {
+    if (window._torImportWorkerBusyV112 || window._torImportQueueV112.length === 0) return;
+    window._torImportWorkerBusyV112 = true;
+    const item = window._torImportQueueV112.shift();
+    try {
+        const res = await fetch('/api/torrent/import_track', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hash: item.hash,
+                index: item.index,
+                full_path: item.full_path,
+                torrent_name: item.torrent_name,
+                format_mode: 'xflac_psycho'
+            })
+        }).then(r => r.json());
+
+        if (res && res.status === 'ok') {
+            item.job.fileStatusMap[item.index] = Object.assign(item.job.fileStatusMap[item.index] || {}, {
+                xflac_file: res.filename,
+                size_mb: res.size_mb
+            });
+            if (typeof window.fetchData === 'function') window.fetchData();
+        } else {
+            item.job.importedSet.delete(item.impKey);
+        }
+    } catch (e) {
+        item.job.importedSet.delete(item.impKey);
+    } finally {
+        window._torImportWorkerBusyV112 = false;
+        if (window._torImportQueueV112.length > 0) {
+            setTimeout(window.processNextTorrentImportV112, 50);
+        }
+    }
+};
+
+// Отрисовка прогресса для той раздачи, которая сейчас открыта на экране
+window.paintOpenedTorrentJobProgressV112 = function(job, te) {
+    if (!job || window._torStateV96.currentHash !== job.hash || window._torScreenModeV112 !== 'files') return;
+    te = te || {};
+
+    const totWrap = document.getElementById('torTotalProgWrapV97');
+    const totFill = document.getElementById('torTotalProgFillV97');
+    if (totWrap && (job.dlActive || job.completedAll || job.netPct > 0)) {
+        totWrap.style.display = 'block';
+    }
+    if (totFill) totFill.style.width = (job.netPct || 0) + '%';
+
+    for (const f of (job.files || [])) {
+        const fIdx = Number(f.index);
+        const st = job.fileStatusMap[fIdx] || {};
+        const isSelectedTarget = job.targetSet.has(fIdx);
+        const impKey = `${job.hash}_${fIdx}`;
+        const rowEl = document.getElementById('torFileRowV96_' + fIdx);
+        const pEl = document.getElementById('torFileProgV96_' + fIdx);
+        const dlBtn = document.getElementById('torDlSingleBtnV98_' + fIdx);
+
+        const pct = Math.max(0, Math.min(100, st.percent || 0));
+        const doneMb = ((st.completed || 0) / (1024 * 1024)).toFixed(1);
+        const totMb = ((st.length || f.length || 0) / (1024 * 1024)).toFixed(1);
+        const isCurrentlyEncoding = (job.hasLossless && te.active && te.current_key === impKey);
+        const readyFile = st.xflac_file || f.xflac_file || '';
+
+        if (rowEl) {
+            if (readyFile) {
+                rowEl.style.background = 'linear-gradient(90deg, rgba(63,185,80,0.28) 100%, #0b0f16 100%)';
+                rowEl.style.borderColor = 'rgba(63,185,80,0.65)';
+            } else if (isCurrentlyEncoding) {
+                const ep = te.track_pct || 10;
+                rowEl.style.background = `linear-gradient(90deg, rgba(63,185,80,0.38) ${ep}%, rgba(137,87,229,0.25) ${ep}%)`;
+                rowEl.style.borderColor = '#3fb950';
+            } else if (pct > 0 && isSelectedTarget) {
+                rowEl.style.background = `linear-gradient(90deg, rgba(137,87,229,0.32) ${pct}%, #0b0f16 ${pct}%)`;
+            }
+        }
+
+        if (readyFile) {
+            if (pEl) pEl.innerText = `✅ В плеере: ${readyFile}`;
+            if (dlBtn) dlBtn.innerText = '✅';
+        } else if (isCurrentlyEncoding) {
+            if (pEl) pEl.innerText = `🧬 Сжатие в .xFLAC: ${te.track_pct || 0}%`;
+        } else if (pEl && (isSelectedTarget || pct > 0)) {
+            pEl.innerText = st.done
+                ? (job.hasLossless ? `⏳ Очередь сжатия xFLAC...` : `⏳ Перенос в плеер...`)
+                : `⬇️ Скачивание: ${doneMb} / ${totMb} MB (${pct}%)`;
+        }
+    }
+
+    const totalTargets = Math.max(1, job.targetSet.size || job.files.length);
+    const readyCnt = job.readyCnt || 0;
+    const totalPct = job.netPct || 0;
+
+    const encWrap = document.getElementById('torXflacProgWrapV99');
+    const encLbl = document.getElementById('torXflacProgLabelV99');
+    const encFill = document.getElementById('torXflacProgFillV99');
+    if (encWrap) {
+        if (!job.hasLossless || (!job.dlActive && !job.completedAll)) {
+            encWrap.style.display = 'none';
+        } else if (readyCnt >= totalTargets && job.targetSet.size > 0) {
+            encWrap.style.display = 'flex';
+            if (encLbl) encLbl.innerText = `✅ Все выбранные треки (${readyCnt}/${totalTargets}) сжаты в .xFLAC!`;
+            if (encFill) encFill.style.width = '100%';
+        } else if (te.active || readyCnt > 0) {
+            encWrap.style.display = 'flex';
+            const ovPct = Math.min(100, Math.round(((readyCnt * 100) + (te.active ? (te.track_pct || 0) : 0)) / totalTargets));
+            if (encLbl) encLbl.innerText = `🧬 Пережатие в xFLAC [${readyCnt}/${totalTargets}]: ${te.current_track || 'Ожидание докачки...'} (${ovPct}%)`;
+            if (encFill) encFill.style.width = ovPct + '%';
+        }
+    }
+
+    const btn = document.getElementById('btnTorStartDlV97');
+    if (btn) {
+        if (job.completedAll && job.targetSet.size > 0) {
+            btn.disabled = false;
+            btn.style.background = 'linear-gradient(135deg, #238636, #1f6feb)';
+            btn.innerText = `✅ Готово (${readyCnt}/${totalTargets} в плеере)`;
+        } else if (job.dlActive) {
+            btn.disabled = true;
+            if (totalPct < 100) {
+                btn.style.background = 'linear-gradient(135deg, #30363d, #1f6feb)';
+                btn.innerText = `⏳ Загрузка сети: ${totalPct}% (в плеере: ${readyCnt}/${totalTargets})`;
+            } else {
+                btn.style.background = 'linear-gradient(135deg, #30363d, #7341be)';
+                btn.innerText = job.hasLossless
+                    ? `🧬 Пережатие xFLAC (${readyCnt}/${totalTargets})...`
+                    : `⏳ Перенос в плеер (${readyCnt}/${totalTargets})...`;
+            }
+        } else {
+            btn.disabled = false;
+            btn.style.background = 'linear-gradient(135deg, #8957e5, #238636)';
+            btn.innerText = job.hasLossless
+                ? '⬇️ Качать выбранные (➔ xFLAC)'
+                : '⬇️ Качать выбранные в плеер (Прямой формат)';
+        }
+    }
+
+    const stEl = document.getElementById('torStatusLineV96');
+    if (stEl && (job.dlActive || job.completedAll)) {
+        const otherActive = Object.values(window._torMapV112).filter(j => j.dlActive && j.hash !== job.hash).length;
+        const bgTag = otherActive > 0 ? ` • В фоне ещё: ${otherActive}` : '';
+        stEl.innerText = `🧲 Сидов: ${job.seeders} • Пиров: ${job.peers} • Сеть: ${totalPct}% • В плеере: ${readyCnt}/${totalTargets}${bgTag}`;
+    }
+};
+
+// Единый фоновый диспетчер всех активных раздач
+window.ensureMultiTorrentWorkerV112 = function() {
+    if (window._torGlobalTimerV112) return;
+    window._torGlobalTimerV112 = setInterval(async () => {
+        const allJobs = Object.values(window._torMapV112);
+        const activeJobs = allJobs.filter(j => j.dlActive);
+        if (activeJobs.length === 0 && !window._torImportWorkerBusyV112 && window._torImportQueueV112.length === 0) {
+            clearInterval(window._torGlobalTimerV112);
+            window._torGlobalTimerV112 = null;
+            window._torStateV96.dlActive = false;
+            return;
+        }
+
+        try {
+            const [d, badges] = await Promise.all([
+                fetch('/api/torrent/status').then(r => r.json()),
+                fetch('/api/sources/live_badges').then(r => r.json())
+            ]);
+            const torList = d.torrents || [];
+            const te = (badges && badges.torrent_enc) || {};
+
+            let globalSumLen = 0, globalSumDone = 0;
+
+            for (const job of allJobs) {
+                const tor = torList.find(x => String(x.hash || '').toLowerCase() === job.hash);
+                if (!tor) continue;
+
+                job.seeders = tor.seeders || 0;
+                job.peers = tor.peers || 0;
+
+                let sumLen = 0, sumDone = 0, readyCnt = 0;
+
+                for (const f of (tor.files || [])) {
+                    const fIdx = Number(f.index);
+                    if (!job.validIdxSet.has(fIdx)) continue;
+
+                    const prevSt = job.fileStatusMap[fIdx] || {};
+                    const readyFile = f.xflac_file || prevSt.xflac_file || '';
+                    job.fileStatusMap[fIdx] = {
+                        completed: f.completed || 0,
+                        length: f.length || 0,
+                        percent: f.percent || 0,
+                        done: Boolean(f.done),
+                        full_path: f.full_path || '',
+                        xflac_file: readyFile
+                    };
+
+                    if (job.targetSet.has(fIdx)) {
+                        sumLen += (f.length || 0);
+                        sumDone += (f.completed || 0);
+                        if (readyFile) readyCnt++;
+                        else if (f.done) {
+                            window.enqueueTorrentTrackImportV112(job, f, tor.name);
+                        }
+                    }
+                }
+
+                job.readyCnt = readyCnt;
+                if (job.targetSet.size > 0) {
+                    job.netPct = sumLen > 0 ? Math.min(100, Math.round((sumDone * 100) / sumLen)) : 0;
+                    if (readyCnt >= job.targetSet.size) {
+                        job.dlActive = false;
+                        job.completedAll = true;
+                        job.netPct = 100;
+                    }
+                }
+
+                if (job.dlActive) {
+                    globalSumLen += sumLen;
+                    globalSumDone += sumDone;
+                }
+            }
+
+            // Обновляем общий процент для бейджа на иконке паутины в шапке
+            const anyStillActive = Object.values(window._torMapV112).some(j => j.dlActive);
+            window._torStateV96.dlActive = anyStillActive;
+            window._torStateV96.dlOverallPct = globalSumLen > 0 ? Math.min(100, Math.round((globalSumDone * 100) / globalSumLen)) : 0;
+
+            const curH = window._torStateV96.currentHash;
+            if (curH && window._torMapV112[curH] && window._torScreenModeV112 === 'files') {
+                window.paintOpenedTorrentJobProgressV112(window._torMapV112[curH], te);
+            } else if (window._torScreenModeV112 === 'search') {
+                window.updateSearchCardsWithLiveMapBadgesV112();
+            }
+        } catch (e) {}
+    }, 750);
+};
