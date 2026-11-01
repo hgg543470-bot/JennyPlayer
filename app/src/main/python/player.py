@@ -1805,6 +1805,140 @@ def api_khinsider_download_track_v88():
                 try: os.remove(p)
                 except Exception: pass
 
+
+# ==============================================================================
+# 📻 JENNY V91: LOSSLESS FLAC RADIO STREAMER & LIVE RECORDER TO XFLAC
+# ==============================================================================
+import time
+
+FLAC_RADIO_PRESETS_V91 = [
+    {"id": "rp_main", "title": "Radio Paradise — Main Mix [FLAC]", "genre": "Eclectic Rock / Indie", "codec": "FLAC 1411 kbps", "url": "https://stream.radioparadise.com/flacm"},
+    {"id": "rp_mellow", "title": "Radio Paradise — Mellow Mix [FLAC]", "genre": "Chill / Acoustic", "codec": "FLAC 1411 kbps", "url": "https://stream.radioparadise.com/mellow-flacm"},
+    {"id": "rp_rock", "title": "Radio Paradise — Rock Mix [FLAC]", "genre": "Classic & Modern Rock", "codec": "FLAC 1411 kbps", "url": "https://stream.radioparadise.com/rock-flacm"},
+    {"id": "rp_global", "title": "Radio Paradise — Global [FLAC]", "genre": "World / Electronic", "codec": "FLAC 1411 kbps", "url": "https://stream.radioparadise.com/global-flacm"},
+    {"id": "jb_radio2", "title": "JB Radio-2 [Hi-Res FLAC]", "genre": "Audiophile Rock / Eclectic", "codec": "FLAC Lossless", "url": "https://maggie.torontocast.com:8076/flac"},
+    {"id": "sector_flac", "title": "SECTOR Radio — Space / Synth [FLAC]", "genre": "Electronic / Ambient", "codec": "FLAC Lossless", "url": "http://89.223.45.5:8000/next-flac"},
+    {"id": "intense_flac", "title": "Intense Radio — Dance / Trance [FLAC]", "genre": "Electronic / Dance", "codec": "FLAC Lossless", "url": "http://secure.live-streams.nl/flac.flac"},
+    {"id": "motherearth", "title": "Mother Earth Radio [Hi-Res FLAC]", "genre": "Instrumental / Classical", "codec": "FLAC 96kHz", "url": "https://motherearth.streamserver24.com/listen/motherearth/motherearth"}
+]
+
+_RADIO_REC_V91 = {"proc": None, "tmp_wav": "", "station": "", "start_ts": 0.0, "xf_mode": 25}
+
+@post('/api/radio/stations')
+def api_radio_stations_v91():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        q = (req.get('query') or '').strip().lower()
+        stations = [s for s in FLAC_RADIO_PRESETS_V91 if not q or q in s["title"].lower() or q in s["genre"].lower()]
+        if q:
+            api_u = f"https://de1.api.radio-browser.info/json/stations/search?name={urllib.parse.quote(q)}&codec=FLAC&hidebroken=true&limit=25"
+        else:
+            api_u = "https://de1.api.radio-browser.info/json/stations/bycodec/FLAC?hidebroken=true&order=clickcount&reverse=true&limit=25"
+        try:
+            rows = _ost_fetch_json_v88(api_u, timeout=8)
+            seen = {s["url"] for s in stations}
+            for r in (rows or []):
+                u = (r.get("url_resolved") or r.get("url") or "").strip()
+                nm = (r.get("name") or "").strip()
+                if u and nm and u not in seen:
+                    seen.add(u)
+                    br = r.get("bitrate") or 1000
+                    stations.append({
+                        "id": r.get("stationuuid") or nm,
+                        "title": f"{nm} [FLAC]",
+                        "genre": (r.get("tags") or r.get("country") or "Lossless Stream")[:45],
+                        "codec": f"FLAC {br} kbps" if br else "FLAC Lossless",
+                        "url": u
+                    })
+        except Exception:
+            pass
+        return json.dumps({"status": "ok", "stations": stations}, ensure_ascii=False)
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+
+@post('/api/radio/record_start')
+def api_radio_rec_start_v91():
+    response.content_type = 'application/json'
+    try:
+        if _RADIO_REC_V91["proc"] and _RADIO_REC_V91["proc"].poll() is None:
+            return json.dumps({"status": "error", "error": "Запись уже идёт"})
+        load_multi_dirs_v71()
+        req = json.loads(request.body.read().decode('utf-8'))
+        s_url = (req.get("url") or "").strip()
+        s_title = (req.get("title") or "Radio_FLAC").strip()
+        fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
+        xf_map = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15, 'xflac_hifi': 45}
+        xf_mode = xf_map.get(fmt, 25)
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        tmp_wav = os.path.join(MUSIC_DIR, f"temp_final_radiorec_{os.getpid()}.wav")
+        if os.path.exists(tmp_wav):
+            try: os.remove(tmp_wav)
+            except Exception: pass
+        ff_bin = find_ffmpeg_binary()
+        proc = subprocess.Popen(
+            [ff_bin, '-y', '-i', s_url, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', tmp_wav],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _RADIO_REC_V91.update({"proc": proc, "tmp_wav": tmp_wav, "station": s_title, "start_ts": time.time(), "xf_mode": xf_mode})
+        return json.dumps({"status": "ok"})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+
+@route('/api/radio/record_status', method='GET')
+def api_radio_rec_status_v91():
+    response.content_type = 'application/json'
+    p = _RADIO_REC_V91.get("proc")
+    active = bool(p and p.poll() is None)
+    tw = _RADIO_REC_V91.get("tmp_wav") or ""
+    sz_b = os.path.getsize(tw) if (tw and os.path.isfile(tw)) else 0
+    sec = max(0, int(time.time() - (_RADIO_REC_V91.get("start_ts") or time.time()))) if active else 0
+    return json.dumps({"active": active, "sec": sec, "wav_mb": round(sz_b / (1024*1024), 2), "station": _RADIO_REC_V91.get("station") or ""})
+
+@post('/api/radio/record_stop')
+def api_radio_rec_stop_v91():
+    response.content_type = 'application/json'
+    tw = _RADIO_REC_V91.get("tmp_wav") or ""
+    try:
+        p = _RADIO_REC_V91.get("proc")
+        if p and p.poll() is None:
+            p.terminate()
+            try: p.wait(timeout=4)
+            except Exception: p.kill()
+        _RADIO_REC_V91["proc"] = None
+        if not tw or not os.path.isfile(tw) or os.path.getsize(tw) < 8192:
+            return json.dumps({"status": "error", "error": "Записано слишком мало данных эфира"})
+        with open(tw, "rb") as f:
+            wav_b = bytearray(f.read())
+        data_sz = max(0, len(wav_b) - 44)
+        struct.pack_into("<I", wav_b, 4, 36 + data_sz)
+        struct.pack_into("<I", wav_b, 40, data_sz)
+
+        xf_mode = _RADIO_REC_V91.get("xf_mode", 25)
+        suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac", 45: "_hifi.xflac"}.get(xf_mode, "_psycho.xflac")
+        safe_st = re.sub(r'[\\/:*?"<>|\[\]]+', '_', _RADIO_REC_V91.get("station") or "FLAC_Radio").strip()[:36]
+        stamp = time.strftime("%H%M%S")
+        final_name = f"Radio - {safe_st}_{stamp}{suf}"
+        final_path = os.path.join(MUSIC_DIR, final_name)
+        xfc_bytes = _encode_wav_to_xflac_bytes_v85(bytes(wav_b), xf_mode)
+        with open(final_path, "wb") as out_f:
+            out_f.write(xfc_bytes)
+        db = load_custom_tags_db_v74()
+        db[final_name] = {"TITLE": f"{safe_st} ({stamp})", "ARTIST": "FLAC Radio", "ALBUM": "Записи радиоэфира", "GENRE": "Lossless Radio"}
+        save_custom_tags_db_v74(db)
+        TRACK_META_CACHE_V71.pop(final_path, None)
+        sz_mb = round(os.path.getsize(final_path) / (1024*1024), 2)
+        return json.dumps({"status": "ok", "filename": final_name, "size_mb": sz_mb})
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)})
+    finally:
+        if tw and os.path.exists(tw):
+            try: os.remove(tw)
+            except Exception: pass
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
