@@ -553,19 +553,33 @@ func init() {
 		IdleConnTimeout:     60 * time.Second,
 		TLSHandshakeTimeout: 6 * time.Second,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err == nil && strings.Contains(host, "rutor.") {
-				ip := resolveRutorIP(nil)
-				if strings.IndexByte(ip, ':') >= 0 {
-					addr = "[" + ip + "]:" + port
-				} else {
-					addr = ip + ":" + port
-				}
-			}
-			return dialer.DialContext(ctx, network, addr)
-		},
-	}
-	httpClient = &http.Client{
+host, port, err := net.SplitHostPort(addr)
+if err == nil && strings.Contains(host, "rutor.") {
+ip := resolveRutorIP(nil)
+targetAddr := ip + ":" + port
+if strings.IndexByte(ip, ':') >= 0 {
+targetAddr = "[" + ip + "]:" + port
+}
+conn, dialErr := dialer.DialContext(ctx, network, targetAddr)
+if dialErr == nil {
+return conn, nil
+}
+// Если IP сменился и коннект не прошел — принудительно обновляем IP через DoH и пробуем снова!
+freshIP := forceRefreshRutorIP(nil)
+if freshIP != "" && freshIP != ip {
+if strings.IndexByte(freshIP, ':') >= 0 {
+targetAddr = "[" + freshIP + "]:" + port
+} else {
+targetAddr = freshIP + ":" + port
+}
+return dialer.DialContext(ctx, network, targetAddr)
+}
+return nil, dialErr
+}
+return dialer.DialContext(ctx, network, addr)
+},
+}
+httpClient = &http.Client{
 		Transport: transport,
 		Timeout:   0,
 	}
@@ -2574,58 +2588,78 @@ mbWg.Wait()
 // 7. ИНДЕКСАТОРЫ: Rutor (через Google DoH), BitSearch, ApiBay, Knaben
 // ============================================================================
 
+var rutorRefreshRunning sync.Mutex
+
+func forceRefreshRutorIP(logger *SearchLogger) string {
+rutorRefreshRunning.Lock()
+defer rutorRefreshRunning.Unlock()
+
+dohEndpoints := []string{
+"https://dns.google/resolve?name=rutor.info&type=A",
+"https://cloudflare-dns.com/dns-query?name=rutor.info&type=A",
+}
+
+for _, ep := range dohEndpoints {
+t0 := time.Now()
+ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+req, err := http.NewRequestWithContext(ctx, "GET", ep, nil)
+if err != nil {
+cancel()
+continue
+}
+req.Header.Set("Accept", "application/dns-json")
+req.Header.Set("User-Agent", "Mozilla/5.0")
+resp, err := http.DefaultClient.Do(req)
+if err != nil {
+cancel()
+continue
+}
+var dnsResp struct {
+Answer []struct {
+Type int    `json:"type"`
+Data string `json:"data"`
+} `json:"Answer"`
+}
+decErr := json.NewDecoder(resp.Body).Decode(&dnsResp)
+resp.Body.Close()
+cancel()
+
+if decErr == nil {
+for _, a := range dnsResp.Answer {
+if a.Type == 1 && net.ParseIP(a.Data) != nil {
+rutorIPMu.Lock()
+cachedRutorIP = a.Data
+rutorIPTime = time.Now()
+rutorIPMu.Unlock()
+if logger != nil {
+logger.Simple("🌐 DoH-резолвер: для rutor.info получен актуальный IP %s (%d мс)", a.Data, time.Since(t0).Milliseconds())
+}
+return a.Data
+}
+}
+}
+}
+
+rutorIPMu.Lock()
+rutorIPTime = time.Now()
+ip := cachedRutorIP
+rutorIPMu.Unlock()
+return ip
+}
+
 func resolveRutorIP(logger *SearchLogger) string {
-	rutorIPMu.RLock()
-	if time.Since(rutorIPTime) < 10*time.Minute && cachedRutorIP != "" {
-		ip := cachedRutorIP
-		rutorIPMu.RUnlock()
-		return ip
-	}
-	rutorIPMu.RUnlock()
+rutorIPMu.RLock()
+ip := cachedRutorIP
+needRefresh := time.Since(rutorIPTime) >= 10*time.Minute
+rutorIPMu.RUnlock()
 
-	t0 := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://dns.google/resolve?name=rutor.info&type=A", nil)
-	if err != nil {
-		return cachedRutorIP
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		rutorIPMu.Lock()
-		rutorIPTime = time.Now()
-		rutorIPMu.Unlock()
-		if logger != nil {
-			logger.Trace("[DoH-Rutor] ERR err=%v using cached=%s", err, cachedRutorIP)
-		}
-		return cachedRutorIP
-	}
-	defer resp.Body.Close()
-
-	var dnsResp struct {
-		Answer []struct {
-			Type int    `json:"type"`
-			Data string `json:"data"`
-		} `json:"Answer"`
-	}
-	if json.NewDecoder(resp.Body).Decode(&dnsResp) == nil {
-		for _, a := range dnsResp.Answer {
-			if a.Type == 1 && net.ParseIP(a.Data) != nil {
-				rutorIPMu.Lock()
-				cachedRutorIP = a.Data
-				rutorIPTime = time.Now()
-				rutorIPMu.Unlock()
-				if logger != nil {
-					logger.Simple("🌐 DoH-резолвер (dns.google): для rutor.info получен IP %s (%d мс)", a.Data, time.Since(t0).Milliseconds())
-					logger.Trace("[DoH-Rutor] resolved IP=%s in %dms", a.Data, time.Since(t0).Milliseconds())
-				}
-				return a.Data
-			}
-		}
-	}
-	return cachedRutorIP
+if needRefresh {
+// Не блокируем текущий поиск: отдаем имеющийся IP за 0 мс, а свежий проверяем в фоне
+go func() {
+_ = forceRefreshRutorIP(logger)
+}()
+}
+return ip
 }
 
 func searchRutorDoH(ctx context.Context, query string, logger *SearchLogger) []TorrentResult {
@@ -4138,8 +4172,6 @@ sess := startOrGetLiveSession(rawQuery, cfg, cfg.ForceNew)
 sess.mu.Lock()
 defer sess.mu.Unlock()
 
-// Если раздачи уже есть в снимке — отдаем за 0 мс!
-// Если это самый первый запрос (0 раздач), ждем прилета первой раздачи максимум 700 мс и сразу отдаем ответ UI
 if sess.latestSnap.TotalFound == 0 && sess.inProgress {
 doneWait := make(chan struct{})
 go func() {
