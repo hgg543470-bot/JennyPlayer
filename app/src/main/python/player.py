@@ -3326,7 +3326,13 @@ def api_torrent_import_track_v105():
                 # Прямой перенос MP3 / OGG / M4A / AAC без пережатия в xFLAC!
                 final_name = os.path.basename(full_p)
                 final_path = os.path.join(MUSIC_DIR, final_name)
-                shutil.copy2(full_p, final_path)
+                if os.path.abspath(full_p) != os.path.abspath(final_path):
+                    try:
+                        if os.path.exists(final_path):
+                            os.remove(final_path)
+                        os.link(full_p, final_path)
+                    except Exception:
+                        shutil.copy2(full_p, final_path)
 
             _JTORRENT_CONVERTED_V96[key] = final_name
             _TOR_ENC_PROGRESS_V99["track_pct"] = 100
@@ -3526,9 +3532,11 @@ def api_video_live_remux_v130():
     cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
     if start_sec > 0.5:
         cmd.extend(['-ss', f"{start_sec:.2f}"])
-    cmd.extend([
-        '-i', src_input,
-        '-c:v', 'copy',
+    force_transcode = (request.query.get('transcode') == '1') or src_input.lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob'))
+    v_codec_args = [
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'
+    ] if force_transcode else ['-c:v', 'copy']
+    cmd.extend(['-fflags', '+genpts+igndts', '-i', src_input] + v_codec_args + [
         '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-f', 'mp4', '-'

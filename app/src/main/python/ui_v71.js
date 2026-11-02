@@ -10775,3 +10775,217 @@ return _origCloseVidV131.apply(this, arguments);
 };
 
 setTimeout(window.upgradeVideoPlayerDOMToV132, 350);
+
+// === 🛠️🎬 JENNY V132.1: AVI AUTO-TRANSCODE, PLAY/PAUSE STATE FIX & DELAYED RAM START ===
+window._vidPlayIntentV132 = false;
+window._vidIsBufferingV132 = false;
+
+window.syncVideoPlayBtnIconV132 = function() {
+const vid = document.getElementById('jennyVideoElV130');
+const playBtn = document.getElementById('v130CenterPlayBtn');
+if (!playBtn || !vid) return;
+const vd = window.videoDeckV131 || {};
+if (window._vidIsBufferingV132 && window._vidPlayIntentV132) {
+playBtn.innerText = '⏳';
+return;
+}
+const isActuallyPlaying = (!vid.paused && !vid.ended && vid.readyState >= 2) || Boolean(vd.isReversed && vd.isStudioPlaying);
+playBtn.innerText = (window._vidPlayIntentV132 && isActuallyPlaying) ? '⏸' : '▶';
+};
+
+window.switchVideoToFfmpegRemuxV130 = function(ev, forceTranscodeVideo) {
+if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const st = window._vidStateV130;
+const vid = document.getElementById('jennyVideoElV130');
+if (!vid || !st.currentUrl) return;
+const curSec = (vid.currentTime || 0) + (st.remuxBaseOffset || 0);
+st.usingRemux = true;
+st.remuxBaseOffset = curSec;
+window._vidPlayIntentV132 = true;
+window._vidIsBufferingV132 = true;
+window.syncVideoPlayBtnIconV132();
+
+const tcFlag = (forceTranscodeVideo || /\.avi$/i.test(st.currentTitle)) ? '1' : '0';
+const remuxUrl = `/api/video/live_remux?src=${encodeURIComponent(st.currentUrl)}&start=${curSec.toFixed(1)}&transcode=${tcFlag}&t=${Date.now()}`;
+vid.src = remuxUrl;
+vid.play().catch(() => {});
+window.showVideoFeedbackV130(tcFlag === '1' ? '🛠️ Потоковый декодер FFmpeg (AVI ➔ MP4)' : '🛠️ Потоковый аудио-декодер FFmpeg (AAC)');
+window.wakeVideoHudV130(false);
+};
+
+window.toggleVideoPlayPauseV130 = function(ev) {
+if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const vid = document.getElementById('jennyVideoElV130');
+const st = window._vidStateV130;
+const vd = window.videoDeckV131;
+if (!vid) return;
+
+// Переключаем по нашему флагу намерения _vidPlayIntentV132, чтобы кнопка НИКОГДА не залипала на ⏸!
+if (window._vidPlayIntentV132) {
+window._vidPlayIntentV132 = false;
+window._vidIsBufferingV132 = false;
+st.userPaused = true;
+if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+if (vd.sourceNode) {
+vd.sourceNode.onended = null;
+try { vd.sourceNode.stop(); } catch (e) {}
+try { vd.sourceNode.disconnect(); } catch (e) {}
+vd.sourceNode = null;
+}
+vd.isStudioPlaying = false;
+try { vid.pause(); } catch (e) {}
+window.syncVideoPlayBtnIconV132();
+window.showVideoFeedbackV130('⏸ Пауза');
+} else {
+window._vidPlayIntentV132 = true;
+window._vidIsBufferingV132 = true;
+st.userPaused = false;
+window.initVideoDeckAudioV131();
+window.syncVideoPlayBtnIconV132();
+if (!vd.isReversed) {
+const p = vid.play();
+if (p && typeof p.catch === 'function') {
+p.catch(() => {
+// Если браузер не смог запустить .avi/.mkv напрямую — автоматически включаем потоковый FFmpeg!
+if (!st.usingRemux) {
+window.switchVideoToFfmpegRemuxV130(null, true);
+} else {
+window._vidPlayIntentV132 = false;
+window._vidIsBufferingV132 = false;
+window.syncVideoPlayBtnIconV132();
+}
+});
+}
+}
+window.syncVideoRamEngineV131(false);
+}
+window.wakeVideoHudV130(false);
+};
+
+window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+opts = opts || {};
+window.upgradeVideoPlayerDOMToV132();
+const root = window.ensureVideoPlayerDOMV130();
+const vid = document.getElementById('jennyVideoElV130');
+const st = window._vidStateV130;
+const vd = window.videoDeckV131;
+
+window.stopAllExternalStreamsV97();
+
+// Если этот файл торрента уже на 100% скачан на диск — берем готовый локальный файл для мгновенного старта!
+let effectiveUrl = streamUrl;
+if (opts.torHash && opts.torFileIdx !== undefined) {
+const dTor = (window._torLiveDaemonSnapV128 || []).find(t => t.hash === opts.torHash);
+const dFile = dTor && (dTor.files || []).find(f => Number(f.index) === Number(opts.torFileIdx));
+const job = window._torMapV112 && window._torMapV112[opts.torHash];
+const jSt = job && job.fileStatusMap && job.fileStatusMap[Number(opts.torFileIdx)];
+const importedName = (jSt && jSt.xflac_file) || (dFile && dFile.xflac_file);
+if (importedName) {
+effectiveUrl = '/api/media/' + encodeURIComponent(importedName);
+}
+}
+
+st.active = true;
+st.userPaused = false;
+st.currentUrl = effectiveUrl;
+st.currentTitle = titleStr || 'Видео';
+st.torHash = opts.torHash || '';
+st.torFileIdx = (opts.torFileIdx !== undefined) ? Number(opts.torFileIdx) : -1;
+st.usingRemux = false;
+st.remuxBaseOffset = 0;
+vd.isReversed = false;
+vd.ramDecodeSession++;
+if (vd.pieceAbortCtrl) { try { vd.pieceAbortCtrl.abort(); } catch (e) {} }
+vd.studioBuffer = null;
+window._vidPlayIntentV132 = true;
+window._vidIsBufferingV132 = true;
+window.updateVideoRevBtnUIV131();
+window.syncVideoPlayBtnIconV132();
+
+document.getElementById('v130VideoTitle').innerText = st.currentTitle;
+const subEl = document.getElementById('v130VideoSubTelemetry');
+if (subEl) {
+subEl.innerText = st.torHash ? '🧲 Буферизация видеопотока...' : '📁 Открытие видеофайла...';
+}
+
+const btnHub = document.getElementById('v130BtnTorHub');
+const btnSave = document.getElementById('v130BtnSaveVideo');
+if (btnHub) btnHub.style.display = st.torHash ? 'inline-flex' : 'none';
+if (btnSave) btnSave.style.display = st.torHash ? 'inline-flex' : 'none';
+
+if (st.torHash && st.torFileIdx >= 0) {
+fetch('/api/torrent/control', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ hash: st.torHash, action: 'boost_file', file_index: st.torFileIdx })
+}).catch(() => {});
+}
+
+root.style.display = 'flex';
+window.initVideoDeckAudioV131();
+window.syncNativeFullscreenLockV132();
+
+// Привязываем однократные слушатели реального старта видео и авто-ремукса при ошибке кодека (.avi / .mkv)
+if (!vid._v132EventsHooked) {
+vid._v132EventsHooked = true;
+vid.addEventListener('playing', () => {
+window._vidIsBufferingV132 = false;
+window._vidPlayIntentV132 = true;
+window.syncVideoPlayBtnIconV132();
+window.wakeVideoHudV130(false);
+// Запускаем фоновую подкачку RAM-кусков Деки Б ТОЛЬКО через 1.5с после реального старта картинки!
+clearTimeout(vid._ramStartDelayT);
+vid._ramStartDelayT = setTimeout(() => {
+if (window._vidStateV130.active && !window._vidStateV130.userPaused && !window.videoDeckV131.studioBuffer) {
+window.decodeVideoToRamV131(window._vidStateV130.currentUrl, window._vidStateV130.currentTitle);
+}
+}, 1500);
+});
+vid.addEventListener('waiting', () => {
+if (window._vidPlayIntentV132) {
+window._vidIsBufferingV132 = true;
+window.syncVideoPlayBtnIconV132();
+}
+});
+vid.addEventListener('pause', () => {
+if (!window._vidStateV130._internalRevPause) {
+window._vidIsBufferingV132 = false;
+window.syncVideoPlayBtnIconV132();
+}
+});
+vid.addEventListener('error', () => {
+if (window._vidStateV130.active && !window._vidStateV130.usingRemux) {
+window.switchVideoToFfmpegRemuxV130(null, true);
+}
+});
+}
+
+// Если файл .avi — сразу запускаем через потоковый FFmpeg-транскодер (Android WebView не декодирует .avi нативно)
+if (/\.avi$/i.test(st.currentTitle)) {
+window.switchVideoToFfmpegRemuxV130(null, true);
+} else {
+vid.src = effectiveUrl;
+vid.playbackRate = vd.speed || 1.0;
+vid.play().catch(() => {});
+}
+window.wakeVideoHudV130(false);
+};
+
+// Автоскрытие кнопок через 2.8с и в полном экране, и в мини-окне PiP (чтобы не висела кнопка поверх кадра)
+window.wakeVideoHudV130 = function(fromTapWake) {
+const hud = document.getElementById('v130HudOverlay');
+if (!hud) return;
+if (fromTapWake && hud.classList.contains('hud-hidden-v130')) {
+window._vidStateV130.hudJustWokeUntil = performance.now() + 380;
+}
+hud.classList.remove('hud-hidden-v130');
+clearTimeout(window._vidStateV130.controlsHideTimer);
+if (window._vidPlayIntentV132) {
+window._vidStateV130.controlsHideTimer = setTimeout(() => {
+hud.classList.add('hud-hidden-v130');
+}, 2800);
+}
+};
