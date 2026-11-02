@@ -332,6 +332,9 @@ var (
 		"m4a":  {"m4a", "aac", "alac", "itunes"},
 		"aac":  {"aac", "m4a", "mp4"},
 		"ogg":  {"ogg", "vorbis", "opus"},
+		"video": {"mp4", "mkv", "webm", "avi", "1080p", "720p", "2160p", "4k", "web-dl", "bdrip", "webrip", "hdrip", "dvdrip", "satrip"},
+		"1080p": {"1080p", "1080i", "fhd"},
+		"2160p": {"2160p", "4k", "uhd"},
 	}
 
 	// Регулярные выражения

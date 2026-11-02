@@ -47,8 +47,9 @@ OMNI_TORRENT_CONFIG = {
         {"id": "mp3",  "label": "🎵 MP3",  "color": "#3fb950"},
         {"id": "m4a",  "label": "🍏 M4A",  "color": "#e3b341"},
         # {"id": "ogg",   "label": "🔥 OGG/OPUS", "color": "#f0883e"},
-        # {"id": "1080p", "label": "🎬 1080p",    "color": "#ff7b72"},
-        # {"id": "2160p", "label": "📽️ 4K UHD",   "color": "#ffa657"},
+        {"id": "video", "label": "🎬 ВИДЕО", "color": "#ff7b72"},
+        {"id": "1080p", "label": "📽️ 1080p", "color": "#ffa657"},
+        {"id": "2160p", "label": "🔥 4K",    "color": "#f0883e"},
     ],
 
     # --- 3. ПОЛЕ ФИЛЬТРАЦИИ ПО ГОДУ ВЫПУСКА ---
@@ -3495,6 +3496,61 @@ def api_torrent_control_v128():
   with urllib.request.urlopen(req, timeout=8) as r: return r.read().decode("utf-8")
  except Exception as e:
   return json.dumps({"status": "error", "error": str(e)})
+
+
+# === 🎬 JENNY V130: VIDEO STREAM & LIVE FFMPEG REMUX ENGINE ===
+@route('/api/video/live_remux', method='GET')
+def api_video_live_remux_v130():
+    src = (request.query.get('src') or '').strip()
+    start_sec = float(request.query.get('start') or 0.0)
+    if not src:
+        response.status = 400
+        return "Missing src"
+    if src.startswith('/api/torrent/stream/'):
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            f_idx = parts[4].split('?')[0]
+            ensure_jtorrent_daemon_v96()
+            src_input = f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}"
+        else:
+            response.status = 400
+            return "Invalid torrent stream path"
+    elif src.startswith('/api/media/'):
+        fn = urllib.parse.unquote(src[len('/api/media/'):].split('?')[0])
+        src_input = resolve_track_full_path_v71(fn)
+    else:
+        src_input = resolve_track_full_path_v71(src)
+
+    ff_bin = find_ffmpeg_binary()
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if start_sec > 0.5:
+        cmd.extend(['-ss', f"{start_sec:.2f}"])
+    cmd.extend([
+        '-i', src_input,
+        '-c:v', 'copy',
+        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-f', 'mp4', '-'
+    ])
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"
+    }
+    def _remux_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_remux_gen(), status=200, headers=resp_hdrs)
 
 def start_server():
     load_saved_music_dir()
