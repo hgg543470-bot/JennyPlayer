@@ -9021,3 +9021,72 @@ window.runTorrentActionV96 = async function(isForceNewSearch) {
 
     pollNextWave();
 };
+
+// === 🚀 JENNY V127: DIRECT .TORRENT CONVEYOR UI, LIVE KB/S SPEED & KILL_ALL RESET ===
+const _origKillAllV94 = window.killAllSourceModulesV94;
+window.killAllSourceModulesV94 = async function(ev) {
+if (window._torGlobalTimerV112) { clearInterval(window._torGlobalTimerV112); window._torGlobalTimerV112 = null; }
+if (window.stopTorrentLiveWavePollV126) { window.stopTorrentLiveWavePollV126(); }
+window._torMapV112 = {};
+window._torSnapshotsByHashV108 = {};
+window._torImportQueueV112 = [];
+window._torImportWorkerBusyV112 = false;
+if (window._torStateV96) {
+window._torStateV96.currentHash = '';
+window._torStateV96.dlActive = false;
+window._torStateV96.dlOverallPct = 0;
+window._torStateV96.activeDlSet = new Set();
+}
+return await _origKillAllV94.apply(this, arguments);
+};
+
+window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const h = window._torStateV96 && window._torStateV96.currentHash;
+const job = h ? window._torMapV112[h] : null;
+if (!job) return;
+const cleanIdx = Number(fileIdx);
+if (!job.validIdxSet.has(cleanIdx)) return;
+if (!job.dlActive && job.selectedFiles.size === job.validIdxSet.size && job.validIdxSet.size > 1) {
+job.selectedFiles.clear();
+document.querySelectorAll('#torBodyListV96 input[type="checkbox"]').forEach(c => { c.checked = false; });
+}
+job.selectedFiles.add(cleanIdx);
+job.targetSet.add(cleanIdx);
+job.dlActive = true;
+job.completedAll = false;
+const chk = document.querySelector(`#torFileRowV96_${cleanIdx} input[type="checkbox"]`);
+if (chk) chk.checked = true;
+if (typeof window.updateTorrentSelectAllBtnUIV117 === 'function') window.updateTorrentSelectAllBtnUIV117();
+if (btnEl) { btnEl.innerText = '⏳'; btnEl.style.color = '#3fb950'; }
+await window.launchJobDownloadInDaemonV112(job);
+};
+
+const _origPaintJobV112 = window.paintOpenedTorrentJobProgressV112;
+window.paintOpenedTorrentJobProgressV112 = function(job, te) {
+_origPaintJobV112.apply(this, arguments);
+if (!job || window._torStateV96.currentHash !== job.hash || window._torScreenModeV112 !== 'files') return;
+const stEl = document.getElementById('torStatusLineV96');
+if (stEl && (job.dlActive || job.completedAll)) {
+const totalTargets = Math.max(1, job.targetSet.size || job.files.length);
+const readyCnt = job.readyCnt || 0;
+const totalPct = job.netPct || 0;
+const spdStr = job.speedKbps > 0 ? ` • ⚡ ${job.speedKbps} КБ/с` : '';
+const totPeersStr = job.totalPeers > job.peers ? `/${job.totalPeers}` : '';
+stEl.innerText = `🧲 Сидов: ${job.seeders} • Пиров: ${job.peers}${totPeersStr}${spdStr} • Сеть: ${totalPct}% • В плеере: ${readyCnt}/${totalTargets}`;
+}
+};
+
+setInterval(async () => {
+const curH = window._torStateV96 && window._torStateV96.currentHash;
+const job = curH && window._torMapV112 ? window._torMapV112[curH] : null;
+if (!job || !job.dlActive) return;
+try {
+const d = await fetch('/api/torrent/status').then(r => r.json());
+const tor = (d.torrents || []).find(x => String(x.hash || '').toLowerCase() === job.hash);
+if (tor) {
+job.speedKbps = tor.speed_kbps || 0;
+job.totalPeers = tor.total_peers || 0;
+}
+} catch (e) {}
+}, 1000);

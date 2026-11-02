@@ -341,7 +341,7 @@ var (
 	reAudioMarkers  = regexp.MustCompile(`(?i)\b(flac|mp3|wav|lossless|alac|m4a|aac|ape|wv|ogg|opus|320\s*kbps|320kbps|24bit|16bit|hi-?res|discography|дискография|альбом|сборник|коллекция|collection|anthology|ost|soundtrack)\b`)
 	reCollabMarkers = regexp.MustCompile(`(?i)(?:\b(feat\.?|ft\.?|feature|featuring|with|prod\.?\s*by|vs\.?|при\s*уч\.?|при\s*участии|уч\.?|совм\.?|совместно\s*с|tribute|трибьют|cover|кавер)\b|\s+&\s+)`)
 	reNoiseWords    = regexp.MustCompile(`(?i)\b(music|lyrics|official|video|audio|hd|клип|слушать|текст|скачать|торрент)\b`)
-	reHardJunk      = regexp.MustCompile(`(?i)(\bfitgirl\b|\brepack\b|pc\s*\||\s*pc\b|\(\d{4}\)\s*pc\b|\bdlc\b|\[v\s*\d+\.\d+|\bfb2\b|\bpdf\b|\brtf\b|\bepub\b|\bmobi\b|\bdjvu\b|аудиокниг|радиоспектакл|\[книг|\bкнига\s*\d|\bкниги\s*\d|\bтом\s*\d|vhsrip|dvdrip|dvdremux|bdremux|dbrip|hdrip|tvrip|видеоколлекц|anifilm|anidub|anilibria|кубик\s+в\s+кубе|iptv|satremux|50\s*fps|курс\s+иллюзионист|полезных\s+привыч|нанопривыч|силовые\s+упражн|pc\s+by)`)
+	reHardJunk      = regexp.MustCompile(`(?i)(\bfitgirl\b|\brepack\b|\bрепак\b|\bxatab\b|\bchovka\b|\bdixen18\b|\bмеханики\b|\bcanek77\b|pc\s*\||\s*pc\b|\(\d{4}\)\s*pc\b|\bdlc\b|\[v\s*\d+\.\d+|\bapk\b|\bfb2\b|\bpdf\b|\brtf\b|\bepub\b|\bmobi\b|\bdjvu\b|аудиокниг|радиоспектакл|\[книг|pc\s+by)`)
 	reBracketMeta   = regexp.MustCompile(`[\(\[\{][^\)\]\}]*[\)\]\}]`)
 
 	// SoundCloud regexes (для авто-извлечения client_id и SSR __sc_hydration)
@@ -2698,7 +2698,7 @@ func searchRutorDoH(ctx context.Context, query string, logger *SearchLogger) []T
 		}
 		infoHash := strings.ToLower(mMag[2])
 		title := cleanTitle(mTit[1])
-		if false && reHardJunk.MatchString(title) {
+		if reHardJunk.MatchString(title) {
 			cutJunk++
 			logger.Trace("[Rutor] REJECTED by reHardJunk: %q", title)
 			continue
@@ -2792,7 +2792,7 @@ func searchBitsearch(ctx context.Context, query string, logger *SearchLogger) []
 		if title == "" {
 			continue
 		}
-		if false && reHardJunk.MatchString(title) {
+		if reHardJunk.MatchString(title) {
 			cutJunk++
 			logger.Trace("[BitSearch] REJECTED by reHardJunk: %q", title)
 			continue
@@ -2880,7 +2880,7 @@ func searchApiBay(ctx context.Context, query string, logger *SearchLogger) []Tor
 			continue
 		}
 		title := cleanTitle(it.Name)
-		if false && reHardJunk.MatchString(title) {
+		if reHardJunk.MatchString(title) {
 			cutJunk++
 			logger.Trace("[ApiBay] REJECTED by reHardJunk: %q", title)
 			continue
@@ -2957,7 +2957,7 @@ func searchKnaben(ctx context.Context, query string, logger *SearchLogger) []Tor
 	cutJunk := 0
 	for _, h := range data.Hits {
 		title := cleanTitle(h.Title)
-		if false && reHardJunk.MatchString(title) {
+		if reHardJunk.MatchString(title) {
 			cutJunk++
 			logger.Trace("[Knaben] REJECTED by reHardJunk: %q", title)
 			continue
