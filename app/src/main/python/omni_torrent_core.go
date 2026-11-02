@@ -93,6 +93,7 @@ type EngineConfig struct {
 	FormatTag      string  `json:"format_tag"`
 	Year           string  `json:"year"`
 	ExactMatch     bool    `json:"exact"`
+	ForceNew       bool    `json:"force_new"`
 	HideZeroSeeds  bool    `json:"hide_zero"`
 	MinTwoSeeds    bool    `json:"min_two_seeds"`
 	MinFuzzyScore  float64 `json:"min_fuzzy_score"`
@@ -4133,13 +4134,27 @@ return sess
 }
 
 func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig) SearchResponse {
-sess := startOrGetLiveSession(rawQuery, cfg, false)
+sess := startOrGetLiveSession(rawQuery, cfg, cfg.ForceNew)
 sess.mu.Lock()
 defer sess.mu.Unlock()
 
-// Ждем только самую первую находку, а при повторных опросах отдаем свежий снимок за 0 мс!
+// Если раздачи уже есть в снимке — отдаем за 0 мс!
+// Если это самый первый запрос (0 раздач), ждем прилета первой раздачи максимум 700 мс и сразу отдаем ответ UI
+if sess.latestSnap.TotalFound == 0 && sess.inProgress {
+doneWait := make(chan struct{})
+go func() {
+time.Sleep(700 * time.Millisecond)
+close(doneWait)
+sess.cond.Broadcast()
+}()
 for sess.latestSnap.TotalFound == 0 && sess.inProgress {
+select {
+case <-doneWait:
+return sess.latestSnap
+default:
 sess.cond.Wait()
+}
+}
 }
 return sess.latestSnap
 }
@@ -4202,6 +4217,9 @@ func parseBoolParam(val string, def bool) bool {
 }
 
 func applyQueryOverrides(q url.Values, cfg *EngineConfig) {
+	if v := q.Get("force_new"); v != "" {
+		cfg.ForceNew = parseBoolParam(v, cfg.ForceNew)
+	}
 	if ft := strings.TrimSpace(q.Get("format_tag")); ft != "" {
 		cfg.FormatTag = strings.ToLower(ft)
 	}
@@ -4348,6 +4366,7 @@ mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 				var reqBody struct {
 					Q     string `json:"q"`
 					Query string `json:"query"`
+					ForceNew bool `json:"force_new"`
 					EngineConfig
 				}
 				reqBody.EngineConfig = cfg

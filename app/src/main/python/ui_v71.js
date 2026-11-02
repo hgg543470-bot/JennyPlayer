@@ -8867,3 +8867,157 @@ window.ensureTorrentYearInputV125 = function() {
         yInp.style.display = '';
     }
 };
+
+// === ⚡ JENNY V126: LIVE REACTIVE TORRENT STREAMING WAVES (ZERO-TIMER PROGRESSIVE UI) ===
+window._torLivePollTimerV126 = null;
+
+window.stopTorrentLiveWavePollV126 = function() {
+    if (window._torLivePollTimerV126) {
+        clearTimeout(window._torLivePollTimerV126);
+        window._torLivePollTimerV126 = null;
+    }
+};
+
+window.applyLiveTorrentWaveDOMV126 = function(body, groups, flatList, isFirstRender) {
+    if (!body) return;
+    const prevScrollTop = body.scrollTop;
+    const openMap = {};
+    body.querySelectorAll('details[data-grp-key]').forEach((det, idx) => {
+        const k = det.getAttribute('data-grp-key') || String(idx);
+        openMap[k] = det.open;
+    });
+
+    const rawHtml = window.renderTorrentMultiGroupsHTMLV119(groups, flatList);
+    body.innerHTML = rawHtml;
+
+    body.querySelectorAll('details').forEach((det, idx) => {
+        const sumEl = det.querySelector('summary');
+        const k = sumEl ? sumEl.innerText.split('раздач:')[0].trim() : ('grp_' + idx);
+        det.setAttribute('data-grp-key', k);
+        if (!isFirstRender && Object.prototype.hasOwnProperty.call(openMap, k)) {
+            det.open = openMap[k];
+        } else if (idx === 0) {
+            det.open = true;
+        }
+    });
+
+    if (!isFirstRender && prevScrollTop > 0) {
+        body.scrollTop = prevScrollTop;
+    }
+    if (typeof window.updateSearchCardsWithLiveMapBadgesV112 === 'function') {
+        window.updateSearchCardsWithLiveMapBadgesV112();
+    }
+};
+
+window.runTorrentActionV96 = async function(isForceNewSearch) {
+    window.stopTorrentLiveWavePollV126();
+    window.renderTorrentFilterBarV99();
+    if (typeof window.injectTorrentFileBtnInHeaderV113 === 'function') {
+        window.injectTorrentFileBtnInHeaderV113();
+    }
+    const inp = document.getElementById('torMagnetInpV91');
+    const body = document.getElementById('torBodyListV96');
+    const ftr = document.getElementById('torFooterBarV96');
+    const stEl = document.getElementById('torStatusLineV96');
+    if (!inp || !body) return;
+    const val = inp.value.trim();
+    if (!val) return;
+    if (val.toLowerCase().startsWith('magnet:?')) {
+        await window.openMagnetInGoEngineV96(val);
+        return;
+    }
+
+    window._torScreenModeV112 = 'search';
+    const mySession = ++window._torViewSessionV112;
+    if (ftr) ftr.style.display = 'none';
+    const ts = window._torStateV96;
+    window.ensureTorrentYearInputV125();
+    window.syncOmniTorrentConfigV125();
+    const yVal = (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || ''));
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase() + (yVal ? ' • ' + yVal : '');
+
+    body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⚡ Живой поиск «${val}» [${fmtLabel}] — выводим раздачи по мере отклика...</div>`;
+    if (stEl) {
+        stEl.innerText = `⚡ Запуск реактивного поиска «${val}»...`;
+    }
+
+    let lastRenderedVer = -1;
+    let lastRenderedCount = -1;
+    let hasRenderedAny = false;
+    let firstCall = (isForceNewSearch !== false);
+
+    const pollNextWave = async () => {
+        if (mySession !== window._torViewSessionV112 || window._torScreenModeV112 === 'files') {
+            return;
+        }
+        try {
+            const res = await fetch('/api/torrent/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: val,
+                    force_new: firstCall,
+                    format_tag: ts.formatTag || 'all',
+                    year: (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || '')),
+                    exact: Boolean(ts.exactSearch),
+                    hide_zero: Boolean(ts.hideZeroSeeds),
+                    min_two_seeds: Boolean(ts.minTwoSeeds)
+                })
+            });
+            firstCall = false;
+            const d = await res.json();
+            if (mySession !== window._torViewSessionV112 || window._torScreenModeV112 === 'files') {
+                return;
+            }
+
+            const groups = d.groups || [];
+            const flatList = d.results || [];
+            const hidCnt = d.hidden_zero || 0;
+            const inProg = Boolean(d.in_progress);
+            const snapVer = d.snapshot_version || 0;
+            const compJobs = d.completed_jobs || 0;
+            const totJobs = d.total_jobs || 0;
+            const seedFilterLbl = ts.minTwoSeeds ? '<2 сидов' : '0 сидов';
+
+            if (flatList.length > 0 || groups.length > 0) {
+                window._torSearchGroupsV119 = groups;
+                if (!hasRenderedAny || flatList.length !== lastRenderedCount || (!inProg && snapVer !== lastRenderedVer)) {
+                    window.applyLiveTorrentWaveDOMV126(body, groups, flatList, !hasRenderedAny);
+                    hasRenderedAny = true;
+                    lastRenderedCount = flatList.length;
+                    lastRenderedVer = snapVer;
+                }
+                if (stEl) {
+                    const progBadge = inProg
+                        ? `⚡ Догрузка [${compJobs}/${totJobs}] • `
+                        : `✅ Готово • `;
+                    stEl.innerText = `${progBadge}[${fmtLabel}] Категорий: ${groups.length || 1} • Раздач: ${flatList.length}` + (hidCnt > 0 ? ` (скрыто: ${hidCnt})` : '');
+                }
+            } else if (!inProg) {
+                if (stEl) stEl.innerText = `📋 Живых раздач: 0` + (hidCnt > 0 ? ` (скрыто с ${seedFilterLbl}: ${hidCnt})` : '');
+                const tips = [];
+                if (ts.exactSearch) tips.push('выключить <b>🎯 Точный поиск</b>');
+                if (ts.minTwoSeeds) tips.push('снять галочку <b>👥 >= 2 сидов</b>');
+                else if (ts.hideZeroSeeds && hidCnt > 0) tips.push('снять галочку <b>🚫 Скрыть 0 сидов</b>');
+                if (ts.formatTag && ts.formatTag !== 'all') tips.push('выбрать фильтр <b>🌐 ВСЕ</b>');
+                const tipStr = tips.length ? `Попробуй ${tips.join(' или ')}.` : 'Попробуй ввести имя исполнителя или открыть готовый <b>📂 .torrent</b> файл.';
+                const fmtWhere = (ts.formatTag && ts.formatTag !== 'all') ? ` в формате <b>${fmtLabel}</b>` : '';
+                body.innerHTML = `<div style="color:#8b949e;text-align:center;padding:25px;line-height:1.45;">По запросу «<b>${val}</b>»${fmtWhere} живых раздач не найдено${hidCnt > 0 ? ` (скрыто ${hidCnt} раздач с ${seedFilterLbl})` : ''}.<br><br>${tipStr}</div>`;
+            } else {
+                if (stEl) {
+                    stEl.innerText = `⚡ Опрос индексаторов [${compJobs}/${totJobs}] — ждём первый отклик...`;
+                }
+            }
+
+            if (inProg && mySession === window._torViewSessionV112 && window._torScreenModeV112 === 'search') {
+                window._torLivePollTimerV126 = setTimeout(pollNextWave, 450);
+            }
+        } catch (e) {
+            if (!hasRenderedAny) {
+                body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:20px;">❌ ${e.message || e}</div>`;
+            }
+        }
+    };
+
+    pollNextWave();
+};

@@ -2579,6 +2579,7 @@ def api_torrent_search_v105():
 
         payload = json.dumps({
             "query": q,
+            "force_new": bool(req.get("force_new", False)),
             "format_tag": fmt_tag,
             "year": year_clean,
             "profile": str(req.get("profile") or cfg.get("profile", "audio")).strip().lower(),
