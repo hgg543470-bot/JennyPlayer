@@ -3451,7 +3451,7 @@ def api_torrent_add_file_v127():
     add_req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add", data=json.dumps({"torrent_path": saved_tor_path, "trackers": all_trackers}).encode("utf-8"), headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(add_req, timeout=12) as r: d_resp = json.loads(r.read().decode("utf-8"))
     if d_resp.get("status") == "ok" and d_resp.get("files"):
-     files_out = [{"index": int(f.get("index", 0)), "path": f.get("path", ""), "length": int(f.get("length", 0)), "completed": 0, "percent": 0, "done": False, "full_path": f.get("full_path") or os.path.join(tor_dir, f.get("path", ""))} for f in d_resp["files"]]
+     files_out = [{"index": int(f.get("index", 0)), "path": f.get("path", ""), "length": int(f.get("length", 0)), "completed": 0, "percent": 0, "done": False, "full_path": f.get("full_path") or os.path.join(tor_dir, f.get("path", "")), "begin_piece": int(f.get("begin_piece", 0)), "end_piece": int(f.get("end_piece", 0))} for f in d_resp["files"]]
      return json.dumps({"status": "ok", "hash": info_hash, "name": d_resp.get("name") or tor_name, "files": files_out, "from_torrent_file": True}, ensure_ascii=False)
    except Exception: pass
  except Exception as e:
@@ -3481,6 +3481,18 @@ def api_torrent_download_v127():
     req2 = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download", data=payload, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req2, timeout=10) as r2: return r2.read().decode("utf-8")
   return res_str
+ except Exception as e:
+  return json.dumps({"status": "error", "error": str(e)})
+
+
+# === 🧩 JENNY V128: TORRENT CONTROL ROUTE ===
+@post('/api/torrent/control')
+def api_torrent_control_v128():
+ response.content_type = 'application/json'
+ try:
+  ensure_jtorrent_daemon_v96()
+  req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control", data=request.body.read(), headers={"Content-Type": "application/json"})
+  with urllib.request.urlopen(req, timeout=8) as r: return r.read().decode("utf-8")
  except Exception as e:
   return json.dumps({"status": "error", "error": str(e)})
 
