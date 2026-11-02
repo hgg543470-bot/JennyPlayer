@@ -290,722 +290,782 @@ func normalizeCompact(s string) string {
   return string(out)
 }
 
-func compactRawLetters(s string) string {
-  s = strings.ReplaceAll(strings.ToLower(s), "ё", "е")
-  var out []rune
-  for _, r := range s {
-    if unicode.IsLetter(r) || unicode.IsDigit(r) {
-      out = append(out, r)
-    }
-  }
-  return string(out)
-}
-
 var (
-  featGuestRe   = regexp.MustCompile(`(?i)(?:\b(feat\.?|ft\.?|feature|featuring|with|prod\.?\s*by|vs\.?|при\s*уч\.?|при\s*участии|уч\.?|совм\.?|совместно\s*с)\b|\s+&\s+)`)
-  bookJunkRe    = regexp.MustCompile(`(?i)(\bfb2\b|\bpdf\b|\brtf\b|\bepub\b|\bmobi\b|\bdjvu\b|аудиокниг|радиоспектакл|курс\s+иллюзионист|полезных\s+привыч|нанопривыч|силовые\s+упражн|pc\s+by)`)
-  suggestJunkRe = regexp.MustCompile(`(?i)\b(music|lyrics|official|video|audio|hd|клип|песни|слушать|текст|скачать|торрент|flac|mp3|рэп|реп|rap|hip-?hop|хип-?хоп|дискография|альбом|альбомы)\b`)
-  hyphenNormRe  = regexp.MustCompile(`(?i)\b(jay)[\s-]*z\b`)
+featGuestRe   = regexp.MustCompile(`(?i)(?:\b(feat\.?|ft\.?|feature|featuring|with|prod\.?\s*by|vs\.?|при\s*уч\.?|при\s*участии|уч\.?|совм\.?|совместно\s*с)\b|\s+&\s+)`)
+suggestJunkRe = regexp.MustCompile(`(?i)\b(music|lyrics|official|video|audio|hd|клип|слушать|текст|скачать|торрент)\b`)
+bookJunkRe    = regexp.MustCompile(`(?i)(\bfitgirl\b|\brepack\b|pc\s*\||\|\s*pc\b|\(\d{4}\)\s*pc\b|\bdlc\b|\[v\s*\d+\.\d+|\bfb2\b|\bpdf\b|\brtf\b|\bepub\b|\bmobi\b|\bdjvu\b|аудиокниг|радиоспектакл|\[книг|\bкнига\s*\d|\bкниги\s*\d|\bтом\s*\d|vhsrip|iptv|satremux|50\s*fps|курс\s+иллюзионист|полезных\s+привыч|нанопривыч|силовые\s+упражн|pc\s+by)`)
 )
 
-// Слоговой англо-фонетический модуль: переводит русскую запись английских имен в оригинал без словарей-костылей
+func compactRawLetters(s string) string {
+s = strings.ReplaceAll(strings.ToLower(s), "ё", "е")
+var out []rune
+for _, r := range s {
+if unicode.IsLetter(r) || unicode.IsDigit(r) {
+out = append(out, r)
+}
+}
+return string(out)
+}
+
+func absInt(x int) int {
+if x < 0 {
+return -x
+}
+return x
+}
+
+var enAlpha = [][2]string{
+{"даблю", "w"}, {"джей", "j"}, {"джэй", "j"}, {"эйч", "h"}, {"кью", "q"}, {"экс", "x"}, {"икс", "x"},
+{"зет", "z"}, {"зэт", "z"}, {"вай", "y"}, {"уай", "y"}, {"кей", "k"}, {"кэй", "k"}, {"джи", "g"},
+{"эй", "a"}, {"ей", "a"}, {"би", "b"}, {"си", "c"}, {"ди", "d"}, {"эф", "f"}, {"ай", "i"},
+{"эл", "l"}, {"эм", "m"}, {"эн", "n"}, {"оу", "o"}, {"пи", "p"}, {"ар", "r"}, {"эс", "s"},
+{"ти", "t"}, {"ви", "v"}, {"зи", "z"}, {"зе", "z"}, {"ю", "u"}, {"и", "e"},
+}
+
+var g2pReplacer = strings.NewReplacer(
+"дж", "j", "тч", "ch", "ч", "ch", "ш", "sh", "щ", "sh", "кс", "x", "кв", "qu", "кью", "cu", "ью", "u",
+"ей", "ay", "эй", "ay", "ай", "i", "ой", "oy", "ау", "ow", "оу", "o", "я", "ya", "ю", "u",
+"а", "a", "б", "b", "в", "v", "г", "g", "д", "d", "е", "e", "з", "z", "и", "i", "й", "y",
+"к", "k", "л", "l", "м", "m", "н", "n", "о", "o", "п", "p", "р", "r", "с", "s", "т", "t",
+"у", "u", "ф", "f", "х", "h", "ц", "ts", "ы", "y", "ъ", "", "ь", "",
+)
+
+func decodeSpelledLetters(s string) []string {
+comp := compactRawLetters(strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(s), "э", "е"), "ё", "е"))
+if len([]rune(comp)) < 3 || len([]rune(comp)) > 16 {
+return nil
+}
+var lets []string
+for rem := comp; len(rem) > 0; {
+hit := false
+for _, kv := range enAlpha {
+if strings.HasPrefix(rem, kv[0]) {
+lets = append(lets, kv[1])
+rem = strings.TrimPrefix(rem, kv[0])
+hit = true
+break
+}
+}
+if !hit {
+return nil
+}
+}
+if len(lets) < 2 || len(lets) > 6 {
+return nil
+}
+joinedCompact := strings.ToUpper(strings.Join(lets, ""))
+res := []string{joinedCompact}
+if len(lets) == 4 {
+res = append(res, strings.ToUpper(lets[0]+lets[1]+" "+lets[2]+lets[3]))
+}
+if lets[0] == "j" && len(lets) == 2 {
+res = append([]string{"Jay-" + strings.ToUpper(lets[1])}, res...)
+}
+return res
+}
+
+// Если однословный запрос начинается со стыка двух согласных (например "xcube"),
+// возвращает также вариант без первой опечаточной согласной ("cube")
+func stripLeadingConsonantCluster(s string) string {
+r := []rune(strings.ToLower(strings.TrimSpace(s)))
+if len(r) < 5 || strings.ContainsRune(s, ' ') {
+return ""
+}
+vowels := "аеёиоуыэюяaeiouy"
+if !strings.ContainsRune(vowels, r[0]) && !strings.ContainsRune(vowels, r[1]) && strings.ContainsRune(vowels, r[2]) {
+if r[0] == 'x' || r[0] == 'k' || r[0] == 'v' || r[0] == 'z' || r[0] == 'q' {
+return string(r[1:])
+}
+}
+return ""
+}
+
 func ruAngloPhoneticVariants(raw string) []string {
-  cleaned := strings.ToLower(strings.TrimSpace(suggestJunkRe.ReplaceAllString(raw, "")))
-  cleaned = strings.Join(strings.Fields(cleaned), " ")
-  if cleaned == "" {
-    return nil
-  }
-
-  s := strings.ReplaceAll(strings.ReplaceAll(cleaned, "э", "е"), "ё", "е")
-  var out []string
-  addOut := func(v string) {
-    v = strings.Join(strings.Fields(strings.TrimSpace(v)), " ")
-    if len(v) >= 2 {
-      for _, ex := range out {
-        if strings.EqualFold(ex, v) {
-          return
-        }
-      }
-      out = append(out, v)
-    }
-  }
-
-  noSpace := compactRawLetters(s)
-  if strings.HasPrefix(noSpace, "джейз") || strings.HasPrefix(noSpace, "джэйз") {
-    rest := strings.TrimPrefix(strings.TrimPrefix(noSpace, "джейз"), "джэйз")
-    if rest == "и" || rest == "ет" || rest == "эт" || rest == "" {
-      addOut("Jay-Z")
-    }
-  }
-
-  syllabic := strings.NewReplacer(
-    "джей", "jay", "джэй", "jay",
-    "зе", "z", "зи", "z", "зет", "z", "зэт", "z",
-    "трейс", "trace", "трэйс", "trace",
-    "тревис", "travis", "трэвис", "travis",
-    "дрейк", "drake", "дрэйк", "drake",
-    "уэст", "west", "вест", "west",
-    "уэйн", "wayne", "вейн", "wayne",
-    "канье", "kanye", "каньэ", "kanye",
-    "кендрик", "kendrick", "кэндрик", "kendrick",
-    "тупак", "2pac", "бигги", "biggie",
-    "снуп", "snoop", "догг", "dogg",
-    "фифти", "50", "сент", "cent", "цент", "cent",
-    "айс", "ice", "кьюб", "cube",
-    "изи", "eazy", "сайпресс", "cypress", "хилл", "hill",
-    "тейлор", "taylor", "свифт", "swift",
-    "билли", "billie", "айлиш", "eilish",
-    "бейонсе", "beyonce", "бионсе", "beyonce",
-    "риана", "rihanna", "рианна", "rihanna", "рихана", "rihanna", "риханна", "rihanna",
-    "эминем", "eminem", "еминем", "eminem",
-    "продиджи", "prodigy", "металика", "metallica", "металлика", "metallica",
-    "рамштайн", "rammstein", "раммштайн", "rammstein",
-    "линкин", "linkin", "депеш", "depeche", "пинк", "pink", "флойд", "floyd",
-    "дж", "j", "ч", "ch", "ш", "sh", "щ", "sh", "кс", "x", "кв", "qu", "ф", "f",
-    "ей", "ay", "ай", "i", "ой", "oy", "ау", "ow", "оу", "o", "ью", "ew", "ю", "u", "я", "ya",
-    "а", "a", "б", "b", "в", "v", "г", "g", "д", "d", "е", "e", "з", "z", "и", "i", "й", "y",
-    "к", "k", "л", "l", "м", "m", "н", "n", "о", "o", "п", "p", "р", "r", "с", "s", "т", "t",
-    "у", "u", "х", "h", "ц", "ts", "ы", "y", "ъ", "", "ь", "",
-  )
-  anglo := syllabic.Replace(s)
-  if hyphenNormRe.MatchString(anglo) {
-    addOut("Jay-Z")
-  }
-  addOut(anglo)
-  return out
+s := strings.ToLower(strings.TrimSpace(raw))
+if s == "" {
+return nil
+}
+var out []string
+add := func(v string) {
+v = strings.Join(strings.Fields(strings.TrimSpace(v)), " ")
+if len(v) >= 2 {
+for _, ex := range out {
+if strings.EqualFold(ex, v) {
+return
+}
+}
+out = append(out, v)
+}
+}
+for _, sp := range decodeSpelledLetters(s) {
+add(sp)
+}
+if trimmed := stripLeadingConsonantCluster(s); trimmed != "" {
+add(trimmed)
+}
+norm := strings.ReplaceAll(strings.ReplaceAll(s, "э", "е"), "ё", "е")
+g2p := g2pReplacer.Replace(norm)
+add(g2p)
+// В немецкой/английской транскрипции русское "шт" соответствует и "sht", и "st" (Моргенштерн <-> Morgenstern, Раммштайн <-> Rammstein)
+if strings.Contains(g2p, "sht") {
+add(strings.ReplaceAll(g2p, "sht", "st"))
+}
+add(ruToEnTranslit.Replace(norm))
+return out
 }
 
-// Проверка совпадения на +-2 буквы БЕЗ УЧЕТА СИМВОЛОВ (пробелов, дефисов, скобок):
-// Возвращает (совпало_ли, точное_расстояние_ошибок)
+func matchStringsIR(query string, target string) (bool, int) {
+qForms := []string{compactRawLetters(query), normalizeCompact(query)}
+for _, ap := range ruAngloPhoneticVariants(query) {
+qForms = append(qForms, normalizeCompact(ap), compactRawLetters(ap))
+}
+tForms := []string{compactRawLetters(target), normalizeCompact(target)}
+qSkel := phoneticSkeleton(query)
+tSkel := phoneticSkeleton(target)
+bestDist, matched := 999, false
+
+for _, qf := range qForms {
+qLen := len([]rune(qf))
+if qLen == 0 {
+continue
+}
+for _, tf := range tForms {
+tLen := len([]rune(tf))
+if tLen == 0 {
+continue
+}
+dist := damerauLevenshtein(qf, tf)
+dice := trigramSimilarity(qf, tf)
+if qLen >= 5 && tLen >= 5 && absInt(qLen-tLen) <= 3 {
+if len(qSkel) >= 4 && damerauLevenshtein(qSkel, tSkel) <= 1 && dist > 1 {
+dist = 1
+} else if dice >= 0.72 && dist > 2 {
+dist = 2
+}
+}
+maxAllowed := 2
+if qLen <= 3 || tLen <= 3 {
+maxAllowed = 0
+} else if qLen == 4 || tLen == 4 {
+if absInt(qLen-tLen) <= 1 {
+maxAllowed = 1
+} else {
+maxAllowed = 0
+}
+}
+if dist <= maxAllowed && dist < bestDist {
+bestDist, matched = dist, true
+}
+}
+}
+return matched, bestDist
+}
+
 func matchWithinTwoLettersNoSymbols(query string, target string) (bool, int) {
-  qForms := []string{compactRawLetters(query), normalizeCompact(query)}
-  for _, ap := range ruAngloPhoneticVariants(query) {
-    qForms = append(qForms, normalizeCompact(ap))
-  }
-  tForms := []string{compactRawLetters(target), normalizeCompact(target)}
-
-  bestDist := 999
-  matched := false
-
-  for _, qf := range qForms {
-    qLen := len([]rune(qf))
-    if qLen == 0 {
-      continue
-    }
-    for _, tf := range tForms {
-      tLen := len([]rune(tf))
-      if tLen == 0 {
-        continue
-      }
-      dist := damerauLevenshtein(qf, tf)
-      // Также проверяем фонетический скелет для пар вроде rihana <-> rihanna
-      if qLen >= 5 && tLen >= 5 && phoneticSkeleton(qf) == phoneticSkeleton(tf) && dist > 1 {
-        dist = 1
-      }
-
-      // Допуск ошибок в зависимости от длины слова без символов:
-      // <= 3 букв: только точное совпадение (0 ошибок, чтобы "jay" не матчил "jayz")
-      // 4 буквы ("jayz"): 0 ошибок (или 1 ошибка если длины равны >= 4)
-      // >= 5 букв: до 2 ошибок включительно (+-2 буквы)
-      maxAllowed := 2
-      if qLen <= 3 || tLen <= 3 {
-        maxAllowed = 0
-      } else if qLen == 4 || tLen == 4 {
-        if qLen == tLen {
-          maxAllowed = 1
-        } else {
-          maxAllowed = 0
-        }
-      }
-
-      if dist <= maxAllowed && dist < bestDist {
-        bestDist = dist
-        matched = true
-      }
-    }
-  }
-  return matched, bestDist
+if ok, d := matchStringsIR(query, target); ok {
+return true, d
+}
+qToks, tToks := tokenize(strings.ToLower(query)), tokenize(strings.ToLower(target))
+if len(qToks) == 1 && len([]rune(qToks[0])) >= 4 && len(tToks) >= 2 && len(tToks) <= 3 {
+for _, tw := range tToks {
+if len([]rune(tw)) >= 4 {
+if ok, d := matchStringsIR(qToks[0], tw); ok && d <= 1 {
+return true, d
+}
+}
+}
+}
+return false, 999
 }
 
-// Позиционный вес: главный артист всегда в начале строки (до " - "),
-// а гостевые feat./ft./with или конец строки получают жесткое понижение приоритета.
 func positionalPriorityMultiplier(queryVariant string, title string) float64 {
-  qComp := normalizeCompact(queryVariant)
-  if len(qComp) < 1 {
-    return 1.0
-  }
-  tLow := strings.ToLower(ruToEnTranslit.Replace(title))
+qComp := normalizeCompact(queryVariant)
+if len(qComp) < 1 {
+return 1.0
+}
+tLow := strings.ToLower(ruToEnTranslit.Replace(title))
+if loc := featGuestRe.FindStringIndex(tLow); loc != nil {
+if !strings.Contains(normalizeCompact(tLow[:loc[0]]), qComp) && strings.Contains(normalizeCompact(tLow[loc[0]:]), qComp) {
+return 0.42
+}
+}
+headPart := tLow
+for _, sep := range []string{" - ", " – ", " — ", ": "} {
+if idx := strings.Index(tLow, sep); idx > 0 {
+headPart = tLow[:idx]
+break
+}
+}
+headComp := normalizeCompact(headPart)
+if headComp == qComp || strings.HasPrefix(headComp, qComp) {
+return 1.28
+}
+if strings.Contains(headComp, qComp) {
+return 1.18
+}
+return 1.0
+}
 
-  if loc := featGuestRe.FindStringIndex(tLow); loc != nil {
-    beforeFeat := normalizeCompact(tLow[:loc[0]])
-    afterFeat := normalizeCompact(tLow[loc[0]:])
-    if !strings.Contains(beforeFeat, qComp) && strings.Contains(afterFeat, qComp) {
-      return 0.40 // Только в зоне feat. -> опускаем вниз
-    }
-  }
-
-  headPart := tLow
-  for _, sep := range []string{" - ", " – ", " — ", ": "} {
-    if idx := strings.Index(tLow, sep); idx > 0 {
-      headPart = tLow[:idx]
-      break
-    }
-  }
-
-  headComp := normalizeCompact(headPart)
-  fullComp := normalizeCompact(tLow)
-
-  if headComp == qComp || strings.HasPrefix(headComp, qComp) {
-    return 1.25
-  }
-  if strings.Contains(headComp, qComp) {
-    return 1.12
-  }
-  if pos := strings.Index(fullComp, qComp); pos > 0 {
-    ratio := float64(pos) / float64(len(fullComp))
-    if ratio > 0.50 {
-      return 0.58
-    }
-  }
-  return 1.0
+func bestTokenSimInField(qt string, fieldTokens []string) float64 {
+qLen := len([]rune(qt))
+qSkel := phoneticSkeleton(qt)
+best := 0.0
+for _, tt := range fieldTokens {
+tLen := len([]rune(tt))
+if qLen <= 3 {
+if qt == tt {
+return 1.0
+}
+continue
+}
+if qLen == 4 {
+if qt == tt {
+return 1.0
+}
+if absInt(qLen-tLen) <= 1 && damerauLevenshtein(qt, tt) <= 1 {
+if 0.85 > best {
+best = 0.85
+}
+}
+continue
+}
+maxLen := qLen
+if tLen > maxLen {
+maxLen = tLen
+}
+dist := damerauLevenshtein(qt, tt)
+levSim := 1.0 - float64(dist)/float64(maxLen)
+if qLen >= 5 && dist <= 2 && levSim < 0.70 {
+levSim = 0.70
+}
+triSim := trigramSimilarity(qt, tt)
+phonSim := 0.0
+if len(qSkel) >= 3 && damerauLevenshtein(qSkel, phoneticSkeleton(tt)) <= 1 && absInt(qLen-tLen) <= 2 {
+phonSim = 0.86
+}
+sim := math.Max(levSim, math.Max(triSim, phonSim))
+if sim > best {
+best = sim
+}
+}
+return best
 }
 
 func computeFuzzyScore(queryVariant string, title string) float64 {
-  qNorm := ruToEnTranslit.Replace(strings.ToLower(queryVariant))
-  tNorm := ruToEnTranslit.Replace(strings.ToLower(title))
+qNorm := ruToEnTranslit.Replace(strings.ToLower(queryVariant))
+qTokens := tokenize(qNorm)
+if len(qTokens) == 0 {
+return 0
+}
 
-  qTokens := tokenize(qNorm)
-  tTokens := tokenize(tNorm)
-  if len(qTokens) == 0 || len(tTokens) == 0 {
-    return 0
-  }
+headRaw, bodyRaw := title, ""
+for _, sep := range []string{" - ", " – ", " — "} {
+if idx := strings.Index(title, sep); idx > 0 {
+headRaw = title[:idx]
+bodyRaw = title[idx+len(sep):]
+break
+}
+}
 
-  posMult := positionalPriorityMultiplier(queryVariant, title)
+headTokens := tokenize(ruToEnTranslit.Replace(strings.ToLower(headRaw)))
+bodyTokens := tokenize(ruToEnTranslit.Replace(strings.ToLower(bodyRaw)))
+allTokens := append(append([]string{}, headTokens...), bodyTokens...)
+if len(allTokens) == 0 {
+return 0
+}
 
-  // Проверяем зону главного исполнителя (до тире " - ") без символов на +-2 буквы:
-  // Это позволяет даже короткому 2-буквенному артисту ("Эл", "U2") или "Jay-Z" / "Jay - Z"
-  // получить 1.0, если он стоит в начале названия раздачи!
-  headPart := title
-  for _, sep := range []string{" - ", " – ", " — "} {
-    if idx := strings.Index(title, sep); idx > 0 {
-      headPart = title[:idx]
-      break
-    }
-  }
-  if ok, dist := matchWithinTwoLettersNoSymbols(queryVariant, headPart); ok {
-    base := 1.0 - float64(dist)*0.06
-    return math.Min(1.0, base*posMult)
-  }
+posMult := positionalPriorityMultiplier(queryVariant, title)
 
-  qCompact := strings.Join(qTokens, "")
-  if len([]rune(qCompact)) >= 3 {
-    for i := 0; i < len(tTokens); i++ {
-      if tTokens[i] == qCompact {
-        return math.Min(1.0, 0.96*posMult)
-      }
-      if i+1 < len(tTokens) && (tTokens[i]+tTokens[i+1]) == qCompact {
-        return math.Min(1.0, 0.96*posMult)
-      }
-    }
-  }
+if ok, dist := matchWithinTwoLettersNoSymbols(queryVariant, headRaw); ok {
+lenNorm := 1.0 / (1.0 + 0.05*float64(absInt(len(headTokens)-len(qTokens))))
+return math.Min(1.0, (0.94-float64(dist)*0.04)*lenNorm*posMult+0.12)
+}
 
-  totalTokenScore := 0.0
-  matchedTokens := 0
+totalScore, matched, headHits := 0.0, 0, 0
+for _, qt := range qTokens {
+hSim := bestTokenSimInField(qt, headTokens)
+bSim := bestTokenSimInField(qt, bodyTokens)
+best := bSim * 0.84
+if hSim >= bSim && hSim > 0 {
+best = hSim * 1.12
+if hSim >= 0.75 {
+headHits++
+}
+}
+if best > 1.0 {
+best = 1.0
+}
+if best >= 0.58 {
+matched++
+}
+totalScore += best
+}
 
-  for _, qt := range qTokens {
-    bestWordSim := 0.0
-    qSkel := phoneticSkeleton(qt)
-    qLen := len([]rune(qt))
-
-    for _, tt := range tTokens {
-      if qLen <= 2 {
-        if qt == tt {
-          bestWordSim = 1.0
-          break
-        }
-        continue
-      }
-
-      tLen := len([]rune(tt))
-      maxLen := qLen
-      if tLen > maxLen {
-        maxLen = tLen
-      }
-      if maxLen == 0 {
-        continue
-      }
-
-      dist := damerauLevenshtein(qt, tt)
-      levSim := 1.0 - float64(dist)/float64(maxLen)
-      if qLen >= 5 && dist <= 2 && levSim < 0.68 {
-        levSim = 0.68
-      }
-
-      triSim := trigramSimilarity(qt, tt)
-
-      tSkel := phoneticSkeleton(tt)
-      phonSim := 0.0
-      if len(qSkel) >= 3 && qSkel == tSkel {
-        phonSim = 0.88
-      } else if len(qSkel) >= 4 && damerauLevenshtein(qSkel, tSkel) <= 1 {
-        phonSim = 0.74
-      }
-
-      wordSim := math.Max(levSim, math.Max(triSim, phonSim))
-      if wordSim > bestWordSim {
-        bestWordSim = wordSim
-      }
-    }
-    if bestWordSim >= 0.58 {
-      matchedTokens++
-    }
-    totalTokenScore += bestWordSim
-  }
-
-  avg := (totalTokenScore / float64(len(qTokens))) * posMult
-  if len(qTokens) >= 2 && matchedTokens < len(qTokens) {
-    avg *= 0.35
-  }
-  if avg > 1.0 {
-    avg = 1.0
-  }
-  return avg
+avg := (totalScore / float64(len(qTokens))) * posMult
+if len(qTokens) >= 2 && matched < len(qTokens) {
+avg *= 0.35
+}
+if headHits > 0 && len(headTokens) > 0 {
+avg += 0.14 * (float64(headHits) / float64(len(headTokens)))
+}
+return math.Min(1.0, avg)
 }
 
 func fetchGoogleSuggest(ctx context.Context, query string, hl string) []string {
-  u := fmt.Sprintf("https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=%s&q=%s", hl, url.QueryEscape(query))
-  req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-  if err != nil {
-    return nil
-  }
-  req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) rv:122.0 Gecko/20100101 Firefox/122.0")
+u := fmt.Sprintf("https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=%s&q=%s", hl, url.QueryEscape(query))
+req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+if err != nil {
+return nil
+}
+req.Header.Set("User-Agent", "Mozilla/5.0")
+resp, err := httpClient.Do(req)
+if err != nil {
+return nil
+}
+defer resp.Body.Close()
 
-  resp, err := httpClient.Do(req)
-  if err != nil {
-    return nil
-  }
-  defer resp.Body.Close()
-
-  var raw []interface{}
-  if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil || len(raw) < 2 {
-    return nil
-  }
-  suggestions, ok := raw[1].([]interface{})
-  if !ok {
-    return nil
-  }
-  var out []string
-  for i, item := range suggestions {
-    if i >= 4 {
-      break
-    }
-    if s, ok := item.(string); ok {
-      cleaned := strings.TrimSpace(suggestJunkRe.ReplaceAllString(s, ""))
-      cleaned = strings.Join(strings.Fields(cleaned), " ")
-      if len([]rune(cleaned)) >= 2 {
-        out = append(out, cleaned)
-      }
-    }
-  }
-  return out
+var raw []interface{}
+if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil || len(raw) < 2 {
+return nil
+}
+suggestions, ok := raw[1].([]interface{})
+if !ok {
+return nil
+}
+var out []string
+for i, item := range suggestions {
+if i >= 5 {
+break
+}
+if s, ok := item.(string); ok {
+cleaned := strings.TrimSpace(suggestJunkRe.ReplaceAllString(s, ""))
+cleaned = strings.Join(strings.Fields(cleaned), " ")
+if len([]rune(cleaned)) >= 2 {
+out = append(out, cleaned)
+}
+}
+}
+return out
 }
 
 func fetchMusicBrainzAliases(ctx context.Context, query string) []string {
-  u := fmt.Sprintf("https://musicbrainz.org/ws/2/artist/?query=%s&fmt=json&limit=3", url.QueryEscape(query))
-  req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-  if err != nil {
-    return nil
-  }
-  req.Header.Set("User-Agent", "JennyPlayerOmniCore/2.4 (https://github.com/hgg543470-bot)")
+u := fmt.Sprintf("https://musicbrainz.org/ws/2/artist/?query=%s&fmt=json&limit=5", url.QueryEscape(query))
+req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+if err != nil {
+return nil
+}
+req.Header.Set("User-Agent", "JennyPlayerOmniCore/3.0")
+resp, err := httpClient.Do(req)
+if err != nil {
+return nil
+}
+defer resp.Body.Close()
 
-  resp, err := httpClient.Do(req)
-  if err != nil {
-    return nil
-  }
-  defer resp.Body.Close()
-
-  var data struct {
-    Artists []struct {
-      Name    string `json:"name"`
-      Score   int    `json:"score"`
-      Aliases []struct {
-        Name string `json:"name"`
-      } `json:"aliases"`
-    } `json:"artists"`
-  }
-  if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-    return nil
-  }
-  var out []string
-  for _, a := range data.Artists {
-    if a.Score < 85 {
-      continue
-    }
-    if ok, _ := matchWithinTwoLettersNoSymbols(query, a.Name); ok {
-      out = append(out, a.Name)
-      for _, al := range a.Aliases {
-        if al.Name != "" && len(out) < 4 {
-          out = append(out, al.Name)
-        }
-      }
-    }
-  }
-  return out
+var data struct {
+Artists []struct {
+Name    string `json:"name"`
+Score   int    `json:"score"`
+Aliases []struct {
+Name string `json:"name"`
+} `json:"aliases"`
+} `json:"artists"`
+}
+if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+return nil
+}
+var out []string
+for _, a := range data.Artists {
+if a.Score < 85 {
+continue
+}
+if ok, _ := matchWithinTwoLettersNoSymbols(query, a.Name); ok {
+out = append(out, a.Name)
+for _, al := range a.Aliases {
+if al.Name != "" && len(out) < 5 {
+out = append(out, al.Name)
+}
+}
+}
+}
+return out
 }
 
 type catalogEntity struct {
-  text     string
-  score    float64
-  isArtist bool
+text     string
+score    float64
+isArtist bool
 }
 
 func hasCollabMarker(s string) bool {
-  return featGuestRe.MatchString(s)
+return featGuestRe.MatchString(s)
 }
 
+// Целевой поиск Артистов + Метод поиска по НАЗВАНИЯМ ПЕСЕН исполнителей (для блоков "Возможно, вы имели в виду...")
 func fetchCatalogEntities(ctx context.Context, query string) ([]catalogEntity, []ResolvedTrackInfo) {
-  var out []catalogEntity
-  var tracks []ResolvedTrackInfo
-  var mu sync.Mutex
-  var wg sync.WaitGroup
+var out []catalogEntity
+var tracks []ResolvedTrackInfo
+var mu sync.Mutex
+var wg sync.WaitGroup
 
-  addEnt := func(txt string, sc float64, isArt bool) {
-    txt = strings.Join(strings.Fields(strings.TrimSpace(txt)), " ")
-    if len([]rune(txt)) < 1 {
-      return
-    }
-    mu.Lock()
-    out = append(out, catalogEntity{text: txt, score: sc, isArtist: isArt})
-    mu.Unlock()
-  }
+addEnt := func(txt string, sc float64, isArt bool) {
+txt = strings.Join(strings.Fields(strings.TrimSpace(txt)), " ")
+if len([]rune(txt)) < 1 {
+return
+}
+mu.Lock()
+out = append(out, catalogEntity{text: txt, score: sc, isArtist: isArt})
+mu.Unlock()
+}
 
-  addTrack := func(art, trk string) {
-    art = strings.TrimSpace(art)
-    trk = strings.TrimSpace(trk)
-    if art == "" {
-      return
-    }
-    mu.Lock()
-    tracks = append(tracks, ResolvedTrackInfo{Artist: art, Track: trk})
-    mu.Unlock()
-  }
+addTrack := func(art, trk string) {
+art, trk = strings.TrimSpace(art), strings.TrimSpace(trk)
+if art == "" {
+return
+}
+mu.Lock()
+tracks = append(tracks, ResolvedTrackInfo{Artist: art, Track: trk})
+mu.Unlock()
+}
 
-  country := "US"
-  if hasCyrillic(query) {
-    country = "RU"
-  }
+country := "US"
+if hasCyrillic(query) {
+country = "RU"
+}
 
-  splitMainAndCollab := func(s string) (string, string) {
-    if loc := featGuestRe.FindStringIndex(s); loc != nil {
-      return strings.TrimSpace(s[:loc[0]]), strings.TrimSpace(s[loc[0]:])
-    }
-    if idx := strings.Index(s, "("); idx > 0 {
-      return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx:])
-    }
-    return strings.TrimSpace(s), ""
-  }
+splitMainAndCollab := func(s string) (string, string) {
+if loc := featGuestRe.FindStringIndex(s); loc != nil {
+return strings.TrimSpace(s[:loc[0]]), strings.TrimSpace(s[loc[0]:])
+}
+if idx := strings.Index(s, "("); idx > 0 {
+return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx:])
+}
+return strings.TrimSpace(s), ""
+}
 
-  qComp := normalizeCompact(query)
-  for _, ap := range ruAngloPhoneticVariants(query) {
-    if ap == "Jay-Z" {
-      qComp = "jayz"
-      break
-    }
-  }
+qComp := normalizeCompact(query)
+qRawLen := len([]rune(compactRawLetters(query)))
 
-  processCatalogItem := func(idx int, art, trk string) {
-    mainArt, collabArt := splitMainAndCollab(art)
-    mainTrk, collabTrk := splitMainAndCollab(trk)
-    if mainArt == "" {
-      return
-    }
-    decay := float64(idx) * 0.02
+processCatalogItem := func(idx int, art, trk, alb string) {
+mainArt, collabArt := splitMainAndCollab(art)
+mainTrk, collabTrk := splitMainAndCollab(trk)
+cleanAlb, _ := splitMainAndCollab(alb)
+if mainArt == "" {
+return
+}
+decay := float64(idx) * 0.015
 
-    // 1. Запрос совпадает на +-2 буквы с ГЛАВНЫМ артистом -> Приоритет №1 (2.00)
-    if okArt, distArt := matchWithinTwoLettersNoSymbols(query, mainArt); okArt {
-      score := 2.00 - float64(distArt)*0.08 - decay
-      addEnt(mainArt, score, true)
-      return
-    }
+// 1. Совпадение с ИМЕНЕМ АРТИСТА (Главный приоритет #1: score ~2.0)
+if okArt, distArt := matchWithinTwoLettersNoSymbols(query, mainArt); okArt {
+score := 2.02 - float64(distArt)*0.06 - decay
+addEnt(mainArt, score, true)
+return
+}
 
-    // 2. Запрос совпадает на +-2 буквы с названием ПЕСНИ -> вытаскиваем Артиста песни (1.58)
-    if okTrk, distTrk := matchWithinTwoLettersNoSymbols(query, mainTrk); okTrk && len([]rune(compactRawLetters(query))) >= 4 {
-      score := 1.58 - float64(distTrk)*0.05 - decay
-      addTrack(mainArt, mainTrk)
-      addEnt(mainArt, score, false)
-      return
-    }
+// 2. НАШ МЕТОД ПОИСКА В НАЗВАНИИ ПЕСЕН ИСПОЛНИТЕЛЕЙ (для блоков "Возможно, вы имели в виду..."):
+//    Если название песни совпадает с запросом (+-2 буквы или по фонетическому скелету),
+//    вытаскиваем исполнителя этой песни в дополнительные группы (score 1.56..1.45) и запоминаем альбом/трек!
+if qRawLen >= 4 {
+if okTrk, distTrk := matchStringsIR(query, mainTrk); okTrk {
+score := 1.58 - float64(distTrk)*0.04 - decay
+target := mainTrk
+if cleanAlb != "" && !strings.Contains(strings.ToLower(cleanAlb), "single") {
+target = cleanAlb
+}
+addTrack(mainArt, target)
+addTrack(mainArt, mainTrk)
+addEnt(mainArt, score, false)
+return
+}
+}
 
-    // 3. Искомый артист участвует в треке как гость/соавтор (feat., feature, при уч., при участии, &) ->
-    //    добавляем партнера по фиту в доп. списки («Возможно, вы имели в виду / или...») с баллом 1.44!
-    collabZone := normalizeCompact(collabArt + " " + collabTrk + " " + art + " " + trk)
-    if len(qComp) >= 3 && strings.Contains(collabZone, qComp) && normalizeCompact(mainArt) != qComp {
-      addEnt(mainArt, 1.44-decay, false)
-    }
-  }
+// 3. Участие через feat. / при уч. / &
+collabTail := strings.TrimSpace(collabArt + " " + collabTrk)
+if collabTail != "" {
+if okCol, _ := matchWithinTwoLettersNoSymbols(query, collabTail); okCol && normalizeCompact(mainArt) != qComp {
+addEnt(mainArt, 1.44-decay, false)
+}
+}
+}
 
-  wg.Add(2)
-  go func() {
-    defer func() { _ = recover(); wg.Done() }()
-    u := fmt.Sprintf("https://itunes.apple.com/search?term=%s&country=%s&media=music&limit=12", url.QueryEscape(query), country)
-    req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-    if err != nil {
-      return
-    }
-    req.Header.Set("User-Agent", "Mozilla/5.0")
-    resp, err := httpClient.Do(req)
-    if err != nil {
-      return
-    }
-    defer resp.Body.Close()
+// Запускаем 3 параллельных потока: iTunes (общий + песни), Deezer (общий) и Deezer Track Search (строго по названиям песен!)
+wg.Add(3)
+go func() {
+defer func() { _ = recover(); wg.Done() }()
+u := fmt.Sprintf("https://itunes.apple.com/search?term=%s&country=%s&media=music&entity=song&limit=20", url.QueryEscape(query), country)
+req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+if err != nil {
+return
+}
+req.Header.Set("User-Agent", "Mozilla/5.0")
+resp, err := httpClient.Do(req)
+if err != nil {
+return
+}
+defer resp.Body.Close()
+var data struct {
+Results []struct {
+ArtistName     string `json:"artistName"`
+TrackName      string `json:"trackName"`
+CollectionName string `json:"collectionName"`
+} `json:"results"`
+}
+if json.NewDecoder(resp.Body).Decode(&data) == nil {
+for idx, it := range data.Results {
+processCatalogItem(idx, it.ArtistName, it.TrackName, it.CollectionName)
+}
+}
+}()
 
-    var data struct {
-      Results []struct {
-        ArtistName string `json:"artistName"`
-        TrackName  string `json:"trackName"`
-      } `json:"results"`
-    }
-    if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-      return
-    }
-    for idx, it := range data.Results {
-      processCatalogItem(idx, it.ArtistName, it.TrackName)
-    }
-  }()
+go func() {
+defer func() { _ = recover(); wg.Done() }()
+u := fmt.Sprintf("https://api.deezer.com/search?q=%s&limit=18", url.QueryEscape(query))
+req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+if err != nil {
+return
+}
+req.Header.Set("User-Agent", "Mozilla/5.0")
+resp, err := httpClient.Do(req)
+if err != nil {
+return
+}
+defer resp.Body.Close()
+var data struct {
+Data []struct {
+Title      string `json:"title"`
+TitleShort string `json:"title_short"`
+Artist     struct {
+Name string `json:"name"`
+} `json:"artist"`
+Album struct {
+Title string `json:"title"`
+} `json:"album"`
+} `json:"data"`
+}
+if json.NewDecoder(resp.Body).Decode(&data) == nil {
+for idx, it := range data.Data {
+tName := it.TitleShort
+if tName == "" {
+tName = it.Title
+}
+processCatalogItem(idx, it.Artist.Name, tName, it.Album.Title)
+}
+}
+}()
 
-  go func() {
-    defer func() { _ = recover(); wg.Done() }()
-    u := fmt.Sprintf("https://api.deezer.com/search?q=%s&limit=12", url.QueryEscape(query))
-    req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-    if err != nil {
-      return
-    }
-    req.Header.Set("User-Agent", "Mozilla/5.0")
-    resp, err := httpClient.Do(req)
-    if err != nil {
-      return
-    }
-    defer resp.Body.Close()
+go func() {
+defer func() { _ = recover(); wg.Done() }()
+u := fmt.Sprintf("https://api.deezer.com/search/track?q=%s&limit=18", url.QueryEscape(query))
+req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+if err != nil {
+return
+}
+req.Header.Set("User-Agent", "Mozilla/5.0")
+resp, err := httpClient.Do(req)
+if err != nil {
+return
+}
+defer resp.Body.Close()
+var data struct {
+Data []struct {
+Title      string `json:"title"`
+TitleShort string `json:"title_short"`
+Artist     struct {
+Name string `json:"name"`
+} `json:"artist"`
+Album struct {
+Title string `json:"title"`
+} `json:"album"`
+} `json:"data"`
+}
+if json.NewDecoder(resp.Body).Decode(&data) == nil {
+for idx, it := range data.Data {
+tName := it.TitleShort
+if tName == "" {
+tName = it.Title
+}
+processCatalogItem(idx, it.Artist.Name, tName, it.Album.Title)
+}
+}
+}()
 
-    var data struct {
-      Data []struct {
-        Title      string `json:"title"`
-        TitleShort string `json:"title_short"`
-        Artist     struct {
-          Name string `json:"name"`
-        } `json:"artist"`
-      } `json:"data"`
-    }
-    if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-      return
-    }
-    for idx, it := range data.Data {
-      tName := it.TitleShort
-      if tName == "" {
-        tName = it.Title
-      }
-      processCatalogItem(idx, it.Artist.Name, tName)
-    }
-  }()
-
-  wg.Wait()
-  return out, tracks
+wg.Wait()
+return out, tracks
 }
 
 func buildExpandedQueries(ctx context.Context, rawQuery string, cfg EngineConfig) (string, []string, []ResolvedTrackInfo) {
-  rawQuery = strings.Join(strings.Fields(strings.TrimSpace(rawQuery)), " ")
-  if rawQuery == "" {
-    return "", nil, nil
-  }
-  if cfg.ExactMatch {
-    return rawQuery, []string{rawQuery}, nil
-  }
+rawQuery = strings.Join(strings.Fields(strings.TrimSpace(rawQuery)), " ")
+if rawQuery == "" {
+return "", nil, nil
+}
+if cfg.ExactMatch {
+return rawQuery, []string{rawQuery}, nil
+}
 
-  cleanedGenre := strings.Join(strings.Fields(strings.TrimSpace(suggestJunkRe.ReplaceAllString(rawQuery, ""))), " ")
-  if len([]rune(cleanedGenre)) >= 2 {
-    rawQuery = cleanedGenre
-  }
+type candInfo struct {
+text     string
+score    float64
+isArtist bool
+}
+scoredMap := make(map[string]candInfo)
+var resolvedTracks []ResolvedTrackInfo
+var topSuggest string
+var mu sync.Mutex
 
-  type scoredTerm struct {
-    display  string
-    score    float64
-    isArtist bool
-  }
-  scoredMap := make(map[string]scoredTerm)
-  var resolvedTracks []ResolvedTrackInfo
-  var topSuggest string
-  var mu sync.Mutex
+addCandidate := func(term string, score float64, isArt bool) {
+term = strings.Join(strings.Fields(strings.TrimSpace(term)), " ")
+if len([]rune(term)) < 1 {
+return
+}
+key := normalizeCompact(term)
+if key == "" {
+key = strings.ToLower(term)
+}
+mu.Lock()
+defer mu.Unlock()
+if ex, ok := scoredMap[key]; !ok || score > ex.score {
+scoredMap[key] = candInfo{text: term, score: score, isArtist: isArt || ex.isArtist}
+}
+}
 
-  addCandidate := func(term string, score float64, isArt bool) {
-    term = strings.Join(strings.Fields(strings.TrimSpace(term)), " ")
-    if len([]rune(term)) < 1 {
-      return
-    }
-    key := normalizeCompact(term)
-    if key == "" {
-      key = strings.ToLower(term)
-    }
-    mu.Lock()
-    defer mu.Unlock()
-    if ex, ok := scoredMap[key]; !ok || score > ex.score {
-      scoredMap[key] = scoredTerm{display: term, score: score, isArtist: isArt || ex.isArtist}
-    }
-  }
+low := strings.ToLower(rawQuery)
+probeQuery := rawQuery
+if !hasVowels(low) && hasVowels(enToRuLayout.Replace(low)) {
+probeQuery = enToRuLayout.Replace(low)
+} else if !hasVowels(low) && hasVowels(ruToEnLayout.Replace(low)) {
+probeQuery = ruToEnLayout.Replace(low)
+}
 
-  low := strings.ToLower(rawQuery)
-  layoutRu := enToRuLayout.Replace(low)
-  layoutEn := ruToEnLayout.Replace(low)
+if trimmed := stripLeadingConsonantCluster(probeQuery); trimmed != "" {
+probeQuery = trimmed
+}
 
-  probeQuery := rawQuery
-  if !hasVowels(low) && hasVowels(layoutRu) {
-    probeQuery = layoutRu
-    addCandidate(layoutRu, 1.40, false)
-  } else if !hasVowels(low) && hasVowels(layoutEn) {
-    probeQuery = layoutEn
-    addCandidate(layoutEn, 1.40, false)
-  }
+// Прямой запрос сохраняется со средним весом 1.50:
+// - Если найден Артист (2.0), Артист встает на #1, а авторы одноименных песен (1.58) идут сразу за ним в "Возможно, вы имели в виду..."!
+// - Если это Песня ("улетаю") или Жанр ("рэп"), и прямые раздачи, и найденные авторы песни (1.58) выводятся вместе!
+addCandidate(probeQuery, 1.50, false)
 
-  if hyphenNormRe.MatchString(probeQuery) {
-    probeQuery = "Jay-Z"
-    addCandidate("Jay-Z", 2.10, true)
-  } else {
-    addCandidate(probeQuery, 1.30, false)
-  }
+var angloProbes []string
+if cfg.EnablePhonetic {
+if hasCyrillic(probeQuery) {
+for idx, sp := range decodeSpelledLetters(probeQuery) {
+addCandidate(sp, 2.08-float64(idx)*0.03, true)
+}
+angloProbes = ruAngloPhoneticVariants(probeQuery)
+for idx, ap := range angloProbes {
+addCandidate(ap, 1.40-float64(idx)*0.03, false)
+}
+}
+}
 
-  var angloProbes []string
-  if cfg.EnablePhonetic {
-    if hasCyrillic(probeQuery) {
-      angloProbes = ruAngloPhoneticVariants(probeQuery)
-      for idx, ap := range angloProbes {
-        if ap == "Jay-Z" {
-          addCandidate("Jay-Z", 2.10, true)
-        } else {
-          addCandidate(ap, 1.25-float64(idx)*0.04, false)
-        }
-      }
-      addCandidate(ruToEnTranslit.Replace(strings.ToLower(probeQuery)), 0.90, false)
-    } else {
-      addCandidate(enToRuTranslit.Replace(strings.ToLower(probeQuery)), 0.75, false)
-    }
-  }
+catalogProbe := probeQuery
+if spelled := decodeSpelledLetters(probeQuery); len(spelled) > 0 {
+catalogProbe = spelled[0]
+}
 
-  catalogProbe := probeQuery
-  if len(angloProbes) > 0 && angloProbes[0] == "Jay-Z" {
-    catalogProbe = "Jay-Z"
-  }
+var wg sync.WaitGroup
+if cfg.EnableCatalog {
+wg.Add(1)
+go func() {
+defer func() { _ = recover(); wg.Done() }()
+ents, trks := fetchCatalogEntities(ctx, catalogProbe)
+mu.Lock()
+resolvedTracks = append(resolvedTracks, trks...)
+mu.Unlock()
+for _, ent := range ents {
+addCandidate(ent.text, ent.score, ent.isArtist)
+}
+// Проверяем также фонетические латинские варианты (включая sht -> st для Rammstein - Morgenstern)
+for i := 0; i < len(angloProbes) && i < 2; i++ {
+if !strings.EqualFold(angloProbes[i], catalogProbe) {
+entsA, trksA := fetchCatalogEntities(ctx, angloProbes[i])
+mu.Lock()
+resolvedTracks = append(resolvedTracks, trksA...)
+mu.Unlock()
+for _, ent := range entsA {
+addCandidate(ent.text, ent.score, ent.isArtist)
+}
+}
+}
+}()
+}
 
-  subCtx, cancel := context.WithTimeout(ctx, 3200*time.Millisecond)
-  defer cancel()
+if cfg.EnablePhonetic {
+wg.Add(2)
+go func() {
+defer func() { _ = recover(); wg.Done() }()
+sugs := fetchGoogleSuggest(ctx, probeQuery, "ru")
+if len(sugs) > 0 {
+mu.Lock()
+topSuggest = sugs[0]
+mu.Unlock()
+}
+for idx, s := range sugs {
+if ok, dist := matchWithinTwoLettersNoSymbols(probeQuery, s); ok {
+addCandidate(s, 1.72-float64(dist)*0.05-float64(idx)*0.02, false)
+} else if len(phoneticSkeleton(probeQuery)) >= 4 && damerauLevenshtein(phoneticSkeleton(probeQuery), phoneticSkeleton(s)) <= 1 {
+// Фонетическое совпадение скелета (например "драм н бэйс" drmnps <-> "drum and bass" drmntps)
+addCandidate(s, 1.82-float64(idx)*0.03, false)
+}
+}
+}()
+go func() {
+defer func() { _ = recover(); wg.Done() }()
+for idx, al := range fetchMusicBrainzAliases(ctx, catalogProbe) {
+addCandidate(al, 1.92-float64(idx)*0.03, true)
+}
+}()
+}
+wg.Wait()
 
-  var wg sync.WaitGroup
+if cfg.EnableCatalog && topSuggest != "" && !strings.EqualFold(topSuggest, probeQuery) {
+if okSug, _ := matchWithinTwoLettersNoSymbols(probeQuery, topSuggest); okSug || damerauLevenshtein(phoneticSkeleton(probeQuery), phoneticSkeleton(topSuggest)) <= 1 {
+fixCtx, fixCancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+ents2, trks2 := fetchCatalogEntities(fixCtx, topSuggest)
+fixCancel()
+resolvedTracks = append(resolvedTracks, trks2...)
+addCandidate(topSuggest, 1.76, false)
+for _, ent := range ents2 {
+addCandidate(ent.text, ent.score, ent.isArtist)
+}
+}
+}
 
-  if cfg.EnableCatalog {
-    wg.Add(1)
-    go func() {
-      defer func() { _ = recover(); wg.Done() }()
-      ents, trks := fetchCatalogEntities(subCtx, catalogProbe)
-      mu.Lock()
-      resolvedTracks = append(resolvedTracks, trks...)
-      mu.Unlock()
-      for _, ent := range ents {
-        addCandidate(ent.text, ent.score, ent.isArtist)
-      }
-      if len(angloProbes) > 0 && !strings.EqualFold(angloProbes[0], catalogProbe) {
-        entsA, trksA := fetchCatalogEntities(subCtx, angloProbes[0])
-        mu.Lock()
-        resolvedTracks = append(resolvedTracks, trksA...)
-        mu.Unlock()
-        for _, ent := range entsA {
-          addCandidate(ent.text, ent.score, ent.isArtist)
-        }
-      }
-    }()
-  }
+// Если найден подтвержденный главный Артист (>= 1.90), отсекаем сырые транслиты (< 1.42),
+// НО ОСТАВЛЯЕМ всех исполнителей одноименных песен (1.44..1.58) для списков "Возможно, вы имели в виду..."!
+hasMainArtist := false
+for _, v := range scoredMap {
+if v.isArtist && v.score >= 1.90 {
+hasMainArtist = true
+break
+}
+}
+if hasMainArtist {
+for k, v := range scoredMap {
+if v.score < 1.43 {
+delete(scoredMap, k)
+}
+}
+}
 
-  if cfg.EnablePhonetic {
-    wg.Add(2)
-    go func() {
-      defer func() { _ = recover(); wg.Done() }()
-      sugs := fetchGoogleSuggest(subCtx, probeQuery, "ru")
-      if len(sugs) > 0 {
-        mu.Lock()
-        topSuggest = sugs[0]
-        mu.Unlock()
-      }
-      for idx, s := range sugs {
-        if ok, dist := matchWithinTwoLettersNoSymbols(probeQuery, s); ok {
-          addCandidate(s, 1.35-float64(dist)*0.05-float64(idx)*0.02, false)
-        }
-      }
-    }()
+var list []candInfo
+for _, v := range scoredMap {
+list = append(list, v)
+}
+sort.Slice(list, func(i, j int) bool {
+return list[i].score > list[j].score
+})
 
-    go func() {
-      defer func() { _ = recover(); wg.Done() }()
-      for idx, al := range fetchMusicBrainzAliases(subCtx, catalogProbe) {
-        addCandidate(al, 1.85-float64(idx)*0.03, true)
-      }
-    }()
-  }
-
-  wg.Wait()
-
-  // Если по сырому вводу (например "зиленые валны") треки не нашлись, но Suggest дал "зеленые волны" (в пределах +-2 букв),
-  // пробиваем исправленную песню в каталогах и вытаскиваем Артиста без занижения приоритета!
-  if cfg.EnableCatalog && topSuggest != "" && !strings.EqualFold(topSuggest, probeQuery) && len(resolvedTracks) == 0 {
-    if okSug, _ := matchWithinTwoLettersNoSymbols(probeQuery, topSuggest); okSug {
-      fixCtx, fixCancel := context.WithTimeout(ctx, 1800*time.Millisecond)
-      ents2, trks2 := fetchCatalogEntities(fixCtx, topSuggest)
-      fixCancel()
-      resolvedTracks = append(resolvedTracks, trks2...)
-      for _, ent := range ents2 {
-        addCandidate(ent.text, ent.score, ent.isArtist)
-      }
-    }
-  }
-
-  // Если среди кандидатов нашелся подтвержденный АРТИСТ в пределах +-2 букв (score >= 1.80),
-  // отсекаем любые побочные песни от других исполнителей!
-  hasStrongEntity := false
-  for _, v := range scoredMap {
-    if v.score >= 1.50 {
-      hasStrongEntity = true
-      break
-    }
-  }
-  if hasStrongEntity {
-    for k, v := range scoredMap {
-      if v.score < 1.38 {
-        delete(scoredMap, k)
-      }
-    }
-  }
-
-  seenTrackKey := make(map[string]bool)
-  var uniqueTracks []ResolvedTrackInfo
-  for _, rt := range resolvedTracks {
-    key := strings.ToLower(rt.Artist)
-    if !seenTrackKey[key] {
-      seenTrackKey[key] = true
-      uniqueTracks = append(uniqueTracks, rt)
-    }
-  }
-
-  var list []scoredTerm
-  for _, v := range scoredMap {
-    list = append(list, v)
-  }
-  sort.Slice(list, func(i, j int) bool {
-    return list[i].score > list[j].score
-  })
-
-  var ordered []string
-  for _, item := range list {
-    ordered = append(ordered, item.display)
-  }
-  if len(ordered) == 0 {
-    return rawQuery, []string{rawQuery}, uniqueTracks
-  }
-  return ordered[0], ordered, uniqueTracks
+var finalTerms []string
+for _, item := range list {
+finalTerms = append(finalTerms, item.text)
+if len(finalTerms) >= 5 {
+break
+}
+}
+if len(finalTerms) == 0 {
+finalTerms = []string{rawQuery}
+}
+return finalTerms[0], finalTerms, resolvedTracks
 }
 
 var (
@@ -1090,7 +1150,8 @@ func resolveRutorIP(ctx context.Context) string {
 }
 
 func searchRutorDoH(ctx context.Context, query string) []TorrentResult {
-  u := "http://rutor.info/search/0/0/000/2/" + url.PathEscape(query)
+  cleanR := strings.NewReplacer("/", " ", "'", " ").Replace(query)
+  u := "http://rutor.info/search/0/0/000/2/" + url.PathEscape(cleanR)
   req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
   if err != nil {
     return nil
@@ -1630,6 +1691,12 @@ func searchSingleVariantAcrossIndexers(ctx context.Context, variantQuery string,
     }
   }
   jobs = append(jobs, searchJob{searchRutorDoH, noHyphen})
+  if !hasCyr && !exact {
+    ruQ := enToRuTranslit.Replace(strings.ToLower(noHyphen))
+    jobs = append(jobs, searchJob{searchRutorDoH, ruQ + " MP3"})
+    jobs = append(jobs, searchJob{searchRutorDoH, ruQ + " FLAC"})
+    jobs = append(jobs, searchJob{searchRutorDoH, ruQ})
+  }
   if noHyphen != variantQuery {
     jobs = append(jobs, searchJob{searchRutorDoH, variantQuery})
   }
@@ -1706,7 +1773,9 @@ func rankAndFilter(results []TorrentResult, matchTerms []string, resolvedTracks 
     if cfg.ExactMatch {
       allPresent := true
       for _, w := range origWords {
-        if !strings.Contains(lowTitle, w) {
+        hasTok := false
+        for _, tk := range tokenize(lowTitle) { if tk == w { hasTok = true; break } }
+        if !hasTok {
           allPresent = false
           break
         }
@@ -1946,6 +2015,7 @@ func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig, maxResults i
         })
       }
     } else {
+      if idx > 0 && len(ranked) > 5 { ranked = ranked[:5] }
       validGroups = append(validGroups, VariantGroup{
         Query:   vq,
         Count:   len(ranked),
@@ -1993,7 +2063,7 @@ func StartOmniHTTPServer(listenAddr string) error {
 
   mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
-    _, _ = w.Write([]byte(`{"status":"ok","version":"2.7"}`))
+    _, _ = w.Write([]byte(`{"status":"ok","version":"3.0-ir"}`))
   })
   mux.HandleFunc("/shutdown", func(w http.ResponseWriter, r *http.Request) {
     _, _ = w.Write([]byte("bye"))
