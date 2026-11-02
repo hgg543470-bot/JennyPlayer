@@ -5444,7 +5444,7 @@ window.runTorrentActionV96 = async function() {
         body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
             <div style="flex:1;min-width:0;">
                 <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
-                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:#3fb950;font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${Number(r.size_mb || 0).toFixed(1)} MB • <span style="color:#3fb950;font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
             </div>
             <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
         </div>`).join('');
@@ -5677,7 +5677,7 @@ window.backToTorrentSearchListV97 = function() {
             body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
                 <div style="flex:1;min-width:0;">
                     <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
-                    <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:#3fb950;font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                    <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${Number(r.size_mb || 0).toFixed(1)} MB • <span style="color:#3fb950;font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
                 </div>
                 <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
             </div>`).join('');
@@ -6231,7 +6231,7 @@ window.runTorrentActionV96 = async function() {
         body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
             <div style="flex:1;min-width:0;">
                 <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
-                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders > 0 ? '#3fb950' : '#ff7b72'};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${Number(r.size_mb || 0).toFixed(1)} MB • <span style="color:${r.seeders > 0 ? '#3fb950' : '#ff7b72'};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
             </div>
             <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
         </div>`).join('');
@@ -6475,7 +6475,7 @@ window.runTorrentActionV96 = async function() {
         body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
             <div style="flex:1;min-width:0;">
                 <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
-                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders > 0 ? '#3fb950' : '#ff7b72'};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${Number(r.size_mb || 0).toFixed(1)} MB • <span style="color:${r.seeders > 0 ? '#3fb950' : '#ff7b72'};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
             </div>
             <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
         </div>`).join('');
@@ -7057,7 +7057,7 @@ window.runTorrentActionV96 = async function() {
         body.innerHTML = list.map((r, i) => `<div onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
             <div style="flex:1;min-width:0;">
                 <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
-                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${Number(r.size_mb || 0).toFixed(1)} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
             </div>
             <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
         </div>`).join('');
@@ -7781,7 +7781,7 @@ window.backToTorrentSearchListV97 = function() {
                 return `<div id="torSearchCardV112_${bh}" onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
                     <div style="flex:1;min-width:0;">
                         <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
-                        <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                        <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${Number(r.size_mb || 0).toFixed(1)} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
                         <div class="tor-search-live-badge-v112" style="display:none;font-size:10px;font-weight:bold;margin-top:3px;"></div>
                     </div>
                     <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
@@ -8637,7 +8637,7 @@ window.runTorrentActionV96 = async function() {
             return `<div id="torSearchCardV112_${bh}" onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${i}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;">
                 <div style="flex:1;min-width:0;">
                     <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
-                    <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                    <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${Number(r.size_mb || 0).toFixed(1)} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
                     <div class="tor-search-live-badge-v112" style="display:none;font-size:10px;font-weight:bold;margin-top:3px;"></div>
                 </div>
                 <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
@@ -8661,7 +8661,7 @@ window.renderTorrentMultiGroupsHTMLV119 = function(groups, flatResults) {
         return `<div id="torSearchCardV112_${bh}" onclick="window.openMagnetInGoEngineV96(window._torSearchResultsV96[${idx}].magnet)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid #262c36;border-radius:9px;cursor:pointer;margin-top:6px;">
             <div style="flex:1;min-width:0;">
                 <div style="color:#e6edf3;font-size:12px;font-weight:bold;">${r.title}</div>
-                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${r.size_mb} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
+                <div style="font-size:10px;color:#8b949e;margin-top:3px;">💾 ${Number(r.size_mb || 0).toFixed(1)} MB • <span style="color:${r.seeders >= 2 ? '#3fb950' : (r.seeders > 0 ? '#e3b341' : '#ff7b72')};font-weight:bold;">▲ Сидов: ${r.seeders}</span> • ▼ Пиров: ${r.peers}</div>
                 <div class="tor-search-live-badge-v112" style="display:none;font-size:10px;font-weight:bold;margin-top:3px;"></div>
             </div>
             <span style="color:#d2a8ff;font-size:11px;font-weight:bold;">Открыть ➔</span>
@@ -9096,6 +9096,7 @@ window._torHubTabV128 = 'torrents';
 window._torHubSelectedHashV128 = '';
 window._torHubSelectedPieceV128 = -1;
 window._torLiveDaemonSnapV128 = [];
+window._torStreamBufferingUrlV129 = '';
 
 window.mountTorrentHeaderHubMenuV128 = function() {
 const m = document.getElementById('jennyTorrentModalV91');
@@ -9116,6 +9117,86 @@ _origOpenTorV128.apply(this, arguments);
 window.mountTorrentHeaderHubMenuV128();
 };
 
+// Умный запуск потока ▶ из торрента: ставит трек первым в конвейер, не сбивается от перерисовки окна и сам дожидается прилета 1-го куска!
+window.previewTorrentFileStreamV97 = async function(fileIdx, btnEl, ev) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const ts = window._torStateV96;
+const hash = ts ? ts.currentHash : '';
+if (!hash) return;
+const streamUrl = `/api/torrent/stream/${hash}/${fileIdx}`;
+const curAud = window._khStateV88 ? window._khStateV88.previewAudio : null;
+
+// Если этот трек уже играет — ставим на паузу/останавливаем
+if (curAud && curAud._pagePath === streamUrl && !curAud.paused) {
+window._torStreamBufferingUrlV129 = '';
+window.stopAllExternalStreamsV97();
+if (document.getElementById('jennyTorInspectorModalV128')) window.renderTorrentInspectorHubV128();
+return;
+}
+// Если он уже в процессе буферизации первого куска — не обрываем его!
+if (window._torStreamBufferingUrlV129 === streamUrl) {
+if (typeof window.showToast === 'function') window.showToast('⚡ Загружаем стартовый кусок трека от пиров...');
+return;
+}
+
+window.stopAllExternalStreamsV97();
+window.pauseMainPlayerForOstV90();
+window._torStreamBufferingUrlV129 = streamUrl;
+const myReqId = ++window._previewReqIdV97;
+if (btnEl) btnEl.innerText = '⏳';
+
+const job = window._torMapV112 && window._torMapV112[hash];
+const fObj = ((job && job.files) || (ts && ts.files) || []).find(x => Number(x.index) === Number(fileIdx));
+const titleStr = fObj ? String(fObj.path || '').split('/').pop() : `Track #${fileIdx}`;
+
+if (job) {
+window._umpPlayingTorrentCtxV108 = { hash: hash, fileIdx: Number(fileIdx) };
+}
+
+// Сразу даем команду демону поставить этот файл #1 в конвейере
+fetch('/api/torrent/control', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ hash: hash, action: 'boost_file', file_index: Number(fileIdx) })
+}).catch(() => {});
+
+for (let attempt = 1; attempt <= 6; attempt++) {
+if (myReqId !== window._previewReqIdV97) return;
+const aud = new Audio(streamUrl + `?t=${Date.now()}`);
+aud._pagePath = streamUrl;
+aud.volume = window.getKhPreviewVolumeV90();
+window._khStateV88.previewAudio = aud;
+window.bindAudioToAllMiniPlayersV98(aud, titleStr);
+if (typeof window.syncMiniPlayerTorrentBtnVisibilityV108 === 'function') {
+window.syncMiniPlayerTorrentBtnVisibilityV108();
+}
+aud.onended = () => {
+window._torStreamBufferingUrlV129 = '';
+if (btnEl) btnEl.innerText = '▶';
+if (document.getElementById('jennyTorInspectorModalV128')) window.renderTorrentInspectorHubV128();
+};
+try {
+await aud.play();
+if (myReqId !== window._previewReqIdV97) { aud.pause(); return; }
+window._torStreamBufferingUrlV129 = '';
+if (btnEl) btnEl.innerText = '⏹';
+if (document.getElementById('jennyTorInspectorModalV128')) window.renderTorrentInspectorHubV128();
+return;
+} catch (e) {
+if (myReqId !== window._previewReqIdV97) return;
+if (attempt === 1 && typeof window.showToast === 'function') {
+window.showToast(`⚡ Подкачка начала «${titleStr}» (автостарт)...`);
+}
+await new Promise(r => setTimeout(r, 1500));
+}
+}
+window._torStreamBufferingUrlV129 = '';
+if (btnEl) btnEl.innerText = '▶';
+if (typeof window.showToast === 'function') {
+window.showToast('⚠️ Пир пока не отдал первый кусок этого трека');
+}
+};
+
 window.toggleTorrentInspectorHubV128 = function(ev, forceTab, forceHash) {
 if (ev && ev.stopPropagation) ev.stopPropagation();
 window.mountTorrentHeaderHubMenuV128();
@@ -9129,6 +9210,14 @@ pop.id = 'jennyTorInspectorModalV128';
 pop.className = 'jenny-modal-backdrop-v71';
 pop.style.zIndex = '2147483646';
 pop.onclick = (e) => { if (e.target === pop) pop.remove(); };
+// Создаем каркас модалки ОДИН РАЗ, чтобы скролл никогда не сбрасывался при ежесекундном обновлении!
+pop.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:460px;max-height:86vh;display:flex;flex-direction:column;border:1.5px solid #d2a8ff;">
+<div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(210,168,255,0.25),rgba(31,111,235,0.25));">
+<span style="color:#d2a8ff;font-weight:900;font-size:13px;">📊 ЦЕНТР ЗАКАЧЕК И ЧАСТЕЙ P2P</span>
+<button type="button" onclick="document.getElementById('jennyTorInspectorModalV128').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button></div>
+<div id="torHubTabsHeaderV128" style="padding:8px 10px;background:#090d14;border-bottom:1px solid #21262d;display:flex;gap:6px;"></div>
+<div id="torHubScrollBodyV128" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:240px;"></div>
+</div>`;
 document.body.appendChild(pop);
 }
 window.renderTorrentInspectorHubV128();
@@ -9139,21 +9228,28 @@ window.switchTorHubTabV128 = function(tabName, hashStr) {
 window._torHubTabV128 = tabName;
 if (hashStr) window._torHubSelectedHashV128 = hashStr;
 window._torHubSelectedPieceV128 = -1;
+const sb = document.getElementById('torHubScrollBodyV128');
+if (sb) sb.scrollTop = 0;
 window.renderTorrentInspectorHubV128();
 };
 
-window.controlTorrentJobV128 = async function(hash, action, fileIdx) {
+window.controlTorrentJobV128 = async function(hash, action, idxVal) {
 try {
-await fetch('/api/torrent/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hash, action, file_index: Number(fileIdx || 0) }) });
+const bodyObj = { hash: hash, action: action };
+if (action === 'boost_piece') bodyObj.piece_index = Number(idxVal || 0);
+else bodyObj.file_index = Number(idxVal || 0);
+await fetch('/api/torrent/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyObj) });
 const job = window._torMapV112 && window._torMapV112[hash];
 if (job) {
 if (action === 'drop') delete window._torMapV112[hash];
 else if (action === 'pause') job.paused = true;
-else if (action === 'resume' || action === 'boost_file') {
+else if (action === 'resume' || action === 'boost_file' || action === 'boost_piece') {
 job.paused = false; job.dlActive = true;
-if (action === 'boost_file' && fileIdx !== undefined) {
-job.selectedFiles.add(Number(fileIdx)); job.targetSet.add(Number(fileIdx));
+if (action === 'boost_file' && idxVal !== undefined) {
+job.selectedFiles.add(Number(idxVal)); job.targetSet.add(Number(idxVal));
 if (typeof window.showToast === 'function') window.showToast('⚡ Трек поставлен первым в очередь!');
+} else if (action === 'boost_piece') {
+if (typeof window.showToast === 'function') window.showToast(`⚡ Часть #${idxVal} поставлена на закачку!`);
 }
 window.ensureMultiTorrentWorkerV112();
 }
@@ -9176,7 +9272,15 @@ window.renderTorrentInspectorHubV128();
 
 window.renderTorrentInspectorHubV128 = function() {
 const pop = document.getElementById('jennyTorInspectorModalV128');
-if (!pop) return;
+const tabsHdr = document.getElementById('torHubTabsHeaderV128');
+const scrollBody = document.getElementById('torHubScrollBodyV128');
+if (!pop || !tabsHdr || !scrollBody) return;
+
+// Сохраняем текущую прокрутку основного списка и матрицы частей!
+const prevMainScroll = scrollBody.scrollTop;
+const oldGrid = document.getElementById('torHubPiecesGridBoxV129');
+const prevGridScroll = oldGrid ? oldGrid.scrollTop : 0;
+
 const torList = window._torLiveDaemonSnapV128 || [];
 const mapJobs = Object.values(window._torMapV112 || {});
 const allHashes = Array.from(new Set([...torList.map(t => t.hash), ...mapJobs.map(j => j.hash)])).filter(Boolean);
@@ -9187,7 +9291,15 @@ const activeTab = window._torHubTabV128 || 'torrents';
 let totalQueuedTracks = 0;
 torList.forEach(t => { totalQueuedTracks += (t.files || []).length; });
 const tabStyle = (id) => `flex:1;padding:7px 6px;font-size:11px;font-weight:900;border-radius:8px;border:1px solid ${activeTab === id ? '#d2a8ff' : '#30363d'};background:${activeTab === id ? 'rgba(210,168,255,0.22)' : '#11161f'};color:${activeTab === id ? '#fff' : '#8b949e'};`;
+
+tabsHdr.innerHTML = `
+<button type="button" onclick="window.switchTorHubTabV128('torrents')" style="${tabStyle('torrents')}">📦 Раздачи (${allHashes.length})</button>
+<button type="button" onclick="window.switchTorHubTabV128('tracks')" style="${tabStyle('tracks')}">🎵 Треки (${totalQueuedTracks})</button>
+<button type="button" onclick="window.switchTorHubTabV128('pieces')" style="${tabStyle('pieces')}">🧩 Карта частей</button>`;
+
 let bodyHtml = '';
+const curAud = window._khStateV88 ? window._khStateV88.previewAudio : null;
+const curPlayingPath = (curAud && !curAud.paused) ? String(curAud._pagePath || '') : '';
 
 if (activeTab === 'torrents') {
 if (!allHashes.length) {
@@ -9242,21 +9354,24 @@ begPiece: f.begin_piece || 0, endPiece: f.end_piece || 0
 });
 });
 });
-allActiveFiles.sort((a, b) => (a.isLead !== b.isLead) ? (a.isLead ? -1 : 1) : ((a.done !== b.done) ? (a.done ? 1 : -1) : ((a.completed !== b.completed) ? b.completed - a.completed : a.index - b.index)));
+// Стабильная сортировка по индексу трека (чтобы список не прыгал под пальцем при смене процентов!)
+allActiveFiles.sort((a, b) => (a.hash !== b.hash) ? a.hash.localeCompare(b.hash) : (a.index - b.index));
 if (!allActiveFiles.length) {
 bodyHtml = `<div style="padding:30px 12px;text-align:center;color:#8b949e;font-size:12px;">Нет выбранных треков в закачке. Нажми <b>⬇️</b> напротив любого трека в раздаче!</div>`;
 } else {
-const shown = allActiveFiles.slice(0, 100);
+const shown = allActiveFiles.slice(0, 120);
 bodyHtml = shown.map(item => {
 const doneMb = (item.completed / (1024 * 1024)).toFixed(1);
 const totMb = (item.length / (1024 * 1024)).toFixed(1);
 const pRange = item.endPiece > item.begPiece ? `🧩 #${item.begPiece}..#${item.endPiece - 1}` : `🧩 #${item.begPiece}`;
-const stB = item.done ? `<span style="color:#3fb950;font-weight:bold;">✅ В плеере</span>` : (item.isLead ? `<span style="color:#d2a8ff;font-weight:900;">🔥 КАЧАЕТСЯ: ${doneMb}/${totMb} МБ (${item.percent}%)</span>` : `<span>⏳ ${doneMb}/${totMb} МБ (${item.percent}%)</span>`);
+const sUrl = `/api/torrent/stream/${item.hash}/${item.index}`;
+const playIcon = (window._torStreamBufferingUrlV129 === sUrl) ? '⏳' : (curPlayingPath === sUrl ? '⏹' : '▶');
+const stB = item.done ? `<span style="color:#3fb950;font-weight:bold;">✅ Готов (${totMb} МБ)</span>` : (item.isLead ? `<span style="color:#d2a8ff;font-weight:900;">🔥 КАЧАЕТСЯ: ${doneMb}/${totMb} МБ (${item.percent}%)</span>` : `<span>⏳ ${doneMb}/${totMb} МБ (${item.percent}%)</span>`);
 return `<div style="padding:7px 9px;border-radius:8px;border:1px solid ${item.isLead ? '#d2a8ff' : (item.done ? 'rgba(63,185,80,0.5)' : '#21262d')};background:linear-gradient(90deg, ${item.done ? 'rgba(63,185,80,0.22)' : 'rgba(137,87,229,0.28)'} ${item.percent}%, #0b0f16 ${item.percent}%);display:flex;align-items:center;gap:6px;">
 <div style="flex:1;min-width:0;"><div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${item.title}</div>
 <div style="font-size:10px;color:#8b949e;margin-top:2px;display:flex;gap:6px;">${stB}<span style="color:#58a6ff;cursor:pointer;" onclick="window.switchTorHubTabV128('pieces','${item.hash}');window.selectPieceOnMapV128('${item.hash}',${item.begPiece});">${pRange}</span></div></div>
 ${!item.done ? `<button type="button" onclick="window.controlTorrentJobV128('${item.hash}','boost_file',${item.index})" style="padding:4px 7px;font-size:10px;background:rgba(210,168,255,0.2);color:#d2a8ff;border:1px solid #d2a8ff;border-radius:6px;font-weight:bold;">⚡ Первым</button>` : ''}
-<button type="button" onclick="window._torStateV96.currentHash='${item.hash}';window.previewTorrentFileStreamV97(${item.index},this,event)" style="padding:4px 8px;font-size:10.5px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:6px;">▶</button></div>`;
+<button type="button" onclick="window._torStateV96.currentHash='${item.hash}';window.previewTorrentFileStreamV97(${item.index},this,event)" style="padding:4px 8px;font-size:10.5px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:6px;">${playIcon}</button></div>`;
 }).join('');
 }
 } else if (activeTab === 'pieces') {
@@ -9273,17 +9388,16 @@ const c = pMap[i];
 if (c === '4') cntDone++; else if (c === '3') cntPartial++; else if (c === '2') cntHigh++; else if (c === '1') cntQueue++;
 }
 const selP = window._torHubSelectedPieceV128;
-let pieceDetailHtml = `<div style="font-size:10.5px;color:#8b949e;padding:6px 8px;background:#0d1117;border:1px solid #262c36;border-radius:8px;">👆 Нажми на любую ячейку части ниже, чтобы увидеть какие треки лежат внутри неё.</div>`;
+let pieceDetailHtml = `<div style="font-size:10.5px;color:#8b949e;padding:6px 8px;background:#0d1117;border:1px solid #262c36;border-radius:8px;">👆 Нажми на любую ячейку части ниже, чтобы увидеть какие файлы лежат внутри неё.</div>`;
 if (selP >= 0 && selP < nPieces) {
 const stCode = pMap[selP];
-const stLabel = stCode === '4' ? '🟩 Скачана (SHA-1 OK)' : (stCode === '3' ? '🟦 Качается сейчас' : (stCode === '2' ? '🟪 Приоритет конвейера' : (stCode === '1' ? '🟨 В очереди' : '⬛ Пропущена')));
-const job = (window._torMapV112 && window._torMapV112[dTor.hash]) || {};
-const allKnownFiles = (job.files && job.files.length) ? job.files : (dTor.files || []);
+const stLabel = stCode === '4' ? '🟩 Скачана (SHA-1 OK)' : (stCode === '3' ? '🟦 Качается сейчас' : (stCode === '2' ? '🟪 Приоритет конвейера' : (stCode === '1' ? '🟨 В очереди' : '⬛ Пропущена (не-аудио файл)')));
+const allKnownFiles = dTor.all_files || dTor.files || [];
 const matchingFiles = allKnownFiles.filter(f => f.begin_piece !== undefined && selP >= f.begin_piece && selP < f.end_piece);
 const filesNames = matchingFiles.length
-? matchingFiles.map(f => `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:3px;"><span style="color:#e6edf3;font-size:11px;">🎵 ${String(f.path || '').split('/').pop()}</span><button type="button" onclick="window.controlTorrentJobV128('${dTor.hash}','boost_file',${f.index})" style="padding:2px 6px;font-size:9.5px;background:rgba(63,185,80,0.2);color:#3fb950;border:1px solid #3fb950;border-radius:5px;font-weight:bold;">⚡ Первым</button></div>`).join('')
-: `<div style="color:#8b949e;font-size:10.5px;">Файлы для части #${selP}</div>`;
-pieceDetailHtml = `<div style="padding:8px 10px;background:#0d131f;border:1px solid #58a6ff;border-radius:8px;"><div style="font-size:11.5px;font-weight:900;color:#79c0ff;">🧩 Часть #${selP} из ${nPieces} (${pLenMb} МБ) — ${stLabel}</div>${filesNames}</div>`;
+? matchingFiles.map(f => `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:3px;"><span style="color:${f.selected ? '#e6edf3' : '#8b949e'};font-size:11px;">${f.selected ? '🎵' : '📄'} ${String(f.path || '').split('/').pop()}</span><button type="button" onclick="window.controlTorrentJobV128('${dTor.hash}','boost_file',${f.index})" style="padding:2px 6px;font-size:9.5px;background:rgba(63,185,80,0.2);color:#3fb950;border:1px solid #3fb950;border-radius:5px;font-weight:bold;">⚡ Качать файл</button></div>`).join('')
+: `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px;"><span style="color:#8b949e;font-size:10.5px;">Служебный блок раздачи</span><button type="button" onclick="window.controlTorrentJobV128('${dTor.hash}','boost_piece',${selP})" style="padding:2px 6px;font-size:9.5px;background:rgba(88,166,255,0.2);color:#58a6ff;border:1px solid #58a6ff;border-radius:5px;font-weight:bold;">⚡ Докачать часть #${selP}</button></div>`;
+pieceDetailHtml = `<div style="padding:8px 10px;background:#0d131f;border:1px solid #58a6ff;border-radius:8px;"><div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:11.5px;font-weight:900;color:#79c0ff;">🧩 Часть #${selP} из ${nPieces} (${pLenMb} МБ) — ${stLabel}</span>${stCode !== '4' ? `<button type="button" onclick="window.controlTorrentJobV128('${dTor.hash}','boost_piece',${selP})" style="padding:2px 6px;font-size:9.5px;background:rgba(210,168,255,0.2);color:#d2a8ff;border:1px solid #d2a8ff;border-radius:5px;font-weight:bold;">⚡ Часть</button>` : ''}</div>${filesNames}</div>`;
 }
 const cells = [];
 for (let i = 0; i < nPieces; i++) {
@@ -9295,21 +9409,16 @@ bodyHtml = `<div style="font-size:12px;font-weight:900;color:#58a6ff;">💿 ${dT
 <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px;font-size:10.5px;background:#0d1117;padding:7px 9px;border-radius:8px;border:1px solid #262c36;">
 <div>🧩 Всего: <b>${nPieces} × ${pLenMb} МБ</b></div><div style="color:#3fb950;">🟩 Готово: <b>${cntDone}</b></div>
 <div style="color:#39c5cf;">🟦 Качается: <b>${cntPartial}</b></div><div style="color:#a371f7;">🟪 Приоритет: <b>${cntHigh}</b></div>
-<div style="color:#d29922;">🟨 Очередь: <b>${cntQueue}</b></div><div style="color:#8b949e;">⬛ Пропуск: <b>${nPieces - cntDone - cntPartial - cntHigh - cntQueue}</b></div></div>
+<div style="color:#d29922;">🟨 Очередь: <b>${cntQueue}</b></div><div style="color:#8b949e;">⬛ Не-аудио: <b>${nPieces - cntDone - cntPartial - cntHigh - cntQueue}</b></div></div>
 ${pieceDetailHtml}
-<div style="max-height:250px;overflow-y:auto;padding:8px;background:#05070a;border:1px solid #30363d;border-radius:9px;display:flex;flex-wrap:wrap;gap:2px;">${cells.join('')}</div>`;
+<div id="torHubPiecesGridBoxV129" style="max-height:250px;overflow-y:auto;padding:8px;background:#05070a;border:1px solid #30363d;border-radius:9px;display:flex;flex-wrap:wrap;gap:2px;">${cells.join('')}</div>`;
 }
 }
 
-pop.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:460px;max-height:86vh;display:flex;flex-direction:column;border:1.5px solid #d2a8ff;">
-<div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(210,168,255,0.25),rgba(31,111,235,0.25));">
-<span style="color:#d2a8ff;font-weight:900;font-size:13px;">📊 ЦЕНТР ЗАКАЧЕК И ЧАСТЕЙ P2P</span>
-<button type="button" onclick="document.getElementById('jennyTorInspectorModalV128').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button></div>
-<div style="padding:8px 10px;background:#090d14;border-bottom:1px solid #21262d;display:flex;gap:6px;">
-<button type="button" onclick="window.switchTorHubTabV128('torrents')" style="${tabStyle('torrents')}">📦 Раздачи (${allHashes.length})</button>
-<button type="button" onclick="window.switchTorHubTabV128('tracks')" style="${tabStyle('tracks')}">🎵 Треки (${totalQueuedTracks})</button>
-<button type="button" onclick="window.switchTorHubTabV128('pieces')" style="${tabStyle('pieces')}">🧩 Карта частей</button></div>
-<div style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:240px;">${bodyHtml}</div></div>`;
+scrollBody.innerHTML = bodyHtml;
+if (prevMainScroll > 0) scrollBody.scrollTop = prevMainScroll;
+const newGrid = document.getElementById('torHubPiecesGridBoxV129');
+if (newGrid && prevGridScroll > 0) newGrid.scrollTop = prevGridScroll;
 };
 
 window.refreshTorrentDaemonSnapV128 = async function() {
