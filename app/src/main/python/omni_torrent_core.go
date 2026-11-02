@@ -1504,27 +1504,49 @@ func resolveSoundCloudClientID(ctx context.Context, cfg EngineConfig, logger *Se
 }
 
 // extractSCArtistTrackAlbum вытаскивает из трека SoundCloud чистого Исполнителя, Трек и Альбом
-func extractSCArtistTrackAlbum(tr scTrackObject) (string, string, string) {
-	artist := strings.TrimSpace(tr.PublisherMetadata.Artist)
-	album := strings.TrimSpace(tr.PublisherMetadata.AlbumTitle); if strings.Contains(strings.ToLower(album), ".online") || strings.Contains(strings.ToLower(album), ".com") || strings.Contains(strings.ToLower(album), ".ru") || strings.Contains(strings.ToLower(album), ".net") || strings.Contains(strings.ToLower(album), "http") { album = "" }
-	if album == "" {
-		album = strings.TrimSpace(tr.PublisherMetadata.ReleaseTitle)
-	}
-	trackTitle := strings.TrimSpace(reNoiseWords.ReplaceAllString(tr.Title, ""))
+var reAudioExt = regexp.MustCompile(`(?i)\.(mp3|wav|flac|m4a|ogg|aac)\b`)
 
-	// Если в заголовке трека на SoundCloud написано "Исполнитель - Название трека"
-	splitArt, splitTrk := splitTorrentArtistAndRest(tr.Title)
-	if splitArt != "" && splitTrk != "" {
-		if artist == "" {
-			artist = splitArt
-		}
-		trackTitle = splitTrk
-	}
-	if artist == "" {
-		artist = strings.TrimSpace(tr.User.Username)
-	}
-	trackTitle = strings.TrimSpace(reBracketMeta.ReplaceAllString(trackTitle, ""))
-	return artist, trackTitle, album
+func cleanCatalogAlbumName(alb string) string {
+alb = strings.TrimSpace(reAudioExt.ReplaceAllString(alb, ""))
+low := strings.ToLower(alb)
+if strings.Contains(low, ".online") || strings.Contains(low, ".com") || strings.Contains(low, ".ru") || strings.Contains(low, ".net") || strings.Contains(low, "http") {
+return ""
+}
+for _, suf := range []string{" - single", " [single]", " (single)"} {
+if strings.HasSuffix(low, suf) {
+return ""
+}
+}
+for _, suf := range []string{" - ep", " [ep]", " (ep)"} {
+if strings.HasSuffix(low, suf) {
+alb = strings.TrimSpace(alb[:len(alb)-len(suf)])
+break
+}
+}
+return alb
+}
+
+func extractSCArtistTrackAlbum(tr scTrackObject) (string, string, string) {
+artist := strings.TrimSpace(reAudioExt.ReplaceAllString(tr.PublisherMetadata.Artist, ""))
+album := cleanCatalogAlbumName(tr.PublisherMetadata.AlbumTitle)
+if album == "" {
+album = cleanCatalogAlbumName(tr.PublisherMetadata.ReleaseTitle)
+}
+rawTitle := strings.TrimSpace(reAudioExt.ReplaceAllString(tr.Title, ""))
+trackTitle := strings.TrimSpace(reNoiseWords.ReplaceAllString(rawTitle, ""))
+
+splitArt, splitTrk := splitTorrentArtistAndRest(rawTitle)
+if splitArt != "" && splitTrk != "" {
+if artist == "" {
+artist = splitArt
+}
+trackTitle = strings.TrimSpace(reNoiseWords.ReplaceAllString(splitTrk, ""))
+}
+if artist == "" {
+artist = strings.TrimSpace(reAudioExt.ReplaceAllString(tr.User.Username, ""))
+}
+trackTitle = strings.TrimSpace(reBracketMeta.ReplaceAllString(trackTitle, ""))
+return artist, trackTitle, album
 }
 
 // fetchSoundCloudPriority — СТУПЕНЬ №1: ищет подсказки, треки, исполнителей и альбомы в SoundCloud
@@ -1584,86 +1606,94 @@ func fetchSoundCloudPriority(ctx context.Context, probes []string, rawQuery stri
 		mu.Unlock()
 	}
 
-	processSCTrackList := func(scTracks []scTrackObject, probe string, via string) {
-		var topSummary []string
-		for i, tr := range scTracks {
-			artist, trackName, albumName := extractSCArtistTrackAlbum(tr)
-			if artist == "" && trackName == "" {
-				continue
-			}
-			if i < 4 {
-				if albumName != "" {
-					topSummary = append(topSummary, fmt.Sprintf("%s — %s [альбом: %s, ▶%d]", artist, trackName, albumName, tr.PlaybackCount))
-				} else {
-					topSummary = append(topSummary, fmt.Sprintf("%s — %s [▶%d]", artist, trackName, tr.PlaybackCount))
-				}
-			}
+processSCTrackList := func(scTracks []scTrackObject, probe string, via string) {
+var topSummary []string
+for i, tr := range scTracks {
+rawArtist, trackName, albumName := extractSCArtistTrackAlbum(tr)
+if rawArtist == "" && trackName == "" {
+continue
+}
 
-			// Бонус за популярность трека в SoundCloud (playback_count)
-			popBonus := math.Min(0.04, math.Log10(float64(tr.PlaybackCount+1))*0.006)
+// Вытаскиваем связанные однокоренные проекты ("АК-47", "Витя АК-47") ДО обрезки списков
+for _, rel := range extractRelatedCollabArtists(rawArtist, trackName, albumName, probe) {
+addEntity(rel, 0.992, true, "связанная группа из трека SoundCloud")
+if strings.Contains(rel, "-") {
+addEntity(strings.ReplaceAll(rel, "-", " "), 0.991, true, "связанная группа (без дефиса) из SoundCloud")
+}
+}
 
-			artistMatches := matchWithinTwoLettersNoSymbols(artist, rawQuery) || matchWithinTwoLettersNoSymbols(artist, probe)
-			trackMatches := matchWithinTwoLettersNoSymbols(trackName, rawQuery) || matchWithinTwoLettersNoSymbols(trackName, probe)
-			albumMatches := albumName != "" && (matchWithinTwoLettersNoSymbols(albumName, rawQuery) || matchWithinTwoLettersNoSymbols(albumName, probe))
+// Очищаем основного артиста от feat. и длинных перечислений через запятую
+artist := rawArtist
+for _, fSep := range []string{" feat.", " feat ", " ft.", " ft ", " при уч", " (feat", " [feat"} {
+if idx := strings.Index(strings.ToLower(artist), fSep); idx > 0 {
+artist = strings.TrimSpace(artist[:idx])
+}
+}
+if strings.Contains(artist, ",") {
+parts := strings.Split(artist, ",")
+picked := ""
+for _, pt := range parts {
+pt = strings.TrimSpace(pt)
+if matchWithinTwoLettersNoSymbols(pt, rawQuery) || matchWithinTwoLettersNoSymbols(pt, probe) {
+picked = pt
+break
+}
+}
+if picked == "" {
+picked = strings.TrimSpace(parts[0])
+}
+artist = picked
+}
 
-			rankDecay := float64(i) * 0.003
-			// 1. Совпал сам исполнитель (или это топ-3 хит по кириллическому запросу)
-			if artistMatches || (i < 3 && hasCyrillic(probe) && !hasCyrillic(artist) && matchWithinTwoLettersNoSymbols(artist, probe)) {
-				addEntity(artist, 0.995+popBonus-rankDecay, true, fmt.Sprintf("артист из трека SoundCloud «%s»", trackName))
-				addTrack(artist, trackName, albumName, "primary_artist")
-				if albumName != "" && !strings.EqualFold(albumName, trackName) {
-					addEntity(artist+" "+albumName, 0.990+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» из метаданных трека SoundCloud", albumName))
-				}
-				if trackName != "" && !strings.EqualFold(artist, trackName) {
-					addEntity(artist+" "+trackName, 0.984+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» артиста «%s» в SoundCloud", trackName, artist))
-				}
-				mu.Lock()
-				if topSCQuery == "" {
-					topSCQuery = artist
-				}
-				mu.Unlock()
-			} else if trackMatches || albumMatches {
-				// 2. Пользователь искал песню или альбом, либо это одноимённый трек у другого исполнителя!
-				addEntity(artist+" "+trackName, 0.994+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» исполнителя «%s» в SoundCloud", trackName, artist))
-				addEntity(artist, 0.986+popBonus-rankDecay, true, fmt.Sprintf("исполнитель найденного трека «%s» в SoundCloud", trackName))
-				if albumName != "" {
-					addEntity(artist+" "+albumName, 0.990+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» для трека «%s» в SoundCloud", albumName, trackName))
-				}
-				addTrack(artist, trackName, albumName, "other_artist_song")
-				mu.Lock()
-				if topSCQuery == "" {
-					topSCQuery = artist + " " + trackName
-				}
-				mu.Unlock()
-			} else if strings.EqualFold(probe, rawQuery) && i < 8 && (tr.PlaybackCount >= 1000 || i < 4) {
-				// 3. Топ-8 релевантных треков выдачи самого поиска SoundCloud (даёт артистов, их альбомы и треки для заполнения 10 слотов SoundCloud)
-				if artist != "" {
-					addEntity(artist, 0.978+popBonus-rankDecay, true, fmt.Sprintf("артист из топ-%d выдачи SoundCloud (▶%d)", i+1, tr.PlaybackCount))
-				}
-				if albumName != "" && artist != "" {
-					addEntity(artist+" "+albumName, 0.982+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» из топ-%d выдачи SoundCloud", albumName, i+1))
-				}
-				if artist != "" && trackName != "" {
-					addEntity(artist+" "+trackName, 0.975+popBonus-rankDecay, false, fmt.Sprintf("трек «%s — %s» из топ-%d выдачи SoundCloud", artist, trackName, i+1))
-					addTrack(artist, trackName, albumName, "primary_artist")
-				}
-				mu.Lock()
-				if topSCQuery == "" && artist != "" {
-					topSCQuery = artist
-				}
-				mu.Unlock()
-			}
+if i < 4 {
+if albumName != "" {
+topSummary = append(topSummary, fmt.Sprintf("%s — %s [альбом: %s, ▶%d]", artist, trackName, albumName, tr.PlaybackCount))
+} else {
+topSummary = append(topSummary, fmt.Sprintf("%s — %s [▶%d]", artist, trackName, tr.PlaybackCount))
+}
+}
 
-			// Вытаскиваем связанных коллаб-артистов из поля artist/title
-			for _, rel := range extractRelatedCollabArtists(artist, trackName, albumName, probe) {
-				addEntity(rel, 0.95, true, "коллаб-артист из трека SoundCloud")
-			}
-		}
-		if len(topSummary) > 0 {
-			logger.Simple("☁️ SoundCloud (%s) по запросу «%s» -> нашёл %d треков за %d мс: %v",
-				via, probe, len(scTracks), time.Since(t0).Milliseconds(), topSummary)
-		}
-	}
+popBonus := math.Min(0.04, math.Log10(float64(tr.PlaybackCount+1))*0.006)
+artistMatches := matchWithinTwoLettersNoSymbols(artist, rawQuery) || matchWithinTwoLettersNoSymbols(artist, probe)
+trackMatches := matchWithinTwoLettersNoSymbols(trackName, rawQuery) || matchWithinTwoLettersNoSymbols(trackName, probe)
+albumMatches := albumName != "" && (matchWithinTwoLettersNoSymbols(albumName, rawQuery) || matchWithinTwoLettersNoSymbols(albumName, probe))
+
+rankDecay := float64(i) * 0.003
+if artistMatches || (i < 3 && hasCyrillic(probe) && !hasCyrillic(artist) && matchWithinTwoLettersNoSymbols(artist, probe)) {
+addEntity(artist, 0.995+popBonus-rankDecay, true, fmt.Sprintf("артист из трека SoundCloud «%s»", trackName))
+addTrack(artist, trackName, albumName, "primary_artist")
+if albumName != "" && !strings.EqualFold(albumName, trackName) {
+addEntity(artist+" "+albumName, 0.990+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» из метаданных трека SoundCloud", albumName))
+}
+if trackName != "" && !strings.EqualFold(artist, trackName) {
+addEntity(artist+" "+trackName, 0.984+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» артиста «%s» в SoundCloud", trackName, artist))
+}
+mu.Lock()
+if topSCQuery == "" {
+topSCQuery = artist
+}
+mu.Unlock()
+} else if trackMatches || albumMatches {
+if !hasCyrillic(rawQuery) || hasCyrillic(artist) || matchWithinTwoLettersNoSymbols(artist, rawQuery) {
+addEntity(artist+" "+trackName, 0.988+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» исполнителя «%s» в SoundCloud", trackName, artist))
+addEntity(artist, 0.982+popBonus-rankDecay, true, fmt.Sprintf("исполнитель найденного трека «%s» в SoundCloud", trackName))
+}
+if albumName != "" {
+addEntity(artist+" "+albumName, 0.986+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» для трека «%s» в SoundCloud", albumName, trackName))
+}
+addTrack(artist, trackName, albumName, "other_artist_song")
+mu.Lock()
+if topSCQuery == "" {
+topSCQuery = artist + " " + trackName
+}
+mu.Unlock()
+}
+}
+if len(topSummary) > 0 {
+logger.Simple("☁️ SoundCloud (%s) по запросу «%s» -> нашёл %d треков за %d мс: %v",
+via, probe, len(scTracks), time.Since(t0).Milliseconds(), topSummary)
+}
+}
 
 	scProbes := probes
 	if len(scProbes) > 3 {
@@ -1964,6 +1994,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 	}
 
 	evaluateCatalogHit := func(artistName, trackName, albumName, source, probeQuery string) {
+		albumName = cleanCatalogAlbumName(albumName)
 		cleanTrack := strings.TrimSpace(reBracketMeta.ReplaceAllString(trackName, ""))
 		artistMatches := matchWithinTwoLettersNoSymbols(artistName, rawQuery) || matchWithinTwoLettersNoSymbols(artistName, probeQuery)
 		trackMatches := matchWithinTwoLettersNoSymbols(cleanTrack, rawQuery) || matchWithinTwoLettersNoSymbols(cleanTrack, probeQuery)
@@ -2027,7 +2058,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 							topArtists = append(topArtists, fmt.Sprintf("%s — %s", r.ArtistName, r.TrackName))
 						}
 						for _, rel := range extractRelatedCollabArtists(r.ArtistName, r.TrackName, r.CollectionName, probe) {
-							addEntity(rel, 0.91, false, "iTunes", "связанный проект «"+rel+"»")
+							addEntity(rel, 0.96, true, "iTunes", "связанный проект «"+rel+"»"); if strings.Contains(rel, "-") { addEntity(strings.ReplaceAll(rel, "-", " "), 0.955, true, "iTunes", "связанный проект «"+rel+"»") }
 						}
 						if i < 2 && hasCyrillic(probe) && !hasCyrillic(r.ArtistName) && matchWithinTwoLettersNoSymbols(r.ArtistName, probe) {
 							addEntity(r.ArtistName, 0.93, true, "iTunes-"+c, "прямой перевод имени артиста каталогом iTunes")
@@ -2080,7 +2111,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 							topItems = append(topItems, fmt.Sprintf("%s — %s", d.Artist.Name, d.Title))
 						}
 						for _, rel := range extractRelatedCollabArtists(d.Artist.Name, d.Title, d.Album.Title, probe) {
-							addEntity(rel, 0.91, false, "Deezer", "связанный проект «"+rel+"»")
+							addEntity(rel, 0.96, true, "Deezer", "связанный проект «"+rel+"»"); if strings.Contains(rel, "-") { addEntity(strings.ReplaceAll(rel, "-", " "), 0.955, true, "Deezer", "связанный проект «"+rel+"»") }
 						}
 						if i < 2 && hasCyrillic(probe) && !hasCyrillic(d.Artist.Name) && matchWithinTwoLettersNoSymbols(d.Artist.Name, probe) {
 							addEntity(d.Artist.Name, 0.93, true, srcName, "прямой перевод имени артиста каталогом Deezer")
