@@ -175,7 +175,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
 
 window.computeBufferAutoGain = function(audioBuffer, targetDb) {
     let tDb = isNaN(parseFloat(targetDb)) ? -10.0 : parseFloat(targetDb);
-    let refBuf = window.studioBuffer || audioBuffer;
+    let refBuf = audioBuffer || window.studioBuffer;
     if (!refBuf) return 1.0;
 
     // Если для этого трека уже рассчитан эталонный RMS по первому куску — держим его железобетонно, чтобы громкость никогда не прыгала!

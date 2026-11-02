@@ -3552,6 +3552,79 @@ def api_video_live_remux_v130():
                 pass
     return bottle.HTTPResponse(body=_remux_gen(), status=200, headers=resp_hdrs)
 
+
+# === 🎬 JENNY V131: VIDEO RAM PCM CHUNK & META ENGINE ===
+def _resolve_video_src_input_v131(src: str) -> str:
+    src = (src or "").strip()
+    if src.startswith('/api/torrent/stream/'):
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            f_idx = parts[4].split('?')[0]
+            ensure_jtorrent_daemon_v96()
+            return f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}"
+    elif src.startswith('/api/media/'):
+        fn = urllib.parse.unquote(src[len('/api/media/'):].split('?')[0])
+        return resolve_track_full_path_v71(fn)
+    return resolve_track_full_path_v71(src)
+
+@route('/api/video/pcm_meta', method='GET')
+def api_video_pcm_meta_v131():
+    response.content_type = 'application/json'
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        return json.dumps({"duration": 0, "size": 0})
+    src_input = _resolve_video_src_input_v131(src)
+    dur_sec, sz_bytes = 0.0, 0
+    try:
+        if os.path.isfile(src_input):
+            sz_bytes = os.path.getsize(src_input)
+        ff_bin = find_ffmpeg_binary()
+        pr = subprocess.run([ff_bin, '-hide_banner', '-i', src_input], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+        raw = (pr.stderr or "") + (pr.stdout or "")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+        if m:
+            dur_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+    return json.dumps({"duration": dur_sec, "size": sz_bytes})
+
+@route('/api/video/pcm_chunk', method='GET')
+def api_video_pcm_chunk_v131():
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        response.status = 400
+        return "Missing src"
+    try:
+        st_sec = max(0.0, float(request.query.get('start', 0.0)))
+        dur_sec = max(0.5, min(60.0, float(request.query.get('dur', 30.0))))
+        sr = int(request.query.get('sr', 44100))
+        if sr < 8000 or sr > 48000:
+            sr = 44100
+        src_input = _resolve_video_src_input_v131(src)
+        cmd = [
+            find_ffmpeg_binary(), '-v', 'error',
+            '-ss', f"{st_sec:.3f}", '-t', f"{dur_sec:.3f}",
+            '-i', src_input, '-vn', '-ac', '2', '-ar', str(sr),
+            '-f', 'f32le', '-acodec', 'pcm_f32le', '-'
+        ]
+        pr = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        raw_interleaved = pr.stdout or b""
+        frames = (len(raw_interleaved) // 4) // 2
+        if frames <= 0:
+            response.content_type = 'application/octet-stream'
+            return b""
+        import array
+        arr = array.array('f')
+        arr.frombytes(raw_interleaved[:frames * 8])
+        out_bytes = arr[0::2].tobytes() + arr[1::2].tobytes()
+        response.content_type = 'application/octet-stream'
+        response.set_header('Content-Length', str(len(out_bytes)))
+        return out_bytes
+    except Exception as e:
+        response.status = 500
+        return str(e)
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
