@@ -22,6 +22,46 @@ DEFAULT_MUSIC_DIR = "/storage/emulated/0/Music/"
 MUSIC_DIR = DEFAULT_MUSIC_DIR
 PRESET_FILE = os.path.join(DEFAULT_MUSIC_DIR, "jenny_dsp_preset.json")
 
+# ==============================================================================
+# ⚙️ КОНФИГУРАЦИЯ ПОИСКОВОГО ЯДРА OMNITORRENT (ТАЙМАУТЫ, ПРОФИЛИ, ФОРМАТЫ, ГОД)
+# ==============================================================================
+OMNI_TORRENT_CONFIG = {
+    # --- 1. ТАЙМАУТЫ ПОИСКА ---
+    "timeout_ms": 10000,         # Таймаут опроса торрент-индексаторов внутри Go-ядра (в мс: 5500 / 10000 / 15000)
+    # "timeout_ms": 15000,       # Раскомментируй для медленного мобильного интернета или VPN
+    "http_timeout_sec": 20.0,    # Общий таймаут ожидания HTTP-ответа в player.py от демона (в секундах)
+
+    # --- 2. РЕЖИМ МЕДИА-ПРОФИЛЯ И ФОРМАТОВ ПОИСКА ---
+    "profile": "audio",          # Активный профиль: "audio" (только музыка), "video" (фильмы/сериалы), "omni" (всё вместе)
+    # "profile": "video",        # Раскомментируй для переключения в режим поиска видео/фильмов
+    # "profile": "omni",         # Раскомментируй, чтобы искать одновременно музыку и фильмы без фильтрации
+
+    "default_format_tag": "all", # Формат по умолчанию при открытии окна: "all", "flac", "wav", "mp3", "m4a"
+    # "default_format_tag": "flac", # Раскомментируй, чтобы при запуске сразу стоял фильтр FLAC
+
+    # Список кнопок форматов в панели Торрент-студии (можно закомментировать ненужные или раскомментировать видео-теги):
+    "format_tags": [
+        {"id": "all",  "label": "🌐 ВСЕ",  "color": "#58a6ff"},
+        {"id": "flac", "label": "💎 FLAC", "color": "#d2a8ff"},
+        {"id": "wav",  "label": "🌊 WAV",  "color": "#39c5cf"},
+        {"id": "mp3",  "label": "🎵 MP3",  "color": "#3fb950"},
+        {"id": "m4a",  "label": "🍏 M4A",  "color": "#e3b341"},
+        # {"id": "ogg",   "label": "🔥 OGG/OPUS", "color": "#f0883e"},
+        # {"id": "1080p", "label": "🎬 1080p",    "color": "#ff7b72"},
+        # {"id": "2160p", "label": "📽️ 4K UHD",   "color": "#ffa657"},
+    ],
+
+    # --- 3. ПОЛЕ ФИЛЬТРАЦИИ ПО ГОДУ ВЫПУСКА ---
+    "enable_year_filter": True,  # Показывать отдельное поле ввода «📅 Год» рядом со строкой поиска
+    "default_year": "",          # Год по умолчанию (оставь "" пустым или укажи например "2025")
+
+    # --- 4. ПОДКЛЮЧАЕМЫЕ НА ЛЕТУ МОДУЛИ ЯДРА ---
+    "enable_phonetic": True,     # Модуль фонетики, авто-раскладки и слогового транслита (джэйзэт -> Jay-Z)
+    "enable_catalog": True,      # Модуль каталогов iTunes/Deezer (Песня -> Артист + доп. списки feat./при уч./&)
+    "enable_udp": True,          # Живой бинарный BEP-15 UDP-радар сидов по 4 трекерам
+}
+
+
 
 def find_ffmpeg_binary():
     """Находит нативный бинарник libffmpeg.so в папке библиотек APK."""
@@ -2416,64 +2456,94 @@ def ensure_jtorrent_daemon_v96():
 threading.Thread(target=ensure_jtorrent_daemon_v96, daemon=True).start()
 
 # ==============================================================================
-# 🧠 JENNY V122: NATIVE GO OMNITORRENT ENGINE BRIDGE (libomnitorrent.so via ctypes)
+# 🧠 JENNY V124: ISOLATED CRASH-PROOF OMNITORRENT DAEMON BRIDGE (127.0.0.1:18999)
 # ==============================================================================
-import ctypes
+_OMNI_PORT_V124 = "18998"
+_OMNI_URL_V124 = f"http://127.0.0.1:{_OMNI_PORT_V124}"
+_OMNI_PROC_V124 = None
+_OMNI_LOCK_V124 = threading.Lock()
 
-_OMNI_LIB_V122 = None
-_OMNI_LOCK_V122 = threading.Lock()
-
-def _get_omnitorrent_lib_v122():
-    global _OMNI_LIB_V122
-    if _OMNI_LIB_V122 is not None:
-        return _OMNI_LIB_V122
-    with _OMNI_LOCK_V122:
-        if _OMNI_LIB_V122 is not None:
-            return _OMNI_LIB_V122
-
-        cand_paths = []
-        ff_dir = os.path.dirname(find_ffmpeg_binary())
-        if ff_dir:
-            cand_paths.append(os.path.join(ff_dir, "libomnitorrent.so"))
-        for env_k in ("JENNY_NATIVE_DIR", "LD_LIBRARY_PATH", "PATH"):
+def find_omnitorrent_binary_v124():
+    cand = None
+    ff_dir = os.path.dirname(find_ffmpeg_binary())
+    if ff_dir and os.path.isfile(os.path.join(ff_dir, "libomnitorrent.so")):
+        cand = os.path.join(ff_dir, "libomnitorrent.so")
+    if not cand:
+        for env_k in ("JENNY_NATIVE_DIR", "PATH", "LD_LIBRARY_PATH"):
             for d in os.environ.get(env_k, "").split(":"):
-                if d:
-                    cand_paths.append(os.path.join(d, "libomnitorrent.so"))
-        cand_paths.append("/data/data/com.termux/files/home/omnibuild/libomnitorrent.so")
-        cand_paths.append(os.path.abspath(os.path.join(BASE_DIR, "..", "jniLibs", "arm64-v8a", "libomnitorrent.so")))
-
-        so_to_load = None
-        for cp in cand_paths:
-            if cp and os.path.isfile(cp):
-                so_to_load = cp
+                if d and os.path.isfile(os.path.join(d, "libomnitorrent.so")):
+                    cand = os.path.join(d, "libomnitorrent.so")
+                    break
+            if cand:
                 break
+    if not cand:
+        local_so = os.path.join(BASE_DIR, "..", "jniLibs", "arm64-v8a", "libomnitorrent.so")
+        if os.path.isfile(local_so):
+            cand = os.path.abspath(local_so)
+    if not cand and os.path.isfile("/data/data/com.termux/files/home/omnibuild/libomnitorrent.so"):
+        cand = "/data/data/com.termux/files/home/omnibuild/libomnitorrent.so"
+    if not cand:
+        return "libomnitorrent.so"
 
-        # Если файл лежит на /storage/ или /sdcard/ (noexec), копируем во внутренний исполняемый каталог
-        if so_to_load and so_to_load.startswith(("/storage/", "/sdcard/")):
-            for exec_dir in (
-                os.environ.get("JENNY_FILES_DIR", ""),
-                "/data/data/com.termux/files/usr/tmp",
-                os.path.expanduser("~")
-            ):
-                if exec_dir and os.path.isdir(exec_dir):
-                    cached_so = os.path.join(exec_dir, "libomnitorrent_exec.so")
-                    try:
-                        if not os.path.isfile(cached_so) or os.path.getsize(cached_so) != os.path.getsize(so_to_load):
-                            shutil.copy2(so_to_load, cached_so)
-                        os.chmod(cached_so, 0o755)
-                        so_to_load = cached_so
-                        break
-                    except Exception:
-                        continue
+    if cand.startswith(("/storage/", "/sdcard/")) and os.path.isfile(cand):
+        for exec_dir in (
+            os.environ.get("JENNY_FILES_DIR", ""),
+            "/data/data/com.termux/files/usr/tmp",
+            os.path.expanduser("~")
+        ):
+            if exec_dir and os.path.isdir(exec_dir):
+                cached_bin = os.path.join(exec_dir, "libomnitorrent_exec.so")
+                try:
+                    if not os.path.isfile(cached_bin) or int(os.path.getmtime(cached_bin)) != int(os.path.getmtime(cand)):
+                        shutil.copy2(cand, cached_bin)
+                    os.chmod(cached_bin, 0o755)
+                    return cached_bin
+                except Exception:
+                    continue
+    return cand
 
-        lib = ctypes.CDLL(so_to_load or "libomnitorrent.so")
-        lib.OmniSearchJSON.argtypes = [ctypes.c_char_p]
-        lib.OmniSearchJSON.restype = ctypes.c_void_p
-        lib.OmniFree.argtypes = [ctypes.c_void_p]
-        _OMNI_LIB_V122 = lib
-        return _OMNI_LIB_V122
+def ensure_omnitorrent_daemon_v124():
+    global _OMNI_PROC_V124
+    try:
+        with urllib.request.urlopen(f"{_OMNI_URL_V124}/health", timeout=0.35) as r:
+            if r.status == 200:
+                return True
+    except Exception:
+        pass
 
-def _enrich_omni_response_trackers_v122(data_dict: dict) -> dict:
+    with _OMNI_LOCK_V124:
+        try:
+            with urllib.request.urlopen(f"{_OMNI_URL_V124}/health", timeout=0.25) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+        try:
+            bin_p = find_omnitorrent_binary_v124()
+            try:
+                os.chmod(bin_p, 0o755)
+            except Exception:
+                pass
+            _OMNI_PROC_V124 = subprocess.Popen(
+                [bin_p, "--serve", f"127.0.0.1:{_OMNI_PORT_V124}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            for _ in range(15):
+                time.sleep(0.08)
+                try:
+                    with urllib.request.urlopen(f"{_OMNI_URL_V124}/health", timeout=0.25) as r:
+                        if r.status == 200:
+                            return True
+                except Exception:
+                    continue
+        except Exception as e:
+            print("OmniTorrent daemon start error:", e)
+    return False
+
+threading.Thread(target=ensure_omnitorrent_daemon_v124, daemon=True).start()
+
+def _enrich_omni_response_trackers_v124(data_dict: dict) -> dict:
     if "enrich_magnet_with_cached_trackers_v109" not in globals():
         return data_dict
     for item in (data_dict.get("results") or []):
@@ -2485,6 +2555,11 @@ def _enrich_omni_response_trackers_v122(data_dict: dict) -> dict:
                 item["magnet"] = enrich_magnet_with_cached_trackers_v109(item["magnet"])
     return data_dict
 
+@route('/api/torrent/config', method=['GET'])
+def api_torrent_config_v125():
+    response.content_type = 'application/json'
+    return json.dumps({"status": "ok", "config": OMNI_TORRENT_CONFIG}, ensure_ascii=False)
+
 @post('/api/torrent/search')
 def api_torrent_search_v105():
     response.content_type = 'application/json'
@@ -2494,26 +2569,41 @@ def api_torrent_search_v105():
         if not q:
             return json.dumps({"status": "error", "error": "Пустой запрос"})
 
+        ensure_omnitorrent_daemon_v124()
+
+        cfg = globals().get("OMNI_TORRENT_CONFIG", {})
+        fmt_tag = (req.get("format_tag") or cfg.get("default_format_tag", "all")).strip().lower()
+        year_val = str(req.get("year") if req.get("year") is not None else cfg.get("default_year", "")).strip()
+        # Оставляем в году только цифры (например "2003")
+        year_clean = "".join(ch for ch in year_val if ch.isdigit())[:4]
+
         payload = json.dumps({
             "query": q,
-            "format_tag": (req.get("format_tag") or "all").strip().lower(),
+            "format_tag": fmt_tag,
+            "year": year_clean,
+            "profile": str(req.get("profile") or cfg.get("profile", "audio")).strip().lower(),
+            "enable_phonetic": bool(req.get("enable_phonetic", cfg.get("enable_phonetic", True))),
+            "enable_catalog": bool(req.get("enable_catalog", cfg.get("enable_catalog", True))),
+            "enable_udp": bool(req.get("enable_udp", cfg.get("enable_udp", True))),
             "exact": bool(req.get("exact", False)),
             "hide_zero": bool(req.get("hide_zero", True)),
             "min_two_seeds": bool(req.get("min_two_seeds", False)),
-            "max_results": 60
+            "max_results": 60,
+            "timeout_ms": int(req.get("timeout_ms") or cfg.get("timeout_ms", 10000))
         }, ensure_ascii=False).encode("utf-8")
 
-        lib = _get_omnitorrent_lib_v122()
-        ptr = lib.OmniSearchJSON(payload)
-        if not ptr:
-            return json.dumps({"status": "error", "error": "OmniSearchJSON returned NULL"})
-        try:
-            raw_json = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8", errors="replace")
-        finally:
-            lib.OmniFree(ptr)
+        http_req = urllib.request.Request(
+            f"{_OMNI_URL_V124}/search",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        http_timeout = float(cfg.get("http_timeout_sec", 20.0))
+        with urllib.request.urlopen(http_req, timeout=http_timeout) as r:
+            raw_json = r.read().decode("utf-8", errors="replace")
 
         parsed = json.loads(raw_json)
-        parsed = _enrich_omni_response_trackers_v122(parsed)
+        parsed = _enrich_omni_response_trackers_v124(parsed)
         return json.dumps(parsed, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})

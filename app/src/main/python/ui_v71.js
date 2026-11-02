@@ -6451,7 +6451,10 @@ window.runTorrentActionV96 = async function() {
     }
     if (ftr) ftr.style.display = 'none';
     const ts = window._torStateV96;
-    const fmtLabel = (ts.formatTag || 'all').toUpperCase();
+    window.ensureTorrentYearInputV125();
+    window.syncOmniTorrentConfigV125();
+    const yVal = (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || ''));
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase() + (yVal ? ' • ' + yVal : '');
     body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Поиск раздач «${val}» [${fmtLabel}]...</div>`;
     try {
         const res = await fetch('/api/torrent/search', {
@@ -7021,7 +7024,10 @@ window.runTorrentActionV96 = async function() {
     }
     if (ftr) ftr.style.display = 'none';
     const ts = window._torStateV96;
-    const fmtLabel = (ts.formatTag || 'all').toUpperCase();
+    window.ensureTorrentYearInputV125();
+    window.syncOmniTorrentConfigV125();
+    const yVal = (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || ''));
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase() + (yVal ? ' • ' + yVal : '');
     body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Поиск раздач «${val}» [${fmtLabel}]...</div>`;
     try {
         const res = await fetch('/api/torrent/search', {
@@ -7029,6 +7035,7 @@ window.runTorrentActionV96 = async function() {
             body: JSON.stringify({
                 query: val,
                 format_tag: ts.formatTag || 'all',
+                year: (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || '')),
                 exact: Boolean(ts.exactSearch),
                 hide_zero: Boolean(ts.hideZeroSeeds),
                 min_two_seeds: Boolean(ts.minTwoSeeds)
@@ -8591,7 +8598,10 @@ window.runTorrentActionV96 = async function() {
     }
     if (ftr) ftr.style.display = 'none';
     const ts = window._torStateV96;
-    const fmtLabel = (ts.formatTag || 'all').toUpperCase();
+    window.ensureTorrentYearInputV125();
+    window.syncOmniTorrentConfigV125();
+    const yVal = (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || ''));
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase() + (yVal ? ' • ' + yVal : '');
     body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Поиск раздач «${val}» [${fmtLabel}]...</div>`;
 
     try {
@@ -8601,6 +8611,7 @@ window.runTorrentActionV96 = async function() {
             body: JSON.stringify({
                 query: val,
                 format_tag: ts.formatTag || 'all',
+                year: (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || '')),
                 exact: Boolean(ts.exactSearch),
                 hide_zero: Boolean(ts.hideZeroSeeds),
                 min_two_seeds: Boolean(ts.minTwoSeeds)
@@ -8717,7 +8728,10 @@ window.runTorrentActionV96 = async function() {
     const mySession = ++window._torViewSessionV112;
     if (ftr) ftr.style.display = 'none';
     const ts = window._torStateV96;
-    const fmtLabel = (ts.formatTag || 'all').toUpperCase();
+    window.ensureTorrentYearInputV125();
+    window.syncOmniTorrentConfigV125();
+    const yVal = (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || ''));
+    const fmtLabel = (ts.formatTag || 'all').toUpperCase() + (yVal ? ' • ' + yVal : '');
     body.innerHTML = `<div style="color:#d2a8ff;text-align:center;padding:30px 10px;">⏳ Мульти-поиск вариантов «${val}» [${fmtLabel}]...</div>`;
 
     try {
@@ -8727,6 +8741,7 @@ window.runTorrentActionV96 = async function() {
             body: JSON.stringify({
                 query: val,
                 format_tag: ts.formatTag || 'all',
+                year: (document.getElementById('torYearInpV125') ? document.getElementById('torYearInpV125').value.trim() : (ts.yearFilter || '')),
                 exact: Boolean(ts.exactSearch),
                 hide_zero: Boolean(ts.hideZeroSeeds),
                 min_two_seeds: Boolean(ts.minTwoSeeds)
@@ -8789,4 +8804,66 @@ window.backToTorrentSearchListV97 = function() {
         return;
     }
     return _origBackToTorListV113.apply(this, arguments);
+};
+
+
+// === 📅 JENNY V125: YEAR INPUT FIELD NEXT TO SEARCH + BACKEND CONFIG SYNC ===
+window._torOmniConfigLoadedV125 = false;
+window.syncOmniTorrentConfigV125 = async function() {
+    if (window._torOmniConfigLoadedV125) return;
+    try {
+        const r = await fetch('/api/torrent/config');
+        const d = await r.json();
+        if (d && d.config) {
+            window._torOmniServerCfgV125 = d.config;
+            if (Array.isArray(d.config.format_tags) && d.config.format_tags.length) {
+                window.TORRENT_FORMAT_TAGS_V101 = d.config.format_tags;
+            }
+            if (d.config.default_format_tag && (!window._torStateV96.formatTag || window._torStateV96.formatTag === 'all')) {
+                window._torStateV96.formatTag = d.config.default_format_tag;
+            }
+            if (d.config.default_year && !window._torStateV96.yearFilter) {
+                window._torStateV96.yearFilter = String(d.config.default_year);
+            }
+            window._torOmniConfigLoadedV125 = true;
+            window.renderTorrentFilterBarV99();
+            window.ensureTorrentYearInputV125();
+        }
+    } catch (e) {}
+};
+
+window.ensureTorrentYearInputV125 = function() {
+    const inp = document.getElementById('torMagnetInpV91');
+    if (!inp || !inp.parentNode) return;
+    const cfg = window._torOmniServerCfgV125 || {};
+    if (cfg.enable_year_filter === false) {
+        const ex = document.getElementById('torYearInpV125');
+        if (ex) ex.style.display = 'none';
+        return;
+    }
+    let yInp = document.getElementById('torYearInpV125');
+    if (!yInp) {
+        yInp = document.createElement('input');
+        yInp.type = 'text';
+        yInp.id = 'torYearInpV125';
+        yInp.setAttribute('inputmode', 'numeric');
+        yInp.setAttribute('maxlength', '4');
+        yInp.placeholder = '📅 Год';
+        yInp.value = (window._torStateV96 && window._torStateV96.yearFilter) ? window._torStateV96.yearFilter : '';
+        yInp.style.cssText = 'width:64px;flex-shrink:0;padding:7px 6px;font-size:12px;background:#06080b !important;color:#58a6ff !important;border:1px solid #30363d !important;border-radius:8px;text-align:center !important;font-weight:bold;';
+        yInp.oninput = function() {
+            this.value = this.value.replace(/[^0-9]/g, '').slice(0, 4);
+            window._torStateV96.yearFilter = this.value;
+            this.style.borderColor = this.value.length === 4 ? '#58a6ff' : '#30363d';
+        };
+        yInp.onkeydown = function(ev) {
+            if (ev.key === 'Enter') {
+                window.runTorrentActionV96();
+            }
+        };
+        // Вставляем поле Года прямо справа от основного поля поиска (перед кнопкой 🔍 / 🧲)
+        inp.parentNode.insertBefore(yInp, inp.nextSibling);
+    } else {
+        yInp.style.display = '';
+    }
 };

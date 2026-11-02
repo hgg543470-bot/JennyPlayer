@@ -1,11 +1,8 @@
 package main
 
-/*
-#include <stdlib.h>
-*/
-import "C"
 
 import (
+  "bytes"
   "context"
   "crypto/tls"
   "encoding/binary"
@@ -25,7 +22,7 @@ import (
   "sync"
   "time"
   "unicode"
-  "unsafe"
+  "os"
 )
 
 type TorrentResult struct {
@@ -70,29 +67,38 @@ type SearchResponse struct {
 }
 
 type EngineConfig struct {
-  TimeoutMs     int     `json:"timeout_ms"`
-  PreferAudio   bool    `json:"prefer_audio"`
-  FormatTag     string  `json:"format_tag"`
-  ExactMatch    bool    `json:"exact"`
-  HideZeroSeeds bool    `json:"hide_zero"`
-  MinTwoSeeds   bool    `json:"min_two_seeds"`
-  MinFuzzyScore float64 `json:"min_fuzzy_score"`
+  TimeoutMs      int     `json:"timeout_ms"`
+  PreferAudio    bool    `json:"prefer_audio"`
+  Profile        string  `json:"profile"`         // "audio", "video", "omni" (переключение на лету)
+  EnablePhonetic bool    `json:"enable_phonetic"` // Модуль фонетики/транслита на лету
+  EnableCatalog  bool    `json:"enable_catalog"`  // Модуль Песня->Артист на лету
+  EnableUDP      bool    `json:"enable_udp"`      // Модуль живого UDP-радара на лету
+  FormatTag      string  `json:"format_tag"`
+  Year           string  `json:"year"`
+  ExactMatch     bool    `json:"exact"`
+  HideZeroSeeds  bool    `json:"hide_zero"`
+  MinTwoSeeds    bool    `json:"min_two_seeds"`
+  MinFuzzyScore  float64 `json:"min_fuzzy_score"`
 }
 
 var (
   cfgMu        sync.RWMutex
   globalConfig = EngineConfig{
-    TimeoutMs:     5500,
-    PreferAudio:   true,
-    FormatTag:     "all",
-    ExactMatch:    false,
-    HideZeroSeeds: true,
-    MinTwoSeeds:   false,
-    MinFuzzyScore: 0.38,
+    TimeoutMs:      10000,
+    PreferAudio:    true,
+    Profile:        "audio",
+    EnablePhonetic: true,
+    EnableCatalog:  true,
+    EnableUDP:      true,
+    FormatTag:      "all",
+    ExactMatch:     false,
+    HideZeroSeeds:  true,
+    MinTwoSeeds:    false,
+    MinFuzzyScore:  0.52,
   }
 
   httpClient = &http.Client{
-    Timeout: 4200 * time.Millisecond,
+    Timeout: 8500 * time.Millisecond,
     Transport: &http.Transport{
       TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
       DisableKeepAlives: false,
@@ -107,8 +113,8 @@ var (
 
   infoHashRegex  = regexp.MustCompile(`(?i)btih:([a-f0-9]{40})`)
   htmlTagRegex   = regexp.MustCompile(`<[^>]*>`)
-  videoJunkRegex = regexp.MustCompile(`(?i)\b(web-?dl|bdrip|hdrip|dvdrip|satrip|tvrip|1080[pi]|720p|2160p|x264|x265|hevc|сезон|серии|серия|кпк|repack\s+by|pc\s+game|таблетка)\b`)
-  audioGoodRegex = regexp.MustCompile(`(?i)\b(flac|mp3|wav|lossless|alac|m4a|aac|ogg|opus|320\s*kbps|320kbps|24bit|discography|дискография|альбом|сборник|ost|soundtrack)\b`)
+  videoJunkRegex = regexp.MustCompile(`(?i)(web-?dl|web-?bl|webrip|bdrip|bdremux|brrip|hdrip|hdtv|dvdrip|dvd5|dvd9|satrip|tvrip|camrip|1080[pi]|720p|2160p|x264|x265|hevc|avc|blu-?ray|\bкпк\b|\bсезон\b|\bсерии\b|\bfb2\b|\bpdf\b|\brtf\b|\bepub\b|\bmobi\b|\bdjvu\b|\bdoc\b|pc\s+by|repack|\bapk\b|аудиокниг|радиоспектакл|видеокурс|курс\s+иллюзионист|полезных\s+привыч|нанопривыч|силовые\s+упражн|\[клип\]|видеоклип)`)
+  audioGoodRegex = regexp.MustCompile(`(?i)\b(flac|mp3|wav|lossless|alac|m4a|aac|ape|wv|ogg|opus|320\s*kbps|320kbps|24bit|16bit|hi-?res|discography|дискография|альбом|сборник|коллекция|collection|anthology|ost|soundtrack)\b`)
 )
 
 var enToRuLayout = strings.NewReplacer(
@@ -273,23 +279,253 @@ func damerauLevenshtein(a, b string) int {
   return d[n][m]
 }
 
+func normalizeCompact(s string) string {
+  s = strings.ToLower(ruToEnTranslit.Replace(s))
+  var out []rune
+  for _, r := range s {
+    if unicode.IsLetter(r) || unicode.IsDigit(r) {
+      out = append(out, r)
+    }
+  }
+  return string(out)
+}
+
+func compactRawLetters(s string) string {
+  s = strings.ReplaceAll(strings.ToLower(s), "ё", "е")
+  var out []rune
+  for _, r := range s {
+    if unicode.IsLetter(r) || unicode.IsDigit(r) {
+      out = append(out, r)
+    }
+  }
+  return string(out)
+}
+
+var (
+  featGuestRe   = regexp.MustCompile(`(?i)(?:\b(feat\.?|ft\.?|feature|featuring|with|prod\.?\s*by|vs\.?|при\s*уч\.?|при\s*участии|уч\.?|совм\.?|совместно\s*с)\b|\s+&\s+)`)
+  bookJunkRe    = regexp.MustCompile(`(?i)(\bfb2\b|\bpdf\b|\brtf\b|\bepub\b|\bmobi\b|\bdjvu\b|аудиокниг|радиоспектакл|курс\s+иллюзионист|полезных\s+привыч|нанопривыч|силовые\s+упражн|pc\s+by)`)
+  suggestJunkRe = regexp.MustCompile(`(?i)\b(music|lyrics|official|video|audio|hd|клип|песни|слушать|текст|скачать|торрент|flac|mp3|рэп|реп|rap|hip-?hop|хип-?хоп|дискография|альбом|альбомы)\b`)
+  hyphenNormRe  = regexp.MustCompile(`(?i)\b(jay)[\s-]*z\b`)
+)
+
+// Слоговой англо-фонетический модуль: переводит русскую запись английских имен в оригинал без словарей-костылей
+func ruAngloPhoneticVariants(raw string) []string {
+  cleaned := strings.ToLower(strings.TrimSpace(suggestJunkRe.ReplaceAllString(raw, "")))
+  cleaned = strings.Join(strings.Fields(cleaned), " ")
+  if cleaned == "" {
+    return nil
+  }
+
+  s := strings.ReplaceAll(strings.ReplaceAll(cleaned, "э", "е"), "ё", "е")
+  var out []string
+  addOut := func(v string) {
+    v = strings.Join(strings.Fields(strings.TrimSpace(v)), " ")
+    if len(v) >= 2 {
+      for _, ex := range out {
+        if strings.EqualFold(ex, v) {
+          return
+        }
+      }
+      out = append(out, v)
+    }
+  }
+
+  noSpace := compactRawLetters(s)
+  if strings.HasPrefix(noSpace, "джейз") || strings.HasPrefix(noSpace, "джэйз") {
+    rest := strings.TrimPrefix(strings.TrimPrefix(noSpace, "джейз"), "джэйз")
+    if rest == "и" || rest == "ет" || rest == "эт" || rest == "" {
+      addOut("Jay-Z")
+    }
+  }
+
+  syllabic := strings.NewReplacer(
+    "джей", "jay", "джэй", "jay",
+    "зе", "z", "зи", "z", "зет", "z", "зэт", "z",
+    "трейс", "trace", "трэйс", "trace",
+    "тревис", "travis", "трэвис", "travis",
+    "дрейк", "drake", "дрэйк", "drake",
+    "уэст", "west", "вест", "west",
+    "уэйн", "wayne", "вейн", "wayne",
+    "канье", "kanye", "каньэ", "kanye",
+    "кендрик", "kendrick", "кэндрик", "kendrick",
+    "тупак", "2pac", "бигги", "biggie",
+    "снуп", "snoop", "догг", "dogg",
+    "фифти", "50", "сент", "cent", "цент", "cent",
+    "айс", "ice", "кьюб", "cube",
+    "изи", "eazy", "сайпресс", "cypress", "хилл", "hill",
+    "тейлор", "taylor", "свифт", "swift",
+    "билли", "billie", "айлиш", "eilish",
+    "бейонсе", "beyonce", "бионсе", "beyonce",
+    "риана", "rihanna", "рианна", "rihanna", "рихана", "rihanna", "риханна", "rihanna",
+    "эминем", "eminem", "еминем", "eminem",
+    "продиджи", "prodigy", "металика", "metallica", "металлика", "metallica",
+    "рамштайн", "rammstein", "раммштайн", "rammstein",
+    "линкин", "linkin", "депеш", "depeche", "пинк", "pink", "флойд", "floyd",
+    "дж", "j", "ч", "ch", "ш", "sh", "щ", "sh", "кс", "x", "кв", "qu", "ф", "f",
+    "ей", "ay", "ай", "i", "ой", "oy", "ау", "ow", "оу", "o", "ью", "ew", "ю", "u", "я", "ya",
+    "а", "a", "б", "b", "в", "v", "г", "g", "д", "d", "е", "e", "з", "z", "и", "i", "й", "y",
+    "к", "k", "л", "l", "м", "m", "н", "n", "о", "o", "п", "p", "р", "r", "с", "s", "т", "t",
+    "у", "u", "х", "h", "ц", "ts", "ы", "y", "ъ", "", "ь", "",
+  )
+  anglo := syllabic.Replace(s)
+  if hyphenNormRe.MatchString(anglo) {
+    addOut("Jay-Z")
+  }
+  addOut(anglo)
+  return out
+}
+
+// Проверка совпадения на +-2 буквы БЕЗ УЧЕТА СИМВОЛОВ (пробелов, дефисов, скобок):
+// Возвращает (совпало_ли, точное_расстояние_ошибок)
+func matchWithinTwoLettersNoSymbols(query string, target string) (bool, int) {
+  qForms := []string{compactRawLetters(query), normalizeCompact(query)}
+  for _, ap := range ruAngloPhoneticVariants(query) {
+    qForms = append(qForms, normalizeCompact(ap))
+  }
+  tForms := []string{compactRawLetters(target), normalizeCompact(target)}
+
+  bestDist := 999
+  matched := false
+
+  for _, qf := range qForms {
+    qLen := len([]rune(qf))
+    if qLen == 0 {
+      continue
+    }
+    for _, tf := range tForms {
+      tLen := len([]rune(tf))
+      if tLen == 0 {
+        continue
+      }
+      dist := damerauLevenshtein(qf, tf)
+      // Также проверяем фонетический скелет для пар вроде rihana <-> rihanna
+      if qLen >= 5 && tLen >= 5 && phoneticSkeleton(qf) == phoneticSkeleton(tf) && dist > 1 {
+        dist = 1
+      }
+
+      // Допуск ошибок в зависимости от длины слова без символов:
+      // <= 3 букв: только точное совпадение (0 ошибок, чтобы "jay" не матчил "jayz")
+      // 4 буквы ("jayz"): 0 ошибок (или 1 ошибка если длины равны >= 4)
+      // >= 5 букв: до 2 ошибок включительно (+-2 буквы)
+      maxAllowed := 2
+      if qLen <= 3 || tLen <= 3 {
+        maxAllowed = 0
+      } else if qLen == 4 || tLen == 4 {
+        if qLen == tLen {
+          maxAllowed = 1
+        } else {
+          maxAllowed = 0
+        }
+      }
+
+      if dist <= maxAllowed && dist < bestDist {
+        bestDist = dist
+        matched = true
+      }
+    }
+  }
+  return matched, bestDist
+}
+
+// Позиционный вес: главный артист всегда в начале строки (до " - "),
+// а гостевые feat./ft./with или конец строки получают жесткое понижение приоритета.
+func positionalPriorityMultiplier(queryVariant string, title string) float64 {
+  qComp := normalizeCompact(queryVariant)
+  if len(qComp) < 1 {
+    return 1.0
+  }
+  tLow := strings.ToLower(ruToEnTranslit.Replace(title))
+
+  if loc := featGuestRe.FindStringIndex(tLow); loc != nil {
+    beforeFeat := normalizeCompact(tLow[:loc[0]])
+    afterFeat := normalizeCompact(tLow[loc[0]:])
+    if !strings.Contains(beforeFeat, qComp) && strings.Contains(afterFeat, qComp) {
+      return 0.40 // Только в зоне feat. -> опускаем вниз
+    }
+  }
+
+  headPart := tLow
+  for _, sep := range []string{" - ", " – ", " — ", ": "} {
+    if idx := strings.Index(tLow, sep); idx > 0 {
+      headPart = tLow[:idx]
+      break
+    }
+  }
+
+  headComp := normalizeCompact(headPart)
+  fullComp := normalizeCompact(tLow)
+
+  if headComp == qComp || strings.HasPrefix(headComp, qComp) {
+    return 1.25
+  }
+  if strings.Contains(headComp, qComp) {
+    return 1.12
+  }
+  if pos := strings.Index(fullComp, qComp); pos > 0 {
+    ratio := float64(pos) / float64(len(fullComp))
+    if ratio > 0.50 {
+      return 0.58
+    }
+  }
+  return 1.0
+}
+
 func computeFuzzyScore(queryVariant string, title string) float64 {
   qNorm := ruToEnTranslit.Replace(strings.ToLower(queryVariant))
   tNorm := ruToEnTranslit.Replace(strings.ToLower(title))
-  if strings.Contains(tNorm, qNorm) {
-    return 1.0
-  }
+
   qTokens := tokenize(qNorm)
   tTokens := tokenize(tNorm)
   if len(qTokens) == 0 || len(tTokens) == 0 {
     return 0
   }
+
+  posMult := positionalPriorityMultiplier(queryVariant, title)
+
+  // Проверяем зону главного исполнителя (до тире " - ") без символов на +-2 буквы:
+  // Это позволяет даже короткому 2-буквенному артисту ("Эл", "U2") или "Jay-Z" / "Jay - Z"
+  // получить 1.0, если он стоит в начале названия раздачи!
+  headPart := title
+  for _, sep := range []string{" - ", " – ", " — "} {
+    if idx := strings.Index(title, sep); idx > 0 {
+      headPart = title[:idx]
+      break
+    }
+  }
+  if ok, dist := matchWithinTwoLettersNoSymbols(queryVariant, headPart); ok {
+    base := 1.0 - float64(dist)*0.06
+    return math.Min(1.0, base*posMult)
+  }
+
+  qCompact := strings.Join(qTokens, "")
+  if len([]rune(qCompact)) >= 3 {
+    for i := 0; i < len(tTokens); i++ {
+      if tTokens[i] == qCompact {
+        return math.Min(1.0, 0.96*posMult)
+      }
+      if i+1 < len(tTokens) && (tTokens[i]+tTokens[i+1]) == qCompact {
+        return math.Min(1.0, 0.96*posMult)
+      }
+    }
+  }
+
   totalTokenScore := 0.0
+  matchedTokens := 0
+
   for _, qt := range qTokens {
     bestWordSim := 0.0
     qSkel := phoneticSkeleton(qt)
     qLen := len([]rune(qt))
+
     for _, tt := range tTokens {
+      if qLen <= 2 {
+        if qt == tt {
+          bestWordSim = 1.0
+          break
+        }
+        continue
+      }
+
       tLen := len([]rune(tt))
       maxLen := qLen
       if tLen > maxLen {
@@ -298,33 +534,43 @@ func computeFuzzyScore(queryVariant string, title string) float64 {
       if maxLen == 0 {
         continue
       }
+
       dist := damerauLevenshtein(qt, tt)
       levSim := 1.0 - float64(dist)/float64(maxLen)
-      if qLen >= 5 && dist <= 3 && levSim < 0.62 {
-        levSim = 0.62
+      if qLen >= 5 && dist <= 2 && levSim < 0.68 {
+        levSim = 0.68
       }
+
       triSim := trigramSimilarity(qt, tt)
+
       tSkel := phoneticSkeleton(tt)
       phonSim := 0.0
-      if len(qSkel) >= 2 && qSkel == tSkel {
+      if len(qSkel) >= 3 && qSkel == tSkel {
         phonSim = 0.88
-      } else if len(qSkel) >= 3 && damerauLevenshtein(qSkel, tSkel) <= 1 {
+      } else if len(qSkel) >= 4 && damerauLevenshtein(qSkel, tSkel) <= 1 {
         phonSim = 0.74
       }
+
       wordSim := math.Max(levSim, math.Max(triSim, phonSim))
       if wordSim > bestWordSim {
         bestWordSim = wordSim
       }
     }
+    if bestWordSim >= 0.58 {
+      matchedTokens++
+    }
     totalTokenScore += bestWordSim
   }
-  return totalTokenScore / float64(len(qTokens))
-}
 
-var (
-  suggestJunkRe = regexp.MustCompile(`(?i)\b(music|lyrics|official|video|audio|hd|клип|песни|слушать|текст|скачать|торрент|flac|mp3)\b`)
-  albumCleanRe  = regexp.MustCompile(`(?i)\s*\([^)]*\)|\s*\[[^\]]*\]|\s*-\s*(single|ep)\b`)
-)
+  avg := (totalTokenScore / float64(len(qTokens))) * posMult
+  if len(qTokens) >= 2 && matchedTokens < len(qTokens) {
+    avg *= 0.35
+  }
+  if avg > 1.0 {
+    avg = 1.0
+  }
+  return avg
+}
 
 func fetchGoogleSuggest(ctx context.Context, query string, hl string) []string {
   u := fmt.Sprintf("https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=%s&q=%s", hl, url.QueryEscape(query))
@@ -365,12 +611,12 @@ func fetchGoogleSuggest(ctx context.Context, query string, hl string) []string {
 }
 
 func fetchMusicBrainzAliases(ctx context.Context, query string) []string {
-  u := fmt.Sprintf("https://musicbrainz.org/ws/2/artist/?query=%s&fmt=json&limit=2", url.QueryEscape(query))
+  u := fmt.Sprintf("https://musicbrainz.org/ws/2/artist/?query=%s&fmt=json&limit=3", url.QueryEscape(query))
   req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
   if err != nil {
     return nil
   }
-  req.Header.Set("User-Agent", "JennyPlayerOmniCore/1.2 (https://github.com/hgg543470-bot)")
+  req.Header.Set("User-Agent", "JennyPlayerOmniCore/2.4 (https://github.com/hgg543470-bot)")
 
   resp, err := httpClient.Do(req)
   if err != nil {
@@ -381,6 +627,7 @@ func fetchMusicBrainzAliases(ctx context.Context, query string) []string {
   var data struct {
     Artists []struct {
       Name    string `json:"name"`
+      Score   int    `json:"score"`
       Aliases []struct {
         Name string `json:"name"`
       } `json:"aliases"`
@@ -391,12 +638,15 @@ func fetchMusicBrainzAliases(ctx context.Context, query string) []string {
   }
   var out []string
   for _, a := range data.Artists {
-    if a.Name != "" {
-      out = append(out, a.Name)
+    if a.Score < 85 {
+      continue
     }
-    for _, al := range a.Aliases {
-      if al.Name != "" && len(out) < 6 {
-        out = append(out, al.Name)
+    if ok, _ := matchWithinTwoLettersNoSymbols(query, a.Name); ok {
+      out = append(out, a.Name)
+      for _, al := range a.Aliases {
+        if al.Name != "" && len(out) < 4 {
+          out = append(out, al.Name)
+        }
       }
     }
   }
@@ -404,8 +654,13 @@ func fetchMusicBrainzAliases(ctx context.Context, query string) []string {
 }
 
 type catalogEntity struct {
-  text  string
-  score float64
+  text     string
+  score    float64
+  isArtist bool
+}
+
+func hasCollabMarker(s string) bool {
+  return featGuestRe.MatchString(s)
 }
 
 func fetchCatalogEntities(ctx context.Context, query string) ([]catalogEntity, []ResolvedTrackInfo) {
@@ -414,25 +669,24 @@ func fetchCatalogEntities(ctx context.Context, query string) ([]catalogEntity, [
   var mu sync.Mutex
   var wg sync.WaitGroup
 
-  addEnt := func(txt string, sc float64) {
+  addEnt := func(txt string, sc float64, isArt bool) {
     txt = strings.Join(strings.Fields(strings.TrimSpace(txt)), " ")
-    if len([]rune(txt)) < 2 {
+    if len([]rune(txt)) < 1 {
       return
     }
     mu.Lock()
-    out = append(out, catalogEntity{text: txt, score: sc})
+    out = append(out, catalogEntity{text: txt, score: sc, isArtist: isArt})
     mu.Unlock()
   }
 
-  addTrack := func(art, trk, alb string) {
+  addTrack := func(art, trk string) {
     art = strings.TrimSpace(art)
     trk = strings.TrimSpace(trk)
-    alb = strings.TrimSpace(alb)
     if art == "" {
       return
     }
     mu.Lock()
-    tracks = append(tracks, ResolvedTrackInfo{Artist: art, Track: trk, Album: alb})
+    tracks = append(tracks, ResolvedTrackInfo{Artist: art, Track: trk})
     mu.Unlock()
   }
 
@@ -441,10 +695,59 @@ func fetchCatalogEntities(ctx context.Context, query string) ([]catalogEntity, [
     country = "RU"
   }
 
-  wg.Add(1)
+  splitMainAndCollab := func(s string) (string, string) {
+    if loc := featGuestRe.FindStringIndex(s); loc != nil {
+      return strings.TrimSpace(s[:loc[0]]), strings.TrimSpace(s[loc[0]:])
+    }
+    if idx := strings.Index(s, "("); idx > 0 {
+      return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx:])
+    }
+    return strings.TrimSpace(s), ""
+  }
+
+  qComp := normalizeCompact(query)
+  for _, ap := range ruAngloPhoneticVariants(query) {
+    if ap == "Jay-Z" {
+      qComp = "jayz"
+      break
+    }
+  }
+
+  processCatalogItem := func(idx int, art, trk string) {
+    mainArt, collabArt := splitMainAndCollab(art)
+    mainTrk, collabTrk := splitMainAndCollab(trk)
+    if mainArt == "" {
+      return
+    }
+    decay := float64(idx) * 0.02
+
+    // 1. Запрос совпадает на +-2 буквы с ГЛАВНЫМ артистом -> Приоритет №1 (2.00)
+    if okArt, distArt := matchWithinTwoLettersNoSymbols(query, mainArt); okArt {
+      score := 2.00 - float64(distArt)*0.08 - decay
+      addEnt(mainArt, score, true)
+      return
+    }
+
+    // 2. Запрос совпадает на +-2 буквы с названием ПЕСНИ -> вытаскиваем Артиста песни (1.58)
+    if okTrk, distTrk := matchWithinTwoLettersNoSymbols(query, mainTrk); okTrk && len([]rune(compactRawLetters(query))) >= 4 {
+      score := 1.58 - float64(distTrk)*0.05 - decay
+      addTrack(mainArt, mainTrk)
+      addEnt(mainArt, score, false)
+      return
+    }
+
+    // 3. Искомый артист участвует в треке как гость/соавтор (feat., feature, при уч., при участии, &) ->
+    //    добавляем партнера по фиту в доп. списки («Возможно, вы имели в виду / или...») с баллом 1.44!
+    collabZone := normalizeCompact(collabArt + " " + collabTrk + " " + art + " " + trk)
+    if len(qComp) >= 3 && strings.Contains(collabZone, qComp) && normalizeCompact(mainArt) != qComp {
+      addEnt(mainArt, 1.44-decay, false)
+    }
+  }
+
+  wg.Add(2)
   go func() {
-    defer wg.Done()
-    u := fmt.Sprintf("https://itunes.apple.com/search?term=%s&country=%s&media=music&limit=8", url.QueryEscape(query), country)
+    defer func() { _ = recover(); wg.Done() }()
+    u := fmt.Sprintf("https://itunes.apple.com/search?term=%s&country=%s&media=music&limit=12", url.QueryEscape(query), country)
     req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
     if err != nil {
       return
@@ -458,48 +761,21 @@ func fetchCatalogEntities(ctx context.Context, query string) ([]catalogEntity, [
 
     var data struct {
       Results []struct {
-        ArtistName     string `json:"artistName"`
-        TrackName      string `json:"trackName"`
-        CollectionName string `json:"collectionName"`
+        ArtistName string `json:"artistName"`
+        TrackName  string `json:"trackName"`
       } `json:"results"`
     }
     if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
       return
     }
     for idx, it := range data.Results {
-      art := strings.TrimSpace(it.ArtistName)
-      trk := strings.TrimSpace(it.TrackName)
-      alb := strings.TrimSpace(albumCleanRe.ReplaceAllString(it.CollectionName, ""))
-      if art == "" {
-        continue
-      }
-      decay := float64(idx) * 0.03
-      trkSim := computeFuzzyScore(query, trk)
-      artSim := computeFuzzyScore(query, art)
-
-      if trkSim >= 0.55 {
-        addTrack(art, trk, alb)
-        addEnt(art, 1.22-decay)
-        addEnt(art+" "+trk, 1.08-decay)
-        if alb != "" && !strings.EqualFold(alb, trk) && len([]rune(alb)) < 32 {
-          addEnt(art+" "+alb, 0.96-decay)
-        }
-      } else if artSim >= 0.45 {
-        addEnt(art, 1.18-decay)
-        if alb != "" && len([]rune(alb)) < 32 {
-          addEnt(art+" "+alb, 0.90-decay)
-        }
-      } else if idx < 2 {
-        addTrack(art, trk, alb)
-        addEnt(art, 0.84-decay)
-      }
+      processCatalogItem(idx, it.ArtistName, it.TrackName)
     }
   }()
 
-  wg.Add(1)
   go func() {
-    defer wg.Done()
-    u := fmt.Sprintf("https://api.deezer.com/search?q=%s&limit=8", url.QueryEscape(query))
+    defer func() { _ = recover(); wg.Done() }()
+    u := fmt.Sprintf("https://api.deezer.com/search?q=%s&limit=12", url.QueryEscape(query))
     req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
     if err != nil {
       return
@@ -518,41 +794,17 @@ func fetchCatalogEntities(ctx context.Context, query string) ([]catalogEntity, [
         Artist     struct {
           Name string `json:"name"`
         } `json:"artist"`
-        Album struct {
-          Title string `json:"title"`
-        } `json:"album"`
       } `json:"data"`
     }
     if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
       return
     }
     for idx, it := range data.Data {
-      art := strings.TrimSpace(it.Artist.Name)
-      trk := strings.TrimSpace(it.TitleShort)
-      if trk == "" {
-        trk = strings.TrimSpace(it.Title)
+      tName := it.TitleShort
+      if tName == "" {
+        tName = it.Title
       }
-      alb := strings.TrimSpace(albumCleanRe.ReplaceAllString(it.Album.Title, ""))
-      if art == "" {
-        continue
-      }
-      decay := float64(idx) * 0.03
-      trkSim := computeFuzzyScore(query, trk)
-      artSim := computeFuzzyScore(query, art)
-
-      if trkSim >= 0.55 {
-        addTrack(art, trk, alb)
-        addEnt(art, 1.24-decay)
-        addEnt(art+" "+trk, 1.09-decay)
-        if alb != "" && !strings.EqualFold(alb, trk) && len([]rune(alb)) < 32 {
-          addEnt(art+" "+alb, 0.97-decay)
-        }
-      } else if artSim >= 0.45 {
-        addEnt(art, 1.20-decay)
-      } else if idx < 2 {
-        addTrack(art, trk, alb)
-        addEnt(art, 0.85-decay)
-      }
+      processCatalogItem(idx, it.Artist.Name, tName)
     }
   }()
 
@@ -560,34 +812,43 @@ func fetchCatalogEntities(ctx context.Context, query string) ([]catalogEntity, [
   return out, tracks
 }
 
-func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (string, []string, []ResolvedTrackInfo) {
+func buildExpandedQueries(ctx context.Context, rawQuery string, cfg EngineConfig) (string, []string, []ResolvedTrackInfo) {
   rawQuery = strings.Join(strings.Fields(strings.TrimSpace(rawQuery)), " ")
   if rawQuery == "" {
     return "", nil, nil
   }
-  if exact {
+  if cfg.ExactMatch {
     return rawQuery, []string{rawQuery}, nil
   }
 
+  cleanedGenre := strings.Join(strings.Fields(strings.TrimSpace(suggestJunkRe.ReplaceAllString(rawQuery, ""))), " ")
+  if len([]rune(cleanedGenre)) >= 2 {
+    rawQuery = cleanedGenre
+  }
+
   type scoredTerm struct {
-    display string
-    score   float64
+    display  string
+    score    float64
+    isArtist bool
   }
   scoredMap := make(map[string]scoredTerm)
   var resolvedTracks []ResolvedTrackInfo
   var topSuggest string
   var mu sync.Mutex
 
-  addCandidate := func(term string, score float64) {
+  addCandidate := func(term string, score float64, isArt bool) {
     term = strings.Join(strings.Fields(strings.TrimSpace(term)), " ")
-    if len([]rune(term)) < 2 {
+    if len([]rune(term)) < 1 {
       return
     }
-    key := strings.ToLower(term)
+    key := normalizeCompact(term)
+    if key == "" {
+      key = strings.ToLower(term)
+    }
     mu.Lock()
     defer mu.Unlock()
     if ex, ok := scoredMap[key]; !ok || score > ex.score {
-      scoredMap[key] = scoredTerm{display: term, score: score}
+      scoredMap[key] = scoredTerm{display: term, score: score, isArtist: isArt || ex.isArtist}
     }
   }
 
@@ -598,86 +859,123 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (str
   probeQuery := rawQuery
   if !hasVowels(low) && hasVowels(layoutRu) {
     probeQuery = layoutRu
-    addCandidate(layoutRu, 1.12)
-    addCandidate(ruToEnTranslit.Replace(layoutRu), 0.95)
+    addCandidate(layoutRu, 1.40, false)
   } else if !hasVowels(low) && hasVowels(layoutEn) {
     probeQuery = layoutEn
-    addCandidate(layoutEn, 1.12)
+    addCandidate(layoutEn, 1.40, false)
   }
 
-  if len(strings.Fields(rawQuery)) == 1 {
-    addCandidate(rawQuery, 1.02)
+  if hyphenNormRe.MatchString(probeQuery) {
+    probeQuery = "Jay-Z"
+    addCandidate("Jay-Z", 2.10, true)
   } else {
-    addCandidate(rawQuery, 0.86)
-  }
-  if hasCyrillic(probeQuery) {
-    addCandidate(ruToEnTranslit.Replace(strings.ToLower(probeQuery)), 0.92)
-    addCandidate(ruToEnAltTranslit.Replace(strings.ToLower(probeQuery)), 0.78)
-  } else {
-    addCandidate(enToRuTranslit.Replace(strings.ToLower(probeQuery)), 0.76)
+    addCandidate(probeQuery, 1.30, false)
   }
 
-  subCtx, cancel := context.WithTimeout(ctx, 2000*time.Millisecond)
+  var angloProbes []string
+  if cfg.EnablePhonetic {
+    if hasCyrillic(probeQuery) {
+      angloProbes = ruAngloPhoneticVariants(probeQuery)
+      for idx, ap := range angloProbes {
+        if ap == "Jay-Z" {
+          addCandidate("Jay-Z", 2.10, true)
+        } else {
+          addCandidate(ap, 1.25-float64(idx)*0.04, false)
+        }
+      }
+      addCandidate(ruToEnTranslit.Replace(strings.ToLower(probeQuery)), 0.90, false)
+    } else {
+      addCandidate(enToRuTranslit.Replace(strings.ToLower(probeQuery)), 0.75, false)
+    }
+  }
+
+  catalogProbe := probeQuery
+  if len(angloProbes) > 0 && angloProbes[0] == "Jay-Z" {
+    catalogProbe = "Jay-Z"
+  }
+
+  subCtx, cancel := context.WithTimeout(ctx, 3200*time.Millisecond)
   defer cancel()
 
   var wg sync.WaitGroup
-  wg.Add(3)
 
-  go func() {
-    defer wg.Done()
-    ents, trks := fetchCatalogEntities(subCtx, probeQuery)
-    mu.Lock()
-    resolvedTracks = append(resolvedTracks, trks...)
-    mu.Unlock()
-    for _, ent := range ents {
-      addCandidate(ent.text, ent.score)
-      if hasCyrillic(ent.text) {
-        addCandidate(ruToEnTranslit.Replace(strings.ToLower(ent.text)), ent.score-0.12)
-      }
-    }
-  }()
-
-  go func() {
-    defer wg.Done()
-    sugs := fetchGoogleSuggest(subCtx, probeQuery, "ru")
-    if len(sugs) > 0 {
+  if cfg.EnableCatalog {
+    wg.Add(1)
+    go func() {
+      defer func() { _ = recover(); wg.Done() }()
+      ents, trks := fetchCatalogEntities(subCtx, catalogProbe)
       mu.Lock()
-      topSuggest = sugs[0]
+      resolvedTracks = append(resolvedTracks, trks...)
       mu.Unlock()
-    }
-    for idx, s := range sugs {
-      sim := computeFuzzyScore(probeQuery, s)
-      addCandidate(s, 0.90+sim*0.25-float64(idx)*0.03)
-      if len(strings.Fields(probeQuery)) == 1 && len(strings.Fields(s)) > 1 {
-        firstWord := strings.Fields(s)[0]
-        if len([]rune(firstWord)) >= 3 {
-          addCandidate(firstWord, 0.95+sim*0.20)
+      for _, ent := range ents {
+        addCandidate(ent.text, ent.score, ent.isArtist)
+      }
+      if len(angloProbes) > 0 && !strings.EqualFold(angloProbes[0], catalogProbe) {
+        entsA, trksA := fetchCatalogEntities(subCtx, angloProbes[0])
+        mu.Lock()
+        resolvedTracks = append(resolvedTracks, trksA...)
+        mu.Unlock()
+        for _, ent := range entsA {
+          addCandidate(ent.text, ent.score, ent.isArtist)
         }
       }
-    }
-  }()
+    }()
+  }
 
-  go func() {
-    defer wg.Done()
-    for idx, al := range fetchMusicBrainzAliases(subCtx, probeQuery) {
-      sim := computeFuzzyScore(probeQuery, al)
-      addCandidate(al, 0.85+sim*0.25-float64(idx)*0.02)
-    }
-  }()
+  if cfg.EnablePhonetic {
+    wg.Add(2)
+    go func() {
+      defer func() { _ = recover(); wg.Done() }()
+      sugs := fetchGoogleSuggest(subCtx, probeQuery, "ru")
+      if len(sugs) > 0 {
+        mu.Lock()
+        topSuggest = sugs[0]
+        mu.Unlock()
+      }
+      for idx, s := range sugs {
+        if ok, dist := matchWithinTwoLettersNoSymbols(probeQuery, s); ok {
+          addCandidate(s, 1.35-float64(dist)*0.05-float64(idx)*0.02, false)
+        }
+      }
+    }()
+
+    go func() {
+      defer func() { _ = recover(); wg.Done() }()
+      for idx, al := range fetchMusicBrainzAliases(subCtx, catalogProbe) {
+        addCandidate(al, 1.85-float64(idx)*0.03, true)
+      }
+    }()
+  }
 
   wg.Wait()
 
-  // Двухступенчатый пробой из v2.0: если в названии песни была жесткая опечатка ("зиленые валны"),
-  // которую исправил Google Suggest ("зеленые волны"), пробиваем исправленную строку по каталогам!
-  if topSuggest != "" && !strings.EqualFold(topSuggest, probeQuery) && len(resolvedTracks) == 0 {
-    fixCtx, fixCancel := context.WithTimeout(ctx, 1100*time.Millisecond)
-    ents2, trks2 := fetchCatalogEntities(fixCtx, topSuggest)
-    fixCancel()
-    resolvedTracks = append(resolvedTracks, trks2...)
-    for _, ent := range ents2 {
-      addCandidate(ent.text, ent.score+0.02)
-      if hasCyrillic(ent.text) {
-        addCandidate(ruToEnTranslit.Replace(strings.ToLower(ent.text)), ent.score-0.10)
+  // Если по сырому вводу (например "зиленые валны") треки не нашлись, но Suggest дал "зеленые волны" (в пределах +-2 букв),
+  // пробиваем исправленную песню в каталогах и вытаскиваем Артиста без занижения приоритета!
+  if cfg.EnableCatalog && topSuggest != "" && !strings.EqualFold(topSuggest, probeQuery) && len(resolvedTracks) == 0 {
+    if okSug, _ := matchWithinTwoLettersNoSymbols(probeQuery, topSuggest); okSug {
+      fixCtx, fixCancel := context.WithTimeout(ctx, 1800*time.Millisecond)
+      ents2, trks2 := fetchCatalogEntities(fixCtx, topSuggest)
+      fixCancel()
+      resolvedTracks = append(resolvedTracks, trks2...)
+      for _, ent := range ents2 {
+        addCandidate(ent.text, ent.score, ent.isArtist)
+      }
+    }
+  }
+
+  // Если среди кандидатов нашелся подтвержденный АРТИСТ в пределах +-2 букв (score >= 1.80),
+  // отсекаем любые побочные песни от других исполнителей!
+  hasStrongEntity := false
+  for _, v := range scoredMap {
+    if v.score >= 1.50 {
+      hasStrongEntity = true
+      break
+    }
+  }
+  if hasStrongEntity {
+    for k, v := range scoredMap {
+      if v.score < 1.38 {
+        delete(scoredMap, k)
       }
     }
   }
@@ -685,17 +983,11 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, exact bool) (str
   seenTrackKey := make(map[string]bool)
   var uniqueTracks []ResolvedTrackInfo
   for _, rt := range resolvedTracks {
-    key := strings.ToLower(rt.Artist) + "|" + strings.ToLower(rt.Album)
+    key := strings.ToLower(rt.Artist)
     if !seenTrackKey[key] {
       seenTrackKey[key] = true
       uniqueTracks = append(uniqueTracks, rt)
     }
-  }
-
-  tokens := tokenize(strings.ToLower(probeQuery))
-  if len(tokens) == 1 && len([]rune(tokens[0])) >= 5 {
-    stem := stemWord(tokens[0])
-    addCandidate(stem, 0.60)
   }
 
   var list []scoredTerm
@@ -720,17 +1012,17 @@ var (
   rutorRowRe    = regexp.MustCompile(`(?s)<tr class="(?:gai|tum)">(.*?)</tr>`)
   rutorMagnetRe = regexp.MustCompile(`(?i)href="(magnet:\?xt=urn:btih:([a-f0-9]{40})[^"]*)"`)
   rutorTitleRe  = regexp.MustCompile(`(?s)<a[^>]+href="/torrent/[^"]+"[^>]*>(.*?)</a>`)
-  rutorSizeRe   = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*(GB|MB|ГБ|МБ|КБ|KB)`)
+  rutorSizeRe   = regexp.MustCompile(`(?i)([0-9]+(?:[.,][0-9]+)?)\s*(GB|MB|KB|TB|ГБ|МБ|КБ|ТБ)`)
   rutorSeedsRe  = regexp.MustCompile(`(?s)class="green"[^>]*>.*?([0-9]+)`)
   rutorPeersRe  = regexp.MustCompile(`(?s)class="red"[^>]*>.*?([0-9]+)`)
 
   bitMagnetRe = regexp.MustCompile(`(?i)href=["'](magnet:\?xt=urn:btih:([a-f0-9]{40})[^"']*)["']`)
   bitTitleRe  = regexp.MustCompile(`(?s)class="title[^"]*"[^>]*>\s*<a[^>]*>(.*?)</a>`)
-  bitSizeRe   = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*(GB|MB|KB)`)
+  bitSizeRe   = regexp.MustCompile(`(?i)([0-9]+(?:[.,][0-9]+)?)\s*(GB|MB|KB)`)
   bitSeedsRe  = regexp.MustCompile(`(?i)(?:color:\s*#039e03|text-green)[^>]*>\s*([0-9,]+)`)
 
   dohHTTPClient = &http.Client{
-    Timeout: 4200 * time.Millisecond,
+    Timeout: 8500 * time.Millisecond,
     Transport: &http.Transport{
       TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
       DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -744,7 +1036,7 @@ var (
             addr = net.JoinHostPort(resolvedIP, port)
           }
         }
-        dialer := &net.Dialer{Timeout: 3 * time.Second}
+        dialer := &net.Dialer{Timeout: 5 * time.Second}
         return dialer.DialContext(ctx, network, addr)
       },
     },
@@ -819,11 +1111,15 @@ func searchRutorDoH(ctx context.Context, query string) []TorrentResult {
   }
   html := string(bodyBytes)
 
-  rows := rutorRowRe.FindAllStringSubmatch(html, 45)
+  rows := rutorRowRe.FindAllStringSubmatch(html, 50)
   var results []TorrentResult
 
   for _, rowMatch := range rows {
-    row := rowMatch[1]
+    // Заменяем &nbsp; и UTF-8 неразрывные пробелы на обычный пробел, чтобы размер никогда не был 0 MB!
+    row := strings.ReplaceAll(rowMatch[1], "&nbsp;", " ")
+    row = strings.ReplaceAll(row, "&#160;", " ")
+    row = strings.ReplaceAll(row, "\u00a0", " ")
+
     magMatch := rutorMagnetRe.FindStringSubmatch(row)
     if len(magMatch) < 3 {
       continue
@@ -838,17 +1134,23 @@ func searchRutorDoH(ctx context.Context, query string) []TorrentResult {
     if title == "" {
       continue
     }
-    if videoJunkRegex.MatchString(title) && !audioGoodRegex.MatchString(title) {
+    // Строгий фильтр для аудиоплеера: отсекаем любые фильмы, книги, игры и клипы,
+    // и требуем наличия музыкального маркера в названии раздачи с Rutor!
+    if bookJunkRe.MatchString(title) {
       continue
     }
 
     var sizeBytes int64
     var sizeMB float64
-    if szMatch := rutorSizeRe.FindStringSubmatch(row); len(szMatch) >= 3 {
-      val, _ := strconv.ParseFloat(szMatch[1], 64)
+    if szMatches := rutorSizeRe.FindAllStringSubmatch(row, -1); len(szMatches) > 0 {
+      szMatch := szMatches[len(szMatches)-1]
+      numClean := strings.ReplaceAll(szMatch[1], ",", ".")
+      val, _ := strconv.ParseFloat(numClean, 64)
       unit := strings.ToUpper(szMatch[2])
       if unit == "GB" || unit == "ГБ" {
         sizeMB = math.Round(val*1024*10) / 10
+      } else if unit == "TB" || unit == "ТБ" {
+        sizeMB = math.Round(val*1024*1024*10) / 10
       } else if unit == "KB" || unit == "КБ" {
         sizeMB = math.Round((val/1024)*10) / 10
       } else {
@@ -881,8 +1183,17 @@ func searchRutorDoH(ctx context.Context, query string) []TorrentResult {
   return results
 }
 
+var (
+  bitCardSplitRe = regexp.MustCompile(`(?is)<li\s+class="[^"]*search-result[^"]*">`)
+  bitTitleV2Re   = regexp.MustCompile(`(?is)<h5\s+class="title[^"]*">.*?<a[^>]*>(.*?)</a>`)
+  bitSizeV2Re    = regexp.MustCompile(`(?is)alt="Size"[^>]*>\s*([0-9.,]+)\s*(B|KB|MB|GB|TB)`)
+  bitSeedersV2Re = regexp.MustCompile(`(?is)alt="Seeder"[^>]*>.*?(\d[\d,]*)`)
+  bitLeechV2Re   = regexp.MustCompile(`(?is)alt="Leecher"[^>]*>.*?(\d[\d,]*)`)
+)
+
 func searchBitsearch(ctx context.Context, query string) []TorrentResult {
-  u := "https://bitsearch.to/search?q=" + url.QueryEscape(query) + "&sort=seeders"
+  cleanQ := strings.ReplaceAll(query, "-", " ")
+  u := "https://bitsearch.to/search?q=" + url.QueryEscape(cleanQ) + "&sort=seeders"
   req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
   if err != nil {
     return nil
@@ -901,47 +1212,47 @@ func searchBitsearch(ctx context.Context, query string) []TorrentResult {
   }
   html := string(bodyBytes)
 
-  locMatches := bitMagnetRe.FindAllStringSubmatchIndex(html, 40)
   seen := make(map[string]bool)
   var results []TorrentResult
 
-  for _, idxPair := range locMatches {
-    magRaw := strings.ReplaceAll(html[idxPair[2]:idxPair[3]], "&amp;", "&")
-    hash := strings.ToLower(html[idxPair[4]:idxPair[5]])
+  cards := bitCardSplitRe.Split(html, -1)
+  for i := 1; i < len(cards) && len(results) < 40; i++ {
+    card := strings.ReplaceAll(cards[i], "&nbsp;", " ")
+    magMatch := bitMagnetRe.FindStringSubmatch(card)
+    if len(magMatch) < 3 {
+      continue
+    }
+    magRaw := strings.ReplaceAll(magMatch[1], "&amp;", "&")
+    hash := strings.ToLower(magMatch[2])
     if seen[hash] {
       continue
     }
     seen[hash] = true
 
-    ctxStart := idxPair[0] - 1300
-    if ctxStart < 0 {
-      ctxStart = 0
+    title := ""
+    if tm := bitTitleV2Re.FindStringSubmatch(card); len(tm) > 1 {
+      title = cleanTitle(tm[1])
     }
-    ctxEnd := idxPair[1] + 220
-    if ctxEnd > len(html) {
-      ctxEnd = len(html)
-    }
-    ctxBlk := html[ctxStart:ctxEnd]
-
-    title := extractNameFromMagnet(magRaw)
     if len([]rune(title)) < 3 {
-      if tm := bitTitleRe.FindStringSubmatch(ctxBlk); len(tm) >= 2 {
-        title = tm[1]
-      }
+      title = cleanTitle(extractNameFromMagnet(magRaw))
     }
-    title = cleanTitle(title)
-    if title == "" || (videoJunkRegex.MatchString(title) && !audioGoodRegex.MatchString(title)) {
+    if title == "" || bookJunkRe.MatchString(title) {
       continue
     }
 
     var sizeBytes int64
     var sizeMB float64
-    if szMatches := bitSizeRe.FindAllStringSubmatch(ctxBlk, -1); len(szMatches) > 0 {
-      lastSz := szMatches[len(szMatches)-1]
-      val, _ := strconv.ParseFloat(lastSz[1], 64)
-      unit := strings.ToUpper(lastSz[2])
+    szMatch := bitSizeV2Re.FindStringSubmatch(card)
+    if len(szMatch) < 3 {
+      szMatch = bitSizeRe.FindStringSubmatch(card)
+    }
+    if len(szMatch) >= 3 {
+      val, _ := strconv.ParseFloat(strings.ReplaceAll(szMatch[1], ",", "."), 64)
+      unit := strings.ToUpper(szMatch[2])
       if unit == "GB" {
         sizeMB = math.Round(val*1024*10) / 10
+      } else if unit == "TB" {
+        sizeMB = math.Round(val*1024*1024*10) / 10
       } else if unit == "KB" {
         sizeMB = math.Round((val/1024)*10) / 10
       } else {
@@ -951,9 +1262,15 @@ func searchBitsearch(ctx context.Context, query string) []TorrentResult {
     }
 
     seeds := 0
-    if sMatches := bitSeedsRe.FindAllStringSubmatch(ctxBlk, -1); len(sMatches) > 0 {
-      rawS := strings.ReplaceAll(sMatches[len(sMatches)-1][1], ",", "")
-      seeds, _ = strconv.Atoi(rawS)
+    if sm := bitSeedersV2Re.FindStringSubmatch(card); len(sm) > 1 {
+      seeds, _ = strconv.Atoi(strings.ReplaceAll(sm[1], ",", ""))
+    } else if sm2 := bitSeedsRe.FindStringSubmatch(card); len(sm2) > 1 {
+      seeds, _ = strconv.Atoi(strings.ReplaceAll(sm2[1], ",", ""))
+    }
+
+    peers := 0
+    if lm := bitLeechV2Re.FindStringSubmatch(card); len(lm) > 1 {
+      peers, _ = strconv.Atoi(strings.ReplaceAll(lm[1], ",", ""))
     }
 
     results = append(results, TorrentResult{
@@ -964,7 +1281,7 @@ func searchBitsearch(ctx context.Context, query string) []TorrentResult {
       SizeMB:    sizeMB,
       SizeHuman: formatBytes(sizeBytes),
       Seeds:     seeds,
-      Peers:     0,
+      Peers:     peers,
       Source:    "BitSearch",
     })
   }
@@ -972,7 +1289,8 @@ func searchBitsearch(ctx context.Context, query string) []TorrentResult {
 }
 
 func searchApiBay(ctx context.Context, query string) []TorrentResult {
-  u := "https://apibay.org/q.php?q=" + url.QueryEscape(query) + "&cat=100"
+  cleanQ := strings.ReplaceAll(query, "-", " ")
+  u := "https://apibay.org/q.php?q=" + url.QueryEscape(cleanQ)
   req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
   if err != nil {
     return nil
@@ -1003,7 +1321,7 @@ func searchApiBay(ctx context.Context, query string) []TorrentResult {
       continue
     }
     title := cleanTitle(it.Name)
-    if title == "" {
+    if title == "" || bookJunkRe.MatchString(title) {
       continue
     }
     seeds, _ := strconv.Atoi(it.Seeders)
@@ -1030,6 +1348,80 @@ func searchApiBay(ctx context.Context, query string) []TorrentResult {
   return results
 }
 
+func searchKnaben(ctx context.Context, query string) []TorrentResult {
+  kCtx, cancel := context.WithTimeout(ctx, 2600*time.Millisecond)
+  defer cancel()
+
+  cleanQ := strings.ReplaceAll(query, "-", " ")
+  payload := map[string]interface{}{
+    "query":           cleanQ,
+    "size":            40,
+    "order_by":        "seeders",
+    "order_direction": "desc",
+  }
+  bodyBytes, _ := json.Marshal(payload)
+  req, err := http.NewRequestWithContext(kCtx, "POST", "https://api.knaben.eu/v1", bytes.NewReader(bodyBytes))
+  if err != nil {
+    return nil
+  }
+  req.Header.Set("Content-Type", "application/json")
+  req.Header.Set("User-Agent", "Mozilla/5.0")
+
+  resp, err := httpClient.Do(req)
+  if err != nil || resp.StatusCode != 200 {
+    if resp != nil {
+      resp.Body.Close()
+    }
+    return nil
+  }
+  defer resp.Body.Close()
+
+  var data struct {
+    Hits []struct {
+      Title     string `json:"title"`
+      MagnetUrl string `json:"magnetUrl"`
+      Hash      string `json:"hash"`
+      Bytes     int64  `json:"bytes"`
+      Seeders   int    `json:"seeders"`
+      Peers     int    `json:"peers"`
+      Tracker   string `json:"tracker"`
+      Category  string `json:"category"`
+    } `json:"hits"`
+  }
+  if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+    return nil
+  }
+
+  var results []TorrentResult
+  for _, h := range data.Hits {
+    title := cleanTitle(h.Title)
+    if title == "" || bookJunkRe.MatchString(title) {
+      continue
+    }
+    hash := strings.ToLower(strings.TrimSpace(h.Hash))
+    if hash == "" {
+      hash = extractInfoHash(h.MagnetUrl)
+    }
+    if len(hash) != 40 {
+      continue
+    }
+    sizeMB := math.Round((float64(h.Bytes)/(1024*1024))*10) / 10
+    results = append(results, TorrentResult{
+      Title:     title,
+      Magnet:    buildMagnet(hash, title),
+      InfoHash:  hash,
+      Size:      h.Bytes,
+      SizeMB:    sizeMB,
+      SizeHuman: formatBytes(h.Bytes),
+      Seeds:     h.Seeders,
+      Peers:     h.Peers,
+      Source:    "Knaben",
+      Category:  h.Category,
+    })
+  }
+  return results
+}
+
 var udpTrackers = []string{
   "tracker.opentrackr.org:1337",
   "open.stealth.si:80",
@@ -1039,12 +1431,12 @@ var udpTrackers = []string{
 
 func udpScrapeSingleTracker(trackerAddr string, validHashes []string, rawBinHashes [][]byte) map[string][2]int {
   out := make(map[string][2]int)
-  conn, err := net.DialTimeout("udp", trackerAddr, 550*time.Millisecond)
+  conn, err := net.DialTimeout("udp", trackerAddr, 900*time.Millisecond)
   if err != nil {
     return out
   }
   defer conn.Close()
-  _ = conn.SetDeadline(time.Now().Add(550 * time.Millisecond))
+  _ = conn.SetDeadline(time.Now().Add(900 * time.Millisecond))
 
   tid1 := uint32(rand.Int31())
   var reqConnect [16]byte
@@ -1134,7 +1526,7 @@ func udpScrapeBatch(hashes []string) map[string][2]int {
     for _, tr := range udpTrackers {
       wg.Add(1)
       go func(addr string, hSlice []string, bSlice [][]byte) {
-        defer wg.Done()
+        defer func() { _ = recover(); wg.Done() }()
         res := udpScrapeSingleTracker(addr, hSlice, bSlice)
         mu.Lock()
         for h, sl := range res {
@@ -1212,6 +1604,7 @@ func searchSingleVariantAcrossIndexers(ctx context.Context, variantQuery string,
   if hasCyr {
     latQuery = ruToEnTranslit.Replace(strings.ToLower(variantQuery))
   }
+  noHyphen := strings.ReplaceAll(variantQuery, "-", " ")
   fmtSuffix := ""
   if _, ok := fmtKeywordsMap[fmtTag]; ok {
     fmtSuffix = " " + strings.ToUpper(fmtTag)
@@ -1224,15 +1617,27 @@ func searchSingleVariantAcrossIndexers(ctx context.Context, variantQuery string,
 
   var jobs []searchJob
   if fmtSuffix != "" {
-    jobs = append(jobs, searchJob{searchRutorDoH, variantQuery + fmtSuffix})
+    jobs = append(jobs, searchJob{searchRutorDoH, noHyphen + fmtSuffix})
+    if noHyphen != variantQuery {
+      jobs = append(jobs, searchJob{searchRutorDoH, variantQuery + fmtSuffix})
+    }
   } else {
-    jobs = append(jobs, searchJob{searchRutorDoH, variantQuery + " MP3"})
-    jobs = append(jobs, searchJob{searchRutorDoH, variantQuery + " FLAC"})
+    jobs = append(jobs, searchJob{searchRutorDoH, noHyphen + " MP3"})
+    jobs = append(jobs, searchJob{searchRutorDoH, noHyphen + " FLAC"})
+    if noHyphen != variantQuery {
+      jobs = append(jobs, searchJob{searchRutorDoH, variantQuery + " MP3"})
+      jobs = append(jobs, searchJob{searchRutorDoH, variantQuery + " FLAC"})
+    }
   }
-  jobs = append(jobs, searchJob{searchRutorDoH, variantQuery})
+  jobs = append(jobs, searchJob{searchRutorDoH, noHyphen})
+  if noHyphen != variantQuery {
+    jobs = append(jobs, searchJob{searchRutorDoH, variantQuery})
+  }
   jobs = append(jobs, searchJob{searchApiBay, latQuery + fmtSuffix})
+  jobs = append(jobs, searchJob{searchKnaben, latQuery + fmtSuffix})
   if !strings.EqualFold(latQuery, variantQuery) {
     jobs = append(jobs, searchJob{searchApiBay, variantQuery})
+    jobs = append(jobs, searchJob{searchKnaben, variantQuery})
   }
   if !exact {
     jobs = append(jobs, searchJob{searchBitsearch, latQuery + fmtSuffix})
@@ -1248,7 +1653,7 @@ func searchSingleVariantAcrossIndexers(ctx context.Context, variantQuery string,
   for _, jb := range jobs {
     wg.Add(1)
     go func(j searchJob) {
-      defer wg.Done()
+      defer func() { _ = recover(); wg.Done() }()
       items := j.fn(ctx, j.arg)
       mu.Lock()
       for _, it := range items {
@@ -1314,6 +1719,11 @@ func rankAndFilter(results []TorrentResult, matchTerms []string, resolvedTracks 
     if !matchesFormatFilter(item.Title, cfg.FormatTag, cfg.ExactMatch) {
       continue
     }
+    if cfg.Year != "" {
+      if !strings.Contains(lowTitle, strings.ToLower(cfg.Year)) {
+        continue
+      }
+    }
 
     bestMatch := 0.0
     matchedVia := ""
@@ -1361,9 +1771,22 @@ func rankAndFilter(results []TorrentResult, matchTerms []string, resolvedTracks 
       seedBoost = -0.25
     }
 
+    isVid := videoJunkRegex.MatchString(item.Title)
+    hasAud := audioGoodRegex.MatchString(item.Title) || isDiscographyOrCollection(lowTitle)
+    if cfg.Profile == "audio" || cfg.Profile == "" {
+      if isVid && !hasAud {
+        continue
+      }
+    } else if cfg.Profile == "video" {
+      if !isVid {
+        continue
+      }
+    }
     audioBoost := 0.0
-    if cfg.PreferAudio && (audioGoodRegex.MatchString(item.Title) || isDiscographyOrCollection(lowTitle)) {
-      audioBoost = 0.14
+    if cfg.Profile == "video" && isVid {
+      audioBoost = 0.22
+    } else if hasAud {
+      audioBoost = 0.18
     }
     if tokens, ok := fmtKeywordsMap[cfg.FormatTag]; ok {
       for _, tok := range tokens {
@@ -1397,16 +1820,18 @@ func rankAndFilter(results []TorrentResult, matchTerms []string, resolvedTracks 
 func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig, maxResults int) SearchResponse {
   start := time.Now()
   if cfg.TimeoutMs <= 0 {
-    cfg.TimeoutMs = 5500
+    cfg.TimeoutMs = 10000
   }
   if cfg.MinFuzzyScore <= 0 {
-    cfg.MinFuzzyScore = 0.38
+    cfg.MinFuzzyScore = 0.52
   }
 
-  ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutMs)*time.Millisecond)
-  defer cancel()
+  resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 1800*time.Millisecond)
+  corrected, expandedTerms, resolvedTracks := buildExpandedQueries(resolveCtx, rawQuery, cfg)
+  resolveCancel()
 
-  corrected, expandedTerms, resolvedTracks := buildExpandedQueries(ctx, rawQuery, cfg.ExactMatch)
+  ctx, cancel := context.WithTimeout(context.Background(), 4500*time.Millisecond)
+  defer cancel()
   if len(expandedTerms) == 0 {
     return SearchResponse{
       Status:        "error",
@@ -1427,8 +1852,16 @@ func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig, maxResults i
   for idx, vq := range candidateVariants {
     wg.Add(1)
     go func(i int, qStr string) {
-      defer wg.Done()
-      rawGroups[i] = searchSingleVariantAcrossIndexers(ctx, qStr, cfg.FormatTag, cfg.ExactMatch)
+      defer func() { _ = recover(); wg.Done() }()
+      qWithYear := qStr
+      if cfg.Year != "" && !strings.Contains(qStr, cfg.Year) {
+        qWithYear = qStr + " " + cfg.Year
+      }
+      items := searchSingleVariantAcrossIndexers(ctx, qWithYear, cfg.FormatTag, cfg.ExactMatch)
+      if qWithYear != qStr {
+        items = append(items, searchSingleVariantAcrossIndexers(ctx, qStr, cfg.FormatTag, cfg.ExactMatch)...)
+      }
+      rawGroups[i] = items
     }(idx, vq)
   }
   wg.Wait()
@@ -1467,16 +1900,59 @@ func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig, maxResults i
   totalHiddenZero := 0
 
   for idx, vq := range candidateVariants {
-    ranked, hid := rankAndFilter(rawGroups[idx], []string{vq, corrected}, resolvedTracks, rawQuery, cfg, 35)
+    ranked, hid := rankAndFilter(rawGroups[idx], []string{vq, corrected}, resolvedTracks, rawQuery, cfg, 45)
     totalHiddenZero += hid
     if len(ranked) == 0 {
       continue
     }
-    validGroups = append(validGroups, VariantGroup{
-      Query:   vq,
-      Count:   len(ranked),
-      Results: ranked,
-    })
+
+    // Для первой (главной) группы отделяем чистые сольные раздачи в Группу #1,
+    // а все совместные релизы (feat., feature, при уч., при участии, &) выносим отдельной группой в допы (#2)!
+    if idx == 0 && !cfg.ExactMatch {
+      var soloItems []TorrentResult
+      var collabItems []TorrentResult
+      for _, it := range ranked {
+        headPart := it.Title
+        for _, sep := range []string{" - ", " – ", " — "} {
+          if sIdx := strings.Index(it.Title, sep); sIdx > 0 {
+            headPart = it.Title[:sIdx]
+            break
+          }
+        }
+        if hasCollabMarker(it.Title) || positionalPriorityMultiplier(vq, it.Title) < 0.90 || (strings.Contains(headPart, "&") && !strings.Contains(vq, "&")) {
+          collabItems = append(collabItems, it)
+        } else {
+          soloItems = append(soloItems, it)
+        }
+      }
+      if len(soloItems) > 0 {
+        validGroups = append(validGroups, VariantGroup{
+          Query:   vq,
+          Count:   len(soloItems),
+          Results: soloItems,
+        })
+        if len(collabItems) > 0 {
+          validGroups = append(validGroups, VariantGroup{
+            Query:   vq + " (feat. / при уч. / &)",
+            Count:   len(collabItems),
+            Results: collabItems,
+          })
+        }
+      } else {
+        validGroups = append(validGroups, VariantGroup{
+          Query:   vq,
+          Count:   len(ranked),
+          Results: ranked,
+        })
+      }
+    } else {
+      validGroups = append(validGroups, VariantGroup{
+        Query:   vq,
+        Count:   len(ranked),
+        Results: ranked,
+      })
+    }
+
     for _, it := range ranked {
       if !seenFlat[it.InfoHash] {
         seenFlat[it.InfoHash] = true
@@ -1511,71 +1987,100 @@ func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig, maxResults i
   }
 }
 
-//export OmniSearch
-func OmniSearch(cQuery *C.char, maxResults C.int) *C.char {
-  query := C.GoString(cQuery)
-  limit := int(maxResults)
-  if limit <= 0 {
-    limit = 50
+// Безопасный HTTP-сервер для изолированного запуска с CGO_ENABLED=0 (не может уронить плеер)
+func StartOmniHTTPServer(listenAddr string) error {
+  mux := http.NewServeMux()
+
+  mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    _, _ = w.Write([]byte(`{"status":"ok","version":"2.7"}`))
+  })
+  mux.HandleFunc("/shutdown", func(w http.ResponseWriter, r *http.Request) {
+    _, _ = w.Write([]byte("bye"))
+    go func() { time.Sleep(50 * time.Millisecond); os.Exit(0) }()
+  })
+
+  mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+    defer func() {
+      if rec := recover(); rec != nil {
+        w.Header().Set("Content-Type", "application/json; charset=utf-8")
+        _ = json.NewEncoder(w).Encode(map[string]interface{}{
+          "status": "error",
+          "error":  fmt.Sprintf("recovered panic: %v", rec),
+        })
+      }
+    }()
+
+    var req struct {
+      Query          string `json:"query"`
+      FormatTag      string `json:"format_tag"`
+      Year           string `json:"year"`
+      Profile        string `json:"profile"`
+      EnablePhonetic *bool  `json:"enable_phonetic"`
+      EnableCatalog  *bool  `json:"enable_catalog"`
+      EnableUDP      *bool  `json:"enable_udp"`
+      Exact          bool   `json:"exact"`
+      HideZero       *bool  `json:"hide_zero"`
+      MinTwoSeeds    bool   `json:"min_two_seeds"`
+      MaxResults     int    `json:"max_results"`
+      TimeoutMs      int    `json:"timeout_ms"`
+    }
+
+    if r.Method == "POST" {
+      bodyBytes, _ := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+      _ = json.Unmarshal(bodyBytes, &req)
+    } else {
+      req.Query = r.URL.Query().Get("q")
+      req.FormatTag = r.URL.Query().Get("format_tag")
+      req.MaxResults, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+    }
+
+    cfgMu.RLock()
+    cfg := globalConfig
+    cfgMu.RUnlock()
+
+    if req.FormatTag != "" {
+      cfg.FormatTag = strings.ToLower(strings.TrimSpace(req.FormatTag))
+    }
+    cfg.Year = strings.TrimSpace(req.Year)
+    if req.Profile != "" {
+      cfg.Profile = strings.ToLower(strings.TrimSpace(req.Profile))
+    }
+    if req.EnablePhonetic != nil {
+      cfg.EnablePhonetic = *req.EnablePhonetic
+    }
+    if req.EnableCatalog != nil {
+      cfg.EnableCatalog = *req.EnableCatalog
+    }
+    if req.EnableUDP != nil {
+      cfg.EnableUDP = *req.EnableUDP
+    }
+    cfg.ExactMatch = req.Exact
+    if req.HideZero != nil {
+      cfg.HideZeroSeeds = *req.HideZero
+    }
+    cfg.MinTwoSeeds = req.MinTwoSeeds
+
+    if req.TimeoutMs >= 1000 {
+      cfg.TimeoutMs = req.TimeoutMs
+    }
+    limit := req.MaxResults
+    if limit <= 0 {
+      limit = 60
+    }
+
+    resp := executeOmniSearchWithConfig(req.Query, cfg, limit)
+    w.Header().Set("Content-Type", "application/json; charset=utf-8")
+    _ = json.NewEncoder(w).Encode(resp)
+  })
+
+  srv := &http.Server{
+    Addr:         listenAddr,
+    Handler:      mux,
+    ReadTimeout:  10 * time.Second,
+    WriteTimeout: 25 * time.Second,
   }
-  cfgMu.RLock()
-  cfg := globalConfig
-  cfgMu.RUnlock()
-
-  resp := executeOmniSearchWithConfig(query, cfg, limit)
-  out, _ := json.Marshal(resp)
-  return C.CString(string(out))
-}
-
-//export OmniSearchJSON
-func OmniSearchJSON(cReqJSON *C.char) *C.char {
-  raw := C.GoString(cReqJSON)
-  var req struct {
-    Query       string `json:"query"`
-    FormatTag   string `json:"format_tag"`
-    Exact       bool   `json:"exact"`
-    HideZero    *bool  `json:"hide_zero"`
-    MinTwoSeeds bool   `json:"min_two_seeds"`
-    MaxResults  int    `json:"max_results"`
-  }
-  _ = json.Unmarshal([]byte(raw), &req)
-
-  cfgMu.RLock()
-  cfg := globalConfig
-  cfgMu.RUnlock()
-
-  if req.FormatTag != "" {
-    cfg.FormatTag = strings.ToLower(strings.TrimSpace(req.FormatTag))
-  }
-  cfg.ExactMatch = req.Exact
-  if req.HideZero != nil {
-    cfg.HideZeroSeeds = *req.HideZero
-  }
-  cfg.MinTwoSeeds = req.MinTwoSeeds
-
-  limit := req.MaxResults
-  if limit <= 0 {
-    limit = 60
-  }
-  resp := executeOmniSearchWithConfig(req.Query, cfg, limit)
-  out, _ := json.Marshal(resp)
-  return C.CString(string(out))
-}
-
-//export OmniConfigure
-func OmniConfigure(cConfigJSON *C.char) C.int {
-  raw := C.GoString(cConfigJSON)
-  cfgMu.Lock()
-  defer cfgMu.Unlock()
-  if err := json.Unmarshal([]byte(raw), &globalConfig); err != nil {
-    return 0
-  }
-  return 1
-}
-
-//export OmniFree
-func OmniFree(ptr *C.char) {
-  C.free(unsafe.Pointer(ptr))
+  return srv.ListenAndServe()
 }
 
 func tokenize(s string) []string {
@@ -1629,4 +2134,24 @@ func formatBytes(b int64) string {
   return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func main() {}
+func main() {
+  addr := "127.0.0.1:18998"
+  if len(os.Args) > 1 {
+    if os.Args[1] == "--serve" {
+      if len(os.Args) > 2 {
+        addr = os.Args[2]
+      }
+      _ = StartOmniHTTPServer(addr)
+      return
+    }
+    cfgMu.RLock()
+    cfg := globalConfig
+    cfgMu.RUnlock()
+    resp := executeOmniSearchWithConfig(strings.Join(os.Args[1:], " "), cfg, 40)
+    enc := json.NewEncoder(os.Stdout)
+    enc.SetIndent("", "  ")
+    _ = enc.Encode(resp)
+    return
+  }
+  _ = StartOmniHTTPServer(addr)
+}
