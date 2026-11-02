@@ -40,6 +40,12 @@ public class MainActivity extends AppCompatActivity {
     private static boolean isPageLoaded = false;
     private static String pendingTorrentPayload = null;
     private static String pendingTorrentName = null;
+    private static boolean isVideoFullscreenV132 = false;
+    private static boolean isVideoLockedV132 = false;
+    private static boolean isDesktopOverlayActiveV132 = false;
+    private static android.widget.FrameLayout overlayContainerV132 = null;
+    private static android.view.WindowManager wmV132 = null;
+    private static android.view.WindowManager.LayoutParams overlayParamsV132 = null;
 
     private void handleIncomingTorrentIntent(Intent intent) {
         if (intent == null) return;
@@ -115,6 +121,78 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    
+    private void applyVideoSystemUiLockV132() {
+        runOnUiThread(() -> {
+            try {
+                android.view.Window win = getWindow();
+                if (win == null) return;
+                View decor = win.getDecorView();
+                boolean hideBars = isVideoFullscreenV132 || isVideoLockedV132;
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    android.view.WindowManager.LayoutParams lp = win.getAttributes();
+                    lp.layoutInDisplayCutoutMode = hideBars
+                        ? android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                        : android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+                    win.setAttributes(lp);
+                }
+
+                if (hideBars) {
+                    win.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+                    decor.setSystemUiVisibility(flags);
+
+                    if (Build.VERSION.SDK_INT >= 29 && webView != null) {
+                        int w = Math.max(1080, webView.getWidth());
+                        int h = Math.max(2400, webView.getHeight());
+                        java.util.List<android.graphics.Rect> rects = new java.util.ArrayList<>();
+                        rects.add(new android.graphics.Rect(0, h - 220, w, h));
+                        rects.add(new android.graphics.Rect(0, 0, w, 160));
+                        rects.add(new android.graphics.Rect(0, h / 2 - 200, 120, h / 2 + 200));
+                        rects.add(new android.graphics.Rect(w - 120, h / 2 - 200, w, h / 2 + 200));
+                        webView.setSystemGestureExclusionRects(rects);
+                    }
+                } else {
+                    win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+                    if (Build.VERSION.SDK_INT >= 29 && webView != null) {
+                        webView.setSystemGestureExclusionRects(java.util.Collections.emptyList());
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && (isVideoFullscreenV132 || isVideoLockedV132)) {
+            applyVideoSystemUiLockV132();
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (isVideoLockedV132) {
+            evalJs("if(window.showVideoFeedbackV130) window.showVideoFeedbackV130('🔒 Управление заблокировано');");
+            applyVideoSystemUiLockV132();
+            return;
+        }
+        if (isVideoFullscreenV132) {
+            evalJs("if(window.toggleVideoNativeFullscreenV132) window.toggleVideoNativeFullscreenV132();");
+            return;
+        }
+        super.onBackPressed();
+    }
+
     public static void evalJs(final String script) {
         if (instance != null && instance.webView != null) {
             instance.webView.post(() -> instance.webView.evaluateJavascript(script, null));
@@ -166,12 +244,150 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebChromeClient(new WebChromeClient());
 
         webView.addJavascriptInterface(new WebAppInterface(), "AndroidBridge");
+        getWindow().getDecorView().setOnSystemUiVisibilityChangeListener(visibility -> {
+            if ((isVideoFullscreenV132 || isVideoLockedV132) && (visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0) {
+                applyVideoSystemUiLockV132();
+            }
+        });
 
         setupFFmpeg();
         checkPermissionsAndStart();
     }
 
     public class WebAppInterface {
+        @JavascriptInterface
+        
+        @JavascriptInterface
+        public void setVideoFullscreenLock(boolean fullscreen, boolean locked) {
+            isVideoFullscreenV132 = fullscreen;
+            isVideoLockedV132 = locked;
+            applyVideoSystemUiLockV132();
+        }
+
+        @JavascriptInterface
+        public boolean canDrawOverlays() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                return Settings.canDrawOverlays(MainActivity.this);
+            }
+            return true;
+        }
+
+        @JavascriptInterface
+        public void requestOverlayPermission() {
+            runOnUiThread(() -> {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void enterDesktopOverlay(final int wDp, final int hDp) {
+            runOnUiThread(() -> {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
+                        requestOverlayPermission();
+                        return;
+                    }
+                    if (isDesktopOverlayActiveV132 || webView == null) return;
+                    wmV132 = (android.view.WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
+                    float density = getResources().getDisplayMetrics().density;
+                    int wPx = Math.max(220, (int) (wDp * density));
+                    int hPx = Math.max(140, (int) (hDp * density));
+
+                    int type = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                            ? android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                            : android.view.WindowManager.LayoutParams.TYPE_PHONE;
+
+                    overlayParamsV132 = new android.view.WindowManager.LayoutParams(
+                            wPx, hPx, type,
+                            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                    | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                                    | android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                            android.graphics.PixelFormat.TRANSLUCENT
+                    );
+                    overlayParamsV132.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+                    overlayParamsV132.x = 24;
+                    overlayParamsV132.y = 140;
+
+                    if (webView.getParent() instanceof android.view.ViewGroup) {
+                        ((android.view.ViewGroup) webView.getParent()).removeView(webView);
+                    }
+                    overlayContainerV132 = new android.widget.FrameLayout(getApplicationContext());
+                    overlayContainerV132.setBackgroundColor(0xFF000000);
+                    overlayContainerV132.addView(webView, new android.widget.FrameLayout.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    ));
+                    wmV132.addView(overlayContainerV132, overlayParamsV132);
+                    isDesktopOverlayActiveV132 = true;
+                    moveTaskToBack(true);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void moveDesktopOverlay(final int dxPx, final int dyPx) {
+            runOnUiThread(() -> {
+                try {
+                    if (!isDesktopOverlayActiveV132 || wmV132 == null || overlayContainerV132 == null || overlayParamsV132 == null) return;
+                    overlayParamsV132.x += dxPx;
+                    overlayParamsV132.y += dyPx;
+                    wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                } catch (Exception e) {}
+            });
+        }
+
+        @JavascriptInterface
+        public void resizeDesktopOverlay(final int wPx, final int hPx) {
+            runOnUiThread(() -> {
+                try {
+                    if (!isDesktopOverlayActiveV132 || wmV132 == null || overlayContainerV132 == null || overlayParamsV132 == null) return;
+                    overlayParamsV132.width = Math.max(220, Math.min(1400, wPx));
+                    overlayParamsV132.height = Math.max(135, Math.min(1800, hPx));
+                    wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                } catch (Exception e) {}
+            });
+        }
+
+        @JavascriptInterface
+        public void exitDesktopOverlay(final boolean bringToFront) {
+            runOnUiThread(() -> {
+                try {
+                    if (!isDesktopOverlayActiveV132) return;
+                    isDesktopOverlayActiveV132 = false;
+                    if (overlayContainerV132 != null) {
+                        overlayContainerV132.removeAllViews();
+                        if (wmV132 != null) {
+                            try { wmV132.removeView(overlayContainerV132); } catch (Exception ignored) {}
+                        }
+                        overlayContainerV132 = null;
+                    }
+                    if (webView != null) {
+                        if (webView.getParent() instanceof android.view.ViewGroup) {
+                            ((android.view.ViewGroup) webView.getParent()).removeView(webView);
+                        }
+                        setContentView(webView);
+                    }
+                    if (bringToFront) {
+                        Intent i = new Intent(MainActivity.this, MainActivity.class);
+                        i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                        startActivity(i);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+
         @JavascriptInterface
         public String consumePendingTorrent() {
             try {
@@ -346,6 +562,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (isDesktopOverlayActiveV132) {
+            evalJs("if(window.exitDesktopOverlayModeV132) window.exitDesktopOverlayModeV132(false);");
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
             startPythonServer();
         }

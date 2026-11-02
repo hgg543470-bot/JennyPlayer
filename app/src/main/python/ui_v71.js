@@ -10492,3 +10492,286 @@ subEl.innerText = `🧩 ${ramTag} • ⚙️ РКПП: ${gKey} • ⏩ x${vd.spe
 }, 1000);
 
 setTimeout(() => { window.decorateVideoIconsInListV130(); window.renderDeckSwitchBannersV131(); }, 400);
+
+// === 📌🔒⛶ JENNY V132: DESKTOP OVERLAY WINDOW, TRUE FULLSCREEN & HARD LOCK ===
+window._vidStateV130 = Object.assign(window._vidStateV130 || {}, {
+nativeFullscreen: false,
+isLocked: false,
+desktopOverlay: false
+});
+
+window.syncNativeFullscreenLockV132 = function() {
+const st = window._vidStateV130;
+const wantFs = Boolean(st.active && !st.pipMode && !st.desktopOverlay && (st.nativeFullscreen || st.isLocked));
+const wantLock = Boolean(st.active && st.isLocked);
+if (window.AndroidBridge && typeof window.AndroidBridge.setVideoFullscreenLock === 'function') {
+try { window.AndroidBridge.setVideoFullscreenLock(wantFs, wantLock); } catch (e) {}
+}
+const fsBtn = document.getElementById('v132BtnFullscreen');
+if (fsBtn) {
+fsBtn.innerText = st.nativeFullscreen ? '🗗 Обычн.' : '⛶ Полный';
+fsBtn.style.borderColor = st.nativeFullscreen ? '#3fb950' : 'rgba(255,255,255,0.25)';
+fsBtn.style.color = st.nativeFullscreen ? '#3fb950' : '#e6edf3';
+}
+const lockBtn = document.getElementById('v132BtnLock');
+if (lockBtn) {
+lockBtn.style.borderColor = st.isLocked ? '#e3b341' : 'rgba(255,255,255,0.25)';
+}
+};
+
+window.toggleVideoNativeFullscreenV132 = function(ev) {
+if (window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const st = window._vidStateV130;
+if (st.desktopOverlay) {
+window.exitDesktopOverlayModeV132(true);
+}
+if (st.pipMode) {
+window.toggleVideoPipModeV130();
+}
+st.nativeFullscreen = !st.nativeFullscreen;
+window.syncNativeFullscreenLockV132();
+window.showVideoFeedbackV130(
+st.nativeFullscreen
+? '⛶ Полный экран ВКЛ (системные кнопки скрыты)'
+: (st.isLocked ? '🔒 Сними замочек, чтобы вернуть системные кнопки' : '🗗 Обычный экран (системные кнопки включены)')
+);
+window.wakeVideoHudV130(false);
+};
+
+window.toggleVideoLockModeV132 = function(ev) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const st = window._vidStateV130;
+st.isLocked = !st.isLocked;
+const hud = document.getElementById('v130HudOverlay');
+const shield = document.getElementById('v132LockShieldOverlay');
+const unlockBtn = document.getElementById('v132FloatingUnlockBtn');
+
+if (st.isLocked) {
+if (hud) hud.classList.add('hud-hidden-v130');
+if (shield) shield.style.display = 'flex';
+if (unlockBtn) {
+unlockBtn.style.opacity = '1';
+clearTimeout(unlockBtn._hideT);
+unlockBtn._hideT = setTimeout(() => { unlockBtn.style.opacity = '0'; }, 2200);
+}
+window.syncNativeFullscreenLockV132();
+window.showVideoFeedbackV130('🔒 Управление и системные жесты ЗАБЛОКИРОВАНЫ');
+} else {
+if (shield) shield.style.display = 'none';
+window.syncNativeFullscreenLockV132();
+window.wakeVideoHudV130(false);
+window.showVideoFeedbackV130(
+st.nativeFullscreen
+? '🔓 Управление разблокировано (Полный экран активен)'
+: '🔓 Разблокировано (системные кнопки возвращены)'
+);
+}
+};
+
+window.enterDesktopOverlayModeV132 = function(ev) {
+if (window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+if (ev && ev.stopPropagation) ev.stopPropagation();
+if (!window.AndroidBridge || typeof window.AndroidBridge.enterDesktopOverlay !== 'function') {
+window.showVideoFeedbackV130('⚠️ Доступно в собранном APK');
+return;
+}
+if (typeof window.AndroidBridge.canDrawOverlays === 'function' && !window.AndroidBridge.canDrawOverlays()) {
+window.showVideoFeedbackV130('🔓 Разреши «Поверх других окон» и нажми снова');
+window.AndroidBridge.requestOverlayPermission();
+return;
+}
+const st = window._vidStateV130;
+const root = document.getElementById('jennyVideoStudioRootV130');
+const stage = document.getElementById('jennyVideoStageV130');
+if (!root) return;
+
+st.desktopOverlay = true;
+st.pipMode = false;
+st.rotated90 = false;
+stage?.classList.remove('rot90-v130');
+root.classList.remove('mode-pip-v130');
+root.classList.add('mode-full-v130', 'mode-desktop-v132');
+root.style.left = '0';
+root.style.top = '0';
+
+const dBtn = document.getElementById('v132BtnDesktop');
+if (dBtn) {
+dBtn.innerText = '🏠 В плеер';
+dBtn.style.borderColor = '#3fb950';
+dBtn.style.color = '#3fb950';
+}
+const resHandle = document.getElementById('v132DesktopResizeHandle');
+if (resHandle) resHandle.style.display = 'flex';
+
+window.AndroidBridge.enterDesktopOverlay(310, 195);
+window.wakeVideoHudV130(false);
+};
+
+window.exitDesktopOverlayModeV132 = function(bringToFront, ev) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const st = window._vidStateV130;
+const root = document.getElementById('jennyVideoStudioRootV130');
+st.desktopOverlay = false;
+if (root) root.classList.remove('mode-desktop-v132');
+const dBtn = document.getElementById('v132BtnDesktop');
+if (dBtn) {
+dBtn.innerText = '📌 На раб. стол';
+dBtn.style.borderColor = '#d2a8ff';
+dBtn.style.color = '#d2a8ff';
+}
+const resHandle = document.getElementById('v132DesktopResizeHandle');
+if (resHandle) resHandle.style.display = 'none';
+
+if (window.AndroidBridge && typeof window.AndroidBridge.exitDesktopOverlay === 'function') {
+try { window.AndroidBridge.exitDesktopOverlay(bringToFront !== false); } catch (e) {}
+}
+window.syncNativeFullscreenLockV132();
+window.wakeVideoHudV130(false);
+};
+
+window.toggleDesktopOverlayModeV132 = function(ev) {
+if (window._vidStateV130.desktopOverlay) {
+window.exitDesktopOverlayModeV132(true, ev);
+} else {
+window.enterDesktopOverlayModeV132(ev);
+}
+};
+
+window.upgradeVideoPlayerDOMToV132 = function() {
+const root = window.ensureVideoPlayerDOMV130();
+const stage = document.getElementById('jennyVideoStageV130');
+if (!root || !stage || document.getElementById('v132LockShieldOverlay')) return;
+
+// 1. Добавляем кнопку «📌 На раб. стол» и «⛶ Полный» в верхнюю шапку видеоплеера
+const pipBtn = document.getElementById('v130BtnPipToggle');
+if (pipBtn && pipBtn.parentElement) {
+const deskBtn = document.createElement('button');
+deskBtn.type = 'button';
+deskBtn.id = 'v132BtnDesktop';
+deskBtn.className = 'v130-btn';
+deskBtn.style.cssText = 'border-color:#d2a8ff !important;color:#d2a8ff !important;';
+deskBtn.innerText = '📌 На раб. стол';
+deskBtn.onclick = (e) => window.toggleDesktopOverlayModeV132(e);
+pipBtn.parentElement.insertBefore(deskBtn, pipBtn);
+
+const fsBtn = document.createElement('button');
+fsBtn.type = 'button';
+fsBtn.id = 'v132BtnFullscreen';
+fsBtn.className = 'v130-btn v130-hide-in-pip';
+fsBtn.innerText = '⛶ Полный';
+fsBtn.onclick = (e) => window.toggleVideoNativeFullscreenV132(e);
+pipBtn.parentElement.insertBefore(fsBtn, pipBtn);
+}
+
+// 2. Добавляем кнопку «🔒 Замок» в нижний ряд управления
+const rotBtn = document.getElementById('v130BtnRotate');
+if (rotBtn && rotBtn.parentElement) {
+const lockBtn = document.createElement('button');
+lockBtn.type = 'button';
+lockBtn.id = 'v132BtnLock';
+lockBtn.className = 'v130-btn';
+lockBtn.innerText = '🔒 Замок';
+lockBtn.onclick = (e) => window.toggleVideoLockModeV132(e);
+rotBtn.parentElement.insertBefore(lockBtn, rotBtn);
+}
+
+// 3. Экранный щит Замка (перехватывает все случайные касания и показывает только кнопку разблокировки 🔒)
+const shield = document.createElement('div');
+shield.id = 'v132LockShieldOverlay';
+shield.style.cssText = 'display:none;position:absolute;inset:0;z-index:25;align-items:center;justify-content:flex-end;padding:20px;box-sizing:border-box;background:transparent;';
+shield.innerHTML = `<button type="button" id="v132FloatingUnlockBtn" onclick="window.toggleVideoLockModeV132(event)" style="width:52px;height:52px;border-radius:50%;background:rgba(13,17,23,0.9);border:2px solid #e3b341;color:#e3b341;font-size:20px;box-shadow:0 0 20px rgba(0,0,0,0.95);transition:opacity 0.22s ease;opacity:1;">🔒</button>`;
+shield.addEventListener('touchend', (e) => {
+if (e.target.id === 'v132FloatingUnlockBtn') return;
+e.stopPropagation();
+const ub = document.getElementById('v132FloatingUnlockBtn');
+if (ub) {
+ub.style.opacity = (ub.style.opacity === '1') ? '0' : '1';
+clearTimeout(ub._hideT);
+if (ub.style.opacity === '1') {
+ub._hideT = setTimeout(() => { ub.style.opacity = '0'; }, 2400);
+}
+}
+}, { passive: true });
+stage.appendChild(shield);
+
+// 4. Уголок изменения размера окна на рабочем столе (↘️)
+const resHandle = document.createElement('div');
+resHandle.id = 'v132DesktopResizeHandle';
+resHandle.style.cssText = 'display:none;position:absolute;right:0;bottom:0;width:32px;height:32px;z-index:30;align-items:flex-end;justify-content:flex-end;padding:4px;font-size:14px;color:#58a6ff;background:linear-gradient(135deg,transparent 50%,rgba(88,166,255,0.35) 50%);cursor:nwse-resize;';
+resHandle.innerText = '↘️';
+let resizing = false, rsX = 0, rsY = 0, initW = 300, initH = 190;
+resHandle.addEventListener('touchstart', (e) => {
+if (!e.touches || !e.touches[0]) return;
+e.stopPropagation();
+resizing = true;
+rsX = e.touches[0].screenX;
+rsY = e.touches[0].screenY;
+initW = window.innerWidth;
+initH = window.innerHeight;
+}, { passive: true });
+resHandle.addEventListener('touchmove', (e) => {
+if (!resizing || !e.touches || !e.touches[0]) return;
+e.stopPropagation();
+const nw = Math.round(initW + (e.touches[0].screenX - rsX));
+const nh = Math.round(initH + (e.touches[0].screenY - rsY));
+if (window.AndroidBridge && typeof window.AndroidBridge.resizeDesktopOverlay === 'function') {
+window.AndroidBridge.resizeDesktopOverlay(nw, nh);
+}
+}, { passive: true });
+resHandle.addEventListener('touchend', (e) => { e.stopPropagation(); resizing = false; }, { passive: true });
+stage.appendChild(resHandle);
+
+// 5. Перетаскивание окна по рабочему столу Android пальцем (по screenX/screenY)
+let deskDragging = false, lastScrX = 0, lastScrY = 0, deskMovedPx = 0;
+stage.addEventListener('touchstart', (e) => {
+const st = window._vidStateV130;
+if (!st.desktopOverlay || st.isLocked || !e.touches || e.touches.length !== 1) return;
+if (e.target.closest('button') || e.target.closest('input') || e.target.id === 'v132DesktopResizeHandle') return;
+deskDragging = true;
+deskMovedPx = 0;
+lastScrX = e.touches[0].screenX;
+lastScrY = e.touches[0].screenY;
+}, { passive: true });
+
+stage.addEventListener('touchmove', (e) => {
+if (!deskDragging || !window._vidStateV130.desktopOverlay || !e.touches || e.touches.length !== 1) return;
+const curX = e.touches[0].screenX;
+const curY = e.touches[0].screenY;
+const dx = Math.round(curX - lastScrX);
+const dy = Math.round(curY - lastScrY);
+deskMovedPx += Math.hypot(dx, dy);
+if (deskMovedPx > 6 && window.AndroidBridge && typeof window.AndroidBridge.moveDesktopOverlay === 'function') {
+window.AndroidBridge.moveDesktopOverlay(dx, dy);
+lastScrX = curX;
+lastScrY = curY;
+}
+}, { passive: true });
+
+stage.addEventListener('touchend', () => {
+deskDragging = false;
+}, { passive: true });
+};
+
+const _origOpenVidV131 = window.openJennyVideoPlayerV130;
+window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+window.upgradeVideoPlayerDOMToV132();
+const r = _origOpenVidV131.apply(this, arguments);
+window.syncNativeFullscreenLockV132();
+return r;
+};
+
+const _origCloseVidV131 = window.closeVideoPlayerV130;
+window.closeVideoPlayerV130 = function(ev) {
+if (window._vidStateV130.desktopOverlay) {
+window.exitDesktopOverlayModeV132(false);
+}
+window._vidStateV130.nativeFullscreen = false;
+window._vidStateV130.isLocked = false;
+const shield = document.getElementById('v132LockShieldOverlay');
+if (shield) shield.style.display = 'none';
+window.syncNativeFullscreenLockV132();
+return _origCloseVidV131.apply(this, arguments);
+};
+
+setTimeout(window.upgradeVideoPlayerDOMToV132, 350);
