@@ -67,16 +67,20 @@ type ResolvedTrackInfo struct {
 }
 
 type SearchResponse struct {
-	Status         string              `json:"status"`
-	OriginalQuery  string              `json:"original_query"`
-	CorrectedQuery string              `json:"corrected_query"`
-	ResolvedTracks []ResolvedTrackInfo `json:"resolved_tracks,omitempty"`
-	ExpandedTerms  []string            `json:"expanded_terms"`
-	ElapsedMs      int64               `json:"elapsed_ms"`
-	TotalFound     int                 `json:"total_found"`
-	HiddenZero     int                 `json:"hidden_zero"`
-	Groups         []VariantGroup      `json:"groups"`
-	Results        []TorrentResult     `json:"results"`
+Status          string              `json:"status"`
+InProgress      bool                `json:"in_progress"`
+SnapshotVersion int                 `json:"snapshot_version"`
+CompletedJobs   int                 `json:"completed_jobs"`
+TotalJobs       int                 `json:"total_jobs"`
+OriginalQuery   string              `json:"original_query"`
+CorrectedQuery  string              `json:"corrected_query"`
+ResolvedTracks  []ResolvedTrackInfo `json:"resolved_tracks,omitempty"`
+ExpandedTerms   []string            `json:"expanded_terms"`
+ElapsedMs       int64               `json:"elapsed_ms"`
+TotalFound      int                 `json:"total_found"`
+HiddenZero      int                 `json:"hidden_zero"`
+Groups          []VariantGroup      `json:"groups"`
+Results         []TorrentResult     `json:"results"`
 }
 
 type EngineConfig struct {
@@ -465,7 +469,7 @@ var (
 
 	// Чистые языковые числительные и служебные сокращения (без хардкода имён артистов или песен)
 	spokenWordEquiv = map[string]string{
-		"доктор": "dr", "doctor": "dr", "др": "dr", "эмси": "mc", "мс": "mc", "ms": "mc",
+		"доктор": "dr", "doctor": "dr", "др": "dr",
 		"фифти": "50", "fifty": "50",
 		"туенти": "twenty", "твенти": "twenty",
 		"уан": "one", "ван": "one",
@@ -562,7 +566,7 @@ func init() {
 	}
 	httpClient = &http.Client{
 		Transport: transport,
-		Timeout:   15 * time.Second,
+		Timeout:   0,
 	}
 }
 
@@ -1415,10 +1419,10 @@ func matchStringsIR(a, b string) bool {
 	if skDl == 0 && sdl <= 2 {
 		return true
 	}
-	if len(sa) >= 3 && len(sb) >= 3 && sdl <= 1 && (skDl == 0 || (skDl <= 1 && len(pa) >= 4 && len(pb) >= 4)) {
+	if len(sa) >= 3 && len(sb) >= 3 && sdl <= 1 && skDl <= 1 {
 		return true
 	}
-	if len(sa) >= 5 && len(sb) >= 5 && sdl <= 2 && (skDl == 0 || (skDl <= 1 && len(pa) >= 4 && len(pb) >= 4)) {
+	if len(sa) >= 5 && len(sb) >= 5 && sdl <= 2 && skDl <= 1 {
 		return true
 	}
 	if len(pa) >= 4 && len(pb) >= 4 && skDl <= 1 && sdl <= 3 {
@@ -1660,49 +1664,27 @@ func resolveSoundCloudClientID(ctx context.Context, cfg EngineConfig, logger *Se
 }
 
 // extractSCArtistTrackAlbum вытаскивает из трека SoundCloud чистого Исполнителя, Трек и Альбом
-var reAudioExt = regexp.MustCompile(`(?i)\.(mp3|wav|flac|m4a|ogg|aac)\b`)
-
-func cleanCatalogAlbumName(alb string) string {
-alb = strings.TrimSpace(reAudioExt.ReplaceAllString(alb, ""))
-low := strings.ToLower(alb)
-if strings.Contains(low, ".online") || strings.Contains(low, ".com") || strings.Contains(low, ".ru") || strings.Contains(low, ".net") || strings.Contains(low, "http") {
-return ""
-}
-for _, suf := range []string{" - single", " [single]", " (single)"} {
-if strings.HasSuffix(low, suf) {
-return ""
-}
-}
-for _, suf := range []string{" - ep", " [ep]", " (ep)"} {
-if strings.HasSuffix(low, suf) {
-alb = strings.TrimSpace(alb[:len(alb)-len(suf)])
-break
-}
-}
-return alb
-}
-
 func extractSCArtistTrackAlbum(tr scTrackObject) (string, string, string) {
-artist := strings.TrimSpace(reAudioExt.ReplaceAllString(tr.PublisherMetadata.Artist, ""))
-album := cleanCatalogAlbumName(tr.PublisherMetadata.AlbumTitle)
-if album == "" {
-album = cleanCatalogAlbumName(tr.PublisherMetadata.ReleaseTitle)
-}
-rawTitle := strings.TrimSpace(reAudioExt.ReplaceAllString(tr.Title, ""))
-trackTitle := strings.TrimSpace(reNoiseWords.ReplaceAllString(rawTitle, ""))
+	artist := strings.TrimSpace(tr.PublisherMetadata.Artist)
+	album := strings.TrimSpace(tr.PublisherMetadata.AlbumTitle)
+	if album == "" {
+		album = strings.TrimSpace(tr.PublisherMetadata.ReleaseTitle)
+	}
+	trackTitle := strings.TrimSpace(reNoiseWords.ReplaceAllString(tr.Title, ""))
 
-splitArt, splitTrk := splitTorrentArtistAndRest(rawTitle)
-if splitArt != "" && splitTrk != "" {
-if artist == "" {
-artist = splitArt
-}
-trackTitle = strings.TrimSpace(reNoiseWords.ReplaceAllString(splitTrk, ""))
-}
-if artist == "" {
-artist = strings.TrimSpace(reAudioExt.ReplaceAllString(tr.User.Username, ""))
-}
-trackTitle = strings.TrimSpace(reBracketMeta.ReplaceAllString(trackTitle, ""))
-return artist, trackTitle, album
+	// Если в заголовке трека на SoundCloud написано "Исполнитель - Название трека"
+	splitArt, splitTrk := splitTorrentArtistAndRest(tr.Title)
+	if splitArt != "" && splitTrk != "" {
+		if artist == "" {
+			artist = splitArt
+		}
+		trackTitle = splitTrk
+	}
+	if artist == "" {
+		artist = strings.TrimSpace(tr.User.Username)
+	}
+	trackTitle = strings.TrimSpace(reBracketMeta.ReplaceAllString(trackTitle, ""))
+	return artist, trackTitle, album
 }
 
 // fetchSoundCloudPriority — СТУПЕНЬ №1: ищет подсказки, треки, исполнителей и альбомы в SoundCloud
@@ -1762,92 +1744,86 @@ func fetchSoundCloudPriority(ctx context.Context, probes []string, rawQuery stri
 		mu.Unlock()
 	}
 
-processSCTrackList := func(scTracks []scTrackObject, probe string, via string) {
-var topSummary []string
-for i, tr := range scTracks {
-rawArtist, trackName, albumName := extractSCArtistTrackAlbum(tr)
-if rawArtist == "" && trackName == "" {
-continue
-}
+	processSCTrackList := func(scTracks []scTrackObject, probe string, via string) {
+		var topSummary []string
+		for i, tr := range scTracks {
+			artist, trackName, albumName := extractSCArtistTrackAlbum(tr)
+			if artist == "" && trackName == "" {
+				continue
+			}
+			if i < 4 {
+				if albumName != "" {
+					topSummary = append(topSummary, fmt.Sprintf("%s — %s [альбом: %s, ▶%d]", artist, trackName, albumName, tr.PlaybackCount))
+				} else {
+					topSummary = append(topSummary, fmt.Sprintf("%s — %s [▶%d]", artist, trackName, tr.PlaybackCount))
+				}
+			}
 
-for _, rel := range extractRelatedCollabArtists(rawArtist, trackName, albumName, probe) {
-addEntity(rel, 0.992, true, "связанная группа из трека SoundCloud")
-if strings.Contains(rel, "-") {
-addEntity(strings.ReplaceAll(rel, "-", " "), 0.991, true, "связанная группа (без дефиса) из SoundCloud")
-}
-}
+			// Бонус за популярность трека в SoundCloud (playback_count)
+			popBonus := math.Min(0.04, math.Log10(float64(tr.PlaybackCount+1))*0.006)
 
-artist := rawArtist
-for _, fSep := range []string{" feat.", " feat ", " ft.", " ft ", " при уч", " (feat", " [feat"} {
-if idx := strings.Index(strings.ToLower(artist), fSep); idx > 0 {
-artist = strings.TrimSpace(artist[:idx])
-}
-}
-if strings.Contains(artist, ",") {
-parts := strings.Split(artist, ",")
-picked := ""
-for _, pt := range parts {
-pt = strings.TrimSpace(pt)
-if matchWithinTwoLettersNoSymbols(pt, rawQuery) || matchWithinTwoLettersNoSymbols(pt, probe) {
-picked = pt
-break
-}
-}
-if picked == "" {
-picked = strings.TrimSpace(parts[0])
-}
-artist = picked
-}
+			artistMatches := matchWithinTwoLettersNoSymbols(artist, rawQuery) || matchWithinTwoLettersNoSymbols(artist, probe)
+			trackMatches := matchWithinTwoLettersNoSymbols(trackName, rawQuery) || matchWithinTwoLettersNoSymbols(trackName, probe)
+			albumMatches := albumName != "" && (matchWithinTwoLettersNoSymbols(albumName, rawQuery) || matchWithinTwoLettersNoSymbols(albumName, probe))
 
-if i < 4 {
-if albumName != "" {
-topSummary = append(topSummary, fmt.Sprintf("%s — %s [альбом: %s, ▶%d]", artist, trackName, albumName, tr.PlaybackCount))
-} else {
-topSummary = append(topSummary, fmt.Sprintf("%s — %s [▶%d]", artist, trackName, tr.PlaybackCount))
-}
-}
+			rankDecay := float64(i) * 0.003
+			// 1. Совпал сам исполнитель (или это топ-3 хит по кириллическому запросу)
+			if artistMatches || (i < 3 && hasCyrillic(probe) && !hasCyrillic(artist) && matchWithinTwoLettersNoSymbols(artist, probe)) {
+				addEntity(artist, 0.995+popBonus-rankDecay, true, fmt.Sprintf("артист из трека SoundCloud «%s»", trackName))
+				addTrack(artist, trackName, albumName, "primary_artist")
+				if albumName != "" && !strings.EqualFold(albumName, trackName) {
+					addEntity(artist+" "+albumName, 0.990+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» из метаданных трека SoundCloud", albumName))
+				}
+				if trackName != "" && !strings.EqualFold(artist, trackName) {
+					addEntity(artist+" "+trackName, 0.984+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» артиста «%s» в SoundCloud", trackName, artist))
+				}
+				mu.Lock()
+				if topSCQuery == "" {
+					topSCQuery = artist
+				}
+				mu.Unlock()
+			} else if trackMatches || albumMatches {
+				// 2. Пользователь искал песню или альбом, либо это одноимённый трек у другого исполнителя!
+				addEntity(artist+" "+trackName, 0.994+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» исполнителя «%s» в SoundCloud", trackName, artist))
+				addEntity(artist, 0.986+popBonus-rankDecay, true, fmt.Sprintf("исполнитель найденного трека «%s» в SoundCloud", trackName))
+				if albumName != "" {
+					addEntity(artist+" "+albumName, 0.990+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» для трека «%s» в SoundCloud", albumName, trackName))
+				}
+				addTrack(artist, trackName, albumName, "other_artist_song")
+				mu.Lock()
+				if topSCQuery == "" {
+					topSCQuery = artist + " " + trackName
+				}
+				mu.Unlock()
+			} else if i < 8 && (tr.PlaybackCount >= 1000 || i < 4) {
+				// 3. Топ-8 релевантных треков выдачи самого поиска SoundCloud (даёт артистов, их альбомы и треки для заполнения 10 слотов SoundCloud)
+				if artist != "" {
+					addEntity(artist, 0.978+popBonus-rankDecay, true, fmt.Sprintf("артист из топ-%d выдачи SoundCloud (▶%d)", i+1, tr.PlaybackCount))
+				}
+				if albumName != "" && artist != "" {
+					addEntity(artist+" "+albumName, 0.982+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» из топ-%d выдачи SoundCloud", albumName, i+1))
+				}
+				if artist != "" && trackName != "" {
+					addEntity(artist+" "+trackName, 0.975+popBonus-rankDecay, false, fmt.Sprintf("трек «%s — %s» из топ-%d выдачи SoundCloud", artist, trackName, i+1))
+					addTrack(artist, trackName, albumName, "primary_artist")
+				}
+				mu.Lock()
+				if topSCQuery == "" && artist != "" {
+					topSCQuery = artist
+				}
+				mu.Unlock()
+			}
 
-popBonus := math.Min(0.04, math.Log10(float64(tr.PlaybackCount+1))*0.006)
-artistMatches := matchWithinTwoLettersNoSymbols(artist, rawQuery) || matchWithinTwoLettersNoSymbols(artist, probe)
-trackMatches := matchWithinTwoLettersNoSymbols(trackName, rawQuery) || matchWithinTwoLettersNoSymbols(trackName, probe)
-albumMatches := albumName != "" && (matchWithinTwoLettersNoSymbols(albumName, rawQuery) || matchWithinTwoLettersNoSymbols(albumName, probe))
-
-rankDecay := float64(i) * 0.003
-if artistMatches || (i < 3 && hasCyrillic(probe) && !hasCyrillic(artist) && matchWithinTwoLettersNoSymbols(artist, probe)) {
-addEntity(artist, 0.995+popBonus-rankDecay, true, fmt.Sprintf("артист из трека SoundCloud «%s»", trackName))
-addTrack(artist, trackName, albumName, "primary_artist")
-if albumName != "" && !strings.EqualFold(albumName, trackName) {
-addEntity(artist+" "+albumName, 0.990+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» из метаданных трека SoundCloud", albumName))
-}
-if i < 3 && trackName != "" && !strings.EqualFold(artist, trackName) {
-addEntity(artist+" "+trackName, 0.984+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» артиста «%s» в SoundCloud", trackName, artist))
-}
-mu.Lock()
-if topSCQuery == "" {
-topSCQuery = artist
-}
-mu.Unlock()
-} else if trackMatches || albumMatches {
-if !hasCyrillic(rawQuery) || hasCyrillic(artist) || matchWithinTwoLettersNoSymbols(artist, rawQuery) {
-addEntity(artist+" "+trackName, 0.988+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» исполнителя «%s» в SoundCloud", trackName, artist))
-addEntity(artist, 0.982+popBonus-rankDecay, true, fmt.Sprintf("исполнитель найденного трека «%s» в SoundCloud", trackName))
-}
-if albumName != "" {
-addEntity(artist+" "+albumName, 0.986+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» для трека «%s» в SoundCloud", albumName, trackName))
-}
-addTrack(artist, trackName, albumName, "other_artist_song")
-mu.Lock()
-if topSCQuery == "" {
-topSCQuery = artist + " " + trackName
-}
-mu.Unlock()
-}
-}
-if len(topSummary) > 0 {
-logger.Simple("☁️ SoundCloud (%s) по запросу «%s» -> нашёл %d треков за %d мс: %v",
-via, probe, len(scTracks), time.Since(t0).Milliseconds(), topSummary)
-}
-}
+			// Вытаскиваем связанных коллаб-артистов из поля artist/title
+			for _, rel := range extractRelatedCollabArtists(artist, trackName, albumName, probe) {
+				addEntity(rel, 0.95, true, "коллаб-артист из трека SoundCloud")
+			}
+		}
+		if len(topSummary) > 0 {
+			logger.Simple("☁️ SoundCloud (%s) по запросу «%s» -> нашёл %d треков за %d мс: %v",
+				via, probe, len(scTracks), time.Since(t0).Milliseconds(), topSummary)
+		}
+	}
 
 	scProbes := probes
 	if len(scProbes) > 3 {
@@ -1885,7 +1861,7 @@ via, probe, len(scTracks), time.Since(t0).Milliseconds(), topSummary)
 						if sug == "" {
 							sug = strings.TrimSpace(item.Query)
 						}
-						if sug != "" && (matchWithinTwoLettersNoSymbols(sug, rawQuery) || matchStringsIR(strings.ReplaceAll(sug, " ", ""), rawQuery) || (idx == 0 && strings.EqualFold(p, rawQuery))) {
+						if sug != "" && (idx == 0 || matchWithinTwoLettersNoSymbols(sug, rawQuery)) {
 							addEntity(sug, 0.995-float64(idx)*0.005, false, "подсказка SoundCloud Autocomplete")
 							mu.Lock()
 							if topSCQuery == "" {
@@ -1961,7 +1937,7 @@ via, probe, len(scTracks), time.Since(t0).Milliseconds(), topSummary)
 	}
 
 	wg.Wait()
-	var cleanTracks []ResolvedTrackInfo; for _, tr := range tracks { if tr.Role != "catalog_candidate" { cleanTracks = append(cleanTracks, tr) } }; return entities, cleanTracks, topSCQuery
+	return entities, tracks, topSCQuery
 }
 
 // ============================================================================
@@ -2059,77 +2035,76 @@ func fetchMusicBrainzAliases(ctx context.Context, query string, logger *SearchLo
 	return out
 }
 
-var reCollabSplit = regexp.MustCompile(`(?i)(\s+&\s+|\s*,\s*|\s+x\s+|\s+и\s+|\s+/\s+|\s+\+\s+)`)
-
-func isDigitsOnly(s string) bool {
-if s == "" {
-return false
-}
-for _, r := range s {
-if !unicode.IsDigit(r) {
-return false
-}
-}
-return true
-}
-
 func extractRelatedCollabArtists(artistField, trackField, albumField, probe string) []string {
-pLow := strings.ToLower(strings.TrimSpace(probe))
-pTokens := tokenize(pLow)
-if len(pTokens) == 0 {
-return nil
-}
+	pLow := strings.ToLower(strings.TrimSpace(probe))
+	pTokens := tokenize(pLow)
+	if len(pTokens) == 0 {
+		return nil
+	}
 
-baseArtist := artistField
-for _, fSep := range []string{" feat.", " feat ", " ft.", " ft ", " при уч", " (feat", " [feat"} {
-if idx := strings.Index(strings.ToLower(baseArtist), fSep); idx > 0 {
-baseArtist = baseArtist[:idx]
-}
-}
+	fullText := strings.ToLower(artistField + " " + trackField + " " + albumField)
+	mentionsProbe := len([]rune(pLow)) >= 3 && strings.Contains(fullText, pLow)
 
-parts := reCollabSplit.Split(baseArtist, -1)
-var out []string
-for _, pt := range parts {
-pt = strings.TrimSpace(pt)
-if len([]rune(pt)) < 2 || len([]rune(pt)) > 25 {
-continue
-}
-if matchWithinTwoLettersNoSymbols(pt, probe) {
-continue
-}
-ptTokens := tokenize(strings.ToLower(pt))
-if len(ptTokens) == 0 {
-continue
-}
+	sepReplacer := strings.NewReplacer(
+		" feat. ", "|", " feat ", "|", " ft. ", "|", " ft ", "|",
+		" & ", "|", ", ", "|", " x ", "|", " X ", "|", " и ", "|", " / ", "|", " (", "|", ")", "|",
+	)
+	parts := strings.Split(sepReplacer.Replace(artistField), "|")
 
-matchedRootCount := 0
-allValidTokens := true
-for _, at := range ptTokens {
-if isDigitsOnly(at) {
-continue
-}
-isRoot := false
-if len([]rune(at)) >= 2 {
-for _, qt := range pTokens {
-if at == qt || (len(at) >= 2 && len(qt) >= 2 && phoneticSoftNorm(at) == phoneticSoftNorm(qt)) {
-isRoot = true
-break
-}
-}
-}
-if isRoot {
-matchedRootCount++
-} else {
-allValidTokens = false
-break
-}
-}
+	// Если в списке исполнителей трека ("Витя АК, АК-47" или "Кипелов, Ария") один из артистов совпал с запросом,
+	// обязательно вытаскиваем ВТОРОГО связанного артиста/группу ("АК-47", "Ария")!
+	anyMatchedProbe := false
+	for _, pt := range parts {
+		pt = strings.TrimSpace(pt)
+		if matchWithinTwoLettersNoSymbols(pt, probe) {
+			anyMatchedProbe = true
+			break
+		}
+	}
+	if anyMatchedProbe && len(parts) > 1 {
+		var partners []string
+		for _, pt := range parts {
+			pt = strings.TrimSpace(pt)
+			if len([]rune(pt)) >= 2 && len([]rune(pt)) <= 28 && !matchWithinTwoLettersNoSymbols(pt, probe) {
+				partners = append(partners, pt)
+			}
+		}
+		if len(partners) > 0 {
+			return partners
+		}
+	}
 
-if allValidTokens && matchedRootCount >= 1 {
-out = append(out, pt)
-}
-}
-return out
+	sharesRoot := false
+	for _, pt := range parts {
+		ptTokens := tokenize(strings.ToLower(pt))
+		for _, at := range ptTokens {
+			if len([]rune(at)) < 2 {
+				continue
+			}
+			for _, qt := range pTokens {
+				if at == qt {
+					sharesRoot = true
+					break
+				}
+			}
+		}
+	}
+
+	if !sharesRoot && !mentionsProbe {
+		return nil
+	}
+	if !sharesRoot && !hasCyrillic(probe) {
+		return nil
+	}
+
+	var out []string
+	for _, pt := range parts {
+		pt = strings.TrimSpace(pt)
+		if len([]rune(pt)) >= 2 && len([]rune(pt)) <= 25 {
+			out = append(out, pt)
+		}
+	}
+	return out
 }
 
 func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string, logger *SearchLogger) ([]catalogEntity, []ResolvedTrackInfo) {
@@ -2175,7 +2150,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 	}
 
 	evaluateCatalogHit := func(artistName, trackName, albumName, source, probeQuery string) {
-		albumName = cleanCatalogAlbumName(albumName); cleanTrack := strings.TrimSpace(reBracketMeta.ReplaceAllString(trackName, ""))
+		cleanTrack := strings.TrimSpace(reBracketMeta.ReplaceAllString(trackName, ""))
 		artistMatches := matchWithinTwoLettersNoSymbols(artistName, rawQuery) || matchWithinTwoLettersNoSymbols(artistName, probeQuery)
 		trackMatches := matchWithinTwoLettersNoSymbols(cleanTrack, rawQuery) || matchWithinTwoLettersNoSymbols(cleanTrack, probeQuery)
 
@@ -2204,7 +2179,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 					continue
 				}
 				for _, at := range aToks {
-					if pt == at || (len([]rune(pt)) >= 3 && len([]rune(at)) >= 3 && matchStringsIR(pt, at)) {
+					if matchStringsIR(pt, at) {
 						sharedTok = true
 						break
 					}
@@ -2214,7 +2189,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 				addEntity(artistName, 0.92, true, source, fmt.Sprintf("общий корневой токен с «%s»", probeQuery))
 				addTrack(artistName, trackName, albumName, "primary_artist", source)
 			} else {
-				if strings.EqualFold(probeQuery, rawQuery) { addTrack(artistName, trackName, albumName, "catalog_candidate", source) }
+				addTrack(artistName, trackName, albumName, "catalog_candidate", source)
 			}
 			logger.Trace("[%s] CANDIDATE result (sharedTok=%v): artist=%q track=%q album=%q", source, sharedTok, artistName, trackName, albumName)
 		}
@@ -2259,7 +2234,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 							topArtists = append(topArtists, fmt.Sprintf("%s — %s", r.ArtistName, r.TrackName))
 						}
 						for _, rel := range extractRelatedCollabArtists(r.ArtistName, r.TrackName, r.CollectionName, probe) {
-							addEntity(rel, 0.96, true, "iTunes", "связанный проект «"+rel+"»"); if strings.Contains(rel, "-") { addEntity(strings.ReplaceAll(rel, "-", " "), 0.955, true, "iTunes", "связанный проект «"+rel+"»") }
+							addEntity(rel, 0.91, false, "iTunes", "связанный проект «"+rel+"»")
 						}
 						if i < 2 && hasCyrillic(probe) && !hasCyrillic(r.ArtistName) && matchWithinTwoLettersNoSymbols(r.ArtistName, probe) {
 							addEntity(r.ArtistName, 0.93, true, "iTunes-"+c, "прямой перевод имени артиста каталогом iTunes")
@@ -2312,7 +2287,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 							topItems = append(topItems, fmt.Sprintf("%s — %s", d.Artist.Name, d.Title))
 						}
 						for _, rel := range extractRelatedCollabArtists(d.Artist.Name, d.Title, d.Album.Title, probe) {
-							addEntity(rel, 0.96, true, "Deezer", "связанный проект «"+rel+"»"); if strings.Contains(rel, "-") { addEntity(strings.ReplaceAll(rel, "-", " "), 0.955, true, "Deezer", "связанный проект «"+rel+"»") }
+							addEntity(rel, 0.91, false, "Deezer", "связанный проект «"+rel+"»")
 						}
 						if i < 2 && hasCyrillic(probe) && !hasCyrillic(d.Artist.Name) && matchWithinTwoLettersNoSymbols(d.Artist.Name, probe) {
 							addEntity(d.Artist.Name, 0.93, true, srcName, "прямой перевод имени артиста каталогом Deezer")
@@ -2345,7 +2320,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 		}
 	}
 	for k, cnt := range artistFreq {
-		if cnt >= 3 {
+		if cnt >= 2 {
 			disp := artistDisplay[k]
 			addEntity(disp, 0.95, true, "CatalogConsensus", fmt.Sprintf("консенсус каталогов (%d совпадений треков)", cnt))
 			logger.Simple("🧠 Алгоритм консенсуса каталогов: для «%s» выявлен связанный исполнитель «%s» (встретился в %d треках)", rawQuery, disp, cnt)
@@ -2458,15 +2433,21 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, cfg EngineConfig
 			}
 		}()
 		// Ступень 2Б: MusicBrainz Aliases
-		go func() {
-			defer wg.Done()
-			for _, p := range catalogProbes {
-				for _, a := range fetchMusicBrainzAliases(ctx, p, logger) {
-					addCand(a, 2, 0.975, true, "алиас артиста из MusicBrainz [Ступень 2]")
-				}
-			}
-		}()
-		// Ступень 3: iTunes + Deezer
+go func() {
+defer wg.Done()
+var mbWg sync.WaitGroup
+for _, p := range catalogProbes {
+mbWg.Add(1)
+go func(probeStr string) {
+defer mbWg.Done()
+for _, a := range fetchMusicBrainzAliases(ctx, probeStr, logger) {
+addCand(a, 2, 0.975, true, "алиас артиста из MusicBrainz [Ступень 2]")
+}
+}(p)
+}
+mbWg.Wait()
+}()
+// Ступень 3: iTunes + Deezer
 		go func() {
 			defer wg.Done()
 			ents, trks := fetchCatalogEntities(ctx, catalogProbes, probe, logger)
@@ -2893,7 +2874,7 @@ func searchApiBay(ctx context.Context, query string, logger *SearchLogger) []Tor
 
 func searchKnaben(ctx context.Context, query string, logger *SearchLogger) []TorrentResult {
 	t0 := time.Now()
-	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	payload := map[string]interface{}{
@@ -2975,7 +2956,7 @@ func searchKnaben(ctx context.Context, query string, logger *SearchLogger) []Tor
 // searchSolidTorrents опрашивает международный P2P-индексатор SolidTorrents (музыка, Lossless, дискографии)
 func searchSolidTorrents(ctx context.Context, query string, logger *SearchLogger) []TorrentResult {
 	t0 := time.Now()
-	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	u := "https://solidtorrents.to/search?q=" + url.QueryEscape(query) + "&sort=seeders"
@@ -3072,7 +3053,7 @@ func searchSolidTorrents(ctx context.Context, query string, logger *SearchLogger
 // searchTorAPIRuTracker опрашивает шлюз TorAPI (RuTracker и NoNameClub без VPN и регистрации)
 func searchTorAPIRuTracker(ctx context.Context, query string, logger *SearchLogger) []TorrentResult {
 	t0 := time.Now()
-	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	baseURL := "https://torapi.vercel.app"
@@ -3685,10 +3666,10 @@ func buildSmartCategoryGroups(ranked []TorrentResult, rawQuery, corrected string
 		}
 	}
 
-	if (len(groups) < 3 && len(catPrimaryArtist) > 1) || len(catPrimaryArtist) >= 4 {
+	if len(groups) < 3 && len(catPrimaryArtist) > 1 {
 		var discographies, losslessAlbums, mp3Releases []TorrentResult
 		for _, it := range catPrimaryArtist {
-			if isDiscographyOrCollection(it.Title) { discographies = append(discographies, it) } else if matchesFormatFilter(it.Title, "flac") || matchesFormatFilter(it.Title, "wav") {
+			if matchesFormatFilter(it.Title, "flac") || matchesFormatFilter(it.Title, "wav") {
 				losslessAlbums = append(losslessAlbums, it)
 			} else {
 				mp3Releases = append(mp3Releases, it)
@@ -3738,124 +3719,430 @@ func buildSmartCategoryGroups(ranked []TorrentResult, rawQuery, corrected string
 	return groups
 }
 
-func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig) SearchResponse {
-	start := time.Now()
-	if cfg.TimeoutMs < 25000 {
-		cfg.TimeoutMs = 25000
-	}
-	logger := newSearchLogger(rawQuery, cfg)
-	defer logger.Flush()
+// ============================================================================
+// 9.5 НЕБЛОКИРУЮЩИЙ РЕАКТИВНЫЙ ДВИЖОК (ОТДАЧА ПО ФАКТУ ПРИЛЁТА БЕЗ ТАЙМЕРОВ)
+// ============================================================================
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutMs)*time.Millisecond)
-	defer cancel()
+type liveSearchSession struct {
+mu              sync.Mutex
+cond            *sync.Cond
+updateCh        chan struct{}
+key             string
+rawQuery        string
+cfg             EngineConfig
+logger          *SearchLogger
+startTime       time.Time
+updatedAt       time.Time
+ctx             context.Context
+cancel          context.CancelFunc
 
-	catCtx, catCancel := context.WithTimeout(context.Background(), 5000*time.Millisecond)
-	terms, corrected, tracks := buildExpandedQueries(catCtx, rawQuery, cfg, logger)
-	catCancel()
+corrected       string
+terms           []string
+dispatchedTerms map[string]int
+termResults     map[int][]TorrentResult
+tracks          []ResolvedTrackInfo
+scrapedSeeds    map[string][2]int
+scrapedAsked    map[string]bool
 
-	groupResults := make([][]TorrentResult, len(terms))
-	var wg sync.WaitGroup
-	for i, term := range terms {
-		wg.Add(1)
-		go func(idx int, t string) {
-			defer wg.Done()
-			groupResults[idx] = searchSingleVariantAcrossIndexers(ctx, t, cfg, logger)
-		}(i, term)
-	}
-	wg.Wait()
-
-	mergedMap := make(map[string]TorrentResult)
-	variantBonus := make(map[string]float64)
-	bestPower := -1.0
-	bestVariantName := ""
-	for idx, grp := range groupResults {
-		if idx >= len(terms) {
-			continue
-		}
-		tName := terms[idx]
-		totalCnt, liveCnt, discoCnt := len(grp), 0, 0
-		for _, it := range grp {
-			if it.Seeds > 0 {
-				liveCnt++
-			}
-			if isDiscographyOrCollection(it.Title) {
-				discoCnt++
-			}
-		}
-		// Ступенчатый бонус для 20 слотов: 1-е место (SoundCloud) получает +24.0, далее плавно убывает по ступеням
-		stepPriorityBonus := float64(20-idx) * 1.2
-		if stepPriorityBonus < 0 {
-			stepPriorityBonus = 0
-		}
-		power := float64(totalCnt)*1.5 + float64(liveCnt)*3.0 + float64(discoCnt)*20.0 + stepPriorityBonus*2.0
-		bonus := math.Log1p(float64(liveCnt))*10.0 + float64(discoCnt)*8.0 + stepPriorityBonus
-		if bonus > 75.0 {
-			bonus = 75.0
-		}
-		variantBonus[tName] = bonus
-		if totalCnt > 0 {
-			logger.Simple("📊 Вариант #%d «%s»: найдено %d раздач (живых: %d, дискографий: %d) -> бонус приоритета +%.1f", idx+1, tName, totalCnt, liveCnt, discoCnt, bonus)
-		}
-		if power > bestPower && totalCnt > 0 && matchWithinTwoLettersNoSymbols(tName, rawQuery) {
-			bestPower = power
-			bestVariantName = tName
-		}
-	}
-	if bestVariantName != "" && bestVariantName != corrected {
-		logger.Simple("👑 Лидер по объёму находок: вариант «%s» обошёл «%s» и стал основным исполнителем!", bestVariantName, corrected)
-		corrected = bestVariantName
-	}
-	for _, grp := range groupResults {
-		for _, it := range grp {
-			it.FinalRank = variantBonus[it.MatchedVia]
-			if ex, ok := mergedMap[it.InfoHash]; !ok || it.Seeds > ex.Seeds || it.FinalRank > ex.FinalRank {
-				mergedMap[it.InfoHash] = it
-			}
-		}
-	}
-
-	var allItems []TorrentResult
-	for _, it := range mergedMap {
-		allItems = append(allItems, it)
-	}
-
-	if cfg.EnableUDP && len(allItems) > 0 {
-		scraped := udpScrapeBatch(allItems, logger)
-		for i := range allItems {
-			if sp, ok := scraped[allItems[i].InfoHash]; ok {
-				if sp[0] > allItems[i].Seeds {
-					allItems[i].Seeds = sp[0]
-				}
-				if sp[1] > allItems[i].Peers {
-					allItems[i].Peers = sp[1]
-				}
-			}
-		}
-	}
-
-	ranked, hiddenZero := rankAndFilter(allItems, rawQuery, corrected, terms, tracks, cfg, logger)
-	groups := buildSmartCategoryGroups(ranked, rawQuery, corrected, terms, tracks, logger)
-
-	elapsed := time.Since(start).Milliseconds()
-	logger.Simple("✅ Поиск завершён за %d мс: всего выдано %d раздач в %d категориях", elapsed, len(ranked), len(groups))
-
-	return SearchResponse{
-		Status:         "ok",
-		OriginalQuery:  rawQuery,
-		CorrectedQuery: corrected,
-		ResolvedTracks: tracks,
-		ExpandedTerms:  terms,
-		ElapsedMs:      elapsed,
-		TotalFound:     len(ranked),
-		HiddenZero:     hiddenZero,
-		Groups:         groups,
-		Results:        ranked,
-	}
+totalJobs       int
+completedJobs   int
+catalogRunning  bool
+inProgress      bool
+version         int
+latestSnap      SearchResponse
 }
 
-// ============================================================================
-// 10. УТИЛИТЫ И HTTP-СЕРВЕР (127.0.0.1:18998) С УПРАВЛЕНИЕМ ЛОГАМИ ИЗ PYTHON
-// ============================================================================
+var (
+sessionsMu   sync.Mutex
+liveSessions = make(map[string]*liveSearchSession)
+)
+
+func makeSessionKey(rawQuery string, cfg EngineConfig) string {
+return fmt.Sprintf("%s|%s|%v|%v|%.2f",
+strings.ToLower(strings.TrimSpace(rawQuery)),
+strings.ToLower(strings.TrimSpace(cfg.FormatTag)),
+cfg.HideZeroSeeds,
+cfg.MinTwoSeeds,
+cfg.MinFuzzyScore,
+)
+}
+
+func (sess *liveSearchSession) notifyUpdate() {
+select {
+case sess.updateCh <- struct{}{}:
+default:
+}
+}
+
+func (sess *liveSearchSession) snapshotWorker() {
+for range sess.updateCh {
+// Коалесценция пачки ответов, прилетевших в одно и то же мгновение (25 мс)
+time.Sleep(25 * time.Millisecond)
+select {
+case <-sess.updateCh:
+default:
+}
+
+// Копируем данные под коротким локом (< 0.05 мс), чтобы /search никогда не блокировался
+sess.mu.Lock()
+terms := append([]string(nil), sess.terms...)
+corrected := sess.corrected
+if corrected == "" {
+corrected = sess.rawQuery
+}
+termResultsCopy := make([][]TorrentResult, len(terms))
+for idx := range terms {
+src := sess.termResults[idx]
+cp := make([]TorrentResult, len(src))
+copy(cp, src)
+termResultsCopy[idx] = cp
+}
+seedsCopy := make(map[string][2]int, len(sess.scrapedSeeds))
+for k, v := range sess.scrapedSeeds {
+seedsCopy[k] = v
+}
+// Для быстрого ранжирования берем только значимые треки (без сотен черновых catalog_candidate)
+var relevantTracks []ResolvedTrackInfo
+seenAlbumKey := make(map[string]bool)
+for _, tr := range sess.tracks {
+if tr.Role == "catalog_candidate" {
+continue
+}
+ak := strings.ToLower(tr.Artist + "|" + tr.Album + "|" + tr.Role)
+if !seenAlbumKey[ak] && len(relevantTracks) < 25 {
+seenAlbumKey[ak] = true
+relevantTracks = append(relevantTracks, tr)
+}
+}
+compJobs := sess.completedJobs
+totJobs := sess.totalJobs
+catRun := sess.catalogRunning
+sess.mu.Unlock()
+
+// Тяжелая математика ранжирования выполняется СВОБОДНО БЕЗ МЬЮТЕКСА
+mergedMap := make(map[string]TorrentResult)
+variantBonus := make(map[string]float64)
+bestPower := -1.0
+bestVariantName := ""
+
+for idx, tName := range terms {
+grp := termResultsCopy[idx]
+totalCnt, liveCnt, discoCnt := len(grp), 0, 0
+for _, it := range grp {
+seeds := it.Seeds
+if sp, ok := seedsCopy[it.InfoHash]; ok && sp[0] > seeds {
+seeds = sp[0]
+}
+if seeds > 0 {
+liveCnt++
+}
+if isDiscographyOrCollection(it.Title) {
+discoCnt++
+}
+}
+stepPriorityBonus := float64(20-idx) * 1.2
+if stepPriorityBonus < 0 {
+stepPriorityBonus = 0
+}
+power := float64(totalCnt)*1.5 + float64(liveCnt)*3.0 + float64(discoCnt)*20.0 + stepPriorityBonus*2.0
+bonus := math.Log1p(float64(liveCnt))*10.0 + float64(discoCnt)*8.0 + stepPriorityBonus
+if bonus > 75.0 {
+bonus = 75.0
+}
+variantBonus[tName] = bonus
+if power > bestPower && totalCnt > 0 && matchWithinTwoLettersNoSymbols(tName, sess.rawQuery) {
+bestPower = power
+bestVariantName = tName
+}
+}
+if bestVariantName != "" && bestVariantName != corrected {
+corrected = bestVariantName
+}
+
+for idx := range terms {
+for _, it := range termResultsCopy[idx] {
+if sp, ok := seedsCopy[it.InfoHash]; ok {
+if sp[0] > it.Seeds {
+it.Seeds = sp[0]
+}
+if sp[1] > it.Peers {
+it.Peers = sp[1]
+}
+}
+it.FinalRank = variantBonus[it.MatchedVia]
+if ex, ok := mergedMap[it.InfoHash]; !ok || it.Seeds > ex.Seeds || it.FinalRank > ex.FinalRank {
+mergedMap[it.InfoHash] = it
+}
+}
+}
+
+var allItems []TorrentResult
+for _, it := range mergedMap {
+allItems = append(allItems, it)
+}
+
+ranked, hiddenZero := rankAndFilter(allItems, sess.rawQuery, corrected, terms, relevantTracks, sess.cfg, sess.logger)
+groups := buildSmartCategoryGroups(ranked, sess.rawQuery, corrected, terms, relevantTracks, sess.logger)
+
+// Мгновенно записываем готовый снимок под локом (< 0.01 мс)
+sess.mu.Lock()
+if bestVariantName != "" {
+sess.corrected = bestVariantName
+}
+sess.version++
+sess.updatedAt = time.Now()
+sess.inProgress = sess.catalogRunning || (sess.completedJobs < sess.totalJobs)
+sess.latestSnap = SearchResponse{
+Status:          "ok",
+InProgress:      sess.inProgress,
+SnapshotVersion: sess.version,
+CompletedJobs:   sess.completedJobs,
+TotalJobs:       sess.totalJobs,
+OriginalQuery:   sess.rawQuery,
+CorrectedQuery:  corrected,
+ResolvedTracks:  relevantTracks,
+ExpandedTerms:   terms,
+ElapsedMs:       time.Since(sess.startTime).Milliseconds(),
+TotalFound:      len(ranked),
+HiddenZero:      hiddenZero,
+Groups:          groups,
+Results:         ranked,
+}
+doneNow := !sess.inProgress && !catRun && compJobs >= totJobs
+sess.cond.Broadcast()
+sess.mu.Unlock()
+
+if doneNow {
+sess.logger.Simple("🏁 Все индексаторы завершили работу за %d мс (итого раздач: %d)",
+time.Since(sess.startTime).Milliseconds(), len(ranked))
+sess.logger.Flush()
+}
+}
+}
+
+func (sess *liveSearchSession) triggerAsyncUDPScrapeLocked(items []TorrentResult) {
+if !sess.cfg.EnableUDP {
+return
+}
+var newHashes [][]byte
+for _, r := range items {
+h := strings.ToLower(r.InfoHash)
+if len(h) == 40 && !sess.scrapedAsked[h] {
+if b, err := hex.DecodeString(h); err == nil && len(b) == 20 {
+sess.scrapedAsked[h] = true
+newHashes = append(newHashes, b)
+}
+}
+}
+if len(newHashes) == 0 {
+return
+}
+for _, tr := range udpTrackers {
+sess.totalJobs++
+go func(trackerAddr string, hashes [][]byte) {
+res := udpScrapeSingleTracker(trackerAddr, hashes, sess.logger)
+sess.mu.Lock()
+sess.completedJobs++
+changed := false
+for h, sp := range res {
+cur := sess.scrapedSeeds[h]
+if sp[0] > cur[0] || sp[1] > cur[1] {
+if sp[0] > cur[0] {
+cur[0] = sp[0]
+}
+if sp[1] > cur[1] {
+cur[1] = sp[1]
+}
+sess.scrapedSeeds[h] = cur
+changed = true
+}
+}
+sess.inProgress = sess.catalogRunning || (sess.completedJobs < sess.totalJobs)
+done := !sess.inProgress
+sess.mu.Unlock()
+if changed || done {
+sess.notifyUpdate()
+}
+}(tr, newHashes)
+}
+}
+
+func (sess *liveSearchSession) dispatchVariantLocked(variant string) {
+vClean := strings.Join(strings.Fields(strings.TrimSpace(variant)), " ")
+if vClean == "" {
+return
+}
+vKey := strings.ToLower(vClean)
+if _, exists := sess.dispatchedTerms[vKey]; exists {
+return
+}
+if len(sess.terms) >= 20 {
+return
+}
+slotIdx := len(sess.terms)
+sess.terms = append(sess.terms, vClean)
+sess.dispatchedTerms[vKey] = slotIdx
+
+var jobs []searchJob
+jobs = append(jobs,
+searchJob{name: "Rutor", fn: searchRutorDoH, arg: vClean},
+searchJob{name: "Knaben", fn: searchKnaben, arg: vClean},
+searchJob{name: "RuTracker(TorAPI)", fn: searchTorAPIRuTracker, arg: vClean},
+searchJob{name: "SolidTorrents", fn: searchSolidTorrents, arg: vClean},
+searchJob{name: "BitSearch", fn: searchBitsearch, arg: vClean},
+searchJob{name: "ApiBay", fn: searchApiBay, arg: vClean},
+searchJob{name: "Seeker(Soulseek)", fn: searchSoulseekSeeker, arg: vClean},
+)
+if strings.Contains(vClean, "/") {
+cleanSlash := strings.Join(strings.Fields(strings.ReplaceAll(vClean, "/", " ")), " ")
+jobs = append(jobs,
+searchJob{name: "Rutor", fn: searchRutorDoH, arg: cleanSlash},
+searchJob{name: "BitSearch", fn: searchBitsearch, arg: cleanSlash},
+searchJob{name: "Knaben", fn: searchKnaben, arg: cleanSlash},
+)
+}
+
+sess.totalJobs += len(jobs)
+for _, job := range jobs {
+go func(j searchJob, idx int, matchedTerm string) {
+items := j.fn(sess.ctx, j.arg, sess.logger)
+sess.mu.Lock()
+sess.completedJobs++
+if len(items) > 0 {
+top := items[0]
+sess.logger.Simple("⚡ [Поток] Индексатор [%s] по «%s» прислал %d раздач (топ: «%s», ▲%d)",
+j.name, j.arg, len(items), top.Title, top.Seeds)
+existing := sess.termResults[idx]
+byHash := make(map[string]int, len(existing))
+for i, ex := range existing {
+byHash[strings.ToLower(ex.InfoHash)] = i
+}
+for _, it := range items {
+it.MatchedVia = matchedTerm
+h := strings.ToLower(it.InfoHash)
+if pos, ok := byHash[h]; ok {
+if it.Seeds > existing[pos].Seeds {
+existing[pos] = it
+}
+} else {
+byHash[h] = len(existing)
+existing = append(existing, it)
+}
+}
+sess.termResults[idx] = existing
+sess.triggerAsyncUDPScrapeLocked(items)
+}
+sess.inProgress = sess.catalogRunning || (sess.completedJobs < sess.totalJobs)
+done := !sess.inProgress
+sess.mu.Unlock()
+if len(items) > 0 || done {
+sess.notifyUpdate()
+}
+}(job, slotIdx, vClean)
+}
+}
+
+func startOrGetLiveSession(rawQuery string, cfg EngineConfig, forceNew bool) *liveSearchSession {
+key := makeSessionKey(rawQuery, cfg)
+sessionsMu.Lock()
+if !forceNew {
+if ex, ok := liveSessions[key]; ok {
+ex.mu.Lock()
+age := time.Since(ex.startTime)
+stillValid := ex.inProgress || age < 3*time.Minute
+ex.mu.Unlock()
+if stillValid {
+sessionsMu.Unlock()
+return ex
+}
+}
+}
+
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+logger := newSearchLogger(rawQuery, cfg)
+sess := &liveSearchSession{
+updateCh:        make(chan struct{}, 1),
+key:             key,
+rawQuery:        rawQuery,
+cfg:             cfg,
+logger:          logger,
+startTime:       time.Now(),
+updatedAt:       time.Now(),
+ctx:             ctx,
+cancel:          cancel,
+corrected:       rawQuery,
+dispatchedTerms: make(map[string]int),
+termResults:     make(map[int][]TorrentResult),
+scrapedSeeds:    make(map[string][2]int),
+scrapedAsked:    make(map[string]bool),
+catalogRunning:  true,
+inProgress:      true,
+latestSnap: SearchResponse{
+Status:        "ok",
+InProgress:    true,
+OriginalQuery: rawQuery,
+},
+}
+sess.cond = sync.NewCond(&sess.mu)
+liveSessions[key] = sess
+sessionsMu.Unlock()
+
+go sess.snapshotWorker()
+
+// ВОЛНА 0 (0 мс): Мгновенный старт по исходному запросу и быстрым фонетическим вариантам
+sess.mu.Lock()
+qClean := strings.Join(strings.Fields(strings.TrimSpace(rawQuery)), " ")
+sess.dispatchVariantLocked(qClean)
+if !hasVowels(qClean) && len([]rune(qClean)) >= 2 {
+if hasCyrillic(qClean) {
+sess.dispatchVariantLocked(kbdRuToEn.Replace(qClean))
+} else {
+sess.dispatchVariantLocked(kbdEnToRu.Replace(qClean))
+}
+}
+if cfg.EnablePhonetic {
+fastAnglo := ruAngloPhoneticVariants(qClean, nil)
+for i := 0; i < len(fastAnglo) && i < 2; i++ {
+sess.dispatchVariantLocked(fastAnglo[i])
+}
+}
+sess.mu.Unlock()
+sess.notifyUpdate()
+
+// ВОЛНА 1..N: Фоновое подключение SoundCloud и каталогов по мере готовности
+go func() {
+catCtx, catCancel := context.WithTimeout(sess.ctx, 3500*time.Millisecond)
+terms, corrected, tracks := buildExpandedQueries(catCtx, rawQuery, cfg, logger)
+catCancel()
+
+sess.mu.Lock()
+if corrected != "" {
+sess.corrected = corrected
+}
+sess.tracks = tracks
+for _, t := range terms {
+sess.dispatchVariantLocked(t)
+}
+sess.catalogRunning = false
+sess.inProgress = sess.completedJobs < sess.totalJobs
+sess.mu.Unlock()
+sess.notifyUpdate()
+}()
+
+return sess
+}
+
+func executeOmniSearchWithConfig(rawQuery string, cfg EngineConfig) SearchResponse {
+sess := startOrGetLiveSession(rawQuery, cfg, false)
+sess.mu.Lock()
+defer sess.mu.Unlock()
+
+// Ждем только самую первую находку, а при повторных опросах отдаем свежий снимок за 0 мс!
+for sess.latestSnap.TotalFound == 0 && sess.inProgress {
+sess.cond.Wait()
+}
+return sess.latestSnap
+}
 
 func cleanTitle(s string) string {
 	s = reHTMLTags.ReplaceAllString(s, "")
@@ -3954,11 +4241,60 @@ func applyQueryOverrides(q url.Values, cfg *EngineConfig) {
 }
 
 func StartOmniHTTPServer(addr string) error {
-	mux := http.NewServeMux()
+go func() {
+_ = resolveRutorIP(nil)
+configMu.RLock()
+cfg := defaultConfig
+configMu.RUnlock()
+_ = resolveSoundCloudClientID(context.Background(), cfg, nil)
+}()
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+mux := http.NewServeMux()
+
+mux.HandleFunc("/search/stream", func(w http.ResponseWriter, r *http.Request) {
+w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+w.Header().Set("Cache-Control", "no-cache")
+w.Header().Set("Connection", "keep-alive")
+w.Header().Set("Access-Control-Allow-Origin", "*")
+flusher, ok := w.(http.Flusher)
+if !ok {
+http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+return
+}
+configMu.RLock()
+cfg := defaultConfig
+configMu.RUnlock()
+q := strings.TrimSpace(r.URL.Query().Get("q"))
+applyQueryOverrides(r.URL.Query(), &cfg)
+forceNew := parseBoolParam(r.URL.Query().Get("force_new"), false)
+
+sess := startOrGetLiveSession(q, cfg, forceNew)
+lastVer := -1
+for {
+sess.mu.Lock()
+for sess.version == lastVer && sess.inProgress {
+sess.cond.Wait()
+}
+snap := sess.latestSnap
+lastVer = sess.version
+stillRunning := sess.inProgress
+sess.mu.Unlock()
+
+b, _ := json.Marshal(snap)
+_, err := fmt.Fprintf(w, "data: %s\n\n", string(b))
+if err != nil {
+return
+}
+flusher.Flush()
+if !stillRunning {
+return
+}
+}
+})
+
+mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","version":"3.5-ir"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","version":"3.2-ir"}`))
 	})
 
 	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
