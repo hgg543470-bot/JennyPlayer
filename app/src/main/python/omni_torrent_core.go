@@ -1665,7 +1665,7 @@ addTrack(artist, trackName, albumName, "primary_artist")
 if albumName != "" && !strings.EqualFold(albumName, trackName) {
 addEntity(artist+" "+albumName, 0.990+popBonus-rankDecay, false, fmt.Sprintf("альбом «%s» из метаданных трека SoundCloud", albumName))
 }
-if trackName != "" && !strings.EqualFold(artist, trackName) {
+if i < 3 && trackName != "" && !strings.EqualFold(artist, trackName) {
 addEntity(artist+" "+trackName, 0.984+popBonus-rankDecay, false, fmt.Sprintf("трек «%s» артиста «%s» в SoundCloud", trackName, artist))
 }
 mu.Lock()
@@ -1905,6 +1905,20 @@ func fetchMusicBrainzAliases(ctx context.Context, query string, logger *SearchLo
 	return out
 }
 
+var reCollabSplit = regexp.MustCompile(`(?i)(\s+&\s+|\s*,\s*|\s+x\s+|\s+и\s+|\s+/\s+|\s+\+\s+)`)
+
+func isDigitsOnly(s string) bool {
+if s == "" {
+return false
+}
+for _, r := range s {
+if !unicode.IsDigit(r) {
+return false
+}
+}
+return true
+}
+
 func extractRelatedCollabArtists(artistField, trackField, albumField, probe string) []string {
 pLow := strings.ToLower(strings.TrimSpace(probe))
 pTokens := tokenize(pLow)
@@ -1919,9 +1933,7 @@ baseArtist = baseArtist[:idx]
 }
 }
 
-sepReplacer := strings.NewReplacer(" & ", "|", ", ", "|", " x ", "|", " X ", "|", " и ", "|")
-parts := strings.Split(sepReplacer.Replace(baseArtist), "|")
-
+parts := reCollabSplit.Split(baseArtist, -1)
 var out []string
 for _, pt := range parts {
 pt = strings.TrimSpace(pt)
@@ -1932,19 +1944,34 @@ if matchWithinTwoLettersNoSymbols(pt, probe) {
 continue
 }
 ptTokens := tokenize(strings.ToLower(pt))
-sharesRoot := false
-for _, at := range ptTokens {
-if len([]rune(at)) < 2 {
+if len(ptTokens) == 0 {
 continue
 }
+
+matchedRootCount := 0
+allValidTokens := true
+for _, at := range ptTokens {
+if isDigitsOnly(at) {
+continue
+}
+isRoot := false
+if len([]rune(at)) >= 2 {
 for _, qt := range pTokens {
 if at == qt || (len(at) >= 2 && len(qt) >= 2 && phoneticSoftNorm(at) == phoneticSoftNorm(qt)) {
-sharesRoot = true
+isRoot = true
 break
 }
 }
 }
-if sharesRoot {
+if isRoot {
+matchedRootCount++
+} else {
+allValidTokens = false
+break
+}
+}
+
+if allValidTokens && matchedRootCount >= 1 {
 out = append(out, pt)
 }
 }
@@ -2275,7 +2302,7 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, cfg EngineConfig
 	var otherItems []candInfo
 	for _, item := range list {
 		if item.tier == 1 {
-			scItems = append(scItems, item)
+			scItems = append(scItems, item); if strings.Contains(item.reason, "связанная группа") { otherItems = append([]candInfo{item}, otherItems...) }
 		} else {
 			otherItems = append(otherItems, item)
 		}
