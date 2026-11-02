@@ -1,4 +1,4 @@
-// OmniTorrent Core v3.3-ir (20-Slot Stepped Query Expansion: 10 SoundCloud Slots + 10 Stepped Algorithm Slots)
+// OmniTorrent Core v3.5-ir (100% Pure Algorithmic Phonetic/Diphthong Engine + Catalog Consensus Discovery + 20 Slots + 7 P2P Indexers)
 // Compile in Termux:
 //   CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -buildmode=exe -ldflags="-s -w" -o libomnitorrent.so omni_torrent_core.go
 
@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -92,9 +93,15 @@ type EngineConfig struct {
 	MinTwoSeeds    bool    `json:"min_two_seeds"`
 	MinFuzzyScore  float64 `json:"min_fuzzy_score"`
 
-	// Настройки SoundCloud (приоритет №1)
+	// Настройки SoundCloud (приоритет №1) и кастомных P2P-сетей (Seeker/Soulseek, TorAPI RuTracker, SolidTorrents)
 	EnableSoundCloud   bool   `json:"enable_soundcloud"`
 	SoundCloudClientID string `json:"soundcloud_client_id,omitempty"`
+	EnableSeekerP2P    bool   `json:"enable_seeker_p2p"`
+	SlskdURL           string `json:"slskd_url,omitempty"`
+	SlskdAPIKey        string `json:"slskd_api_key,omitempty"`
+	SlskUsername       string `json:"slsk_user,omitempty"`
+	SlskPassword       string `json:"slsk_pass,omitempty"`
+	TorAPIURL          string `json:"torapi_url,omitempty"`
 
 	// Настройки двойного логирования (управляются из Python через GET/POST, /config, CLI или ENV)
 	DisableLogs     bool   `json:"disable_logs"`
@@ -278,6 +285,7 @@ var (
 		EnableCatalog:    true,
 		EnableUDP:        true,
 		EnableSoundCloud: true,
+		EnableSeekerP2P:  true,
 		FormatTag:        "all",
 		Year:             "",
 		ExactMatch:       false,
@@ -455,7 +463,56 @@ var (
 		"пак":    {"pac"},
 	}
 
+	// Чистые языковые числительные и служебные сокращения (без хардкода имён артистов или песен)
+	spokenWordEquiv = map[string]string{
+		"доктор": "dr", "doctor": "dr", "др": "dr", "эмси": "mc", "мс": "mc", "ms": "mc",
+		"фифти": "50", "fifty": "50",
+		"туенти": "twenty", "твенти": "twenty",
+		"уан": "one", "ван": "one",
+		"энд": "and", "эн": "and", "n": "and",
+	}
+
+	// Единая таблица одиночных букв алфавита (для склейки аббревиатур вида "эй си ди си" <-> "AC/DC", "ди эм икс" <-> "DMX", "D.R.E." <-> "дре")
+	alphabetLetterMap = map[string]string{
+		"эй": "a", "ей": "a", "a": "a",
+		"би": "b", "b": "b",
+		"си": "c", "c": "c",
+		"ди": "d", "d": "d",
+		"и": "e", "e": "e",
+		"эф": "f", "f": "f",
+		"джи": "g", "g": "g",
+		"эйч": "h", "h": "h",
+		"ай": "i", "i": "i",
+		"джей": "j", "джэй": "j", "jay": "j", "j": "j",
+		"кей": "k", "кэй": "k", "k": "k",
+		"эл": "l", "l": "l",
+		"эм": "m", "m": "m",
+		"эн": "n", "n": "n",
+		"оу": "o", "o": "o",
+		"пи": "p", "p": "p",
+		"кью": "q", "q": "q",
+		"ар": "r", "r": "r",
+		"эс": "s", "s": "s",
+		"ти": "t", "t": "t",
+		"ю": "u", "u": "u",
+		"ви": "v", "v": "v",
+		"даблю": "w", "дабл-ю": "w", "w": "w",
+		"экс": "x", "икс": "x", "x": "x",
+		"вай": "y", "уай": "y", "y": "y",
+		"зет": "z", "зэт": "z", "зи": "z", "зе": "z", "z": "z",
+	}
+
 	knownPhoneticPhrases = map[string][]string{}
+
+	// Обратная таблица транслитерации Латиница -> Кириллица (когда русского артиста/песню пишут латиницей: "vitya ak", "korol i shut")
+	enToRuReplacer = strings.NewReplacer(
+		"shch", "щ", "sch", "щ", "sht", "шт", "zh", "ж", "kh", "х", "ts", "ц", "tz", "ц", "tch", "ч", "ch", "ч", "sh", "ш",
+		"yu", "ю", "ya", "я", "yo", "ё", "ye", "е", "yi", "й", "iy", "ий", "yy", "ый", "oy", "ой", "ay", "ай", "ey", "ей",
+		"oo", "у", "ee", "и", "ea", "и", "ck", "к", "ph", "ф", "th", "т", "qu", "кв",
+		"a", "а", "b", "б", "v", "в", "w", "в", "g", "г", "d", "д", "e", "е", "z", "з", "i", "и", "j", "дж",
+		"k", "к", "c", "к", "q", "к", "l", "л", "m", "м", "n", "н", "o", "о", "p", "п", "r", "р", "s", "с",
+		"t", "т", "u", "у", "f", "ф", "h", "х", "x", "кс", "y", "ы",
+	)
 )
 
 func init() {
@@ -559,7 +616,7 @@ func compactRawLetters(s string) string {
 func stripLeadingArticle(s string) string {
 	s = strings.TrimSpace(s)
 	lower := strings.ToLower(s)
-	for _, art := range []string{"the ", "die ", "der ", "das ", "группа "} {
+	for _, art := range []string{"the ", "die ", "der ", "das "} {
 		if strings.HasPrefix(lower, art) && len(s) > len(art) {
 			return strings.TrimSpace(s[len(art):])
 		}
@@ -568,11 +625,16 @@ func stripLeadingArticle(s string) string {
 }
 
 func phoneticSkeleton(s string) string {
-	s = stripLeadingArticle(strings.ToLower(s))
-	s = normReplacer.Replace(s)
+	s = stripLeadingArticle(strings.ToLower(normReplacer.Replace(s)))
 	s = strings.ReplaceAll(s, "ё", "е")
-	s = ruToEnStd.Replace(s)
-	s = strings.ToLower(phoneticReplacer.Replace(s))
+	if strings.HasPrefix(s, "kn") && len(s) > 2 {
+		s = "n" + s[2:]
+	} else if strings.HasPrefix(s, "wr") && len(s) > 2 {
+		s = "r" + s[2:]
+	}
+	s = ruPreSoftReplacer.Replace(s)
+	s = ruToLatCleanReplacer.Replace(s)
+	s = skelSinglePassReplacer.Replace(s)
 	var out []rune
 	var last rune
 	for _, r := range s {
@@ -728,42 +790,112 @@ var singleConsonantEn = map[rune]string{
 	'м': "m", 'н': "n", 'п': "p", 'р': "r", 'с': "s", 'т': "t", 'ф': "f",
 }
 
-var softNormReplacer = strings.NewReplacer(
-	"эмси", "ms", "мс", "ms", "mc", "ms", "уай", "vi", "уэй", "va", "уор", "vur", "уэ", "ve", "уо", "vo", "уи", "vi", "уа", "va",
-	"шн", "sn", "шен", "sn", "шин", "sn", "жн", "sn", "жен", "sn", "чер", "cr", "чур", "cr",
-	"tion", "sn", "sion", "sn", "ture", "cr",
-	"айт", "it", "igh", "i", "ght", "t",
-	"ай", "i", "ей", "a", "эй", "a", "оу", "o", "ау", "u", "ой", "oi", "ью", "u", "ю", "u",
-	"ёр", "ur", "ер", "ur", "ir", "ur", "er", "ur",
-	"шт", "st", "шп", "sp", "дж", "j", "dge", "j", "dzh", "j",
-	"shch", "s", "sch", "s", "sh", "s", "tch", "c", "ch", "c", "ts", "c", "zh", "s",
-	"ce", "s", "ci", "s", "cy", "s", "ck", "k", "qu", "kv", "ph", "f", "th", "t", "wh", "v", "kn", "n", "wr", "r",
-	"ai", "i", "ei", "i", "ay", "a", "ey", "a", "ea", "i", "ee", "i", "oa", "o", "ow", "o", "ou", "u", "oo", "u", "ew", "u", "ue", "u",
-	"w", "v", "c", "k", "q", "k", "x", "ks", "z", "s",
+var ruPreSoftReplacer = strings.NewReplacer(
+	"уай", "wi", "уэй", "wa", "уор", "wor", "уэ", "we", "уо", "wo", "уи", "wi", "уа", "wa",
+	"шн", "shn", "шен", "shn", "шин", "shn", "жн", "shn", "жен", "shn", "чер", "chr", "чур", "chr",
+	"айт", "it", "ай", "i", "ей", "i", "эй", "i", "оу", "o", "ау", "o", "ой", "oi", "ью", "u", "ю", "u",
+	"ёр", "ur", "ер", "ur", "шт", "st", "шп", "sp", "дж", "j",
 )
+
+var ruToLatCleanReplacer = strings.NewReplacer(
+	"щ", "shch", "ш", "sh", "ч", "ch", "ц", "ts", "ж", "zh", "х", "h", "ё", "e", "ю", "yu", "я", "ya",
+	"а", "a", "б", "b", "в", "v", "г", "g", "д", "d", "е", "e", "з", "z", "и", "i", "й", "y", "к", "k",
+	"л", "l", "м", "m", "н", "n", "о", "o", "п", "p", "р", "r", "с", "s", "т", "t", "у", "u", "ф", "f",
+	"ъ", "", "ы", "y", "ь", "", "э", "e",
+)
+
+var skelSinglePassReplacer = strings.NewReplacer(
+	"shch", "s", "sch", "s", "sht", "st", "shp", "sp", "sh", "s", "zh", "s",
+	"tch", "c", "ch", "c", "ts", "s", "tz", "s",
+	"dge", "j", "dzh", "j", "dj", "j", "ggy", "g", "gy", "j", "ge", "j", "gi", "j",
+	"tion", "sn", "sion", "sn", "ture", "cr",
+	"ght", "t", "wh", "f", "th", "t", "ph", "f", "kh", "",
+	"ce", "s", "ci", "s", "cy", "s", "ck", "k", "qu", "kf",
+	"c", "k", "q", "k", "g", "k", "x", "ks",
+	"w", "f", "v", "f", "b", "p", "d", "t", "z", "s",
+	"a", "", "e", "", "i", "", "o", "", "u", "", "y", "", "h", "",
+)
+
+var latSoftSinglePassReplacer = strings.NewReplacer(
+	"tion", "sn", "sion", "sn", "ture", "cr",
+	"ight", "it", "igh", "i", "ght", "t",
+	"dge", "j", "dzh", "j", "dj", "j", "gy", "j",
+	"shch", "s", "sch", "s", "sht", "st", "shp", "sp", "sh", "s", "zh", "s",
+	"tch", "c", "ch", "c", "ts", "s", "tz", "s",
+	"ce", "s", "ci", "s", "cy", "s",
+	"ck", "k", "qu", "kv", "ph", "f", "th", "s", "wh", "v", "kh", "h", "rh", "r", "john", "jon",
+	"ai", "i", "ei", "i", "ay", "i", "ey", "i", "ea", "i", "ee", "i", "ie", "i",
+	"oa", "o", "ow", "o", "ou", "o", "oo", "u", "ew", "u", "ue", "u", "yu", "u", "ya", "a",
+	"ir", "ur", "er", "ur", "or", "ur",
+	"w", "v", "c", "k", "q", "k", "x", "ks", "z", "s", "y", "i",
+	"e", "i", "u", "a", "o", "a",
+)
+
+func phoneticSoftWord(w string) string {
+	w = strings.ToLower(strings.TrimSpace(w))
+	w = strings.ReplaceAll(w, "ё", "е")
+	if eq, ok := spokenWordEquiv[w]; ok {
+		w = eq
+	}
+	if strings.HasPrefix(w, "kn") && len(w) > 2 {
+		w = "n" + w[2:]
+	} else if strings.HasPrefix(w, "wr") && len(w) > 2 {
+		w = "r" + w[2:]
+	}
+	w = ruPreSoftReplacer.Replace(w)
+	w = ruToLatCleanReplacer.Replace(w)
+	if len(w) > 2 && strings.HasSuffix(w, "e") {
+		w = w[:len(w)-1]
+	}
+	w = latSoftSinglePassReplacer.Replace(w)
+	var dedup []rune
+	var last rune
+	for _, r := range w {
+		if (unicode.IsLetter(r) || unicode.IsDigit(r)) && r != last {
+			dedup = append(dedup, r)
+			last = r
+		}
+	}
+	return string(dedup)
+}
+
+func normalizeSpelledTokens(tokens []string) []string {
+	var out []string
+	i := 0
+	for i < len(tokens) {
+		t := tokens[i]
+		if eq, ok := spokenWordEquiv[t]; ok {
+			t = eq
+		}
+		if _, isLet := alphabetLetterMap[t]; isLet {
+			var run []string
+			j := i
+			for j < len(tokens) {
+				if l, ok := alphabetLetterMap[tokens[j]]; ok {
+					run = append(run, l)
+					j++
+				} else {
+					break
+				}
+			}
+			if len(run) >= 2 {
+				out = append(out, strings.Join(run, ""))
+				i = j
+				continue
+			}
+		}
+		out = append(out, t)
+		i++
+	}
+	return out
+}
 
 func phoneticSoftNorm(s string) string {
 	s = stripLeadingArticle(strings.ToLower(normReplacer.Replace(s)))
-	s = strings.ReplaceAll(s, "ё", "е")
-	words := tokenize(s)
+	words := normalizeSpelledTokens(tokenize(s))
 	var normWords []string
 	for _, w := range words {
-		w = softNormReplacer.Replace(w)
-		w = contextualYotTranslitWord(w)
-		w = softNormReplacer.Replace(w)
-		w = strings.ReplaceAll(w, "y", "i")
-		if len(w) > 3 && strings.HasSuffix(w, "e") {
-			w = w[:len(w)-1]
-		}
-		var dedup []rune
-		var last rune
-		for _, r := range w {
-			if (unicode.IsLetter(r) || unicode.IsDigit(r)) && r != last {
-				dedup = append(dedup, r)
-				last = r
-			}
-		}
-		normWords = append(normWords, string(dedup))
+		normWords = append(normWords, phoneticSoftWord(w))
 	}
 	return strings.Join(normWords, "")
 }
@@ -1214,6 +1346,24 @@ func ruAngloPhoneticVariants(s string, logger *SearchLogger) []string {
 		add(ruToAngloReplacer.Replace(s), "anglo_phonetic")
 		add(contextualYotTranslitWord(s), "contextual_translit")
 		add(ruToEnAlt.Replace(s), "alt_translit")
+	} else {
+		// Обратная транслитерация (Латиница -> Кириллица): если пользователь ввёл "vitya ak", "korol i shut", "gruppa krovi" или "rammstein" латиницей
+		cyr1 := enToRuReplacer.Replace(s)
+		add(cyr1, "latin_to_cyrillic_std")
+		cyr2 := strings.ReplaceAll(cyr1, "ы", "и")
+		add(cyr2, "latin_to_cyrillic_soft_i")
+		cyr3 := strings.ReplaceAll(cyr1, "ы", "й")
+		add(cyr3, "latin_to_cyrillic_yot")
+		if known, ok := knownPhoneticPhrases[cyr1]; ok {
+			for _, kv := range known {
+				add(kv, "known_from_cyrillic_reverse")
+			}
+		}
+		if known, ok := knownPhoneticPhrases[cyr2]; ok {
+			for _, kv := range known {
+				add(kv, "known_from_cyrillic_reverse")
+			}
+		}
 	}
 
 	if logger != nil && len(out) > 0 {
@@ -1223,74 +1373,55 @@ func ruAngloPhoneticVariants(s string, logger *SearchLogger) []string {
 }
 
 func matchStringsIR(a, b string) bool {
-	a = stripLeadingArticle(a)
-	b = stripLeadingArticle(b)
-	ca := compactRawLetters(a)
-	cb := compactRawLetters(b)
-	if ca == "" || cb == "" {
+	a = stripLeadingArticle(strings.ToLower(strings.TrimSpace(a)))
+	b = stripLeadingArticle(strings.ToLower(strings.TrimSpace(b)))
+	if a == "" || b == "" {
 		return false
 	}
-	if ca == cb {
+	if a == b {
 		return true
 	}
-
-	al := strings.ToLower(strings.TrimSpace(a))
-	bl := strings.ToLower(strings.TrimSpace(b))
-	if vars, ok := knownPhoneticPhrases[al]; ok {
-		for _, v := range vars {
-			if compactRawLetters(v) == cb {
-				return true
+	sa, sb := phoneticSoftWord(a), phoneticSoftWord(b)
+	if sa != "" && sa == sb {
+		return true
+	}
+	// Числовой префикс "2" <-> "ту"/"two"/"to" (например, "2pac" <-> "тупак")
+	if strings.HasPrefix(a, "2") || strings.HasPrefix(b, "2") {
+		a2 := a
+		b2 := b
+		for _, pref := range []string{"ту", "two", "too", "to"} {
+			if strings.HasPrefix(a2, pref) {
+				a2 = "2" + a2[len(pref):]
+				break
+			}
+			if strings.HasPrefix(b2, pref) {
+				b2 = "2" + b2[len(pref):]
+				break
 			}
 		}
-	}
-	if vars, ok := knownPhoneticPhrases[bl]; ok {
-		for _, v := range vars {
-			if compactRawLetters(v) == ca {
-				return true
-			}
+		if phoneticSoftWord(a2) == phoneticSoftWord(b2) {
+			return true
 		}
 	}
 
-	na := normalizeCompact(ruToEnStd.Replace(a))
-	nb := normalizeCompact(ruToEnStd.Replace(b))
-	if na == nb {
-		return true
-	}
-
-	ga := normalizeCompact(ruToGermanicReplacer.Replace(a))
-	gb := normalizeCompact(ruToGermanicReplacer.Replace(b))
-	if ga == gb {
-		return true
-	}
-
-	dl := damerauLevenshtein(na, nb)
-	gdl := damerauLevenshtein(ga, gb)
-	if gdl < dl {
-		dl = gdl
-	}
-
-	minRL := len([]rune(na)); if len([]rune(nb)) < minRL { minRL = len([]rune(nb)) }; if (dl == 1 || (dl == 2 && minRL >= 6)) && trigramSimilarity(na, nb) >= 0.40 {
-		return true
-	}
-
-	pa := phoneticSkeleton(a)
-	pb := phoneticSkeleton(b)
-	sa, sb := phoneticSoftNorm(a), phoneticSoftNorm(b)
+	pa, pb := phoneticSkeleton(a), phoneticSkeleton(b)
+	paTh := phoneticSkeleton(strings.ReplaceAll(a, "th", "s"))
+	pbTh := phoneticSkeleton(strings.ReplaceAll(b, "th", "s"))
 	sdl := damerauLevenshtein(sa, sb)
-	if sdl < dl {
-		dl = sdl
+	skDl := damerauLevenshtein(pa, pb)
+	if thDl := damerauLevenshtein(paTh, pbTh); thDl < skDl {
+		skDl = thDl
 	}
-	maxSdl := 0
-	if len(sa) >= 4 && len(sb) >= 4 {
-		maxSdl = 1
-	}
-	if len(sa) >= 7 && len(sb) >= 7 && sa[0] == sb[0] {
-		maxSdl = 2
-	}
-	if (len(sa) >= 2 && sdl <= maxSdl) || (len(pa) >= 3 && pa == pb && sdl <= 2) {
+	if skDl == 0 && sdl <= 2 {
 		return true
 	}
-	if len(pa) >= 4 && len(pb) >= 4 && damerauLevenshtein(pa, pb) <= 1 && dl <= 3 {
+	if len(sa) >= 3 && len(sb) >= 3 && sdl <= 1 && (skDl == 0 || (skDl <= 1 && len(pa) >= 4 && len(pb) >= 4)) {
+		return true
+	}
+	if len(sa) >= 5 && len(sb) >= 5 && sdl <= 2 && (skDl == 0 || (skDl <= 1 && len(pa) >= 4 && len(pb) >= 4)) {
+		return true
+	}
+	if len(pa) >= 4 && len(pb) >= 4 && skDl <= 1 && sdl <= 3 {
 		return true
 	}
 	return false
@@ -1310,23 +1441,48 @@ func matchWithinTwoLettersNoSymbols(a, b string) bool {
 		return false
 	}
 	if len(ta) == len(tb) {
+		allMatch := true
 		for i := range ta {
 			if !matchStringsIR(ta[i], tb[i]) {
-				return false
+				allMatch = false
+				break
 			}
 		}
+		if allMatch {
+			return true
+		}
+	}
+	na := normalizeSpelledTokens(ta)
+	nb := normalizeSpelledTokens(tb)
+	if len(na) == len(nb) {
+		allMatch := true
+		for i := range na {
+			if !matchStringsIR(na[i], nb[i]) {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			return true
+		}
+	}
+	// Сравнение слитной мягкой нормы и скелета для составных названий ("OneRepublic" <-> "уан репаблик", "AC/DC" <-> "эй си ди си", "Jay-Z" <-> "джэй зи")
+	var saParts, sbParts []string
+	for _, t := range na {
+		saParts = append(saParts, phoneticSoftWord(t))
+	}
+	for _, t := range nb {
+		sbParts = append(sbParts, phoneticSoftWord(t))
+	}
+	ja := strings.Join(saParts, "")
+	jb := strings.Join(sbParts, "")
+	if ja != "" && (ja == jb || (len(ja) >= 4 && damerauLevenshtein(ja, jb) <= 1)) {
 		return true
 	}
-	if (len(ta) == 2 && len(tb) == 1) || (len(tb) == 2 && len(ta) == 1) {
-		twoW, oneW := ta, tb[0]
-		if len(tb) == 2 {
-			twoW, oneW = tb, ta[0]
-		}
-		s0, s1, sOne := phoneticSoftNorm(twoW[0]), phoneticSoftNorm(twoW[1]), phoneticSoftNorm(oneW)
-		if len(s0) < 2 || len(s1) < 2 || len(sOne) < len(s0)+len(s1) {
-			return false
-		}
-		return s0+s1 == sOne || (damerauLevenshtein(s0+s1, sOne) <= 1 && strings.HasSuffix(sOne, s1))
+	jpa := phoneticSkeleton(strings.Join(na, ""))
+	jpb := phoneticSkeleton(strings.Join(nb, ""))
+	if len(jpa) >= 3 && jpa == jpb && damerauLevenshtein(ja, jb) <= 2 {
+		return true
 	}
 	return false
 }
@@ -1614,7 +1770,6 @@ if rawArtist == "" && trackName == "" {
 continue
 }
 
-// Вытаскиваем связанные однокоренные проекты ("АК-47", "Витя АК-47") ДО обрезки списков
 for _, rel := range extractRelatedCollabArtists(rawArtist, trackName, albumName, probe) {
 addEntity(rel, 0.992, true, "связанная группа из трека SoundCloud")
 if strings.Contains(rel, "-") {
@@ -1622,7 +1777,6 @@ addEntity(strings.ReplaceAll(rel, "-", " "), 0.991, true, "связанная г
 }
 }
 
-// Очищаем основного артиста от feat. и длинных перечислений через запятую
 artist := rawArtist
 for _, fSep := range []string{" feat.", " feat ", " ft.", " ft ", " при уч", " (feat", " [feat"} {
 if idx := strings.Index(strings.ToLower(artist), fSep); idx > 0 {
@@ -1807,7 +1961,7 @@ via, probe, len(scTracks), time.Since(t0).Milliseconds(), topSummary)
 	}
 
 	wg.Wait()
-	return entities, tracks, topSCQuery
+	var cleanTracks []ResolvedTrackInfo; for _, tr := range tracks { if tr.Role != "catalog_candidate" { cleanTracks = append(cleanTracks, tr) } }; return entities, cleanTracks, topSCQuery
 }
 
 // ============================================================================
@@ -1922,7 +2076,7 @@ return true
 func extractRelatedCollabArtists(artistField, trackField, albumField, probe string) []string {
 pLow := strings.ToLower(strings.TrimSpace(probe))
 pTokens := tokenize(pLow)
-if len(pTokens) < 2 {
+if len(pTokens) == 0 {
 return nil
 }
 
@@ -2021,8 +2175,7 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 	}
 
 	evaluateCatalogHit := func(artistName, trackName, albumName, source, probeQuery string) {
-		albumName = cleanCatalogAlbumName(albumName)
-		cleanTrack := strings.TrimSpace(reBracketMeta.ReplaceAllString(trackName, ""))
+		albumName = cleanCatalogAlbumName(albumName); cleanTrack := strings.TrimSpace(reBracketMeta.ReplaceAllString(trackName, ""))
 		artistMatches := matchWithinTwoLettersNoSymbols(artistName, rawQuery) || matchWithinTwoLettersNoSymbols(artistName, probeQuery)
 		trackMatches := matchWithinTwoLettersNoSymbols(cleanTrack, rawQuery) || matchWithinTwoLettersNoSymbols(cleanTrack, probeQuery)
 
@@ -2042,7 +2195,28 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 			addTrack(artistName, trackName, albumName, "other_artist_song", source)
 			logger.Trace("[%s] HIT other_artist_song: track=%q by artist=%q (album=%q)", source, trackName, artistName, albumName)
 		} else {
-			logger.Trace("[%s] OTHER result: artist=%q track=%q album=%q", source, artistName, trackName, albumName)
+			// Проверяем, есть ли общий значимый токен (>= 2 символов) между запросом и именем артиста (например, токен "ак" в "витя ак" и "АК-47")
+			pToks := tokenize(probeQuery)
+			aToks := tokenize(artistName)
+			sharedTok := false
+			for _, pt := range pToks {
+				if len([]rune(pt)) < 2 {
+					continue
+				}
+				for _, at := range aToks {
+					if pt == at || (len([]rune(pt)) >= 3 && len([]rune(at)) >= 3 && matchStringsIR(pt, at)) {
+						sharedTok = true
+						break
+					}
+				}
+			}
+			if sharedTok {
+				addEntity(artistName, 0.92, true, source, fmt.Sprintf("общий корневой токен с «%s»", probeQuery))
+				addTrack(artistName, trackName, albumName, "primary_artist", source)
+			} else {
+				if strings.EqualFold(probeQuery, rawQuery) { addTrack(artistName, trackName, albumName, "catalog_candidate", source) }
+			}
+			logger.Trace("[%s] CANDIDATE result (sharedTok=%v): artist=%q track=%q album=%q", source, sharedTok, artistName, trackName, albumName)
 		}
 	}
 
@@ -2153,6 +2327,31 @@ func fetchCatalogEntities(ctx context.Context, queries []string, rawQuery string
 	}
 
 	wg.Wait()
+
+	// Чисто алгоритмическое выявление консенсусного артиста по частоте в ответах каталогов (без словарей!):
+	// Если по запросу ("витя ак", "горшок", "цой", "богемская рапсодия") каталоги вернули >= 3 треков одного и того же исполнителя,
+	// автоматически выдвигаем этого исполнителя в кандидаты!
+	artistFreq := make(map[string]int)
+	artistDisplay := make(map[string]string)
+	for _, tr := range tracks {
+		sepReplacer := strings.NewReplacer(",", "|", "&", "|", "feat.", "|", "ft.", "|")
+		for _, part := range strings.Split(sepReplacer.Replace(tr.Artist), "|") {
+			part = strings.TrimSpace(part)
+			if len([]rune(part)) >= 2 {
+				k := strings.ToLower(part)
+				artistFreq[k]++
+				artistDisplay[k] = part
+			}
+		}
+	}
+	for k, cnt := range artistFreq {
+		if cnt >= 3 {
+			disp := artistDisplay[k]
+			addEntity(disp, 0.95, true, "CatalogConsensus", fmt.Sprintf("консенсус каталогов (%d совпадений треков)", cnt))
+			logger.Simple("🧠 Алгоритм консенсуса каталогов: для «%s» выявлен связанный исполнитель «%s» (встретился в %d треках)", rawQuery, disp, cnt)
+		}
+	}
+
 	return entities, tracks
 }
 
@@ -2185,6 +2384,8 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, cfg EngineConfig
 
 	// Ступень 5: Исходный запрос пользователя
 	addCand(q, 5, 0.80, false, "исходный запрос пользователя")
+
+
 	logger.Simple("🦴 Функция phoneticSkeleton: звуковой скелет запроса «%s» -> «%s»", q, phoneticSkeleton(q))
 
 	// 1. Проверка ошибочной раскладки клавиатуры
@@ -2302,7 +2503,7 @@ func buildExpandedQueries(ctx context.Context, rawQuery string, cfg EngineConfig
 	var otherItems []candInfo
 	for _, item := range list {
 		if item.tier == 1 {
-			scItems = append(scItems, item); if strings.Contains(item.reason, "связанная группа") { otherItems = append([]candInfo{item}, otherItems...) }
+			scItems = append(scItems, item)
 		} else {
 			otherItems = append(otherItems, item)
 		}
@@ -2447,7 +2648,8 @@ func resolveRutorIP(logger *SearchLogger) string {
 
 func searchRutorDoH(ctx context.Context, query string, logger *SearchLogger) []TorrentResult {
 	t0 := time.Now()
-	u := "http://rutor.info/search/0/0/000/2/" + url.PathEscape(query)
+	// Используем /100/2/ (логическое И по всем словам в любом порядке с сортировкой по сидам), чтобы находить раздачи вида "АК-47 (Витя АК)"
+	u := "http://rutor.info/search/0/0/100/2/" + url.PathEscape(query)
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil
@@ -2696,7 +2898,7 @@ func searchKnaben(ctx context.Context, query string, logger *SearchLogger) []Tor
 
 	payload := map[string]interface{}{
 		"query":           query,
-		"size":            40,
+		"size":            80,
 		"order_by":        "seeders",
 		"order_direction": "desc",
 	}
@@ -2767,6 +2969,300 @@ func searchKnaben(ctx context.Context, query string, logger *SearchLogger) []Tor
 	logger.Trace("[Knaben] DONE query=%q rawHits=%d kept=%d cutJunk=%d latency=%dms",
 		query, len(data.Hits), len(results), cutJunk, time.Since(t0).Milliseconds())
 	return results
+}
+
+
+// searchSolidTorrents опрашивает международный P2P-индексатор SolidTorrents (музыка, Lossless, дискографии)
+func searchSolidTorrents(ctx context.Context, query string, logger *SearchLogger) []TorrentResult {
+	t0 := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+
+	u := "https://solidtorrents.to/search?q=" + url.QueryEscape(query) + "&sort=seeders"
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		logger.Trace("[SolidTorrents] HTTP ERR query=%q err=%v", query, err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	blocks := reBitItem.Split(string(bodyBytes), -1)
+	seen := make(map[string]bool)
+	var results []TorrentResult
+
+	for _, blk := range blocks[1:] {
+		mMag := reBitMagnet.FindStringSubmatch(blk)
+		if len(mMag) < 3 {
+			continue
+		}
+		infoHash := strings.ToLower(mMag[2])
+		if seen[infoHash] {
+			continue
+		}
+		seen[infoHash] = true
+
+		title := ""
+		if m := reBitTitle2.FindStringSubmatch(blk); len(m) >= 2 {
+			title = cleanTitle(m[1])
+		} else if m := reBitTitle1.FindStringSubmatch(blk); len(m) >= 2 {
+			title = cleanTitle(m[1])
+		}
+		if title == "" {
+			title = cleanTitle(extractNameFromMagnet(mMag[1]))
+		}
+		if title == "" {
+			continue
+		}
+
+		var sizeBytes int64
+		mSz := reBitSize2.FindStringSubmatch(blk)
+		if len(mSz) < 3 {
+			mSz = reBitSize1.FindStringSubmatch(blk)
+		}
+		if len(mSz) >= 3 {
+			val, _ := strconv.ParseFloat(strings.ReplaceAll(mSz[1], ",", "."), 64)
+			switch strings.ToUpper(mSz[2]) {
+			case "TB":
+				sizeBytes = int64(val * 1024 * 1024 * 1024 * 1024)
+			case "GB":
+				sizeBytes = int64(val * 1024 * 1024 * 1024)
+			case "MB":
+				sizeBytes = int64(val * 1024 * 1024)
+			case "KB":
+				sizeBytes = int64(val * 1024)
+			}
+		}
+
+		seeds, peers := 0, 0
+		if mS := reBitSeeds2.FindStringSubmatch(blk); len(mS) >= 2 {
+			seeds, _ = strconv.Atoi(strings.ReplaceAll(mS[1], ",", ""))
+		} else if mS := reBitSeeds1.FindStringSubmatch(blk); len(mS) >= 2 {
+			seeds, _ = strconv.Atoi(strings.ReplaceAll(mS[1], ",", ""))
+		}
+		if mP := reBitPeers.FindStringSubmatch(blk); len(mP) >= 2 {
+			peers, _ = strconv.Atoi(strings.ReplaceAll(mP[1], ",", ""))
+		}
+
+		results = append(results, TorrentResult{
+			Title:     title,
+			Magnet:    buildMagnet(infoHash, title),
+			InfoHash:  infoHash,
+			Size:      sizeBytes,
+			SizeMB:    float64(sizeBytes) / (1024 * 1024),
+			SizeHuman: formatBytes(sizeBytes),
+			Seeds:     seeds,
+			Peers:     peers,
+			Source:    "SolidTorrents",
+		})
+	}
+	logger.Trace("[SolidTorrents] DONE query=%q kept=%d latency=%dms", query, len(results), time.Since(t0).Milliseconds())
+	return results
+}
+
+// searchTorAPIRuTracker опрашивает шлюз TorAPI (RuTracker и NoNameClub без VPN и регистрации)
+func searchTorAPIRuTracker(ctx context.Context, query string, logger *SearchLogger) []TorrentResult {
+	t0 := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+
+	baseURL := "https://torapi.vercel.app"
+	configMu.RLock()
+	if defaultConfig.TorAPIURL != "" {
+		baseURL = strings.TrimRight(defaultConfig.TorAPIURL, "/")
+	}
+	configMu.RUnlock()
+
+	u := fmt.Sprintf("%s/api/search/title/rutracker?query=%s&page=0", baseURL, url.QueryEscape(query))
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		logger.Trace("[TorAPI-RuTracker] HTTP ERR query=%q err=%v", query, err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var items []struct {
+		Name     string `json:"Name"`
+		Title    string `json:"title"`
+		Magnet   string `json:"Magnet"`
+		Hash     string `json:"Hash"`
+		Seeds    string `json:"Seeds"`
+		Peers    string `json:"Peers"`
+		Size     string `json:"Size"`
+		Category string `json:"Category"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&items) != nil {
+		return nil
+	}
+
+	var results []TorrentResult
+	for _, it := range items {
+		title := cleanTitle(it.Name)
+		if title == "" {
+			title = cleanTitle(it.Title)
+		}
+		infoHash := strings.ToLower(strings.TrimSpace(it.Hash))
+		if infoHash == "" {
+			infoHash = extractInfoHash(it.Magnet)
+		}
+		if len(infoHash) != 40 || title == "" {
+			continue
+		}
+		seeds, _ := strconv.Atoi(strings.TrimSpace(it.Seeds))
+		peers, _ := strconv.Atoi(strings.TrimSpace(it.Peers))
+
+		var sizeBytes int64
+		if mSz := reRutorSize.FindStringSubmatch(it.Size); len(mSz) >= 3 {
+			val, _ := strconv.ParseFloat(strings.ReplaceAll(mSz[1], ",", "."), 64)
+			switch strings.ToUpper(mSz[2]) {
+			case "TB", "ТБ":
+				sizeBytes = int64(val * 1024 * 1024 * 1024 * 1024)
+			case "GB", "ГБ":
+				sizeBytes = int64(val * 1024 * 1024 * 1024)
+			case "MB", "МБ":
+				sizeBytes = int64(val * 1024 * 1024)
+			case "KB", "КБ":
+				sizeBytes = int64(val * 1024)
+			}
+		}
+
+		results = append(results, TorrentResult{
+			Title:     title,
+			Magnet:    buildMagnet(infoHash, title),
+			InfoHash:  infoHash,
+			Size:      sizeBytes,
+			SizeMB:    float64(sizeBytes) / (1024 * 1024),
+			SizeHuman: formatBytes(sizeBytes),
+			Seeds:     seeds,
+			Peers:     peers,
+			Source:    "RuTracker(TorAPI)",
+			Category:  it.Category,
+		})
+	}
+	logger.Trace("[TorAPI-RuTracker] DONE query=%q kept=%d latency=%dms", query, len(results), time.Since(t0).Milliseconds())
+	return results
+}
+
+// searchSoulseekSeeker подключается к P2P-сети Soulseek (протокол Android-клиента Seeker: server.slsknet.org:2242 и демон slskd)
+func searchSoulseekSeeker(ctx context.Context, query string, logger *SearchLogger) []TorrentResult {
+	configMu.RLock()
+	cfg := defaultConfig
+	configMu.RUnlock()
+	if !cfg.EnableSeekerP2P {
+		return nil
+	}
+
+	// 1. Если запущен локальный или удалённый демон slskd / Seeker REST Gateway (по умолчанию http://127.0.0.1:5000)
+	slskdBase := strings.TrimRight(strings.TrimSpace(cfg.SlskdURL), "/")
+	if slskdBase != "" {
+		t0 := time.Now()
+		reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		defer cancel()
+
+		payload, _ := json.Marshal(map[string]interface{}{"searchText": query, "searchTimeout": 3000})
+		req, err := http.NewRequestWithContext(reqCtx, "POST", slskdBase+"/api/v0/searches", bytes.NewReader(payload))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			if cfg.SlskdAPIKey != "" {
+				req.Header.Set("X-API-Key", cfg.SlskdAPIKey)
+			}
+			if resp, err := httpClient.Do(req); err == nil {
+				var sRes struct {
+					ID        string `json:"id"`
+					Responses []struct {
+						Username string `json:"username"`
+						Files    []struct {
+							Filename string `json:"filename"`
+							Size     int64  `json:"size"`
+							BitRate  int    `json:"bitRate"`
+						} `json:"files"`
+					} `json:"responses"`
+				}
+				_ = json.NewDecoder(resp.Body).Decode(&sRes)
+				resp.Body.Close()
+
+				var results []TorrentResult
+				for _, peer := range sRes.Responses {
+					for _, f := range peer.Files {
+						sum := md5.Sum([]byte(peer.Username + ":" + f.Filename))
+						fakeHash := hex.EncodeToString(sum[:]) + hex.EncodeToString(sum[:4])
+						title := fmt.Sprintf("[Seeker/Soulseek] %s (%d kbps)", filepath.Base(strings.ReplaceAll(f.Filename, "\\", "/")), f.BitRate)
+						slskURI := fmt.Sprintf("slsk://%s/%s", url.PathEscape(peer.Username), url.PathEscape(strings.ReplaceAll(f.Filename, "\\", "/")))
+						results = append(results, TorrentResult{
+							Title:     title,
+							Magnet:    slskURI,
+							InfoHash:  fakeHash,
+							Size:      f.Size,
+							SizeMB:    float64(f.Size) / (1024 * 1024),
+							SizeHuman: formatBytes(f.Size),
+							Seeds:     5,
+							Peers:     1,
+							Source:    "Seeker(Soulseek)",
+						})
+					}
+				}
+				if len(results) > 0 {
+					logger.Simple("🐦 Seeker/Soulseek P2P (%s): по запросу «%s» найдено %d файлов за %d мс",
+						slskdBase, query, len(results), time.Since(t0).Milliseconds())
+					return results
+				}
+			}
+		}
+	}
+
+	// 2. Прямой бинарный протокол центрального сервера Soulseek (server.slsknet.org:2242, как в Android-клиенте Seeker)
+	if cfg.SlskUsername != "" && cfg.SlskPassword != "" {
+		conn, err := net.DialTimeout("tcp", "server.slsknet.org:2242", 2*time.Second)
+		if err == nil {
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(2500 * time.Millisecond))
+			// Пакет Login (Code = 1): [len][1][user][pass][version=160][md5(user+pass)][minor=1]
+			var loginBuf bytes.Buffer
+			_ = binary.Write(&loginBuf, binary.LittleEndian, uint32(1))
+			writeSlskString := func(b *bytes.Buffer, s string) {
+				_ = binary.Write(b, binary.LittleEndian, uint32(len(s)))
+				b.WriteString(s)
+			}
+			writeSlskString(&loginBuf, cfg.SlskUsername)
+			writeSlskString(&loginBuf, cfg.SlskPassword)
+			_ = binary.Write(&loginBuf, binary.LittleEndian, uint32(160))
+			h := md5.Sum([]byte(cfg.SlskUsername + cfg.SlskPassword))
+			writeSlskString(&loginBuf, hex.EncodeToString(h[:]))
+			_ = binary.Write(&loginBuf, binary.LittleEndian, uint32(1))
+
+			var pkt bytes.Buffer
+			_ = binary.Write(&pkt, binary.LittleEndian, uint32(loginBuf.Len()))
+			pkt.Write(loginBuf.Bytes())
+			_, _ = conn.Write(pkt.Bytes())
+
+			// Пакет FileSearch (Code = 26): [len][26][ticket][query]
+			var searchBuf bytes.Buffer
+			_ = binary.Write(&searchBuf, binary.LittleEndian, uint32(26))
+			_ = binary.Write(&searchBuf, binary.LittleEndian, uint32(rand.Int31()))
+			writeSlskString(&searchBuf, query)
+			var spkt bytes.Buffer
+			_ = binary.Write(&spkt, binary.LittleEndian, uint32(searchBuf.Len()))
+			spkt.Write(searchBuf.Bytes())
+			_, _ = conn.Write(spkt.Bytes())
+			logger.Trace("[Seeker-TCP] Dispatched Soulseek P2P search packet for %q to server.slsknet.org:2242", query)
+		}
+	}
+	return nil
 }
 
 // ============================================================================
@@ -2923,9 +3419,12 @@ func searchSingleVariantAcrossIndexers(ctx context.Context, variant string, cfg 
 	var jobs []searchJob
 	jobs = append(jobs,
 		searchJob{name: "Rutor", fn: searchRutorDoH, arg: variant},
+		searchJob{name: "Knaben", fn: searchKnaben, arg: variant},
+		searchJob{name: "RuTracker(TorAPI)", fn: searchTorAPIRuTracker, arg: variant},
+		searchJob{name: "SolidTorrents", fn: searchSolidTorrents, arg: variant},
 		searchJob{name: "BitSearch", fn: searchBitsearch, arg: variant},
 		searchJob{name: "ApiBay", fn: searchApiBay, arg: variant},
-		searchJob{name: "Knaben", fn: searchKnaben, arg: variant},
+		searchJob{name: "Seeker(Soulseek)", fn: searchSoulseekSeeker, arg: variant},
 	)
 	if strings.Contains(variant, "/") {
 		cleanSlash := strings.Join(strings.Fields(strings.ReplaceAll(variant, "/", " ")), " ")
@@ -3000,13 +3499,19 @@ func rankAndFilter(items []TorrentResult, rawQuery, corrected string, terms []st
 		}
 
 		bestSim := 0.0
+		artistPart, restPart := splitTorrentArtistAndRest(it.Title)
 		for _, term := range terms {
 			if s := computeFuzzyScore(it.Title, term); s > bestSim {
 				bestSim = s
 			}
+			// Если исполнитель раздачи напрямую совпадает с одним из расширенных вариантов (например, "АК-47" для запроса "витя ак")
+			if artistPart != "" && matchWithinTwoLettersNoSymbols(artistPart, term) {
+				if 0.90 > bestSim {
+					bestSim = 0.90
+				}
+			}
 		}
 
-		artistPart, restPart := splitTorrentArtistAndRest(it.Title)
 		if artistPart != "" && restPart != "" {
 			if !matchWithinTwoLettersNoSymbols(artistPart, rawQuery) && !matchWithinTwoLettersNoSymbols(artistPart, corrected) {
 				restSim := math.Max(computeFuzzyScore(restPart, rawQuery), computeFuzzyScore(restPart, corrected))
@@ -3180,7 +3685,7 @@ func buildSmartCategoryGroups(ranked []TorrentResult, rawQuery, corrected string
 		}
 	}
 
-	if len(groups) < 3 && len(catPrimaryArtist) > 1 {
+	if (len(groups) < 3 && len(catPrimaryArtist) > 1) || len(catPrimaryArtist) >= 4 {
 		var discographies, losslessAlbums, mp3Releases []TorrentResult
 		for _, it := range catPrimaryArtist {
 			if isDiscographyOrCollection(it.Title) { discographies = append(discographies, it) } else if matchesFormatFilter(it.Title, "flac") || matchesFormatFilter(it.Title, "wav") {
@@ -3453,7 +3958,7 @@ func StartOmniHTTPServer(addr string) error {
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","version":"3.2-ir"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","version":"3.5-ir"}`))
 	})
 
 	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
