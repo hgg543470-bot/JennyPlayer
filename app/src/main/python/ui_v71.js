@@ -9466,12 +9466,10 @@ const s = String(nameOrPath || '').split('?')[0].toLowerCase().trim();
 return window.VIDEO_EXTS_V130.some(ext => s.endsWith(ext));
 };
 
-// Добавляем вкладку «🎬 Видео» в основную ленту плейлистов
 if (window.PLAYLIST_BUILTIN_TABS_V71 && !window.PLAYLIST_BUILTIN_TABS_V71.some(t => t.id === 'videos')) {
 window.PLAYLIST_BUILTIN_TABS_V71.splice(2, 0, { id: 'videos', icon: '🎬', ru: 'Видео', en: 'Videos' });
 }
 
-// Добавляем теги видео в фильтр Торрент-студии
 if (window.TORRENT_FORMAT_TAGS_V101 && !window.TORRENT_FORMAT_TAGS_V101.some(t => t.id === 'video')) {
 window.TORRENT_FORMAT_TAGS_V101.push(
 { id: 'video', label: '🎬 ВИДЕО', color: '#ff7b72' },
@@ -9480,7 +9478,6 @@ window.TORRENT_FORMAT_TAGS_V101.push(
 );
 }
 
-// Поддержка вкладки «🎬 Видео» в счётчике и списке треков
 const _origGetCntV130 = window.getTrackCountForTabV71;
 window.getTrackCountForTabV71 = function(tabId) {
 if (tabId === 'videos') {
@@ -9516,7 +9513,7 @@ window._vidStateV130 = {
 active: false,
 pipMode: false,
 rotated90: false,
-fitMode: 'contain', // 'contain' | 'cover' | 'fill'
+fitMode: 'contain',
 dspConnected: false,
 dspBypass: false,
 mediaSourceNode: null,
@@ -9529,7 +9526,8 @@ torHash: '',
 torFileIdx: -1,
 usingRemux: false,
 remuxBaseOffset: 0,
-controlsHideTimer: null
+controlsHideTimer: null,
+hudJustWokeUntil: 0
 };
 
 window.ensureVideoPlayerDOMV130 = function() {
@@ -9550,8 +9548,8 @@ align-items: center;
 overflow: hidden;
 user-select: none;
 -webkit-user-select: none;
+touch-action: none;
 box-shadow: 0 18px 50px rgba(0,0,0,0.96);
-transition: width 0.22s ease, height 0.22s ease, border-radius 0.22s ease;
 }
 #jennyVideoStudioRootV130.mode-full-v130 {
 inset: 0 !important;
@@ -9561,7 +9559,7 @@ border-radius: 0 !important;
 border: none !important;
 }
 #jennyVideoStudioRootV130.mode-pip-v130 {
-width: 276px !important;
+width: 280px !important;
 height: 168px !important;
 border-radius: 14px !important;
 border: 1.5px solid #58a6ff !important;
@@ -9571,6 +9569,7 @@ box-shadow: 0 12px 34px rgba(0,0,0,0.95), 0 0 16px rgba(88,166,255,0.35) !import
 position: relative;
 width: 100%;
 height: 100%;
+flex-shrink: 0;
 display: flex;
 align-items: center;
 justify-content: center;
@@ -9578,10 +9577,16 @@ background: #000;
 overflow: hidden;
 }
 #jennyVideoStageV130.rot90-v130 {
+position: fixed !important;
+left: 50% !important;
+top: 50% !important;
 width: 100vh !important;
 height: 100vw !important;
-transform: rotate(90deg);
-transform-origin: center center;
+max-width: none !important;
+max-height: none !important;
+flex-shrink: 0 !important;
+transform: translate(-50%, -50%) rotate(90deg) !important;
+transform-origin: center center !important;
 }
 #jennyVideoElV130 {
 width: 100%;
@@ -9590,6 +9595,7 @@ max-width: 100%;
 max-height: 100%;
 background: #000;
 outline: none;
+pointer-events: none;
 }
 .v130-hud-overlay {
 position: absolute;
@@ -9597,23 +9603,27 @@ inset: 0;
 display: flex;
 flex-direction: column;
 justify-content: space-between;
-background: linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0) 24%, rgba(0,0,0,0) 72%, rgba(0,0,0,0.88) 100%);
+background: linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0) 26%, rgba(0,0,0,0) 70%, rgba(0,0,0,0.88) 100%);
 opacity: 1;
-transition: opacity 0.22s ease;
+transition: opacity 0.2s ease;
 pointer-events: none;
+z-index: 10;
 }
 .v130-hud-overlay.hud-hidden-v130 {
-opacity: 0;
+opacity: 0 !important;
+visibility: hidden !important;
 }
 .v130-hud-bar {
 pointer-events: auto;
 }
-.v130-hud-hidden-all .v130-hud-bar {
+.v130-hud-overlay.hud-hidden-v130 .v130-hud-bar,
+.v130-hud-overlay.hud-hidden-v130 .v130-btn,
+.v130-hud-overlay.hud-hidden-v130 input {
 pointer-events: none !important;
 }
 .v130-btn {
-background: rgba(13,17,23,0.82) !important;
-border: 1px solid rgba(255,255,255,0.22) !important;
+background: rgba(13,17,23,0.85) !important;
+border: 1px solid rgba(255,255,255,0.25) !important;
 color: #e6edf3 !important;
 padding: 6px 10px !important;
 border-radius: 8px !important;
@@ -9623,7 +9633,6 @@ display: inline-flex !important;
 align-items: center !important;
 justify-content: center !important;
 gap: 4px !important;
-backdrop-filter: blur(6px);
 }
 .v130-btn:active {
 transform: scale(0.94);
@@ -9642,11 +9651,9 @@ root.innerHTML = `
 <div id="jennyVideoStageV130">
 <video id="jennyVideoElV130" playsinline webkit-playsinline preload="auto" crossorigin="anonymous"></video>
 
-<!-- Индикатор двойного тапа / яркости / громкости по центру -->
-<div id="v130CenterFeedback" style="display:none;position:absolute;padding:10px 18px;border-radius:12px;background:rgba(9,13,20,0.88);border:1.5px solid #58a6ff;color:#ffffff;font-size:14px;font-weight:900;z-index:15;pointer-events:none;box-shadow:0 0 20px rgba(0,0,0,0.9);"></div>
+<div id="v130CenterFeedback" style="display:none;position:absolute;padding:10px 18px;border-radius:12px;background:rgba(9,13,20,0.92);border:1.5px solid #58a6ff;color:#ffffff;font-size:14px;font-weight:900;z-index:20;pointer-events:none;box-shadow:0 0 20px rgba(0,0,0,0.9);"></div>
 
 <div id="v130HudOverlay" class="v130-hud-overlay">
-<!-- Верхняя панель -->
 <div class="v130-hud-bar" id="v130TopDragBar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;">
 <div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
 <span style="font-size:15px;">🎬</span>
@@ -9657,31 +9664,29 @@ root.innerHTML = `
 </div>
 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
 <button type="button" class="v130-btn v130-hide-in-pip" id="v130BtnTorHub" onclick="window.openTorHubFromVideoV130(event)" style="display:none;border-color:#d2a8ff !important;color:#d2a8ff !important;">🧩 Части</button>
-<button type="button" class="v130-btn" id="v130BtnPipToggle" onclick="window.toggleVideoPipModeV130(event)" title="Свернуть в плавающее мини-окно / Развернуть">❐ Мини</button>
-<button type="button" class="v130-btn" onclick="window.closeVideoPlayerV130(event)" style="background:rgba(218,54,51,0.85) !important;border-color:#ff7b72 !important;color:#fff !important;">✖</button>
+<button type="button" class="v130-btn" id="v130BtnPipToggle" onclick="window.toggleVideoPipModeV130(event)">❐ Мини</button>
+<button type="button" class="v130-btn" onclick="window.closeVideoPlayerV130(event)" style="background:rgba(218,54,51,0.9) !important;border-color:#ff7b72 !important;color:#fff !important;">✖</button>
 </div>
 </div>
 
-<!-- Центральные крупные кнопки управления -->
 <div class="v130-hud-bar" style="display:flex;align-items:center;justify-content:center;gap:24px;">
 <button type="button" class="v130-btn v130-hide-in-pip" onclick="window.seekVideoRelativeV130(-10, event)" style="width:46px;height:46px;border-radius:50% !important;font-size:13px !important;">⏪10</button>
-<button type="button" class="v130-btn" id="v130CenterPlayBtn" onclick="window.toggleVideoPlayPauseV130(event)" style="width:58px;height:58px;border-radius:50% !important;font-size:22px !important;background:rgba(115,65,190,0.85) !important;border:2px solid #d2a8ff !important;box-shadow:0 0 20px rgba(163,113,247,0.6);">⏸</button>
+<button type="button" class="v130-btn" id="v130CenterPlayBtn" onclick="window.toggleVideoPlayPauseV130(event)" style="width:54px;height:54px;border-radius:50% !important;font-size:20px !important;background:rgba(115,65,190,0.88) !important;border:2px solid #d2a8ff !important;box-shadow:0 0 18px rgba(163,113,247,0.6);">⏸</button>
 <button type="button" class="v130-btn v130-hide-in-pip" onclick="window.seekVideoRelativeV130(10, event)" style="width:46px;height:46px;border-radius:50% !important;font-size:13px !important;">10⏩</button>
 </div>
 
-<!-- Нижняя панель с таймлайном и настройками -->
 <div class="v130-hud-bar" style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;">
 <div style="display:flex;align-items:center;gap:8px;">
-<span id="v130CurTime" style="color:#58a6ff;font-size:11px;font-family:monospace;font-weight:bold;min-width:38px;">0:00</span>
+<span id="v130CurTime" style="color:#58a6ff;font-size:11px;font-family:monospace;font-weight:bold;min-width:36px;">0:00</span>
 <input type="range" id="v130SeekSlider" min="0" max="1000" value="0" style="flex:1;height:6px;accent-color:#a371f7;cursor:pointer;">
-<span id="v130DurTime" style="color:#e3b341;font-size:11px;font-family:monospace;font-weight:bold;min-width:38px;text-align:right;">0:00</span>
+<span id="v130DurTime" style="color:#e3b341;font-size:11px;font-family:monospace;font-weight:bold;min-width:36px;text-align:right;">0:00</span>
 </div>
 <div class="v130-hide-in-pip" style="display:flex;align-items:center;justify-content:space-between;gap:5px;flex-wrap:wrap;">
 <button type="button" class="v130-btn" id="v130BtnRotate" onclick="window.toggleVideoRotate90V130(event)">🔄 90°</button>
 <button type="button" class="v130-btn" id="v130BtnFit" onclick="window.cycleVideoFitModeV130(event)">📐 Вписать</button>
 <button type="button" class="v130-btn" id="v130BtnSpeed" onclick="window.cycleVideoSpeedV130(event)">⏩ 1.0x</button>
 <button type="button" class="v130-btn" id="v130BtnDsp" onclick="window.toggleVideoDspModeV130(event)" style="border-color:#3fb950 !important;color:#3fb950 !important;">🎧 DSP: ВКЛ</button>
-<button type="button" class="v130-btn" id="v130BtnRemux" onclick="window.switchVideoToFfmpegRemuxV130(event)" title="Включить потоковый FFmpeg-декодер звука (если в MKV/AVI нет звука)">🛠️ Звук MKV</button>
+<button type="button" class="v130-btn" id="v130BtnRemux" onclick="window.switchVideoToFfmpegRemuxV130(event)" title="Включить потоковый FFmpeg-декодер звука">🛠️ Звук MKV</button>
 <button type="button" class="v130-btn" id="v130BtnSaveVideo" onclick="window.saveCurrentVideoToLibraryV130(event)" style="display:none;border-color:#58a6ff !important;color:#58a6ff !important;">⬇️ В плеер</button>
 </div>
 </div>
@@ -9693,6 +9698,15 @@ window.bindVideoStudioEventsV130();
 return root;
 };
 
+window.isVideoHudGuardActiveV130 = function(ev) {
+if (performance.now() < (window._vidStateV130.hudJustWokeUntil || 0)) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+if (ev && ev.preventDefault) ev.preventDefault();
+return true;
+}
+return false;
+};
+
 window.showVideoFeedbackV130 = function(text) {
 const fb = document.getElementById('v130CenterFeedback');
 if (!fb) return;
@@ -9702,18 +9716,19 @@ clearTimeout(fb._hideT);
 fb._hideT = setTimeout(() => { fb.style.display = 'none'; }, 850);
 };
 
-window.wakeVideoHudV130 = function() {
+window.wakeVideoHudV130 = function(fromTapWake) {
 const hud = document.getElementById('v130HudOverlay');
 if (!hud) return;
+if (fromTapWake && hud.classList.contains('hud-hidden-v130')) {
+window._vidStateV130.hudJustWokeUntil = performance.now() + 380;
+}
 hud.classList.remove('hud-hidden-v130');
-document.getElementById('jennyVideoStageV130')?.classList.remove('v130-hud-hidden-all');
 clearTimeout(window._vidStateV130.controlsHideTimer);
 const vid = document.getElementById('jennyVideoElV130');
-if (vid && !vid.paused) {
+if (vid && !vid.paused && !window._vidStateV130.pipMode) {
 window._vidStateV130.controlsHideTimer = setTimeout(() => {
 hud.classList.add('hud-hidden-v130');
-document.getElementById('jennyVideoStageV130')?.classList.add('v130-hud-hidden-all');
-}, 3400);
+}, 3800);
 }
 };
 
@@ -9738,12 +9753,13 @@ if (window.inputMixer && window.audioCtx) {
 window.inputMixer.gain.setTargetAtTime(st.dspBypass ? 0.0 : 1.0, window.audioCtx.currentTime, 0.015);
 }
 if (st.directGainNode && window.audioCtx) {
-st.directGainNode.gain.setTargetAtTime(st.dspBypass ? 1.0 : 0.0, window.audioCtx.currentTime, 0.015);
+window.directGainNode.gain.setTargetAtTime(st.dspBypass ? 1.0 : 0.0, window.audioCtx.currentTime, 0.015);
 }
 } catch (e) {}
 };
 
 window.toggleVideoDspModeV130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
 st.dspBypass = !st.dspBypass;
@@ -9755,10 +9771,11 @@ btn.style.color = st.dspBypass ? '#8b949e' : '#3fb950';
 btn.style.borderColor = st.dspBypass ? '#30363d' : '#3fb950';
 }
 window.showVideoFeedbackV130(st.dspBypass ? '🎧 Прямой звук (DSP ВЫКЛ)' : '🎧 Студийный тракт Jenny DSP ВКЛ');
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 };
 
 window.toggleVideoRotate90V130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
 if (st.pipMode) window.toggleVideoPipModeV130();
@@ -9766,12 +9783,13 @@ st.rotated90 = !st.rotated90;
 const stage = document.getElementById('jennyVideoStageV130');
 if (stage) stage.classList.toggle('rot90-v130', st.rotated90);
 const btn = document.getElementById('v130BtnRotate');
-if (btn) btn.style.borderColor = st.rotated90 ? '#58a6ff' : 'rgba(255,255,255,0.22)';
-window.showVideoFeedbackV130(st.rotated90 ? '🔄 Горизонтальный разворот 90°' : '📱 Обычная ориентация');
-window.wakeVideoHudV130();
+if (btn) btn.style.borderColor = st.rotated90 ? '#58a6ff' : 'rgba(255,255,255,0.25)';
+window.showVideoFeedbackV130(st.rotated90 ? '🔄 Горизонтальный разворот 90°' : '📱 Портретный режим');
+window.wakeVideoHudV130(false);
 };
 
 window.cycleVideoFitModeV130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
 const modes = ['contain', 'cover', 'fill'];
@@ -9783,10 +9801,11 @@ if (vid) vid.style.objectFit = st.fitMode;
 const btn = document.getElementById('v130BtnFit');
 if (btn) btn.innerText = labels[st.fitMode];
 window.showVideoFeedbackV130(labels[st.fitMode]);
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 };
 
 window.cycleVideoSpeedV130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
 const speeds = [0.75, 1.0, 1.25, 1.5, 2.0];
@@ -9797,10 +9816,11 @@ if (vid) vid.playbackRate = st.speed;
 const btn = document.getElementById('v130BtnSpeed');
 if (btn) btn.innerText = `⏩ ${st.speed}x`;
 window.showVideoFeedbackV130(`⏩ Скорость: ${st.speed}x`);
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 };
 
 window.toggleVideoPipModeV130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
 const root = document.getElementById('jennyVideoStudioRootV130');
@@ -9813,8 +9833,10 @@ st.rotated90 = false;
 if (stage) stage.classList.remove('rot90-v130');
 root.classList.remove('mode-full-v130');
 root.classList.add('mode-pip-v130');
-root.style.left = (window.innerWidth - 288) + 'px';
-root.style.top = '72px';
+if (!root._hasCustomPipPosV130) {
+root.style.left = Math.max(8, window.innerWidth - 290) + 'px';
+root.style.top = '74px';
+}
 root.style.right = 'auto';
 root.style.bottom = 'auto';
 if (btn) btn.innerText = '⛶ Развернуть';
@@ -9825,34 +9847,36 @@ root.style.left = '0';
 root.style.top = '0';
 if (btn) btn.innerText = '❐ Мини';
 }
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 };
 
 window.toggleVideoPlayPauseV130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const vid = document.getElementById('jennyVideoElV130');
 if (!vid) return;
 if (vid.paused) {
-window.pauseMainPlayerForOstV90();
 window.connectVideoToJennyDspV130();
 vid.play().catch(() => {});
 } else {
 vid.pause();
 }
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 };
 
 window.seekVideoRelativeV130 = function(deltaSec, ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const vid = document.getElementById('jennyVideoElV130');
 if (!vid) return;
 const target = Math.max(0, (vid.currentTime || 0) + deltaSec);
 vid.currentTime = isFinite(vid.duration) ? Math.min(vid.duration, target) : target;
 window.showVideoFeedbackV130(deltaSec > 0 ? `⏩ +${deltaSec} сек` : `⏪ ${deltaSec} сек`);
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 };
 
 window.switchVideoToFfmpegRemuxV130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
 const vid = document.getElementById('jennyVideoElV130');
@@ -9864,18 +9888,22 @@ const remuxUrl = `/api/video/live_remux?src=${encodeURIComponent(st.currentUrl)}
 vid.src = remuxUrl;
 vid.play().catch(() => {});
 window.showVideoFeedbackV130('🛠️ Включён потоковый аудио-декодер FFmpeg (AAC)');
+window.wakeVideoHudV130(false);
 };
 
 window.openTorHubFromVideoV130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
+if (!st.torHash) return;
 if (!st.pipMode) window.toggleVideoPipModeV130();
 if (typeof window.toggleTorrentInspectorHubV128 === 'function') {
-window.toggleTorrentInspectorHubV128(ev, 'pieces', st.torHash || '');
+window.toggleTorrentInspectorHubV128(ev, 'pieces', st.torHash);
 }
 };
 
 window.saveCurrentVideoToLibraryV130 = async function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
 if (!st.torHash || st.torFileIdx < 0) return;
@@ -9884,9 +9912,14 @@ window.showVideoFeedbackV130('⬇️ Видео поставлено первы�
 };
 
 window.closeVideoPlayerV130 = function(ev) {
+if (window.isVideoHudGuardActiveV130(ev)) return;
 if (ev && ev.stopPropagation) ev.stopPropagation();
 const st = window._vidStateV130;
 st.active = false;
+st.rotated90 = false;
+clearTimeout(st.controlsHideTimer);
+const stage = document.getElementById('jennyVideoStageV130');
+if (stage) stage.classList.remove('rot90-v130');
 const vid = document.getElementById('jennyVideoElV130');
 if (vid) {
 try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (e) {}
@@ -9902,7 +9935,6 @@ const vid = document.getElementById('jennyVideoElV130');
 const st = window._vidStateV130;
 
 window.stopAllExternalStreamsV97();
-window.pauseMainPlayerForOstV90();
 
 st.active = true;
 st.currentUrl = streamUrl;
@@ -9939,7 +9971,7 @@ vid.playbackRate = st.speed || 1.0;
 vid.play().catch(() => {
 if (subEl) subEl.innerText = '⚡ Подкачка стартовых видео-частей от пиров...';
 });
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 };
 
 window.bindVideoStudioEventsV130 = function() {
@@ -9950,15 +9982,23 @@ const seek = document.getElementById('v130SeekSlider');
 const playBtn = document.getElementById('v130CenterPlayBtn');
 if (!root || !vid) return;
 
+['touchstart', 'touchmove', 'touchend', 'click'].forEach(evName => {
+root.addEventListener(evName, (e) => {
+e.stopPropagation();
+}, false);
+});
+
 let userDraggingSeek = false;
-seek.addEventListener('touchstart', () => { userDraggingSeek = true; }, { passive: true });
-seek.addEventListener('mousedown', () => { userDraggingSeek = true; });
-const finishSeek = () => {
+seek.addEventListener('touchstart', (e) => { e.stopPropagation(); userDraggingSeek = true; }, { passive: true });
+seek.addEventListener('mousedown', (e) => { e.stopPropagation(); userDraggingSeek = true; });
+const finishSeek = (e) => {
+if (e && e.stopPropagation) e.stopPropagation();
 if (!userDraggingSeek) return;
 userDraggingSeek = false;
 if (isFinite(vid.duration) && vid.duration > 0) {
 vid.currentTime = (parseFloat(seek.value) / 1000.0) * vid.duration;
 }
+window.wakeVideoHudV130(false);
 };
 seek.addEventListener('touchend', finishSeek, { passive: true });
 seek.addEventListener('mouseup', finishSeek);
@@ -9967,11 +10007,11 @@ seek.addEventListener('change', finishSeek);
 vid.addEventListener('play', () => {
 if (playBtn) playBtn.innerText = '⏸';
 window.connectVideoToJennyDspV130();
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 });
 vid.addEventListener('pause', () => {
 if (playBtn) playBtn.innerText = '▶';
-window.wakeVideoHudV130();
+window.wakeVideoHudV130(false);
 });
 vid.addEventListener('loadedmetadata', () => {
 const subEl = document.getElementById('v130VideoSubTelemetry');
@@ -9990,24 +10030,24 @@ if (dEl) dEl.innerText = dur > 0 ? (window.fmtKhSecV90 ? window.fmtKhSecV90(dur)
 if (seek && dur > 0) seek.value = Math.min(1000, Math.round((cur / dur) * 1000));
 });
 
-// Перетаскивание мини-окна PiP пальцем + двойной тап (-10с / +10с) + вертикальные свайпы яркости и громкости
 let lastTapTs = 0;
 let startX = 0, startY = 0, initLeft = 0, initTop = 0;
-let gestureMode = ''; // '' | 'pip_drag' | 'vol' | 'bright'
+let gestureMode = '';
+let canStartPipDrag = false;
 
 stage.addEventListener('touchstart', (e) => {
 if (!e.touches || e.touches.length !== 1) return;
 const t = e.touches[0];
 startX = t.clientX;
 startY = t.clientY;
+gestureMode = '';
 const st = window._vidStateV130;
-if (st.pipMode && !e.target.closest('button') && !e.target.closest('input')) {
-gestureMode = 'pip_drag';
+const onInteractive = Boolean(e.target.closest('button') || e.target.closest('input'));
+canStartPipDrag = Boolean(st.pipMode && !onInteractive);
+if (canStartPipDrag) {
 const r = root.getBoundingClientRect();
 initLeft = r.left;
 initTop = r.top;
-} else {
-gestureMode = '';
 }
 }, { passive: true });
 
@@ -10016,22 +10056,30 @@ if (!e.touches || e.touches.length !== 1) return;
 const t = e.touches[0];
 const dx = t.clientX - startX;
 const dy = t.clientY - startY;
+const dist = Math.hypot(dx, dy);
 const st = window._vidStateV130;
 
-if (gestureMode === 'pip_drag') {
-const nx = Math.max(4, Math.min(window.innerWidth - 280, initLeft + dx));
+if (canStartPipDrag && (gestureMode === 'pip_drag' || dist > 8)) {
+gestureMode = 'pip_drag';
+root._hasCustomPipPosV130 = true;
+const nx = Math.max(4, Math.min(window.innerWidth - 284, initLeft + dx));
 const ny = Math.max(4, Math.min(window.innerHeight - 172, initTop + dy));
 root.style.left = nx + 'px';
 root.style.top = ny + 'px';
 return;
 }
 
-if (!st.pipMode && !e.target.closest('.v130-hud-bar') && Math.abs(dy) > 24 && Math.abs(dy) > Math.abs(dx) * 1.5) {
+if (!st.pipMode && !e.target.closest('button') && !e.target.closest('input')) {
+const primaryDelta = st.rotated90 ? -dx : dy;
+const secondaryDelta = st.rotated90 ? dy : dx;
+if (Math.abs(primaryDelta) > 24 && Math.abs(primaryDelta) > Math.abs(secondaryDelta) * 1.4) {
 if (!gestureMode) {
-gestureMode = (startX < window.innerWidth * 0.5) ? 'bright' : 'vol';
+const isLeftSide = st.rotated90 ? (startY < window.innerHeight * 0.5) : (startX < window.innerWidth * 0.5);
+gestureMode = isLeftSide ? 'bright' : 'vol';
 }
 if (gestureMode === 'bright') {
-st.brightness = Math.max(0.35, Math.min(1.6, st.brightness - dy * 0.003));
+st.brightness = Math.max(0.35, Math.min(1.6, st.brightness - primaryDelta * 0.003));
+startX = t.clientX;
 startY = t.clientY;
 vid.style.filter = `brightness(${st.brightness.toFixed(2)})`;
 window.showVideoFeedbackV130(`☀️ Яркость: ${Math.round(st.brightness * 100)}%`);
@@ -10040,26 +10088,46 @@ const vb = document.getElementById('volumeBar');
 if (vb) {
 const maxV = parseFloat(vb.max) || 15;
 const curV = parseFloat(vb.value) || 10;
-const nextV = Math.max(0, Math.min(maxV, curV - (dy > 0 ? 0.4 : -0.4)));
+const nextV = Math.max(0, Math.min(maxV, curV - (primaryDelta > 0 ? 0.4 : -0.4)));
 vb.value = Math.round(nextV);
 if (typeof window.changeVolume === 'function') window.changeVolume();
+startX = t.clientX;
 startY = t.clientY;
 window.showVideoFeedbackV130(`🔊 Громкость: ${Math.round((vb.value / 10) * 100)}%`);
+}
 }
 }
 }
 }, { passive: true });
 
 stage.addEventListener('touchend', (e) => {
-if (e.target.closest('button') || e.target.closest('input')) return;
-if (gestureMode) { gestureMode = ''; return; }
+canStartPipDrag = false;
+if (gestureMode) {
+gestureMode = '';
+return;
+}
+const hud = document.getElementById('v130HudOverlay');
+const isHudHidden = Boolean(hud && hud.classList.contains('hud-hidden-v130'));
+
+if (isHudHidden) {
+window.wakeVideoHudV130(true);
+return;
+}
+
+if (e.target.closest('button') || e.target.closest('input')) {
+window.wakeVideoHudV130(false);
+return;
+}
+
 const now = Date.now();
-if (now - lastTapTs < 280) {
-const rect = stage.getBoundingClientRect();
-const tapX = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientX : rect.width / 2;
-if (tapX < rect.left + rect.width * 0.45) {
+const st = window._vidStateV130;
+if (!st.pipMode && now - lastTapTs < 280) {
+const tapClientX = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientX : window.innerWidth / 2;
+const tapClientY = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientY : window.innerHeight / 2;
+const normPos = st.rotated90 ? (tapClientY / Math.max(1, window.innerHeight)) : (tapClientX / Math.max(1, window.innerWidth));
+if (normPos < 0.42) {
 window.seekVideoRelativeV130(-10);
-} else if (tapX > rect.left + rect.width * 0.55) {
+} else if (normPos > 0.58) {
 window.seekVideoRelativeV130(10);
 } else {
 window.toggleVideoPlayPauseV130();
@@ -10068,17 +10136,14 @@ lastTapTs = 0;
 return;
 }
 lastTapTs = now;
-const hud = document.getElementById('v130HudOverlay');
-if (hud && hud.classList.contains('hud-hidden-v130')) {
-window.wakeVideoHudV130();
-} else if (hud) {
+
+if (hud) {
 hud.classList.add('hud-hidden-v130');
-stage.classList.add('v130-hud-hidden-all');
+clearTimeout(st.controlsHideTimer);
 }
 }, { passive: true });
 };
 
-// Перехватываем запуск видеофайлов в Торрент-студии и в главном списке плеера
 const _origPreviewTorV129 = window.previewTorrentFileStreamV97;
 window.previewTorrentFileStreamV97 = async function(fileIdx, btnEl, ev) {
 const ts = window._torStateV96;
@@ -10107,7 +10172,6 @@ return;
 return _origHandleTrackPlayV130.apply(this, arguments);
 };
 
-// Живая телеметрия скорости торрента прямо в шапке видеоплеера во время просмотра!
 setInterval(() => {
 const st = window._vidStateV130;
 if (!st.active || !st.torHash) return;
