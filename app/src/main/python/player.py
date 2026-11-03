@@ -4146,14 +4146,45 @@ def api_omni_logs_tail_v139():
     log_dir = _OMNI_CORES_STATE_V139["config"].get("log_dir") or "/storage/emulated/0/scripts/JennyPlayer"
     fn = "omni_full_trace.log" if log_type == "trace" else "omni_simple.log"
     fp = os.path.join(log_dir, fn)
-    lines = []
+    text_out = ""
     if os.path.isfile(fp):
         try:
             with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()[-120:]
+                all_lines = f.readlines()[-400:]
+            raw_tail = "".join(all_lines)
+            marker = "🔎 НОВЫЙ ПОИСК" if log_type != "trace" else "[INIT]"
+            idx = raw_tail.rfind(marker)
+            if idx > 0:
+                sep_idx = raw_tail.rfind("====", 0, idx)
+                text_out = raw_tail[sep_idx if sep_idx >= 0 else idx:]
+            else:
+                text_out = "".join(all_lines[-160:])
         except Exception:
             pass
-    return json.dumps({"ok": True, "file": fp, "text": "".join(lines) if lines else "Лог пока пуст — сделай поиск в Торрент-студии."})
+    return json.dumps({"ok": True, "file": fp, "text": text_out if text_out else "Лог пока пуст — сделай поиск в Торрент-студии."})
+
+@route('/api/omni/search_start', method=['GET', 'POST'])
+def api_omni_live_wave_start_v141():
+    response.content_type = 'application/json'
+    st = ensure_active_omni_core_v139()
+    port = st["port"]
+    qs = request.query_string or ""
+    url_t = f"http://127.0.0.1:{port}/search_start" + (f"?{qs}" if qs else "")
+    body_b = request.body.read() if request.method == 'POST' else None
+    req = urllib.request.Request(url_t, data=body_b, method=request.method)
+    if body_b:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return r.read().decode("utf-8", "ignore")
+
+@route('/api/omni/search_poll', method='GET')
+def api_omni_live_wave_poll_v141():
+    response.content_type = 'application/json'
+    port = globals().get('_OMNI_PORT_V96', 18998)
+    qs = request.query_string or ""
+    url_t = f"http://127.0.0.1:{port}/search_poll" + (f"?{qs}" if qs else "")
+    with urllib.request.urlopen(url_t, timeout=5) as r:
+        return r.read().decode("utf-8", "ignore")
 
 def start_server():
     load_saved_music_dir()
