@@ -4720,6 +4720,52 @@ def api_video_resolve_stream_source_v144():
         "prefer_source": disk_path if (disk_path and os.path.isfile(disk_path)) else direct_http
     })
 
+
+# === 🎬⚡ JENNY V145: SEQUENTIAL STREAM READ-AHEAD & EXTENDED FORMAT FILTERS ===
+import threading
+
+_ACTIVE_STREAM_READAHEAD_V145 = {"url": "", "offset": 0, "ts": 0, "running": False}
+
+def _sequential_readahead_worker_v145():
+    """Плавно подтягивает следующие 4 МБ потока из libjtorrent.so в фоновом режиме,
+    чтобы демон качал куски строго последовательно перед курсором плеера."""
+    while True:
+        time.sleep(0.8)
+        try:
+            st = _ACTIVE_STREAM_READAHEAD_V145
+            if not st["url"] or (time.time() - st["ts"] > 25):
+                continue
+            target_u = st["url"]
+            start_b = st["offset"]
+            req = urllib.request.Request(
+                target_u,
+                headers={"Range": f"bytes={start_b}-{start_b + 2 * 1024 * 1024 - 1}"}
+            )
+            with _orig_urlopen_v139_1(req, timeout=2.5) as r:
+                chunk = r.read(256 * 1024)
+                if chunk:
+                    st["offset"] = start_b + len(chunk)
+        except Exception:
+            pass
+
+threading.Thread(target=_sequential_readahead_worker_v145, daemon=True).start()
+
+@route('/api/torrent/stream_nudge', method='POST')
+def api_torrent_stream_nudge_v145():
+    """Принимает текущий URL потока и ориентировочное смещение от видеоплеера для последовательного прогрева."""
+    response.content_type = 'application/json'
+    data = request.json or {}
+    u = (data.get("url") or "").strip()
+    off = int(data.get("offset_bytes") or 0)
+    if u:
+        if u.startswith("/"):
+            u = f"http://127.0.0.1:8080{u}"
+        _ACTIVE_STREAM_READAHEAD_V145["url"] = u
+        if off >= 0:
+            _ACTIVE_STREAM_READAHEAD_V145["offset"] = off
+        _ACTIVE_STREAM_READAHEAD_V145["ts"] = time.time()
+    return json.dumps({"ok": True})
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
