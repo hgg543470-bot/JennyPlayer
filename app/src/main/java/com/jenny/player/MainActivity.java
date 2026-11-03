@@ -42,7 +42,12 @@ public class MainActivity extends AppCompatActivity {
     private static String pendingTorrentName = null;
     private static boolean isVideoFullscreenV132 = false;
     private static boolean isVideoLockedV132 = false;
+    private static boolean isVideoActiveV132 = false;
     private static boolean isDesktopOverlayActiveV132 = false;
+    private static int savedOverlayW = 0;
+    private static int savedOverlayH = 0;
+    private static int savedOverlayX = 24;
+    private static int savedOverlayY = 140;
     private static android.widget.FrameLayout overlayContainerV132 = null;
     private static android.view.WindowManager wmV132 = null;
     private static android.view.WindowManager.LayoutParams overlayParamsV132 = null;
@@ -193,6 +198,183 @@ public class MainActivity extends AppCompatActivity {
         super.onBackPressed();
     }
 
+    
+    private void enterDesktopOverlayInternalV133() {
+        runOnUiThread(() -> {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
+                    return;
+                }
+                if (isDesktopOverlayActiveV132 || webView == null) return;
+                wmV132 = (android.view.WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
+                float density = getResources().getDisplayMetrics().density;
+                int wPx = (savedOverlayW > 48) ? savedOverlayW : Math.round(300 * density);
+                int hPx = (savedOverlayH > 32) ? savedOverlayH : Math.round(176 * density);
+
+                int type = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                        ? android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                        : android.view.WindowManager.LayoutParams.TYPE_PHONE;
+
+                overlayParamsV132 = new android.view.WindowManager.LayoutParams(
+                        wPx, hPx, type,
+                        android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                                | android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                        android.graphics.PixelFormat.TRANSLUCENT
+                );
+                overlayParamsV132.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+                overlayParamsV132.x = savedOverlayX;
+                overlayParamsV132.y = savedOverlayY;
+
+                if (webView.getParent() instanceof android.view.ViewGroup) {
+                    ((android.view.ViewGroup) webView.getParent()).removeView(webView);
+                }
+
+                overlayContainerV132 = new android.widget.FrameLayout(getApplicationContext()) {
+                    private float downRawX = 0f, downRawY = 0f;
+                    private int startWinX = 0, startWinY = 0;
+                    private boolean isDragging = false;
+                    private boolean isPinching = false;
+                    private float initSpan = 1f, initFocusX = 0f, initFocusY = 0f;
+                    private int pinchStartW = 0, pinchStartH = 0, pinchStartX = 0, pinchStartY = 0;
+
+                    private void cancelWebViewTouch(android.view.MotionEvent ev) {
+                        android.view.MotionEvent cancelEv = android.view.MotionEvent.obtain(ev);
+                        cancelEv.setAction(android.view.MotionEvent.ACTION_CANCEL);
+                        super.dispatchTouchEvent(cancelEv);
+                        cancelEv.recycle();
+                    }
+
+                    @Override
+                    public boolean dispatchTouchEvent(android.view.MotionEvent ev) {
+                        if (!isDesktopOverlayActiveV132 || wmV132 == null || overlayParamsV132 == null) {
+                            return super.dispatchTouchEvent(ev);
+                        }
+                        int action = ev.getActionMasked();
+                        float viewOriginX = ev.getRawX() - ev.getX();
+                        float viewOriginY = ev.getRawY() - ev.getY();
+
+                        if (action == android.view.MotionEvent.ACTION_DOWN) {
+                            downRawX = ev.getRawX();
+                            downRawY = ev.getRawY();
+                            startWinX = overlayParamsV132.x;
+                            startWinY = overlayParamsV132.y;
+                            isDragging = false;
+                            isPinching = false;
+                            return super.dispatchTouchEvent(ev);
+                        }
+
+                        if (action == android.view.MotionEvent.ACTION_POINTER_DOWN && ev.getPointerCount() >= 2) {
+                            if (!isPinching) {
+                                cancelWebViewTouch(ev);
+                            }
+                            isPinching = true;
+                            isDragging = false;
+                            float rx0 = viewOriginX + ev.getX(0);
+                            float ry0 = viewOriginY + ev.getY(0);
+                            float rx1 = viewOriginX + ev.getX(1);
+                            float ry1 = viewOriginY + ev.getY(1);
+                            initSpan = (float) Math.max(8.0, Math.hypot(rx1 - rx0, ry1 - ry0));
+                            initFocusX = (rx0 + rx1) * 0.5f;
+                            initFocusY = (ry0 + ry1) * 0.5f;
+                            pinchStartW = overlayParamsV132.width;
+                            pinchStartH = overlayParamsV132.height;
+                            pinchStartX = overlayParamsV132.x;
+                            pinchStartY = overlayParamsV132.y;
+                            return true;
+                        }
+
+                        if (action == android.view.MotionEvent.ACTION_MOVE) {
+                            if (isPinching && ev.getPointerCount() >= 2) {
+                                float rx0 = viewOriginX + ev.getX(0);
+                                float ry0 = viewOriginY + ev.getY(0);
+                                float rx1 = viewOriginX + ev.getX(1);
+                                float ry1 = viewOriginY + ev.getY(1);
+                                float curSpan = (float) Math.max(8.0, Math.hypot(rx1 - rx0, ry1 - ry0));
+                                float curFocusX = (rx0 + rx1) * 0.5f;
+                                float curFocusY = (ry0 + ry1) * 0.5f;
+                                float scale = curSpan / initSpan;
+
+                                int newW = Math.max(48, Math.round(pinchStartW * scale));
+                                int newH = Math.max(32, Math.round(pinchStartH * scale));
+                                float actualScaleX = (float) newW / Math.max(1, pinchStartW);
+                                float actualScaleY = (float) newH / Math.max(1, pinchStartH);
+
+                                overlayParamsV132.width = newW;
+                                overlayParamsV132.height = newH;
+                                overlayParamsV132.x = Math.round(curFocusX - (initFocusX - pinchStartX) * actualScaleX);
+                                overlayParamsV132.y = Math.round(curFocusY - (initFocusY - pinchStartY) * actualScaleY);
+                                savedOverlayW = newW;
+                                savedOverlayH = newH;
+                                savedOverlayX = overlayParamsV132.x;
+                                savedOverlayY = overlayParamsV132.y;
+                                wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                                return true;
+                            } else if (!isPinching && ev.getPointerCount() == 1) {
+                                float dx = ev.getRawX() - downRawX;
+                                float dy = ev.getRawY() - downRawY;
+                                if (!isDragging && Math.hypot(dx, dy) > 8.0) {
+                                    isDragging = true;
+                                    cancelWebViewTouch(ev);
+                                }
+                                if (isDragging) {
+                                    overlayParamsV132.x = Math.round(startWinX + dx);
+                                    overlayParamsV132.y = Math.round(startWinY + dy);
+                                    savedOverlayX = overlayParamsV132.x;
+                                    savedOverlayY = overlayParamsV132.y;
+                                    wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                                    return true;
+                                }
+                            }
+                            return super.dispatchTouchEvent(ev);
+                        }
+
+                        if (action == android.view.MotionEvent.ACTION_POINTER_UP) {
+                            if (ev.getPointerCount() <= 2) {
+                                int remIdx = (ev.getActionIndex() == 0) ? 1 : 0;
+                                downRawX = viewOriginX + ev.getX(remIdx);
+                                downRawY = viewOriginY + ev.getY(remIdx);
+                                startWinX = overlayParamsV132.x;
+                                startWinY = overlayParamsV132.y;
+                                isPinching = false;
+                                isDragging = true;
+                            }
+                            return true;
+                        }
+
+                        if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_CANCEL) {
+                            if (isDragging || isPinching) {
+                                isDragging = false;
+                                isPinching = false;
+                                return true;
+                            }
+                        }
+                        return super.dispatchTouchEvent(ev);
+                    }
+                };
+
+                overlayContainerV132.setBackgroundColor(0xFF000000);
+                overlayContainerV132.addView(webView, new android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                ));
+                wmV132.addView(overlayContainerV132, overlayParamsV132);
+                isDesktopOverlayActiveV132 = true;
+                evalJs("if(window.onDesktopOverlayStateChangedV133) window.onDesktopOverlayStateChangedV133(true);");
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (isVideoActiveV132 && !isDesktopOverlayActiveV132) {
+            enterDesktopOverlayInternalV133();
+        }
+    }
+
     public static void evalJs(final String script) {
         if (instance != null && instance.webView != null) {
             instance.webView.post(() -> instance.webView.evaluateJavascript(script, null));
@@ -286,50 +468,14 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @JavascriptInterface
+        public void setVideoActiveState(boolean active) {
+            isVideoActiveV132 = active;
+        }
+
+        @JavascriptInterface
         public void enterDesktopOverlay(final int wDp, final int hDp) {
-            runOnUiThread(() -> {
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
-                        requestOverlayPermission();
-                        return;
-                    }
-                    if (isDesktopOverlayActiveV132 || webView == null) return;
-                    wmV132 = (android.view.WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
-                    float density = getResources().getDisplayMetrics().density;
-                    int wPx = Math.max(220, (int) (wDp * density));
-                    int hPx = Math.max(140, (int) (hDp * density));
-
-                    int type = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                            ? android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                            : android.view.WindowManager.LayoutParams.TYPE_PHONE;
-
-                    overlayParamsV132 = new android.view.WindowManager.LayoutParams(
-                            wPx, hPx, type,
-                            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                    | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                                    | android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-                            android.graphics.PixelFormat.TRANSLUCENT
-                    );
-                    overlayParamsV132.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
-                    overlayParamsV132.x = 24;
-                    overlayParamsV132.y = 140;
-
-                    if (webView.getParent() instanceof android.view.ViewGroup) {
-                        ((android.view.ViewGroup) webView.getParent()).removeView(webView);
-                    }
-                    overlayContainerV132 = new android.widget.FrameLayout(getApplicationContext());
-                    overlayContainerV132.setBackgroundColor(0xFF000000);
-                    overlayContainerV132.addView(webView, new android.widget.FrameLayout.LayoutParams(
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                    ));
-                    wmV132.addView(overlayContainerV132, overlayParamsV132);
-                    isDesktopOverlayActiveV132 = true;
-                    moveTaskToBack(true);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            });
+            enterDesktopOverlayInternalV133();
+            runOnUiThread(() -> moveTaskToBack(true));
         }
 
         @JavascriptInterface

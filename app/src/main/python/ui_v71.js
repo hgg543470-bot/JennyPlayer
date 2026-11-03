@@ -10989,3 +10989,173 @@ hud.classList.add('hud-hidden-v130');
 }, 2800);
 }
 };
+
+// === 🚀🤏 JENNY V133: AUTO HOME OVERLAY, FREE PINCH-RESIZE ANYWHERE & NO BRIGHT/VOL GESTURES ===
+window.onDesktopOverlayStateChangedV133 = function(isOverlay) {
+const st = window._vidStateV130;
+const root = document.getElementById('jennyVideoStudioRootV130');
+const stage = document.getElementById('jennyVideoStageV130');
+const pipBtn = document.getElementById('v130BtnPipToggle');
+if (!root) return;
+
+st.desktopOverlay = Boolean(isOverlay);
+if (isOverlay) {
+st.pipMode = false;
+st.rotated90 = false;
+stage?.classList.remove('rot90-v130');
+root.classList.remove('mode-pip-v130');
+root.classList.add('mode-full-v130', 'mode-desktop-v132');
+root.style.left = '0';
+root.style.top = '0';
+if (pipBtn) pipBtn.innerText = '⛶ Развернуть';
+} else {
+root.classList.remove('mode-desktop-v132');
+if (pipBtn) pipBtn.innerText = st.pipMode ? '⛶ Развернуть' : '❐ Мини';
+}
+};
+
+// Если мы на рабочем столе и нажали «⛶ Развернуть» — возвращаемся в полное приложение!
+const _origTogglePipV132 = window.toggleVideoPipModeV130;
+window.toggleVideoPipModeV130 = function(ev) {
+if (window._vidStateV130 && window._vidStateV130.desktopOverlay) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+window.exitDesktopOverlayModeV132(true, ev);
+return;
+}
+return _origTogglePipV132.apply(this, arguments);
+};
+
+// Убираем ненужную кнопку «📌 На раб. стол» и угловой ползунок ↘️
+window.cleanUpDesktopButtonsV133 = function() {
+const dBtn = document.getElementById('v132BtnDesktop');
+if (dBtn) dBtn.remove();
+const rHandle = document.getElementById('v132DesktopResizeHandle');
+if (rHandle) rHandle.remove();
+if (!document.getElementById('jennyV133OverlayCompactStyle')) {
+const st = document.createElement('style');
+st.id = 'jennyV133OverlayCompactStyle';
+st.textContent = `
+#jennyVideoStudioRootV130.mode-desktop-v132 .v130-hide-in-pip { display: none !important; }
+`;
+document.head.appendChild(st);
+}
+};
+
+// Полностью переписываем обработчик касаний сцены БЕЗ жестов яркости/громкости и со свободным щипком в режиме Мини!
+window.installCleanStageTouchV133 = function() {
+const root = document.getElementById('jennyVideoStudioRootV130');
+const stage = document.getElementById('jennyVideoStageV130');
+if (!root || !stage || stage._v133TouchInstalled) return;
+stage._v133TouchInstalled = true;
+
+let startX = 0, startY = 0, initLeft = 0, initTop = 0;
+let isPipDrag = false, isPipPinch = false;
+let initSpan = 1, initFocusX = 0, initFocusY = 0, pinchW = 280, pinchH = 168, pinchL = 0, pinchT = 0;
+let lastTapTs = 0;
+
+stage.addEventListener('touchstart', (e) => {
+const st = window._vidStateV130;
+if (st.desktopOverlay || st.isLocked) return;
+const onInteractive = Boolean(e.target.closest('button') || e.target.closest('input'));
+
+if (st.pipMode && e.touches.length >= 2) {
+isPipPinch = true;
+isPipDrag = false;
+const t0 = e.touches[0], t1 = e.touches[1];
+initSpan = Math.max(8, Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY));
+initFocusX = (t0.clientX + t1.clientX) * 0.5;
+initFocusY = (t0.clientY + t1.clientY) * 0.5;
+const r = root.getBoundingClientRect();
+pinchW = r.width; pinchH = r.height; pinchL = r.left; pinchT = r.top;
+return;
+}
+
+if (e.touches.length === 1 && !onInteractive) {
+startX = e.touches[0].clientX;
+startY = e.touches[0].clientY;
+isPipDrag = false;
+if (st.pipMode) {
+const r = root.getBoundingClientRect();
+initLeft = r.left;
+initTop = r.top;
+}
+}
+}, { passive: true, capture: true });
+
+stage.addEventListener('touchmove', (e) => {
+const st = window._vidStateV130;
+// Блокируем старые обработчики яркости/громкости и JS-перетаскивания оверлея!
+e.stopImmediatePropagation();
+if (st.desktopOverlay || st.isLocked) return;
+
+if (st.pipMode && isPipPinch && e.touches.length >= 2) {
+const t0 = e.touches[0], t1 = e.touches[1];
+const curSpan = Math.max(8, Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY));
+const curFocusX = (t0.clientX + t1.clientX) * 0.5;
+const curFocusY = (t0.clientY + t1.clientY) * 0.5;
+const scale = curSpan / initSpan;
+const nw = Math.max(48, Math.round(pinchW * scale));
+const nh = Math.max(32, Math.round(pinchH * scale));
+const sx = nw / Math.max(1, pinchW);
+const sy = nh / Math.max(1, pinchH);
+root._hasCustomPipPosV130 = true;
+root.style.setProperty('width', nw + 'px', 'important');
+root.style.setProperty('height', nh + 'px', 'important');
+root.style.left = Math.round(curFocusX - (initFocusX - pinchL) * sx) + 'px';
+root.style.top = Math.round(curFocusY - (initFocusY - pinchT) * sy) + 'px';
+return;
+}
+
+if (st.pipMode && !isPipPinch && e.touches.length === 1 && !e.target.closest('button') && !e.target.closest('input')) {
+const dx = e.touches[0].clientX - startX;
+const dy = e.touches[0].clientY - startY;
+if (isPipDrag || Math.hypot(dx, dy) > 6) {
+isPipDrag = true;
+root._hasCustomPipPosV130 = true;
+root.style.left = Math.round(initLeft + dx) + 'px';
+root.style.top = Math.round(initTop + dy) + 'px';
+}
+}
+}, { passive: true, capture: true });
+
+stage.addEventListener('touchend', (e) => {
+const st = window._vidStateV130;
+if (isPipDrag || isPipPinch) {
+e.stopImmediatePropagation();
+if (e.touches.length === 0) {
+isPipDrag = false;
+isPipPinch = false;
+}
+return;
+}
+}, { passive: true, capture: true });
+};
+
+const _origOpenVidV132 = window.openJennyVideoPlayerV130;
+window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+const r = _origOpenVidV132.apply(this, arguments);
+window.cleanUpDesktopButtonsV133();
+window.installCleanStageTouchV133();
+if (window.AndroidBridge) {
+try {
+window.AndroidBridge.setVideoActiveState(true);
+if (typeof window.AndroidBridge.canDrawOverlays === 'function' && !window.AndroidBridge.canDrawOverlays()) {
+window.AndroidBridge.requestOverlayPermission();
+}
+} catch (e) {}
+}
+return r;
+};
+
+const _origCloseVidV132 = window.closeVideoPlayerV130;
+window.closeVideoPlayerV130 = function(ev) {
+if (window.AndroidBridge && typeof window.AndroidBridge.setVideoActiveState === 'function') {
+try { window.AndroidBridge.setVideoActiveState(false); } catch (e) {}
+}
+return _origCloseVidV132.apply(this, arguments);
+};
+
+setTimeout(() => {
+window.cleanUpDesktopButtonsV133();
+window.installCleanStageTouchV133();
+}, 400);
