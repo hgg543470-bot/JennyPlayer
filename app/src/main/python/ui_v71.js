@@ -11629,45 +11629,126 @@ setTimeout(window.mountV135VideoControlsAndMainBtn, 450);
 setInterval(window.mountV135VideoControlsAndMainBtn, 3000);
 
 // === 🎬 JENNY V136: PERSISTENT VIDEO LIST MERGE & TAB COUNTER ===
-window._cachedDiscoveredVideosV136 = window._cachedDiscoveredVideosV136 || [];
+// === 📁 JENNY V137: SEPARATE VIDEO DIRECTORY (/storage/emulated/0/JennyVideo) & CLEAN MUSIC TABS ===
+window._dedicatedVideoListV137 = [];
+window._dedicatedVideoMetaMapV137 = {};
+window._dedicatedVideoDirPathV137 = '/storage/emulated/0/JennyVideo';
 
-window.mergeDiscoveredVideosIntoLastDataV136 = function() {
-if (!window.lastData || !Array.isArray(window.lastData.all_tracks)) return false;
-let changed = false;
-(window._cachedDiscoveredVideosV136 || []).forEach(fn => {
-if (fn && !window.lastData.all_tracks.includes(fn)) {
-window.lastData.all_tracks.unshift(fn);
-changed = true;
+// Также собираем видео из живого снимка торрент-демона на клиенте, чтобы они были видны мгновенно!
+window.collectClientTorrentVideosV137 = function() {
+const map = Object.assign({}, window._dedicatedVideoMetaMapV137);
+const snap = window._torLiveDaemonSnapV128 || [];
+snap.forEach(tor => {
+const h = tor.hash || '';
+(tor.files || []).forEach(f => {
+const p = String(f.path || f.name || '');
+if (window.isVideoFileNameV130 && window.isVideoFileNameV130(p)) {
+const bn = p.split('/').pop() || p;
+if (!map[bn]) {
+map[bn] = {
+name: bn,
+size_mb: Math.round((f.size || 0) / (1024 * 1024)),
+percent: f.percent || 0,
+tor_hash: h,
+tor_file_idx: Number(f.index),
+stream_url: `/api/torrent/stream/${h}/${f.index}`
+};
+}
 }
 });
-return changed;
+});
+return Object.values(map);
 };
 
-window.syncDiscoveredVideosIntoPlaylistV134 = async function() {
+window.syncDiscoveredVideosIntoPlaylistV134 = async function(forceScan) {
 try {
-const res = await fetch('/api/video/discovered_list');
-if (!res.ok) return;
+const res = await fetch('/api/video/discovered_list' + (forceScan ? '?force=1' : ''));
+if (res.ok) {
 const data = await res.json();
-const vids = (data && data.videos) || [];
-window._cachedDiscoveredVideosV136 = vids;
-const changed = window.mergeDiscoveredVideosIntoLastDataV136();
-if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
-if (changed || window.activePlaylistTabV71 === 'videos') {
-if (typeof window.renderActivePlaylistTracksV71 === 'function') {
-window.renderActivePlaylistTracksV71(false);
+if (data.video_dir) window._dedicatedVideoDirPathV137 = data.video_dir;
+const items = data.items || [];
+const nextMap = {};
+items.forEach(it => { if (it && it.name) nextMap[it.name] = it; });
+window._dedicatedVideoMetaMapV137 = nextMap;
 }
-}
-window.decorateVideoIconsInListV130();
 } catch (e) {}
-};
 
-// Следим, чтобы при любом фоновом обновлении window.lastData видео мгновенно вливались обратно в список
-setInterval(() => {
-if (window.mergeDiscoveredVideosIntoLastDataV136()) {
+const mergedItems = window.collectClientTorrentVideosV137();
+window._dedicatedVideoListV137 = mergedItems.map(x => x.name).sort();
+
+// Очищаем музыкальный массив all_tracks от видеофайлов, чтобы они НЕ мешались во вкладке «🎵 Все»!
+if (window.lastData && Array.isArray(window.lastData.all_tracks)) {
+window.lastData.all_tracks = window.lastData.all_tracks.filter(fn => !window.isVideoFileNameV130(fn));
+}
+
 if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
 if (window.activePlaylistTabV71 === 'videos' && typeof window.renderActivePlaylistTracksV71 === 'function') {
 window.renderActivePlaylistTracksV71(false);
 }
-window.decorateVideoIconsInListV130();
+};
+
+// Точный счетчик на чипе «🎬 Видео» (только из папки JennyVideo и видео-торрентов)
+window.getTrackCountForTabV71 = function(tabId) {
+if (tabId === 'videos') {
+return (window._dedicatedVideoListV137 || []).length;
 }
-}, 900);
+const allTracks = ((window.lastData && window.lastData.all_tracks) || []).filter(fn => !window.isVideoFileNameV130(fn));
+if (tabId === 'all') return allTracks.length;
+if (tabId === 'fav') return (window.favorites || []).filter(fn => !window.isVideoFileNameV130(fn)).length;
+return _origGetCntV130.apply(this, arguments);
+};
+
+// Отрисовка вкладки «🎬 Видео» из отдельной папки /storage/emulated/0/JennyVideo
+window.renderActivePlaylistTracksV71 = function(scrollSubChipToCenter) {
+if (window.activePlaylistTabV71 === 'videos') {
+const unifiedBox = document.getElementById('unifiedList');
+if (!unifiedBox) return;
+window.mountPlaylistStripDOMV71();
+const subWrap = document.getElementById('jennySubFilterWrapV71');
+if (subWrap) {
+subWrap.innerHTML = `
+<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;margin-bottom:6px;background:#090d14;border:1px solid #30363d;border-radius:10px;font-size:11px;color:#8b949e;">
+<span>📁 Папка: <b style="color:#58a6ff;">${window._dedicatedVideoDirPathV137}</b></span>
+<button type="button" onclick="window.syncDiscoveredVideosIntoPlaylistV134(true)" style="padding:3px 8px;border-radius:7px;background:#161b22;border:1px solid #58a6ff;color:#58a6ff;font-size:10.5px;font-weight:bold;">🔄 Обновить</button>
+</div>`;
+}
+const items = window.collectClientTorrentVideosV137();
+const vids = items.map(x => x.name);
+const sorted = window.sortTrackArrayForTabV71 ? window.sortTrackArrayForTabV71(vids, 'videos') : vids;
+window.viewedFullTabListV73 = [...sorted];
+const cntEl = document.getElementById('tracksCount');
+if (cntEl) cntEl.innerText = sorted.length;
+
+unifiedBox.innerHTML = sorted.length
+? sorted.map(fn => buildTrackRowHTML(fn, 'main', (window.favorites || []).includes(fn) ? '❤️' : '🤍')).join('')
+: `<div style="padding:22px;color:#8b949e;text-align:center;line-height:1.5;">🎬 В папке <b>${window._dedicatedVideoDirPathV137}</b> пока пусто.<br>Скачай фильм в <b>Торрент-студии</b> или закинь видео в эту папку!</div>`;
+window.decorateVideoIconsInListV130();
+return;
+}
+
+// Для всех музыкальных вкладок скрываем видеофайлы
+if (window.lastData && Array.isArray(window.lastData.all_tracks)) {
+window.lastData.all_tracks = window.lastData.all_tracks.filter(fn => !window.isVideoFileNameV130(fn));
+}
+return _origRenderActivePlV130.apply(this, arguments);
+};
+
+// Запуск видео из вкладки «🎬 Видео» (поддерживает и локальные файлы из JennyVideo, и прямые потоки из торрента!)
+window.handleTrackPlayBtn = function(filename, listContext, ev) {
+if (window.isVideoFileNameV130(filename)) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const meta = (window._dedicatedVideoMetaMapV137 && window._dedicatedVideoMetaMapV137[filename])
+|| window.collectClientTorrentVideosV137().find(x => x.name === filename)
+|| {};
+const url = meta.stream_url || ('/api/media/' + encodeURIComponent(filename));
+window.openJennyVideoPlayerV130(url, filename, {
+torHash: meta.tor_hash || '',
+torFileIdx: meta.tor_file_idx !== undefined ? Number(meta.tor_file_idx) : -1
+});
+return;
+}
+return _origHandleTrackPlayV130.apply(this, arguments);
+};
+
+setInterval(() => window.syncDiscoveredVideosIntoPlaylistV134(false), 3500);
+setTimeout(() => window.syncDiscoveredVideosIntoPlaylistV134(true), 500);
