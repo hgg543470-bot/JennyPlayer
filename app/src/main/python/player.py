@@ -3858,12 +3858,37 @@ _OMNI_CORE_REGISTRY_V139 = {
 }
 
 def _discover_custom_cores_v139():
+    # 1. Автопоиск любых новых ядер libomni*.so, закинутых в app/src/main/jniLibs/arm64-v8a при сборке APK
+    port_seq = 18990
+    builtin_so = {"libomnitorrent.so", "libomnitorrent_v36ir.so"}
+    try:
+        probe_p = _find_native_so_v96("libomnitorrent.so") if '_find_native_so_v96' in globals() else None
+        nat_dir = os.path.dirname(probe_p) if (probe_p and os.path.isfile(probe_p)) else None
+        if nat_dir and os.path.isdir(nat_dir):
+            for fn in sorted(os.listdir(nat_dir)):
+                if fn.startswith("libomni") and fn.endswith(".so") and fn not in builtin_so:
+                    clean_label = re.sub(r"^libomni(torrent)?_?", "", fn[:-3]) or fn[:-3]
+                    cid = "jni_" + re.sub(r"[^a-zA-Z0-9_]", "_", clean_label)
+                    full_so = os.path.join(nat_dir, fn)
+                    _OMNI_CORE_REGISTRY_V139[cid] = {
+                        "id": cid,
+                        "title": f"🚀 {clean_label}",
+                        "desc": f"Встроенное ядро из jniLibs ({fn})",
+                        "custom_path": full_so,
+                        "so_name": fn,
+                        "fallback_so": "libomnitorrent.so",
+                        "port": port_seq
+                    }
+                    port_seq += 1
+    except Exception:
+        pass
+
+    # 2. Автопоиск внешних .so из /storage/emulated/0/scripts/JennyPlayer/cores
     ext_dir = "/storage/emulated/0/scripts/JennyPlayer/cores"
     priv_dir = "/data/user/0/com.jenny.player/files/cores"
     try:
         os.makedirs(ext_dir, exist_ok=True)
         os.makedirs(priv_dir, exist_ok=True)
-        port_seq = 18990
         for fn in sorted(os.listdir(ext_dir)):
             if fn.endswith(".so"):
                 cid = "custom_" + re.sub(r"[^a-zA-Z0-9_]", "_", fn[:-3])
