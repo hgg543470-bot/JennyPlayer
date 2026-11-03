@@ -4641,6 +4641,85 @@ def api_sc_fast_search_v143():
     res = _fast_soundcloud_search_v143(q, 25)
     return json.dumps({"ok": True, "status": "ok", "results": res, "items": res, "tracks": res, "count": len(res)})
 
+
+# === 🔊🎬 JENNY V144: TORRENT MKV AUDIO STREAM RESOLVER & CORS UNLOCK ===
+@hook('after_request')
+def _enable_cors_for_webaudio_v144():
+    """Разрешает WebAudio API (DSP) и <video> читать потоки без обнуления звука по CORS."""
+    try:
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, HEAD'
+        response.headers['Access-Control-Allow-Headers'] = 'Range, Content-Type, Origin, Accept'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range, Accept-Ranges'
+    except Exception:
+        pass
+
+def _find_partial_torrent_file_on_disk_v144(name_hint: str, info_hash: str = ""):
+    """Находит реальный качающийся .mkv/.mp4/.avi файл торрента на диске для прямого чтения звука."""
+    hint_clean = os.path.basename((name_hint or "").strip()).lower()
+    best_path = None
+    best_size = -1
+    for root_d in _get_all_torrent_storage_dirs_v142() if '_get_all_torrent_storage_dirs_v142' in globals() else [
+        "/data/user/0/com.jenny.player/files",
+        "/data/user/0/com.jenny.player/cache",
+        "/storage/emulated/0/JennyVideo",
+        "/storage/emulated/0/Download",
+    ]:
+        if not os.path.isdir(root_d):
+            continue
+        for r_dir, _, f_list in os.walk(root_d):
+            for fn in f_list:
+                fl = fn.lower()
+                if not fl.endswith(('.mkv', '.mp4', '.avi', '.webm', '.mov', '.ts')):
+                    continue
+                if (hint_clean and (hint_clean in fl or fl in hint_clean or fl[:16] == hint_clean[:16])) or (info_hash and info_hash.lower() in r_dir.lower()):
+                    fp = os.path.join(r_dir, fn)
+                    try:
+                        sz = os.path.getsize(fp)
+                        if sz > best_size:
+                            best_size = sz
+                            best_path = fp
+                    except Exception:
+                        pass
+    return best_path
+
+@route('/api/video/resolve_stream_source', method='GET')
+def api_video_resolve_stream_source_v144():
+    """Возвращает прямой URL потока libjtorrent или локальный путь к качающемуся MKV для аудио-моста."""
+    response.content_type = 'application/json'
+    src = (request.query.get('src') or '').strip()
+    title = (request.query.get('title') or '').strip()
+    jport = globals().get('_JTORRENT_PORT_V96', 42070)
+
+    disk_path = _find_partial_torrent_file_on_disk_v144(title or src)
+    direct_http = src
+    if src.startswith('/'):
+        direct_http = f"http://127.0.0.1:8080{src}"
+
+    # Проверяем, какой трек сейчас отдаёт libjtorrent.so
+    try:
+        with _orig_urlopen_v139_1(f"http://127.0.0.1:{jport}/status", timeout=0.6) as r:
+            st = json.loads(r.read().decode("utf-8", "ignore"))
+            t_list = st if isinstance(st, list) else (st.get("torrents") or [])
+            for tor in t_list:
+                th = (tor.get("hash") or "").strip().lower()
+                for idx, f_obj in enumerate(tor.get("files") or []):
+                    fn = os.path.basename(f_obj.get("path") or f_obj.get("name") or "")
+                    if fn and (not title or fn[:14].lower() in title.lower() or title[:14].lower() in fn.lower()):
+                        if not disk_path:
+                            disk_path = _find_partial_torrent_file_on_disk_v144(fn, th)
+                        direct_http = f"http://127.0.0.1:{jport}/stream?hash={th}&index={idx}"
+                        break
+    except Exception:
+        pass
+
+    return json.dumps({
+        "ok": True,
+        "disk_path": disk_path or "",
+        "direct_http": direct_http,
+        "prefer_source": disk_path if (disk_path and os.path.isfile(disk_path)) else direct_http
+    })
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)

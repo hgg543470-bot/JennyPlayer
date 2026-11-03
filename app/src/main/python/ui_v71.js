@@ -12316,3 +12316,152 @@ clearTimeout(tid);
 return _prevFetchV143.apply(this, arguments);
 };
 })();
+
+// === 🔊📝 JENNY V144: FULL UNTRUNCATED TITLES & MKV TORRENT AUDIO ENGINE ===
+(function() {
+// 1. CSS-исправление обрезанных названий:
+// - В Центре закачек и частей P2P (вкладки Треки и Раздачи) показываем полное имя файла в 2-3 строки без троеточия
+// - В шапке видеоплеера переносим ряд кнопок (A=Б, Части, Полный, Мини, ✖) на вторую строку, чтобы название серии читалось целиком на всю ширину!
+const styleId = 'jennyFullTitlesAndVideoHeaderV144';
+if (!document.getElementById(styleId)) {
+const st = document.createElement('style');
+st.id = styleId;
+st.textContent = `
+/* Полные имена файлов в Центре закачек и Торрент-студии */
+#torModal b, #torModal strong, #torFilesList div, #torFilesList span,
+[id*="P2P"] b, [id*="P2P"] span, [id*="Center"] b, [id*="Center"] div {
+white-space: normal !important;
+text-overflow: clip !important;
+overflow-wrap: anywhere !important;
+word-break: break-word !important;
+line-height: 1.32 !important;
+}
+`;
+document.head.appendChild(st);
+}
+
+// Выпрямляем сжатую колонку названия в шапке видеоплеера (где было "F.. ▲2 442КБ/с")
+window.fixVideoPlayerHeaderLayoutV144 = function() {
+try {
+const allBtns = Array.from(document.querySelectorAll('button'));
+const fullBtn = allBtns.find(b => (b.innerText || '').includes('Полный'));
+const partsBtn = allBtns.find(b => (b.innerText || '').includes('Части'));
+if (fullBtn && partsBtn) {
+const btnRow = fullBtn.parentElement;
+const topHeader = btnRow ? btnRow.parentElement : null;
+if (topHeader && topHeader !== document.body) {
+topHeader.style.setProperty('display', 'flex', 'important');
+topHeader.style.setProperty('flex-direction', 'column', 'important');
+topHeader.style.setProperty('align-items', 'stretch', 'important');
+topHeader.style.setProperty('gap', '6px', 'important');
+topHeader.style.setProperty('width', '100%', 'important');
+
+const titleBox = topHeader.firstElementChild;
+if (titleBox && titleBox !== btnRow) {
+titleBox.style.setProperty('width', '100%', 'important');
+titleBox.style.setProperty('max-width', '100%', 'important');
+titleBox.style.setProperty('white-space', 'normal', 'important');
+titleBox.style.setProperty('word-break', 'break-word', 'important');
+titleBox.style.setProperty('display', 'flex', 'important');
+titleBox.style.setProperty('flex-wrap', 'wrap', 'important');
+titleBox.style.setProperty('align-items', 'center', 'important');
+titleBox.style.setProperty('gap', '6px', 'important');
+titleBox.querySelectorAll('div, span, b').forEach(el => {
+el.style.setProperty('white-space', 'normal', 'important');
+el.style.setProperty('max-width', '100%', 'important');
+el.style.setProperty('overflow', 'visible', 'important');
+el.style.setProperty('text-overflow', 'clip', 'important');
+});
+}
+btnRow.style.setProperty('display', 'flex', 'important');
+btnRow.style.setProperty('flex-wrap', 'wrap', 'important');
+btnRow.style.setProperty('justify-content', 'flex-end', 'important');
+btnRow.style.setProperty('width', '100%', 'important');
+}
+}
+} catch (e) {}
+};
+
+// Также раскрываем обрезанный текст карточек внутри Центра закачек P2P (вкладка Треки)
+window.expandTruncatedTorCenterTitlesV144 = function() {
+try {
+document.querySelectorAll('div, span, b').forEach(el => {
+const txt = (el.innerText || '').trim();
+if (txt.includes('КАЧАЕТСЯ:') || txt.includes('Futurama') || txt.endsWith('...')) {
+if (el.children.length === 0 && el.style) {
+el.style.whiteSpace = 'normal';
+el.style.overflow = 'visible';
+el.style.textOverflow = 'clip';
+el.style.wordBreak = 'break-word';
+}
+}
+});
+} catch (e) {}
+};
+
+// 2. ВОССТАНОВЛЕНИЕ ЗВУКА НА ТОРРЕНТ-ФАЙЛАХ .MKV:
+// а) Снимаем принудительный video.muted = true, который ставил старый обработчик MKV, когда буфер RAM 0/25 пуст!
+// б) Если звук в самом <video> не декодируется WebView (кодек AC3/EAC3 в MKV), автоматически запускаем нативный Android MediaPlayer-мост!
+window._nativeMkvAudioActiveV144 = false;
+window._lastMkvSourceResolvedV144 = '';
+
+window.ensureMkvTorrentSoundV144 = async function() {
+try {
+const vid = document.querySelector('video');
+if (!vid) {
+if (window._nativeMkvAudioActiveV144 && window.AndroidBridge && window.AndroidBridge.jennyNativeAudioStopV144) {
+window.AndroidBridge.jennyNativeAudioStopV144();
+window._nativeMkvAudioActiveV144 = false;
+}
+return;
+}
+
+const vSrc = vid.currentSrc || vid.src || '';
+if (!vSrc) return;
+
+// Проверяем, играет ли какой-то отдельный <audio> прокси-элемент для MKV; если он стоит (paused или readyState < 2) — РАЗМЬЮЧИВАЕМ <video>!
+let proxyAudioPlaying = false;
+document.querySelectorAll('audio').forEach(a => {
+if (!a.paused && a.readyState >= 2 && a.currentTime > 0) {
+proxyAudioPlaying = true;
+}
+});
+
+if (!proxyAudioPlaying) {
+// Всегда включаем звук на самом <video>, чтобы встроенные AAC/MP3/Opus дорожки в MKV не глушились!
+if (vid.muted) vid.muted = false;
+if (vid.volume < 0.9) vid.volume = 1.0;
+}
+
+// Если у нас есть нативный мост в MainActivity.java и видео идет (currentTime > 0.2), проверяем, нужна ли помощь с декодированием AC3/EAC3
+if (!vid.paused && vid.readyState >= 2 && window.AndroidBridge && typeof window.AndroidBridge.jennyNativeAudioStartV144 === 'function') {
+// Проверяем, есть ли декодированный аудиопоток у самого WebView <video>
+const hasWebkitAudio = (typeof vid.webkitAudioDecodedByteCount === 'number') ? (vid.webkitAudioDecodedByteCount > 0) : true;
+const hasMozAudio = (typeof vid.mozHasAudio === 'boolean') ? vid.mozHasAudio : true;
+const audioTracksEmpty = (vid.audioTracks && vid.audioTracks.length === 0);
+
+// Если WebView за 1 секунду видео не декодировал ни одного байта аудио (0 байт — это AC3/EAC3/DTS в MKV!), запускаем нативный декодер Android!
+if ((!hasWebkitAudio && vid.currentTime > 0.8) || audioTracksEmpty || !hasMozAudio) {
+if (window._lastMkvSourceResolvedV144 !== vSrc) {
+window._lastMkvSourceResolvedV144 = vSrc;
+const res = await fetch('/api/video/resolve_stream_source?src=' + encodeURIComponent(vSrc));
+const d = await res.json();
+const targetUrl = d.prefer_source || vSrc;
+window.AndroidBridge.jennyNativeAudioStartV144(targetUrl, Math.floor(vid.currentTime * 1000));
+window._nativeMkvAudioActiveV144 = true;
+} else if (window._nativeMkvAudioActiveV144) {
+window.AndroidBridge.jennyNativeAudioSyncV144(Math.floor(vid.currentTime * 1000), !vid.paused, vid.playbackRate || 1.0);
+}
+}
+} else if (vid.paused && window._nativeMkvAudioActiveV144 && window.AndroidBridge && window.AndroidBridge.jennyNativeAudioSyncV144) {
+window.AndroidBridge.jennyNativeAudioSyncV144(Math.floor(vid.currentTime * 1000), false, 1.0);
+}
+} catch (e) {}
+};
+
+setInterval(() => {
+window.fixVideoPlayerHeaderLayoutV144();
+window.expandTruncatedTorCenterTitlesV144();
+window.ensureMkvTorrentSoundV144();
+}, 500);
+})();
