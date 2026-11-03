@@ -3821,6 +3821,247 @@ def api_video_discovered_list_v134():
         "items": items
     })
 
+# === 🧠⚡ JENNY V139: HOT-SWAPPABLE SEARCH CORES MANAGER (v3.6-ir / Classic / Custom) ===
+_OMNI_CORES_STATE_V139 = {
+    "active_core": "v36ir",
+    "procs": {},
+    "config": {
+        "disable_logs": False,
+        "enable_simple_log": True,
+        "enable_trace_log": False,
+        "log_dir": "/storage/emulated/0/scripts/JennyPlayer",
+        "enable_soundcloud": True,
+        "enable_seeker_p2p": True,
+        "slskd_url": "http://127.0.0.1:5000",
+        "slsk_user": "",
+        "slsk_pass": ""
+    }
+}
+
+_OMNI_CORE_REGISTRY_V139 = {
+    "v36ir": {
+        "id": "v36ir",
+        "title": "⚡ v3.6-ir Live Wave",
+        "desc": "20 слотов (10 SC + 10 ступеней), 99.7% чистая фонетика, 7 P2P-сетей (TorAPI/Seeker)",
+        "so_name": "libomnitorrent_v36ir.so",
+        "fallback_so": "libomnitorrent.so",
+        "port": 18999
+    },
+    "classic": {
+        "id": "classic",
+        "title": "🏛️ Classic Core",
+        "desc": "Стабильное базовое ядро OmniTorrent (порт 18998)",
+        "so_name": "libomnitorrent.so",
+        "fallback_so": "libomnitorrent.so",
+        "port": 18998
+    }
+}
+
+def _discover_custom_cores_v139():
+    ext_dir = "/storage/emulated/0/scripts/JennyPlayer/cores"
+    priv_dir = "/data/user/0/com.jenny.player/files/cores"
+    try:
+        os.makedirs(ext_dir, exist_ok=True)
+        os.makedirs(priv_dir, exist_ok=True)
+        port_seq = 18990
+        for fn in sorted(os.listdir(ext_dir)):
+            if fn.endswith(".so"):
+                cid = "custom_" + re.sub(r"[^a-zA-Z0-9_]", "_", fn[:-3])
+                src_p = os.path.join(ext_dir, fn)
+                dst_p = os.path.join(priv_dir, fn)
+                try:
+                    if not os.path.isfile(dst_p) or os.path.getsize(src_p) != os.path.getsize(dst_p):
+                        shutil.copy2(src_p, dst_p)
+                        os.chmod(dst_p, 0o755)
+                except Exception:
+                    pass
+                _OMNI_CORE_REGISTRY_V139[cid] = {
+                    "id": cid,
+                    "title": f"🧪 {fn}",
+                    "desc": f"Внешнее ядро из папки cores ({fn})",
+                    "custom_path": dst_p,
+                    "so_name": fn,
+                    "fallback_so": "libomnitorrent.so",
+                    "port": port_seq
+                }
+                port_seq += 1
+    except Exception:
+        pass
+
+def _resolve_core_binary_v139(core_info):
+    if core_info.get("custom_path") and os.path.isfile(core_info["custom_path"]):
+        return core_info["custom_path"]
+    try:
+        if '_find_native_so_v96' in globals():
+            p = _find_native_so_v96(core_info["so_name"])
+            if p and os.path.isfile(p):
+                return p
+            p2 = _find_native_so_v96(core_info.get("fallback_so", "libomnitorrent.so"))
+            if p2 and os.path.isfile(p2):
+                return p2
+    except Exception:
+        pass
+    return None
+
+def _push_core_config_v139(port):
+    raw_cfg = dict(_OMNI_CORES_STATE_V139["config"])
+    if not raw_cfg.get("slsk_user"):
+        raw_cfg.pop("slsk_user", None)
+        raw_cfg.pop("slsk_pass", None)
+    try:
+        payload = json.dumps(raw_cfg).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/config",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+    except Exception:
+        pass
+
+def ensure_active_omni_core_v139(core_id=None):
+    global _OMNI_PORT_V96
+    _discover_custom_cores_v139()
+    cid = core_id or _OMNI_CORES_STATE_V139.get("active_core") or "v36ir"
+    if cid not in _OMNI_CORE_REGISTRY_V139:
+        cid = "v36ir"
+    _OMNI_CORES_STATE_V139["active_core"] = cid
+    info = _OMNI_CORE_REGISTRY_V139[cid]
+    port = info["port"]
+
+    alive = False
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/health")
+        with urllib.request.urlopen(req, timeout=0.35) as r:
+            alive = (r.status == 200)
+    except Exception:
+        alive = False
+
+    if not alive:
+        bin_p = _resolve_core_binary_v139(info)
+        if bin_p:
+            cfg = _OMNI_CORES_STATE_V139["config"]
+            log_dir = cfg.get("log_dir") or "/storage/emulated/0/scripts/JennyPlayer"
+            try:
+                os.makedirs(log_dir, exist_ok=True)
+            except Exception:
+                pass
+            cmd = [
+                bin_p,
+                f"-addr=127.0.0.1:{port}",
+                f"-log-dir={log_dir}",
+                f"-simple-log={'true' if cfg.get('enable_simple_log') else 'false'}",
+                f"-trace-log={'true' if cfg.get('enable_trace_log') else 'false'}"
+            ]
+            if cfg.get("disable_logs"):
+                cmd.append("-no-logs")
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _OMNI_CORES_STATE_V139["procs"][cid] = proc
+                for _ in range(18):
+                    time.sleep(0.06)
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=0.25) as r:
+                            if r.status == 200:
+                                alive = True
+                                break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if alive:
+            _push_core_config_v139(port)
+
+    _OMNI_PORT_V96 = port
+    return {"ok": True, "active_core": cid, "port": port, "alive": alive, "info": info}
+
+if 'ensure_omnitorrent_daemon_v96' in globals():
+    _orig_ensure_omni_v96 = ensure_omnitorrent_daemon_v96
+    def ensure_omnitorrent_daemon_v96():
+        res = ensure_active_omni_core_v139()
+        if not res.get("alive"):
+            return _orig_ensure_omni_v96()
+        return True
+
+_orig_urlopen_v139_1 = urllib.request.urlopen
+def _omni_adapted_urlopen_v139_1(url_or_req, *args, **kwargs):
+    try:
+        u_str = url_or_req.full_url if hasattr(url_or_req, 'full_url') else str(url_or_req)
+        if ('127.0.0.1:1899' in u_str) and ('/search?' in u_str):
+            active_port = globals().get('_OMNI_PORT_V96', 18999)
+            u_str = re.sub(r'127\.0\.0\.1:1899\d', f'127.0.0.1:{active_port}', u_str)
+            cfg = _OMNI_CORES_STATE_V139.get("config", {})
+            if 'simple_log=' not in u_str:
+                extra_q = urllib.parse.urlencode({
+                    "simple_log": 0 if cfg.get("disable_logs") else (1 if cfg.get("enable_simple_log", True) else 0),
+                    "trace_log": 0 if cfg.get("disable_logs") else (1 if cfg.get("enable_trace_log", False) else 0),
+                    "log_dir": cfg.get("log_dir") or "/storage/emulated/0/scripts/JennyPlayer"
+                })
+                u_str = u_str + ("&" + extra_q)
+            if hasattr(url_or_req, 'full_url'):
+                url_or_req.full_url = u_str
+            else:
+                url_or_req = u_str
+            if 'timeout' not in kwargs or (kwargs['timeout'] is not None and kwargs['timeout'] < 20):
+                kwargs['timeout'] = 20
+    except Exception:
+        pass
+    return _orig_urlopen_v139_1(url_or_req, *args, **kwargs)
+
+urllib.request.urlopen = _omni_adapted_urlopen_v139_1
+
+@route('/api/omni/cores', method='GET')
+def api_omni_cores_list_v139():
+    response.content_type = 'application/json'
+    _discover_custom_cores_v139()
+    st = ensure_active_omni_core_v139()
+    cores_out = []
+    for k, v in _OMNI_CORE_REGISTRY_V139.items():
+        cores_out.append({
+            "id": k,
+            "title": v["title"],
+            "desc": v["desc"],
+            "port": v["port"],
+            "active": (k == _OMNI_CORES_STATE_V139["active_core"])
+        })
+    return json.dumps({
+        "ok": True,
+        "active_core": _OMNI_CORES_STATE_V139["active_core"],
+        "port": st["port"],
+        "alive": st["alive"],
+        "config": _OMNI_CORES_STATE_V139["config"],
+        "cores": cores_out
+    })
+
+@route('/api/omni/switch_core', method='POST')
+def api_omni_switch_core_v139():
+    response.content_type = 'application/json'
+    data = request.json or {}
+    target_id = data.get("core_id") or "v36ir"
+    if isinstance(data.get("config"), dict):
+        _OMNI_CORES_STATE_V139["config"].update(data["config"])
+    st = ensure_active_omni_core_v139(target_id)
+    _push_core_config_v139(st["port"])
+    return json.dumps(st)
+
+@route('/api/omni/logs_tail', method='GET')
+def api_omni_logs_tail_v139():
+    response.content_type = 'application/json'
+    log_type = request.query.get('type') or 'simple'
+    log_dir = _OMNI_CORES_STATE_V139["config"].get("log_dir") or "/storage/emulated/0/scripts/JennyPlayer"
+    fn = "omni_full_trace.log" if log_type == "trace" else "omni_simple.log"
+    fp = os.path.join(log_dir, fn)
+    lines = []
+    if os.path.isfile(fp):
+        try:
+            with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()[-120:]
+        except Exception:
+            pass
+    return json.dumps({"ok": True, "file": fp, "text": "".join(lines) if lines else "Лог пока пуст — сделай поиск в Торрент-студии."})
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
