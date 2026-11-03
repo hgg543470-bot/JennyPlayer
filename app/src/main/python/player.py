@@ -3823,7 +3823,7 @@ def api_video_discovered_list_v134():
 
 # === 🧠⚡ JENNY V139: HOT-SWAPPABLE SEARCH CORES MANAGER (v3.6-ir / Classic / Custom) ===
 _OMNI_CORES_STATE_V139 = {
-    "active_core": "v36ir",
+    "active_core": "v40ir",
     "procs": {},
     "config": {
         "disable_logs": False,
@@ -3838,94 +3838,140 @@ _OMNI_CORES_STATE_V139 = {
     }
 }
 
-_OMNI_CORE_REGISTRY_V139 = {
-    "v36ir": {
-        "id": "v36ir",
-        "title": "⚡ v3.6-ir Live Wave",
-        "desc": "20 слотов (10 SC + 10 ступеней), 99.7% чистая фонетика, 7 P2P-сетей (TorAPI/Seeker)",
-        "so_name": "libomnitorrent_v36ir.so",
-        "fallback_so": "libomnitorrent.so",
-        "port": 18999
-    },
-    "classic": {
-        "id": "classic",
-        "title": "🏛️ Classic Core",
-        "desc": "Стабильное базовое ядро OmniTorrent (порт 18998)",
-        "so_name": "libomnitorrent.so",
-        "fallback_so": "libomnitorrent.so",
-        "port": 18998
-    }
-}
+_OMNI_CORE_REGISTRY_V139 = {}
 
-def _discover_custom_cores_v139():
-    # 1. Автопоиск любых новых ядер libomni*.so, закинутых в app/src/main/jniLibs/arm64-v8a при сборке APK
-    port_seq = 18990
-    builtin_so = {"libomnitorrent.so", "libomnitorrent_v36ir.so"}
+def _get_native_lib_dirs_v140():
+    """Находит реальную системную папку lib/arm64 установленного APK + рабочие папки ядер."""
+    dirs = []
+    # 1. Напрямую через Chaquopy / Android ApplicationInfo.nativeLibraryDir
     try:
-        probe_p = _find_native_so_v96("libomnitorrent.so") if '_find_native_so_v96' in globals() else None
-        nat_dir = os.path.dirname(probe_p) if (probe_p and os.path.isfile(probe_p)) else None
-        if nat_dir and os.path.isdir(nat_dir):
-            for fn in sorted(os.listdir(nat_dir)):
-                if fn.startswith("libomni") and fn.endswith(".so") and fn not in builtin_so:
-                    clean_label = re.sub(r"^libomni(torrent)?_?", "", fn[:-3]) or fn[:-3]
-                    cid = "jni_" + re.sub(r"[^a-zA-Z0-9_]", "_", clean_label)
-                    full_so = os.path.join(nat_dir, fn)
-                    _OMNI_CORE_REGISTRY_V139[cid] = {
-                        "id": cid,
-                        "title": f"🚀 {clean_label}",
-                        "desc": f"Встроенное ядро из jniLibs ({fn})",
-                        "custom_path": full_so,
-                        "so_name": fn,
-                        "fallback_so": "libomnitorrent.so",
-                        "port": port_seq
-                    }
-                    port_seq += 1
+        from java import jclass
+        app = jclass("com.chaquo.python.Python").getPlatform().getApplication()
+        nat_d = str(app.getApplicationInfo().nativeLibraryDir)
+        if nat_d and os.path.isdir(nat_d) and nat_d not in dirs:
+            dirs.append(nat_d)
     except Exception:
         pass
 
-    # 2. Автопоиск внешних .so из /storage/emulated/0/scripts/JennyPlayer/cores
-    ext_dir = "/storage/emulated/0/scripts/JennyPlayer/cores"
+    # 2. Через /proc/self/maps (ищем путь, откуда загружены .so нашего APK)
+    try:
+        with open("/proc/self/maps", "r", encoding="utf-8", errors="ignore") as f:
+            for ln in f:
+                if "/com.jenny.player" in ln and "/lib/" in ln and ".so" in ln:
+                    p = ln.split()[-1]
+                    d = os.path.dirname(p)
+                    if os.path.isdir(d) and d not in dirs:
+                        dirs.append(d)
+    except Exception:
+        pass
+
+    # 3. Из существующих переменных player.py
+    for k, v in list(globals().items()):
+        if isinstance(v, str) and v.endswith(".so") and os.path.isfile(v):
+            d = os.path.dirname(v)
+            if d not in dirs:
+                dirs.append(d)
+
+    # 4. Прямая папка проекта jniLibs/arm64-v8a и папка cores
+    for extra in (
+        "/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/arm64-v8a",
+        "/storage/emulated/0/scripts/JennyPlayer/cores",
+    ):
+        if os.path.isdir(extra) and extra not in dirs:
+            dirs.append(extra)
+    return dirs
+
+def _prepare_executable_so_v140(src_path, fn):
+    """Если .so лежит в системной папке APK (/data/app/...) — возвращаем напрямую.
+    Если лежит на /storage/emulated/0 — копируем во внутреннюю исполняемую папку приложения с правами 0755."""
+    if src_path.startswith("/data/"):
+        return src_path
     priv_dir = "/data/user/0/com.jenny.player/files/cores"
     try:
-        os.makedirs(ext_dir, exist_ok=True)
         os.makedirs(priv_dir, exist_ok=True)
-        for fn in sorted(os.listdir(ext_dir)):
-            if fn.endswith(".so"):
-                cid = "custom_" + re.sub(r"[^a-zA-Z0-9_]", "_", fn[:-3])
-                src_p = os.path.join(ext_dir, fn)
-                dst_p = os.path.join(priv_dir, fn)
-                try:
-                    if not os.path.isfile(dst_p) or os.path.getsize(src_p) != os.path.getsize(dst_p):
-                        shutil.copy2(src_p, dst_p)
-                        os.chmod(dst_p, 0o755)
-                except Exception:
-                    pass
-                _OMNI_CORE_REGISTRY_V139[cid] = {
-                    "id": cid,
-                    "title": f"🧪 {fn}",
-                    "desc": f"Внешнее ядро из папки cores ({fn})",
-                    "custom_path": dst_p,
-                    "so_name": fn,
-                    "fallback_so": "libomnitorrent.so",
-                    "port": port_seq
-                }
-                port_seq += 1
+        dst_p = os.path.join(priv_dir, fn)
+        if not os.path.isfile(dst_p) or os.path.getsize(src_path) != os.path.getsize(dst_p) or int(os.path.getmtime(src_path)) != int(os.path.getmtime(dst_p)):
+            shutil.copy2(src_path, dst_p)
+            os.chmod(dst_p, 0o755)
+        return dst_p
     except Exception:
-        pass
+        return src_path
+
+def _discover_custom_cores_v139():
+    """Автоматически находит ВСЕ файлы libomni*.so в APK и папке проекта и строит реестр для UI."""
+    found_so = {}
+    for d in _get_native_lib_dirs_v140():
+        try:
+            for fn in sorted(os.listdir(d)):
+                if fn.startswith("libomni") and fn.endswith(".so"):
+                    full_p = os.path.join(d, fn)
+                    if os.path.isfile(full_p):
+                        # Приоритет отдаем файлу из /data/app/... (системная папка APK с правами SELinux exec)
+                        if fn not in found_so or full_p.startswith("/data/"):
+                            found_so[fn] = full_p
+        except Exception:
+            pass
+
+    new_reg = {}
+    port_seq = 18990
+
+    # Сортируем так, чтобы новые версии (v40ir, v36ir и кастомные) шли первыми, а базовый libomnitorrent.so — последним
+    def _sort_key(fn_name):
+        if fn_name == "libomnitorrent.so":
+            return (1, fn_name)
+        return (0, fn_name)
+
+    for fn in sorted(found_so.keys(), key=_sort_key, reverse=True):
+        raw_p = found_so[fn]
+        exec_p = _prepare_executable_so_v140(raw_p, fn)
+        if fn == "libomnitorrent.so":
+            cid = "classic"
+            title = "🏛️ Classic Core"
+            port = 18998
+        elif fn == "libomnitorrent_v36ir.so":
+            cid = "v36ir"
+            title = "⚡ v3.6-ir Live Wave"
+            port = 18999
+        else:
+            clean_label = re.sub(r"^libomni(torrent)?_?", "", fn[:-3]) or fn[:-3]
+            cid = re.sub(r"[^a-zA-Z0-9_]", "_", clean_label).lower()
+            title = f"🔥 {clean_label}"
+            port = port_seq
+            port_seq += 1
+
+        new_reg[cid] = {
+            "id": cid,
+            "title": title,
+            "desc": f"Ядро {fn} (порт {port})",
+            "custom_path": exec_p,
+            "so_name": fn,
+            "port": port
+        }
+
+    # Если вдруг ничего не нашлось, оставляем дефолтную запись
+    if not new_reg:
+        new_reg["classic"] = {
+            "id": "classic",
+            "title": "🏛️ Classic Core",
+            "desc": "Базовое ядро",
+            "custom_path": None,
+            "so_name": "libomnitorrent.so",
+            "port": 18998
+        }
+
+    _OMNI_CORE_REGISTRY_V139.clear()
+    _OMNI_CORE_REGISTRY_V139.update(new_reg)
+    if _OMNI_CORES_STATE_V139.get("active_core") not in _OMNI_CORE_REGISTRY_V139:
+        _OMNI_CORES_STATE_V139["active_core"] = next(iter(_OMNI_CORE_REGISTRY_V139.keys()))
 
 def _resolve_core_binary_v139(core_info):
-    if core_info.get("custom_path") and os.path.isfile(core_info["custom_path"]):
-        return core_info["custom_path"]
-    try:
-        if '_find_native_so_v96' in globals():
-            p = _find_native_so_v96(core_info["so_name"])
-            if p and os.path.isfile(p):
-                return p
-            p2 = _find_native_so_v96(core_info.get("fallback_so", "libomnitorrent.so"))
-            if p2 and os.path.isfile(p2):
-                return p2
-    except Exception:
-        pass
+    p = core_info.get("custom_path")
+    if p and os.path.isfile(p):
+        return p
+    for d in _get_native_lib_dirs_v140():
+        cand = os.path.join(d, core_info.get("so_name", "libomnitorrent.so"))
+        if os.path.isfile(cand):
+            return _prepare_executable_so_v140(cand, os.path.basename(cand))
     return None
 
 def _push_core_config_v139(port):
@@ -3941,7 +3987,7 @@ def _push_core_config_v139(port):
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             resp.read()
     except Exception:
         pass
@@ -3949,18 +3995,21 @@ def _push_core_config_v139(port):
 def ensure_active_omni_core_v139(core_id=None):
     global _OMNI_PORT_V96
     _discover_custom_cores_v139()
-    cid = core_id or _OMNI_CORES_STATE_V139.get("active_core") or "v36ir"
+    cid = core_id or _OMNI_CORES_STATE_V139.get("active_core")
     if cid not in _OMNI_CORE_REGISTRY_V139:
-        cid = "v36ir"
+        cid = next(iter(_OMNI_CORE_REGISTRY_V139.keys()))
     _OMNI_CORES_STATE_V139["active_core"] = cid
     info = _OMNI_CORE_REGISTRY_V139[cid]
     port = info["port"]
 
     alive = False
+    version_str = ""
     try:
         req = urllib.request.Request(f"http://127.0.0.1:{port}/health")
         with urllib.request.urlopen(req, timeout=0.35) as r:
             alive = (r.status == 200)
+            h_data = json.loads(r.read().decode("utf-8", "ignore"))
+            version_str = h_data.get("version", "")
     except Exception:
         alive = False
 
@@ -3985,12 +4034,14 @@ def ensure_active_omni_core_v139(core_id=None):
             try:
                 proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 _OMNI_CORES_STATE_V139["procs"][cid] = proc
-                for _ in range(18):
+                for _ in range(20):
                     time.sleep(0.06)
                     try:
                         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=0.25) as r:
                             if r.status == 200:
                                 alive = True
+                                h_data = json.loads(r.read().decode("utf-8", "ignore"))
+                                version_str = h_data.get("version", "")
                                 break
                     except Exception:
                         pass
@@ -4000,7 +4051,7 @@ def ensure_active_omni_core_v139(core_id=None):
             _push_core_config_v139(port)
 
     _OMNI_PORT_V96 = port
-    return {"ok": True, "active_core": cid, "port": port, "alive": alive, "info": info}
+    return {"ok": True, "active_core": cid, "port": port, "alive": alive, "version": version_str, "info": info}
 
 if 'ensure_omnitorrent_daemon_v96' in globals():
     _orig_ensure_omni_v96 = ensure_omnitorrent_daemon_v96
@@ -4014,23 +4065,24 @@ _orig_urlopen_v139_1 = urllib.request.urlopen
 def _omni_adapted_urlopen_v139_1(url_or_req, *args, **kwargs):
     try:
         u_str = url_or_req.full_url if hasattr(url_or_req, 'full_url') else str(url_or_req)
-        if ('127.0.0.1:1899' in u_str) and ('/search?' in u_str):
-            active_port = globals().get('_OMNI_PORT_V96', 18999)
+        if ('127.0.0.1:1899' in u_str):
+            active_port = globals().get('_OMNI_PORT_V96', 18998)
             u_str = re.sub(r'127\.0\.0\.1:1899\d', f'127.0.0.1:{active_port}', u_str)
-            cfg = _OMNI_CORES_STATE_V139.get("config", {})
-            if 'simple_log=' not in u_str:
-                extra_q = urllib.parse.urlencode({
-                    "simple_log": 0 if cfg.get("disable_logs") else (1 if cfg.get("enable_simple_log", True) else 0),
-                    "trace_log": 0 if cfg.get("disable_logs") else (1 if cfg.get("enable_trace_log", False) else 0),
-                    "log_dir": cfg.get("log_dir") or "/storage/emulated/0/scripts/JennyPlayer"
-                })
-                u_str = u_str + ("&" + extra_q)
+            if '/search?' in u_str:
+                cfg = _OMNI_CORES_STATE_V139.get("config", {})
+                if 'simple_log=' not in u_str:
+                    extra_q = urllib.parse.urlencode({
+                        "simple_log": 0 if cfg.get("disable_logs") else (1 if cfg.get("enable_simple_log", True) else 0),
+                        "trace_log": 0 if cfg.get("disable_logs") else (1 if cfg.get("enable_trace_log", False) else 0),
+                        "log_dir": cfg.get("log_dir") or "/storage/emulated/0/scripts/JennyPlayer"
+                    })
+                    u_str = u_str + ("&" + extra_q)
+                if 'timeout' not in kwargs or (kwargs['timeout'] is not None and kwargs['timeout'] < 20):
+                    kwargs['timeout'] = 20
             if hasattr(url_or_req, 'full_url'):
                 url_or_req.full_url = u_str
             else:
                 url_or_req = u_str
-            if 'timeout' not in kwargs or (kwargs['timeout'] is not None and kwargs['timeout'] < 20):
-                kwargs['timeout'] = 20
     except Exception:
         pass
     return _orig_urlopen_v139_1(url_or_req, *args, **kwargs)
@@ -4040,7 +4092,6 @@ urllib.request.urlopen = _omni_adapted_urlopen_v139_1
 @route('/api/omni/cores', method='GET')
 def api_omni_cores_list_v139():
     response.content_type = 'application/json'
-    _discover_custom_cores_v139()
     st = ensure_active_omni_core_v139()
     cores_out = []
     for k, v in _OMNI_CORE_REGISTRY_V139.items():
@@ -4056,6 +4107,7 @@ def api_omni_cores_list_v139():
         "active_core": _OMNI_CORES_STATE_V139["active_core"],
         "port": st["port"],
         "alive": st["alive"],
+        "version": st.get("version", ""),
         "config": _OMNI_CORES_STATE_V139["config"],
         "cores": cores_out
     })
@@ -4064,7 +4116,7 @@ def api_omni_cores_list_v139():
 def api_omni_switch_core_v139():
     response.content_type = 'application/json'
     data = request.json or {}
-    target_id = data.get("core_id") or "v36ir"
+    target_id = data.get("core_id")
     if isinstance(data.get("config"), dict):
         _OMNI_CORES_STATE_V139["config"].update(data["config"])
     st = ensure_active_omni_core_v139(target_id)
