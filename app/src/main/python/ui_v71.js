@@ -11752,3 +11752,104 @@ return _origHandleTrackPlayV130.apply(this, arguments);
 
 setInterval(() => window.syncDiscoveredVideosIntoPlaylistV134(false), 3500);
 setTimeout(() => window.syncDiscoveredVideosIntoPlaylistV134(true), 500);
+
+// === ➕🎬 JENNY V138: FIX ADD FORMAT BUTTON (NO WEBVIEW PROMPT) & AUTO VIDEO EXTS ===
+window.ensureAllVideoFormatsInConfigV138 = function() {
+const requiredExts = ['.mp3', '.opus', '.m4a', '.flac', '.wav', '.ogg', '.mp4', '.mkv', '.avi', '.webm', '.mov', '.aac', '.xflac'];
+const patchCfg = (cfg) => {
+if (!cfg || typeof cfg !== 'object') return;
+for (const k of Object.keys(cfg)) {
+if (Array.isArray(cfg[k]) && cfg[k].some(x => typeof x === 'string' && x.startsWith('.'))) {
+requiredExts.forEach(ext => {
+if (!cfg[k].includes(ext)) cfg[k].push(ext);
+});
+}
+}
+};
+patchCfg(window.appConfig);
+patchCfg(window._musicConfigRefV131);
+if (window.videoDeckV131 && window.videoDeckV131.config) patchCfg(window.videoDeckV131.config);
+
+// Также проверяем списки форматов в localStorage
+for (let i = 0; i < localStorage.length; i++) {
+const lk = localStorage.key(i);
+if (!lk) continue;
+const raw = localStorage.getItem(lk);
+if (raw && (raw.includes('".mp3"') || raw.includes('".xflac"'))) {
+try {
+const parsed = JSON.parse(raw);
+if (Array.isArray(parsed)) {
+requiredExts.forEach(ext => { if (!parsed.includes(ext)) parsed.push(ext); });
+localStorage.setItem(lk, JSON.stringify(parsed));
+} else if (parsed && typeof parsed === 'object') {
+patchCfg(parsed);
+localStorage.setItem(lk, JSON.stringify(parsed));
+}
+} catch (e) {}
+}
+}
+};
+
+// Перехватываем клик по кнопке «+ Формат» и вместо неработающего в Android WebView window.prompt() рисуем встроенное поле ввода!
+window.openInlineAddFormatBoxV138 = function(btnEl, origFn) {
+let box = document.getElementById('jennyInlineAddFormatBoxV138');
+if (box) {
+box.remove();
+return;
+}
+box = document.createElement('div');
+box.id = 'jennyInlineAddFormatBoxV138';
+box.style.cssText = 'display:flex;align-items:center;gap:6px;margin:8px 0;padding:8px;background:#090d14;border:1.5px solid #3fb950;border-radius:10px;';
+box.innerHTML = `
+<input type="text" id="jennyNewExtInputV138" placeholder=".mkv, .avi, .flv..." style="flex:1;background:#161b22;border:1px solid #30363d;color:#fff;padding:6px 10px;border-radius:7px;font-size:12px;outline:none;">
+<button type="button" id="jennyConfirmExtBtnV138" style="padding:6px 12px;border-radius:7px;background:#238636;border:1px solid #3fb950;color:#fff;font-size:11.5px;font-weight:bold;">✅ ОК</button>
+<button type="button" onclick="this.parentElement.remove()" style="padding:6px 9px;border-radius:7px;background:#21262d;border:1px solid #30363d;color:#8b949e;font-size:11.5px;">✖</button>
+`;
+const container = (btnEl && btnEl.closest('div')?.parentElement) || document.getElementById('settingsModal');
+if (btnEl && btnEl.parentElement && btnEl.parentElement.parentElement) {
+btnEl.parentElement.parentElement.insertBefore(box, btnEl.parentElement.nextSibling);
+} else if (container) {
+container.appendChild(box);
+}
+const inp = document.getElementById('jennyNewExtInputV138');
+const okBtn = document.getElementById('jennyConfirmExtBtnV138');
+if (inp) setTimeout(() => inp.focus(), 50);
+
+const submitExt = () => {
+let val = (inp ? inp.value : '').trim().toLowerCase();
+if (!val) return;
+if (!val.startsWith('.')) val = '.' + val;
+window._customPromptReturnV138 = val;
+if (typeof origFn === 'function') {
+try { origFn(val); } catch (e) {}
+}
+window.ensureAllVideoFormatsInConfigV138();
+if (typeof window.saveConfig === 'function') { try { window.saveConfig(); } catch (e) {} }
+box.remove();
+if (typeof window.showToast === 'function') window.showToast('✅ Формат добавлен: ' + val);
+if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') window.syncDiscoveredVideosIntoPlaylistV134(true);
+};
+if (okBtn) okBtn.onclick = submitExt;
+if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitExt(); });
+};
+
+// Перехватываем window.prompt во всем приложении, чтобы любая кнопка с prompt() открывала рабочее окно ввода
+window.prompt = function(msg, defVal) {
+if (window._customPromptReturnV138) {
+const v = window._customPromptReturnV138;
+window._customPromptReturnV138 = null;
+return v;
+}
+const activeBtn = document.activeElement;
+const callerFn = arguments.callee && arguments.callee.caller;
+window.openInlineAddFormatBoxV138(activeBtn, callerFn);
+return null;
+};
+
+window.ensureAllVideoFormatsInConfigV138();
+setTimeout(() => {
+window.ensureAllVideoFormatsInConfigV138();
+if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') {
+window.syncDiscoveredVideosIntoPlaylistV134(true);
+}
+}, 400);
