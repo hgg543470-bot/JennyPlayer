@@ -170,14 +170,34 @@ def _get_xflac_lib_v84():
     ff_bin = os.environ.get("FFMPEG_BINARY", "")
     ff_dir = os.path.dirname(ff_bin) if ff_bin else ""
     native_dir = os.environ.get("JENNY_NATIVE_DIR", "") or ff_dir
-    files_dir = os.environ.get("JENNY_FILES_DIR", "")
+    files_dir = os.environ.get("JENNY_FILES_DIR", "") or "/data/user/0/com.jenny.player/files"
     path_dirs = [p.strip() for p in os.environ.get("PATH", "").split(":") if p.strip()]
+
+    extra_dirs = []
+    if "_get_native_lib_dirs_v140" in globals():
+        try:
+            extra_dirs = _get_native_lib_dirs_v140()
+        except Exception:
+            pass
+
+    # Предзагружаем libc++_shared.so из папки нативных библиотек APK, если она есть
+    for d in ([native_dir] + extra_dirs + path_dirs):
+        if d:
+            cpp_so = os.path.join(d, "libc++_shared.so")
+            if os.path.isfile(cpp_so):
+                try:
+                    ctypes.CDLL(cpp_so, mode=ctypes.RTLD_GLOBAL)
+                    break
+                except Exception:
+                    pass
 
     candidates = []
     if os.environ.get("XFLAC_LIB_PATH"):
         candidates.append(os.environ["XFLAC_LIB_PATH"])
     if native_dir:
         candidates.append(os.path.join(native_dir, "libxflac.so"))
+    for ed in extra_dirs:
+        candidates.append(os.path.join(ed, "libxflac.so"))
     for pd in path_dirs:
         candidates.append(os.path.join(pd, "libxflac.so"))
     candidates.extend([

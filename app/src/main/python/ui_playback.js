@@ -310,7 +310,7 @@ window.playTrack = async function(filename, listContext = 'main') {
     const player = document.getElementById('audioPlayer');
     const titleEl = document.getElementById('nowPlaying');
 
-    if(player) { player.pause();  }
+    if(player) { player.pause(); player.removeAttribute('src'); try { player.load(); } catch(e){} }
     if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} }
     window.isStudioPlaying = false;
     window.studioBuffer = null;
