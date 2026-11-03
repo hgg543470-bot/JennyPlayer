@@ -11853,3 +11853,81 @@ if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') {
 window.syncDiscoveredVideosIntoPlaylistV134(true);
 }
 }, 400);
+
+// === 🧠⚡ JENNY V139.2: UNIVERSAL MOUNT FOR CORE SWITCHER (TORRENT STUDIO + SETTINGS) ===
+window.renderOmniCoreSwitcherBarV139 = function() {
+const st = window._omniCoreStateV139;
+if (!st) return;
+const cfg = st.config || {};
+
+// Ищем поле поиска в Торрент-студии по любому ID или placeholder
+const candidates = [
+document.getElementById('torSearchInputV82'),
+document.getElementById('torrentSearchInput'),
+document.getElementById('torQueryInput'),
+...Array.from(document.querySelectorAll('input[type="text"], input[type="search"]')).filter(el => {
+const ph = (el.placeholder || '').toLowerCase();
+const id = (el.id || '').toLowerCase();
+return id.includes('tor') || id.includes('omni') || ph.includes('торрент') || ph.includes('rutor') || ph.includes('magnet') || ph.includes('раздач');
+})
+].filter(Boolean);
+
+const buildBarInner = () => {
+const chipsHtml = (st.cores || []).map(c => {
+const isAct = (c.id === st.active_core);
+return `<button type="button" onclick="window.syncOmniCoreBackendV139('${c.id}', true)" style="padding:4px 9px;border-radius:8px;font-size:11px;font-weight:800;border:1.5px solid ${isAct ? '#3fb950' : '#30363d'};background:${isAct ? 'rgba(63,185,80,0.18)' : '#161b22'};color:${isAct ? '#3fb950' : '#8b949e'};">${c.title}</button>`;
+}).join('');
+
+const cfgPanelHtml = st.panelOpen ? `
+<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:6px;border-top:1px dashed #21262d;">
+<button type="button" onclick="window.toggleOmniCoreFlagV139('enable_soundcloud')" style="padding:3px 7px;border-radius:7px;font-size:10.5px;border:1px solid ${cfg.enable_soundcloud ? '#ff7b72' : '#30363d'};background:#0d1117;color:${cfg.enable_soundcloud ? '#ff7b72' : '#8b949e'};">☁️ SC 10 слотов: ${cfg.enable_soundcloud ? 'ВКЛ' : 'ВЫКЛ'}</button>
+<button type="button" onclick="window.toggleOmniCoreFlagV139('enable_seeker_p2p')" style="padding:3px 7px;border-radius:7px;font-size:10.5px;border:1px solid ${cfg.enable_seeker_p2p ? '#58a6ff' : '#30363d'};background:#0d1117;color:${cfg.enable_seeker_p2p ? '#58a6ff' : '#8b949e'};">🐦 Seeker P2P: ${cfg.enable_seeker_p2p ? 'ВКЛ' : 'ВЫКЛ'}</button>
+<button type="button" onclick="window.toggleOmniCoreFlagV139('enable_simple_log')" style="padding:3px 7px;border-radius:7px;font-size:10.5px;border:1px solid ${cfg.enable_simple_log ? '#d2a8ff' : '#30363d'};background:#0d1117;color:${cfg.enable_simple_log ? '#d2a8ff' : '#8b949e'};">📝 Simple Log: ${cfg.enable_simple_log ? 'ВКЛ' : 'ВЫКЛ'}</button>
+<button type="button" onclick="window.toggleOmniCoreFlagV139('enable_trace_log')" style="padding:3px 7px;border-radius:7px;font-size:10.5px;border:1px solid ${cfg.enable_trace_log ? '#e3b341' : '#30363d'};background:#0d1117;color:${cfg.enable_trace_log ? '#e3b341' : '#8b949e'};">🔬 Trace Log: ${cfg.enable_trace_log ? 'ВКЛ' : 'ВЫКЛ'}</button>
+<button type="button" onclick="window.toggleOmniCoreFlagV139('disable_logs')" style="padding:3px 7px;border-radius:7px;font-size:10.5px;border:1px solid ${cfg.disable_logs ? '#f85149' : '#30363d'};background:#0d1117;color:${cfg.disable_logs ? '#f85149' : '#8b949e'};">🚫 No-Logs: ${cfg.disable_logs ? 'ВКЛ' : 'ВЫКЛ'}</button>
+<button type="button" onclick="window.openOmniLiveLogModalV139('simple')" style="padding:3px 8px;border-radius:7px;font-size:10.5px;border:1px solid #58a6ff;background:#161b22;color:#58a6ff;font-weight:bold;">👁️ Simple</button>
+<button type="button" onclick="window.openOmniLiveLogModalV139('trace')" style="padding:3px 8px;border-radius:7px;font-size:10.5px;border:1px solid #e3b341;background:#161b22;color:#e3b341;font-weight:bold;">🔬 Trace</button>
+</div>` : '';
+
+return `
+<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;">
+<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+<span style="font-size:11px;color:#8b949e;font-weight:bold;">🧠 Ядро P2P:</span>
+${chipsHtml}
+</div>
+<button type="button" onclick="window._omniCoreStateV139.panelOpen=!window._omniCoreStateV139.panelOpen;window.renderOmniCoreSwitcherBarV139();" style="padding:4px 8px;border-radius:8px;font-size:10.5px;border:1px solid #58a6ff;background:#161b22;color:#58a6ff;font-weight:bold;">⚙️ v3.6-ir ${st.panelOpen ? '▴' : '▾'}</button>
+</div>
+${cfgPanelHtml}`;
+};
+
+// 1. Монтируем над строкой поиска в Торрент-студии
+if (candidates.length > 0) {
+const qInp = candidates[0];
+const hostRow = qInp.parentElement;
+const modalContainer = hostRow ? hostRow.parentElement : null;
+if (modalContainer) {
+let bar = document.getElementById('jennyOmniCoreSwitcherBarV139');
+if (!bar) {
+bar = document.createElement('div');
+bar.id = 'jennyOmniCoreSwitcherBarV139';
+bar.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin:6px 0 8px 0;padding:7px 9px;background:linear-gradient(135deg,#0b1019,#111824);border:1px solid #30363d;border-radius:11px;';
+modalContainer.insertBefore(bar, hostRow);
+}
+bar.innerHTML = buildBarInner();
+}
+}
+
+// 2. Дублируем блок управления ядром в Настройки (⚙️), чтобы он был доступен всегда
+const settingsModal = document.getElementById('settingsModal');
+if (settingsModal) {
+let sBar = document.getElementById('jennyOmniCoreSettingsBoxV139');
+if (!sBar) {
+sBar = document.createElement('div');
+sBar.id = 'jennyOmniCoreSettingsBoxV139';
+sBar.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin:10px 0;padding:9px 11px;background:linear-gradient(135deg,#0b1019,#111824);border:1.5px solid #58a6ff;border-radius:12px;';
+const firstChild = settingsModal.querySelector('div') || settingsModal;
+firstChild.insertBefore(sBar, firstChild.firstChild);
+}
+sBar.innerHTML = buildBarInner();
+}
+};
