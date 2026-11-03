@@ -179,6 +179,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && isDesktopOverlayActiveV132) {
+            restoreWebViewToActivityV135(false);
+        }
         if (hasFocus && (isVideoFullscreenV132 || isVideoLockedV132)) {
             applyVideoSystemUiLockV132();
         }
@@ -419,6 +422,7 @@ public class MainActivity extends AppCompatActivity {
                 evalJs("if(window.onDesktopOverlayStateChangedV133) window.onDesktopOverlayStateChangedV133(true);");
             } catch (Exception e) {
                 e.printStackTrace();
+                restoreWebViewToActivityV135(false);
             }
         });
     }
@@ -429,6 +433,53 @@ public class MainActivity extends AppCompatActivity {
         if (isVideoActiveV132 && !isDesktopOverlayActiveV132) {
             enterDesktopOverlayInternalV133();
         }
+    }
+
+    
+    private void restoreWebViewToActivityV135(final boolean bringToFront) {
+        runOnUiThread(() -> {
+            try {
+                boolean wasOverlay = isDesktopOverlayActiveV132;
+                isDesktopOverlayActiveV132 = false;
+                if (overlayContainerV132 != null) {
+                    overlayContainerV132.removeAllViews();
+                    if (wmV132 != null) {
+                        try {
+                            wmV132.removeViewImmediate(overlayContainerV132);
+                        } catch (Exception e1) {
+                            try { wmV132.removeView(overlayContainerV132); } catch (Exception ignored) {}
+                        }
+                    }
+                    overlayContainerV132 = null;
+                }
+                if (webView != null) {
+                    webView.setScaleX(1.0f);
+                    webView.setScaleY(1.0f);
+                    android.view.ViewGroup contentGroup = findViewById(android.R.id.content);
+                    android.view.ViewParent parent = webView.getParent();
+                    if (parent != contentGroup) {
+                        if (parent instanceof android.view.ViewGroup) {
+                            ((android.view.ViewGroup) parent).removeView(webView);
+                        }
+                        setContentView(webView);
+                    }
+                    webView.onResume();
+                    webView.resumeTimers();
+                    webView.requestLayout();
+                    webView.invalidate();
+                }
+                if (bringToFront) {
+                    Intent i = new Intent(MainActivity.this, MainActivity.class);
+                    i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    startActivity(i);
+                }
+                if (wasOverlay) {
+                    evalJs("if(window.onDesktopOverlayStateChangedV133) window.onDesktopOverlayStateChangedV133(false);");
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
     }
 
     public static void evalJs(final String script) {
@@ -564,34 +615,7 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void exitDesktopOverlay(final boolean bringToFront) {
-            runOnUiThread(() -> {
-                try {
-                    if (!isDesktopOverlayActiveV132) return;
-                    isDesktopOverlayActiveV132 = false;
-                    if (overlayContainerV132 != null) {
-                        overlayContainerV132.removeAllViews();
-                        if (wmV132 != null) {
-                            try { wmV132.removeView(overlayContainerV132); } catch (Exception ignored) {}
-                        }
-                        overlayContainerV132 = null;
-                    }
-                    if (webView != null) {
-                        if (webView.getParent() instanceof android.view.ViewGroup) {
-                            ((android.view.ViewGroup) webView.getParent()).removeView(webView);
-                        }
-                        webView.setScaleX(1.0f);
-                        webView.setScaleY(1.0f);
-                        setContentView(webView);
-                    }
-                    if (bringToFront) {
-                        Intent i = new Intent(MainActivity.this, MainActivity.class);
-                        i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                        startActivity(i);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            });
+            restoreWebViewToActivityV135(bringToFront);
         }
 
         @JavascriptInterface
@@ -768,9 +792,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (isDesktopOverlayActiveV132) {
-            evalJs("if(window.exitDesktopOverlayModeV132) window.exitDesktopOverlayModeV132(false);");
-        }
+        restoreWebViewToActivityV135(false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
             startPythonServer();
         }

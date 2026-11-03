@@ -11318,3 +11318,312 @@ window.showVideoFeedbackV130(`🧠 Весь звук видео в RAM: 100% (${
 }
 return audioBuf;
 };
+
+// === ⏱️🎬 JENNY V135: VIDEO TIME RESUME, MAIN BAR MINI-WINDOW BUTTON & COLLAPSIBLE BOTTOM PANEL ===
+
+window.getVideoResumeKeyV135 = function(titleStr, streamUrl) {
+const raw = String(titleStr || streamUrl || '').split('?')[0].trim().toLowerCase();
+return raw || 'default_video';
+};
+
+window.loadVideoResumeMapV135 = function() {
+try {
+return JSON.parse(localStorage.getItem('ytm_video_resume_map_v135') || '{}') || {};
+} catch (e) {
+return {};
+}
+};
+
+window.saveCurrentVideoProgressV135 = function() {
+const st = window._vidStateV130;
+const vid = document.getElementById('jennyVideoElV130');
+if (!st || !st.currentUrl || !vid) return;
+const curSec = (vid.currentTime || 0) + (st.remuxBaseOffset || 0);
+const durSec = isFinite(vid.duration) && vid.duration > 0 ? (vid.duration + (st.remuxBaseOffset || 0)) : 0;
+const key = window.getVideoResumeKeyV135(st.currentTitle, st.currentUrl);
+const map = window.loadVideoResumeMapV135();
+const prev = map[key] || {};
+const saveSec = curSec > 2.5 ? curSec : (prev.time || 0);
+
+const entry = {
+key: key,
+time: saveSec,
+dur: durSec || prev.dur || 0,
+url: st.currentUrl,
+title: st.currentTitle || 'Видео',
+torHash: st.torHash || '',
+torFileIdx: st.torFileIdx !== undefined ? st.torFileIdx : -1,
+pipMode: Boolean(st.pipMode),
+updatedAt: Date.now()
+};
+map[key] = entry;
+try {
+localStorage.setItem('ytm_video_resume_map_v135', JSON.stringify(map));
+localStorage.setItem('ytm_last_video_v135', JSON.stringify(entry));
+} catch (e) {}
+window.updateMainMiniVidBtnUIV135();
+};
+
+// 1. Кнопка скрытия/показа нижней панели кнопок внутри окна видеоплеера
+window.toggleVideoBottomBarV135 = function(ev) {
+if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const row = document.getElementById('v135BottomToolsRow');
+const btn = document.getElementById('v135BtnToggleBottomBar');
+if (!row) return;
+const isHidden = row.getAttribute('data-collapsed-v135') === '1';
+const nextHidden = !isHidden;
+row.setAttribute('data-collapsed-v135', nextHidden ? '1' : '0');
+row.style.setProperty('display', nextHidden ? 'none' : 'flex', 'important');
+try { localStorage.setItem('ytm_vid_bottom_collapsed_v135', nextHidden ? '1' : '0'); } catch (e) {}
+if (btn) {
+btn.innerText = nextHidden ? '▴ Опции' : '▾ Скрыть';
+btn.style.borderColor = nextHidden ? '#58a6ff' : 'rgba(255,255,255,0.25)';
+btn.style.color = nextHidden ? '#58a6ff' : '#e6edf3';
+}
+window.wakeVideoHudV130(false);
+};
+
+// 2. Монтируем кнопку скрытия нижней панели в видеоплеере и кнопку «🎬 Мини» в главном окне над полосой перемотки
+window.mountV135VideoControlsAndMainBtn = function() {
+const root = window.ensureVideoPlayerDOMV130 ? window.ensureVideoPlayerDOMV130() : null;
+if (root) {
+const seek = document.getElementById('v130SeekSlider');
+const seekRow = seek ? seek.parentElement : null;
+const bottomBar = seekRow ? seekRow.parentElement : null;
+if (seekRow && bottomBar) {
+const toolsRow = bottomBar.children[1];
+if (toolsRow && !toolsRow.id) {
+toolsRow.id = 'v135BottomToolsRow';
+const savedCollapsed = localStorage.getItem('ytm_vid_bottom_collapsed_v135') === '1';
+if (savedCollapsed) {
+toolsRow.setAttribute('data-collapsed-v135', '1');
+toolsRow.style.setProperty('display', 'none', 'important');
+}
+}
+if (!document.getElementById('v135BtnToggleBottomBar')) {
+const tBtn = document.createElement('button');
+tBtn.type = 'button';
+tBtn.id = 'v135BtnToggleBottomBar';
+tBtn.className = 'v130-btn v130-hide-in-pip';
+const isCol = toolsRow && toolsRow.getAttribute('data-collapsed-v135') === '1';
+tBtn.innerText = isCol ? '▴ Опции' : '▾ Скрыть';
+tBtn.style.cssText = 'padding:3px 7px !important;font-size:10px !important;margin-left:4px;';
+tBtn.onclick = (e) => window.toggleVideoBottomBarV135(e);
+seekRow.appendChild(tBtn);
+}
+}
+}
+
+// Кнопка «🎬 Мини» в главном окне плеера (между RU/EN и 🔄 95 над полосой перемотки)
+const langBtn = document.getElementById('langBtn');
+const topCtrlBar = langBtn ? langBtn.parentElement : null;
+if (topCtrlBar && !document.getElementById('jennyMainMiniVidBtnV135')) {
+const mBtn = document.createElement('button');
+mBtn.type = 'button';
+mBtn.id = 'jennyMainMiniVidBtnV135';
+mBtn.onclick = (e) => window.toggleMainPlayerMiniVideoV135(e);
+mBtn.style.cssText = 'padding:5px 10px;font-size:11.5px;font-weight:900;border-radius:16px;background:linear-gradient(135deg,rgba(163,113,247,0.22),rgba(88,166,255,0.22));border:1.5px solid #a371f7;color:#e6edf3;display:inline-flex;align-items:center;gap:4px;box-shadow:0 0 12px rgba(163,113,247,0.28);margin-right:auto;margin-left:6px;';
+mBtn.innerHTML = '🎬 Мини';
+if (langBtn.nextSibling) {
+topCtrlBar.insertBefore(mBtn, langBtn.nextSibling);
+} else {
+topCtrlBar.appendChild(mBtn);
+}
+}
+window.updateMainMiniVidBtnUIV135();
+};
+
+window.updateMainMiniVidBtnUIV135 = function() {
+const btn = document.getElementById('jennyMainMiniVidBtnV135');
+if (!btn) return;
+const st = window._vidStateV130 || {};
+if (st.active && st.pipMode) {
+btn.innerHTML = '🎬 Скрыть мини';
+btn.style.borderColor = '#3fb950';
+btn.style.color = '#3fb950';
+} else if (st.active && !st.pipMode) {
+btn.innerHTML = '❐ В мини-окно';
+btn.style.borderColor = '#58a6ff';
+btn.style.color = '#58a6ff';
+} else {
+btn.innerHTML = '🎬 Мини';
+btn.style.borderColor = '#a371f7';
+btn.style.color = '#e6edf3';
+}
+};
+
+// 3. Действие по нажатию на кнопку «🎬 Мини» в главном окне плеера
+window.toggleMainPlayerMiniVideoV135 = function(ev) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const st = window._vidStateV130 || {};
+const root = document.getElementById('jennyVideoStudioRootV130');
+
+if (st.active && root && root.style.display !== 'none') {
+if (!st.pipMode) {
+window.toggleVideoPipModeV130();
+window.updateMainMiniVidBtnUIV135();
+return;
+} else {
+window.saveCurrentVideoProgressV135();
+window.closeVideoPlayerV130();
+window.updateMainMiniVidBtnUIV135();
+return;
+}
+}
+
+// Если видео сейчас закрыто — достаем последнее смотревшееся видео (или первое из вкладки Видео) и открываем сразу в режиме ❐ Мини!
+let lastVid = null;
+try { lastVid = JSON.parse(localStorage.getItem('ytm_last_video_v135') || 'null'); } catch (e) {}
+
+if (!lastVid || !lastVid.url) {
+const allTracks = (window.lastData && window.lastData.all_tracks) || [];
+const firstVid = allTracks.find(fn => window.isVideoFileNameV130 && window.isVideoFileNameV130(fn));
+if (firstVid) {
+lastVid = { url: '/api/media/' + encodeURIComponent(firstVid), title: firstVid, torHash: '', torFileIdx: -1 };
+}
+}
+
+if (!lastVid || !lastVid.url) {
+if (typeof window.showToast === 'function') {
+window.showToast('🎬 Выбери любое видео во вкладке «Видео» или в Торрентах!');
+}
+return;
+}
+
+window.openJennyVideoPlayerV130(lastVid.url, lastVid.title, {
+torHash: lastVid.torHash || '',
+torFileIdx: lastVid.torFileIdx !== undefined ? lastVid.torFileIdx : -1,
+startInPipV135: true
+});
+};
+
+// 4. При возврате с рабочего стола в приложение автоматически переводим активное видео в аккуратное внутреннее мини-окно
+window.onDesktopOverlayStateChangedV133 = function(isOverlay) {
+const st = window._vidStateV130;
+const root = document.getElementById('jennyVideoStudioRootV130');
+const stage = document.getElementById('jennyVideoStageV130');
+const pipBtn = document.getElementById('v130BtnPipToggle');
+if (!root || !st) return;
+
+st.desktopOverlay = Boolean(isOverlay);
+if (isOverlay) {
+st.pipMode = false;
+st.rotated90 = false;
+stage?.classList.remove('rot90-v130');
+root.classList.remove('mode-pip-v130');
+root.classList.add('mode-full-v130', 'mode-desktop-v132');
+root.style.left = '0';
+root.style.top = '0';
+if (pipBtn) pipBtn.innerText = '⛶ Развернуть';
+} else {
+root.classList.remove('mode-desktop-v132');
+if (st.active && !st._expandingToFullV135) {
+st.pipMode = true;
+root.classList.remove('mode-full-v130');
+root.classList.add('mode-pip-v130');
+if (!root._hasCustomPipPosV130) {
+root.style.left = Math.max(8, window.innerWidth - 290) + 'px';
+root.style.top = '74px';
+}
+if (pipBtn) pipBtn.innerText = '⛶ Развернуть';
+} else {
+st._expandingToFullV135 = false;
+if (pipBtn) pipBtn.innerText = st.pipMode ? '⛶ Развернуть' : '❐ Мини';
+}
+window.syncNativeFullscreenLockV132();
+window.updateMainMiniVidBtnUIV135();
+}
+};
+
+// 5. Обновляем openJennyVideoPlayerV130 и closeVideoPlayerV130 для автосохранения и восстановления секунды!
+const _origOpenVidV134 = window.openJennyVideoPlayerV130;
+window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+opts = opts || {};
+window.mountV135VideoControlsAndMainBtn();
+
+const map = window.loadVideoResumeMapV135();
+const key = window.getVideoResumeKeyV135(titleStr, streamUrl);
+const savedEntry = map[key];
+const resumeSec = (savedEntry && savedEntry.time > 3 && (!savedEntry.dur || savedEntry.time < savedEntry.dur - 8))
+? Number(savedEntry.time)
+: 0;
+
+const r = _origOpenVidV134.apply(this, arguments);
+const st = window._vidStateV130;
+const vid = document.getElementById('jennyVideoElV130');
+
+if (opts.startInPipV135 && !st.pipMode) {
+window.toggleVideoPipModeV130();
+}
+
+if (vid && !vid._v135ResumeHooked) {
+vid._v135ResumeHooked = true;
+let lastSaveTs = 0;
+vid.addEventListener('timeupdate', () => {
+const now = Date.now();
+if (now - lastSaveTs > 1500) {
+lastSaveTs = now;
+window.saveCurrentVideoProgressV135();
+}
+});
+vid.addEventListener('pause', () => {
+window.saveCurrentVideoProgressV135();
+});
+vid.addEventListener('loadedmetadata', () => {
+if (vid._pendingResumeSecV135 && vid._pendingResumeSecV135 > 0 && !window._vidStateV130.usingRemux) {
+const target = vid._pendingResumeSecV135;
+vid._pendingResumeSecV135 = 0;
+try { vid.currentTime = target; } catch (e) {}
+window.syncVideoRamEngineV131(false);
+}
+});
+}
+
+if (resumeSec > 0 && vid) {
+const fmtTime = window.fmtKhSecV90 ? window.fmtKhSecV90(resumeSec) : `${Math.floor(resumeSec)}с`;
+if (st.usingRemux || /\.avi$/i.test(st.currentTitle)) {
+st.usingRemux = true;
+st.remuxBaseOffset = resumeSec;
+const tcFlag = /\.avi$/i.test(st.currentTitle) ? '1' : '0';
+vid.src = `/api/video/live_remux?src=${encodeURIComponent(st.currentUrl)}&start=${resumeSec.toFixed(1)}&transcode=${tcFlag}&t=${Date.now()}`;
+vid.play().catch(() => {});
+} else {
+vid._pendingResumeSecV135 = resumeSec;
+try { vid.currentTime = resumeSec; } catch (e) {}
+}
+setTimeout(() => {
+window.showVideoFeedbackV130(`⏪ Продолжение с ${fmtTime}`);
+}, 350);
+}
+
+window.saveCurrentVideoProgressV135();
+window.updateMainMiniVidBtnUIV135();
+return r;
+};
+
+const _origCloseVidV134 = window.closeVideoPlayerV130;
+window.closeVideoPlayerV130 = function(ev) {
+window.saveCurrentVideoProgressV135();
+const r = _origCloseVidV134.apply(this, arguments);
+window.updateMainMiniVidBtnUIV135();
+return r;
+};
+
+const _origPipToggleV134 = window.toggleVideoPipModeV130;
+window.toggleVideoPipModeV130 = function(ev) {
+if (window._vidStateV130 && window._vidStateV130.desktopOverlay) {
+window._vidStateV130._expandingToFullV135 = true;
+}
+const r = _origPipToggleV134.apply(this, arguments);
+window.saveCurrentVideoProgressV135();
+window.updateMainMiniVidBtnUIV135();
+return r;
+};
+
+window.addEventListener('beforeunload', () => {
+window.saveCurrentVideoProgressV135();
+});
+
+setTimeout(window.mountV135VideoControlsAndMainBtn, 450);
+setInterval(window.mountV135VideoControlsAndMainBtn, 3000);
