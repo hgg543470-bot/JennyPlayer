@@ -1,5 +1,52 @@
 import threading
 import ctypes
+
+def _find_and_load_native_so_v147_2(so_filename):
+    import ctypes
+    cand_paths = []
+    # 1. Через Android ApplicationInfo.nativeLibraryDir
+    try:
+        from java import jclass
+        app = jclass("com.chaquo.python.Python").getPlatform().getApplication()
+        nat_d = str(app.getApplicationInfo().nativeLibraryDir)
+        if nat_d:
+            cand_paths.append(os.path.join(nat_d, so_filename))
+    except Exception:
+        pass
+
+    # 2. Через /proc/self/maps (точный путь /data/app/.../lib/arm64)
+    try:
+        with open("/proc/self/maps", "r", encoding="utf-8", errors="ignore") as f:
+            for ln in f:
+                if "/lib/" in ln and ".so" in ln and ("jenny" in ln or "/data/app/" in ln):
+                    d = os.path.dirname(ln.split()[-1])
+                    p = os.path.join(d, so_filename)
+                    if p not in cand_paths:
+                        cand_paths.append(p)
+    except Exception:
+        pass
+
+    # 3. Копирование из jniLibs во внутреннюю исполняемую папку приложения, если в /data/app не нашлось
+    ext_p = f"/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/arm64-v8a/{so_filename}"
+    priv_p = f"/data/user/0/com.jenny.player/files/{so_filename}"
+    if os.path.isfile(ext_p):
+        try:
+            if not os.path.isfile(priv_p) or os.path.getsize(ext_p) != os.path.getsize(priv_p):
+                import shutil
+                shutil.copy2(ext_p, priv_p)
+                os.chmod(priv_p, 0o755)
+            cand_paths.append(priv_p)
+        except Exception:
+            pass
+
+    cand_paths.append(so_filename)
+    for cp in cand_paths:
+        try:
+            return ctypes.CDLL(cp), cp
+        except Exception:
+            pass
+    return None, None
+
 import lzma
 import hashlib
 import re
