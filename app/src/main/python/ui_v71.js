@@ -11854,23 +11854,91 @@ window.syncDiscoveredVideosIntoPlaylistV134(true);
 }
 }, 400);
 
-// === 🧠⚡ JENNY V139.2: UNIVERSAL MOUNT FOR CORE SWITCHER (TORRENT STUDIO + SETTINGS) ===
+// === 🧠⚡ JENNY V139: HOT-SWAP SEARCH CORE SWITCHER UI & v3.6-ir CONFIG/LOG VIEWER ===
+window._omniCoreStateV139 = {
+active_core: localStorage.getItem('ytm_omni_active_core_v139') || 'v36ir',
+cores: [
+{ id: 'v36ir', title: '⚡ v3.6-ir Live Wave', port: 18999 },
+{ id: 'classic', title: '🏛️ Classic Core', port: 18998 }
+],
+config: {
+disable_logs: false,
+enable_simple_log: true,
+enable_trace_log: false,
+enable_soundcloud: true,
+enable_seeker_p2p: true
+},
+panelOpen: false
+};
+
+window.syncOmniCoreBackendV139 = async function(targetCoreId, triggerReSearch) {
+try {
+if (targetCoreId) {
+window._omniCoreStateV139.active_core = targetCoreId;
+localStorage.setItem('ytm_omni_active_core_v139', targetCoreId);
+}
+const res = await fetch('/api/omni/switch_core', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+core_id: window._omniCoreStateV139.active_core,
+config: window._omniCoreStateV139.config
+})
+});
+if (res.ok) {
+const d = await res.json();
+if (d.active_core) window._omniCoreStateV139.active_core = d.active_core;
+}
+const listRes = await fetch('/api/omni/cores');
+if (listRes.ok) {
+const ld = await listRes.json();
+if (Array.isArray(ld.cores) && ld.cores.length) window._omniCoreStateV139.cores = ld.cores;
+if (ld.config) Object.assign(window._omniCoreStateV139.config, ld.config);
+}
+window.renderOmniCoreSwitcherBarV139();
+if (triggerReSearch) {
+const qInp = document.getElementById('torSearchInputV82') || document.querySelector('#torModal input[type="text"]');
+if (qInp && qInp.value.trim().length > 0 && typeof window.runTorrentSearchV82 === 'function') {
+window.runTorrentSearchV82();
+}
+}
+} catch (e) {}
+};
+
+window.toggleOmniCoreFlagV139 = function(flagKey) {
+const cfg = window._omniCoreStateV139.config;
+cfg[flagKey] = !cfg[flagKey];
+window.syncOmniCoreBackendV139(null, false);
+};
+
+window.openOmniLiveLogModalV139 = async function(logType) {
+try {
+const res = await fetch('/api/omni/logs_tail?type=' + encodeURIComponent(logType || 'simple'));
+const data = await res.json();
+let box = document.getElementById('jennyOmniLogViewerV139');
+if (!box) {
+box = document.createElement('div');
+box.id = 'jennyOmniLogViewerV139';
+box.style.cssText = 'position:fixed;inset:12px;z-index:99999;background:#090d14;border:1.5px solid #58a6ff;border-radius:14px;display:flex;flex-direction:column;padding:12px;box-shadow:0 0 35px rgba(0,0,0,0.95);';
+document.body.appendChild(box);
+}
+box.innerHTML = `
+<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:8px;border-bottom:1px solid #30363d;">
+<b style="color:#58a6ff;font-size:12.5px;">📄 Лог ядра: ${logType === 'trace' ? 'omni_full_trace.log' : 'omni_simple.log'}</b>
+<div style="display:flex;gap:6px;">
+<button type="button" onclick="window.openOmniLiveLogModalV139('${logType}')" style="padding:4px 9px;border-radius:7px;background:#161b22;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;font-weight:bold;">🔄 Обновить</button>
+<button type="button" onclick="document.getElementById('jennyOmniLogViewerV139').remove()" style="padding:4px 9px;border-radius:7px;background:#21262d;border:1px solid #f85149;color:#f85149;font-size:11px;font-weight:bold;">✖ Закрыть</button>
+</div>
+</div>
+<pre style="flex:1;overflow:auto;margin:8px 0 0 0;padding:8px;background:#05070b;border:1px solid #21262d;border-radius:8px;color:#e6edf3;font-size:10.5px;line-height:1.38;white-space:pre-wrap;word-break:break-word;">${(data.text || '').replace(/</g, '&lt;')}</pre>
+`;
+} catch (e) {}
+};
+
 window.renderOmniCoreSwitcherBarV139 = function() {
 const st = window._omniCoreStateV139;
 if (!st) return;
 const cfg = st.config || {};
-
-// Ищем поле поиска в Торрент-студии по любому ID или placeholder
-const candidates = [
-document.getElementById('torSearchInputV82'),
-document.getElementById('torrentSearchInput'),
-document.getElementById('torQueryInput'),
-...Array.from(document.querySelectorAll('input[type="text"], input[type="search"]')).filter(el => {
-const ph = (el.placeholder || '').toLowerCase();
-const id = (el.id || '').toLowerCase();
-return id.includes('tor') || id.includes('omni') || ph.includes('торрент') || ph.includes('rutor') || ph.includes('magnet') || ph.includes('раздач');
-})
-].filter(Boolean);
 
 const buildBarInner = () => {
 const chipsHtml = (st.cores || []).map(c => {
@@ -11900,7 +11968,17 @@ ${chipsHtml}
 ${cfgPanelHtml}`;
 };
 
-// 1. Монтируем над строкой поиска в Торрент-студии
+const candidates = [
+document.getElementById('torSearchInputV82'),
+document.getElementById('torrentSearchInput'),
+document.getElementById('torQueryInput'),
+...Array.from(document.querySelectorAll('input[type="text"], input[type="search"]')).filter(el => {
+const ph = (el.placeholder || '').toLowerCase();
+const id = (el.id || '').toLowerCase();
+return id.includes('tor') || id.includes('omni') || ph.includes('торрент') || ph.includes('rutor') || ph.includes('magnet') || ph.includes('раздач');
+})
+].filter(Boolean);
+
 if (candidates.length > 0) {
 const qInp = candidates[0];
 const hostRow = qInp.parentElement;
@@ -11917,7 +11995,6 @@ bar.innerHTML = buildBarInner();
 }
 }
 
-// 2. Дублируем блок управления ядром в Настройки (⚙️), чтобы он был доступен всегда
 const settingsModal = document.getElementById('settingsModal');
 if (settingsModal) {
 let sBar = document.getElementById('jennyOmniCoreSettingsBoxV139');
@@ -11931,3 +12008,10 @@ firstChild.insertBefore(sBar, firstChild.firstChild);
 sBar.innerHTML = buildBarInner();
 }
 };
+
+setTimeout(() => window.syncOmniCoreBackendV139(null, false), 600);
+setInterval(() => {
+if (!document.getElementById('jennyOmniCoreSwitcherBarV139') || !document.getElementById('jennyOmniCoreSettingsBoxV139')) {
+window.renderOmniCoreSwitcherBarV139();
+}
+}, 1500);
