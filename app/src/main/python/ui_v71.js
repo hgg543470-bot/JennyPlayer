@@ -12025,7 +12025,7 @@ window.renderOmniCoreSwitcherBarV139();
 }
 }, 1500);
 
-// === 🚀🛡️ JENNY V147: CLEAN UNIFIED ADDON (FILTERS, TORRENT DELETE, 4S CORNER TOASTS, MKV AUDIO & DUAL-DECK MIXER) ===
+// === 🚀🛡️ JENNY V147: CLEAN UNIFIED ADDON ===
 (function() {
 const styleId = 'jennyV147UnifiedStyles';
 if (!document.getElementById(styleId)) {
@@ -12069,26 +12069,10 @@ box-shadow: 0 4px 14px rgba(0,0,0,0.65) !important;
 pointer-events: none !important;
 transition: opacity 0.25s ease !important;
 }
-#jennyFullVideoTitleBannerV147 {
-width: 100% !important;
-padding: 4px 8px !important;
-margin-bottom: 4px !important;
-background: rgba(13, 17, 23, 0.88) !important;
-border-left: 3px solid #58a6ff !important;
-border-radius: 6px !important;
-color: #f0f6fc !important;
-font-size: 11.5px !important;
-font-weight: 700 !important;
-line-height: 1.3 !important;
-word-break: break-word !important;
-white-space: normal !important;
-box-sizing: border-box !important;
-}
 `;
 document.head.appendChild(st);
 }
 
-// 1. Угловые тосты на 4 секунды вместо мелькающих по центру
 window._cornerToastTimerV147 = null;
 window.showCornerToastV147 = function(msg, durationMs) {
 if (!msg) return;
@@ -12114,7 +12098,6 @@ window.showToast = function(msg, dur) {
 window.showCornerToastV147(msg, dur || 4000);
 };
 
-// 2. Расширенные фильтры аудио и видео форматов в Торрент-студии
 window._activeFormatFilterV147 = 'all';
 const _EXTENDED_FILTERS_V147 = [
 { id: 'all', label: '🌐 ВСЕ', exts: [] },
@@ -12140,7 +12123,6 @@ try { window.setTorFormatV82(fmtId); } catch (e) {}
 }
 window._torFormatTagV82 = fmtId;
 window.renderExtendedFormatBarV147();
-
 const fDef = _EXTENDED_FILTERS_V147.find(x => x.id === fmtId);
 const fileRows = Array.from(document.querySelectorAll('#torModal div[style*="border"]')).filter(el => {
 const t = (el.innerText || '');
@@ -12183,18 +12165,6 @@ return '<button type="button" data-fmt-v147="' + f.id + '" onclick="window.apply
 }).join('');
 };
 
-// 3. Честное удаление торрентов с диска и полный сброс в Центре закачек P2P
-window._deletedTorHashesV147 = new Set(JSON.parse(localStorage.getItem('ytm_deleted_tor_hashes_v142') || '[]'));
-window.nukeAllTorrentsAndCacheV147 = async function() {
-try {
-const res = await fetch('/api/torrent/nuke_all', { method: 'POST' });
-const d = await res.json();
-window._torLiveDaemonSnapV128 = [];
-window.showCornerToastV147('🧹 Все закачки остановлены, очищено ' + (d.freed_mb || 0) + ' МБ!', 4000);
-} catch (e) {}
-};
-
-// 4. Микшер громкости двух дек (Музыка Дека А + Видео Дека Б играют одновременно)
 window._dualDeckMusicVolV147 = parseFloat(localStorage.getItem('ytm_dual_music_vol_v146') || '1.0');
 window._dualDeckVideoVolV147 = parseFloat(localStorage.getItem('ytm_dual_video_vol_v146') || '0.75');
 window._keepVideoPlayingDuringMusicV147 = false;
@@ -12238,15 +12208,12 @@ if (el.paused && !window._userPausedVideoManuallyV147) el.play().catch(() => {})
 }
 }, true);
 
-// 5. Разблокировка видео-потока [jbuf-lock], звук MKV и баннер полного имени
 window._nativeMkvAudioActiveV147 = false;
 window._lastMkvSourceResolvedV147 = '';
 
 window.tickUnifiedEngineV147 = async function() {
 try {
 window.renderExtendedFormatBarV147();
-
-// Рисуем микшер двух дек в Настройках под кнопками Дека А / Дека Б
 const deckABtn = Array.from(document.querySelectorAll('button')).find(b => (b.innerText || '').includes('Дека А: Музыка'));
 if (deckABtn && deckABtn.parentElement && !document.getElementById('jennyDualDeckMixerBoxV147')) {
 const row = deckABtn.parentElement;
@@ -12260,12 +12227,9 @@ mixer.innerHTML = '<div style="font-size:10.5px;color:#8b949e;font-weight:bold;d
 '<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:11px;color:#d2a8ff;min-width:78px;font-weight:700;">🎬 Видео: <b id="jennyDualVideoValV147">' + vPct + '%</b></span><input type="range" min="0" max="100" value="' + vPct + '" oninput="window.setDualDeckVolV147(\'video\', this.value)" style="flex:1;accent-color:#a371f7;height:5px;"></div>';
 row.parentElement.insertBefore(mixer, row.nextSibling);
 }
-
-// Применяем громкости к аудио и видео
 document.querySelectorAll('audio').forEach(aud => {
 aud.volume = Math.max(0, Math.min(1, window._dualDeckMusicVolV147));
 });
-
 const vid = document.querySelector('video');
 if (!vid) {
 if (window._nativeMkvAudioActiveV147 && window.AndroidBridge && window.AndroidBridge.jennyNativeAudioStopV144) {
@@ -12274,19 +12238,14 @@ window._nativeMkvAudioActiveV147 = false;
 }
 return;
 }
-
 window._jbufLock = false;
 window._jbufLocked = false;
 const vVol = Math.max(0, Math.min(1, window._dualDeckVideoVolV147));
 if (vVol > 0.01 && vid.muted) vid.muted = false;
 vid.volume = vVol;
-
-// Снимаем искусственную паузу [jbuf-lock], когда буфер готов
 if (!window._userPausedVideoManuallyV147 && vid.paused && vid.readyState >= 3) {
 vid.play().catch(() => {});
 }
-
-// Нативный мост для AC3/EAC3 дорожек в MKV
 const vSrc = vid.currentSrc || vid.src || '';
 if (vSrc && !vid.paused && vid.readyState >= 2 && window.AndroidBridge && typeof window.AndroidBridge.jennyNativeAudioStartV144 === 'function') {
 const hasWebkitAudio = (typeof vid.webkitAudioDecodedByteCount === 'number') ? (vid.webkitAudioDecodedByteCount > 0) : true;

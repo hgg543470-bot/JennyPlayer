@@ -4805,6 +4805,37 @@ try:
 except Exception:
     pass
 
+
+# === 💎🔊 JENNY V147: AUTO-BIND NATIVE LIBXFLAC.SO & LIBHOSE_DSP.SO ===
+def _auto_bind_xflac_and_dsp_v147():
+    import ctypes
+    dirs = _get_native_lib_dirs_v140() if '_get_native_lib_dirs_v140' in globals() else []
+    for d in dirs:
+        xf_p = os.path.join(d, "libxflac.so")
+        if os.path.isfile(xf_p):
+            try:
+                lib_obj = ctypes.CDLL(xf_p)
+                for var_name in ("xflac_lib", "XFLAC_LIB", "_xflac_lib", "libxflac"):
+                    globals()[var_name] = lib_obj
+                for path_var in ("xflac_path", "XFLAC_PATH", "LIBXFLAC_PATH"):
+                    globals()[path_var] = xf_p
+                break
+            except Exception:
+                pass
+        hs_p = os.path.join(d, "libhose_dsp.so")
+        if os.path.isfile(hs_p):
+            try:
+                h_obj = ctypes.CDLL(hs_p)
+                for var_name in ("hose_lib", "HOSE_LIB", "_hose_lib", "dsp_lib"):
+                    globals()[var_name] = h_obj
+            except Exception:
+                pass
+
+try:
+    _auto_bind_xflac_and_dsp_v147()
+except Exception:
+    pass
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
