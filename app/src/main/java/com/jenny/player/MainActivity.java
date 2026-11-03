@@ -255,9 +255,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public class WebAppInterface {
-        @JavascriptInterface
-        
-        @JavascriptInterface
+                @JavascriptInterface
         public void setVideoFullscreenLock(boolean fullscreen, boolean locked) {
             isVideoFullscreenV132 = fullscreen;
             isVideoLockedV132 = locked;
