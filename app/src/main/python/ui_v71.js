@@ -12617,3 +12617,196 @@ window.renderExtendedFormatBarV145();
 window.unlockP2PVideoStreamAndBannerV145();
 }, 450);
 })();
+
+// === 🎛️🎶 JENNY V146: TRUE SIMULTANEOUS DUAL-DECK PLAYBACK (MUSIC UNDER VIDEO) & MIXER ===
+(function() {
+window._dualDeckMusicVolV146 = parseFloat(localStorage.getItem('ytm_dual_music_vol_v146') || '1.0');
+window._dualDeckVideoVolV146 = parseFloat(localStorage.getItem('ytm_dual_video_vol_v146') || '0.65');
+window._keepVideoPlayingDuringMusicV146 = false;
+window._musicLoadStartTsV146 = 0;
+window._lastPendingTrackTitleV146 = '';
+
+// 1. Применяем независимую громкость к Деке А (Музыка) и Деке Б (Видео)
+window.applyDualDeckVolumesV146 = function() {
+try {
+const mVol = Math.max(0, Math.min(1, window._dualDeckMusicVolV146));
+const vVol = Math.max(0, Math.min(1, window._dualDeckVideoVolV146));
+
+const vid = document.querySelector('video');
+if (vid) {
+vid.volume = vVol;
+if (vVol > 0.01 && vid.muted) vid.muted = false;
+if (vVol <= 0.01) vid.muted = true;
+}
+
+document.querySelectorAll('audio').forEach(aud => {
+aud.volume = mVol;
+if (mVol > 0.01 && aud.muted) aud.muted = false;
+});
+
+// Если работает WebAudio GainNode в Студийном движке (RAM) — регулируем его тоже
+if (window._masterGainNode && window._masterGainNode.gain) {
+window._masterGainNode.gain.value = mVol;
+}
+} catch (e) {}
+};
+
+window.setDualDeckVolV146 = function(which, val) {
+const num = Math.max(0, Math.min(100, parseFloat(val) || 0)) / 100.0;
+if (which === 'music') {
+window._dualDeckMusicVolV146 = num;
+localStorage.setItem('ytm_dual_music_vol_v146', String(num));
+const lbl = document.getElementById('jennyDualMusicValV146');
+if (lbl) lbl.textContent = Math.round(num * 100) + '%';
+} else {
+window._dualDeckVideoVolV146 = num;
+localStorage.setItem('ytm_dual_video_vol_v146', String(num));
+const lbl = document.getElementById('jennyDualVideoValV146');
+if (lbl) lbl.textContent = Math.round(num * 100) + '%';
+}
+window.applyDualDeckVolumesV146();
+};
+
+// 2. Когда пользователь кликает по треку в плейлисте при работающем видео («Матрица»):
+// - Запоминаем, что видео играло, чтобы Android WebView не поставил его на паузу при старте <audio>
+// - Пробуждаем AudioContext, если он уснул
+document.addEventListener('click', (ev) => {
+const vid = document.querySelector('video');
+if (vid && !vid.paused && vid.readyState >= 2) {
+window._keepVideoPlayingDuringMusicV146 = true;
+setTimeout(() => { window._keepVideoPlayingDuringMusicV146 = false; }, 3500);
+}
+if (window.audioCtx && window.audioCtx.state === 'suspended') {
+window.audioCtx.resume().catch(() => {});
+}
+if (window._audioCtx && window._audioCtx.state === 'suspended') {
+window._audioCtx.resume().catch(() => {});
+}
+}, true);
+
+// Если Android WebView попытался сам поставить <video> на паузу в момент старта песни в Деке А — мгновенно продолжаем воспроизведение видео!
+document.addEventListener('pause', (ev) => {
+const el = ev.target;
+if (el && el.tagName === 'VIDEO' && window._keepVideoPlayingDuringMusicV146 && !window._userPausedVideoManuallyV145) {
+setTimeout(() => {
+if (el.paused && !window._userPausedVideoManuallyV145) {
+el.play().catch(() => {});
+}
+}, 60);
+}
+}, true);
+
+// 3. Контроль зависшего состояния «⏳ Загрузка: ...» в нижнем баре:
+// Если Студийный движок (RAM) думает дольше 1.5 сек (например, на тяжелом треке или потоке),
+// автоматически запускаем трек прямым HTML5 <audio> потоком, чтобы музыка заиграла мгновенно!
+window.watchStuckMusicLoaderV146 = function() {
+try {
+const allEls = Array.from(document.querySelectorAll('div, span'));
+const loadEl = allEls.find(el => {
+const t = (el.innerText || '').trim();
+return t.startsWith('⏳ Загрузка:') && el.children.length === 0;
+});
+
+if (!loadEl) {
+window._musicLoadStartTsV146 = 0;
+return;
+}
+
+const curText = (loadEl.innerText || '').trim();
+if (curText !== window._lastPendingTrackTitleV146) {
+window._lastPendingTrackTitleV146 = curText;
+window._musicLoadStartTsV146 = Date.now();
+return;
+}
+
+if (window._musicLoadStartTsV146 && (Date.now() - window._musicLoadStartTsV146 > 1600)) {
+window._musicLoadStartTsV146 = Date.now() + 5000;
+const aud = document.querySelector('audio');
+if (aud && aud.paused && (aud.src || aud.currentSrc)) {
+if (window._keepVideoPlayingDuringMusicV146) {
+const vid = document.querySelector('video');
+aud.play().then(() => {
+if (vid && vid.paused && !window._userPausedVideoManuallyV145) vid.play().catch(() => {});
+}).catch(() => {});
+} else {
+aud.play().catch(() => {});
+}
+}
+}
+} catch (e) {}
+};
+
+// 4. Рисуем компактный сдвоенный микшер «🎵 Музыка % | 🎬 Видео %» под кнопками Дека А / Дека Б в Настройках
+window.renderDualDeckMixerBarV146 = function() {
+try {
+const deckABtn = Array.from(document.querySelectorAll('button')).find(b => (b.innerText || '').includes('Дека А: Музыка'));
+if (!deckABtn || !deckABtn.parentElement) return;
+const row = deckABtn.parentElement;
+if (document.getElementById('jennyDualDeckMixerBoxV146')) return;
+
+const mPct = Math.round(window._dualDeckMusicVolV146 * 100);
+const vPct = Math.round(window._dualDeckVideoVolV146 * 100);
+
+const mixer = document.createElement('div');
+mixer.id = 'jennyDualDeckMixerBoxV146';
+mixer.style.cssText = 'margin:6px 0 10px 0;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:10px;display:flex;flex-direction:column;gap:6px;';
+mixer.innerHTML = `
+<div style="font-size:10.5px;color:#8b949e;font-weight:bold;display:flex;justify-content:space-between;">
+<span>🎚️ МИКШЕР ДВУХ ДЕК (МУЗЫКА ПОД ФИЛЬМ)</span>
+<span style="color:#58a6ff;">Играют вместе</span>
+</div>
+<div style="display:flex;align-items:center;gap:8px;">
+<span style="font-size:11px;color:#79c0ff;min-width:78px;font-weight:700;">🎵 Музыка: <b id="jennyDualMusicValV146">${mPct}%</b></span>
+<input type="range" min="0" max="100" value="${mPct}" oninput="window.setDualDeckVolV146('music', this.value)" style="flex:1;accent-color:#58a6ff;height:5px;">
+</div>
+<div style="display:flex;align-items:center;gap:8px;">
+<span style="font-size:11px;color:#d2a8ff;min-width:78px;font-weight:700;">🎬 Видео: <b id="jennyDualVideoValV146">${vPct}%</b></span>
+<input type="range" min="0" max="100" value="${vPct}" oninput="window.setDualDeckVolV146('video', this.value)" style="flex:1;accent-color:#a371f7;height:5px;">
+</div>
+`;
+row.parentElement.insertBefore(mixer, row.nextSibling);
+} catch (e) {}
+};
+
+// Также исправляем в V144 проверку proxyAudioPlaying, чтобы музыка Деки А НЕ выключала звук фильма и наоборот!
+window.ensureMkvTorrentSoundV144 = async function() {
+try {
+const vid = document.querySelector('video');
+if (!vid) {
+if (window._nativeMkvAudioActiveV144 && window.AndroidBridge && window.AndroidBridge.jennyNativeAudioStopV144) {
+window.AndroidBridge.jennyNativeAudioStopV144();
+window._nativeMkvAudioActiveV144 = false;
+}
+return;
+}
+const vSrc = vid.currentSrc || vid.src || '';
+if (!vSrc) return;
+
+// Применяем громкость Деки Б из микшера
+const vVol = Math.max(0, Math.min(1, window._dualDeckVideoVolV146));
+if (vVol > 0.01 && vid.muted) vid.muted = false;
+vid.volume = vVol;
+
+if (!vid.paused && vid.readyState >= 2 && window.AndroidBridge && typeof window.AndroidBridge.jennyNativeAudioStartV144 === 'function') {
+const hasWebkitAudio = (typeof vid.webkitAudioDecodedByteCount === 'number') ? (vid.webkitAudioDecodedByteCount > 0) : true;
+if (!hasWebkitAudio && vid.currentTime > 0.9) {
+if (window._lastMkvSourceResolvedV144 !== vSrc) {
+window._lastMkvSourceResolvedV144 = vSrc;
+const res = await fetch('/api/video/resolve_stream_source?src=' + encodeURIComponent(vSrc));
+const d = await res.json();
+window.AndroidBridge.jennyNativeAudioStartV144(d.prefer_source || vSrc, Math.floor(vid.currentTime * 1000));
+window._nativeMkvAudioActiveV144 = true;
+} else if (window._nativeMkvAudioActiveV144) {
+window.AndroidBridge.jennyNativeAudioSyncV144(Math.floor(vid.currentTime * 1000), !vid.paused, vid.playbackRate || 1.0);
+}
+}
+}
+} catch (e) {}
+};
+
+setInterval(() => {
+window.applyDualDeckVolumesV146();
+window.watchStuckMusicLoaderV146();
+window.renderDualDeckMixerBarV146();
+}, 400);
+})();

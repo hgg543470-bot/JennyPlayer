@@ -4766,6 +4766,36 @@ def api_torrent_stream_nudge_v145():
         _ACTIVE_STREAM_READAHEAD_V145["ts"] = time.time()
     return json.dumps({"ok": True})
 
+
+# === 🎛️⚡ JENNY V146: TRUE CONCURRENT WSGISERVER FOR DUAL-DECK (VIDEO + MUSIC) ===
+import socketserver
+import wsgiref.simple_server
+
+class _JennyConcurrentWSGIServerV146(socketserver.ThreadingMixIn, wsgiref.simple_server.WSGIServer):
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = 64
+
+# Подменяем сам базовый класс в модуле wsgiref И в реестре bottle.server_names,
+# чтобы стрим фильма в Деке Б НИКОГДА не держал загрузку музыки в Деке А!
+wsgiref.simple_server.WSGIServer = _JennyConcurrentWSGIServerV146
+
+try:
+    import bottle
+    class _JennySilentWSGIHandlerV146(wsgiref.simple_server.WSGIRequestHandler):
+        def log_message(self, format, *args):
+            pass
+    class _JennyThreadedAdapterV146(bottle.ServerAdapter):
+        def run(self, handler):
+            srv = _JennyConcurrentWSGIServerV146((self.host, self.port), _JennySilentWSGIHandlerV146)
+            srv.set_app(handler)
+            srv.serve_forever()
+    bottle.WSGIRefServer = _JennyThreadedAdapterV146
+    if hasattr(bottle, 'server_names') and isinstance(bottle.server_names, dict):
+        bottle.server_names['wsgiref'] = _JennyThreadedAdapterV146
+except Exception:
+    pass
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
