@@ -3822,6 +3822,7 @@ def api_video_discovered_list_v134():
     })
 
 # === 🧠⚡ JENNY V139: HOT-SWAPPABLE SEARCH CORES MANAGER (v3.6-ir / Classic / Custom) ===
+import os, sys, re, json, time, shutil, subprocess, threading, socketserver, urllib.request, urllib.parse, wsgiref.simple_server
 _OMNI_CORES_STATE_V139 = {
     "active_core": "v40ir",
     "procs": {},
@@ -4531,13 +4532,13 @@ def _resolve_sc_client_id_fast_v143():
         )
         with _orig_urlopen_v139_1(req, timeout=3.5) as r:
             html = r.read().decode("utf-8", "ignore")
-        scripts = re.findall(r'https://a-v2\.sndcdn\.com/assets/[^\s"']+\.js', html)
+        scripts = re.findall(r"https://a-v2\.sndcdn\.com/assets/[^\s\x22\x27]+\.js", html)
         for s_url in reversed(scripts[-4:]):
             try:
                 r_js = urllib.request.Request(s_url, headers={"User-Agent": "Mozilla/5.0"})
                 with _orig_urlopen_v139_1(r_js, timeout=2.5) as rj:
                     js_txt = rj.read().decode("utf-8", "ignore")
-                m = re.search(r'client_id\s*[:=]\s*["']([a-zA-Z0-9]{32})["']', js_txt)
+                m = re.search(r"client_id\s*[:=]\s*[\x22\x27]([a-zA-Z0-9]{32})[\x22\x27]", js_txt)
                 if m:
                     _SC_CACHED_CLIENT_ID_V143["id"] = m.group(1)
                     _SC_CACHED_CLIENT_ID_V143["ts"] = now
@@ -4643,7 +4644,6 @@ def api_sc_fast_search_v143():
 
 
 # === 🔊🎬 JENNY V144: TORRENT MKV AUDIO STREAM RESOLVER & CORS UNLOCK ===
-@hook('after_request')
 def _enable_cors_for_webaudio_v144():
     """Разрешает WebAudio API (DSP) и <video> читать потоки без обнуления звука по CORS."""
     try:
@@ -4653,6 +4653,12 @@ def _enable_cors_for_webaudio_v144():
         response.headers['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range, Accept-Ranges'
     except Exception:
         pass
+
+try:
+    import bottle as _btl_v146_1
+    _btl_v146_1.hook('after_request')(_enable_cors_for_webaudio_v144)
+except Exception:
+    pass
 
 def _find_partial_torrent_file_on_disk_v144(name_hint: str, info_hash: str = ""):
     """Находит реальный качающийся .mkv/.mp4/.avi файл торрента на диске для прямого чтения звука."""
@@ -4748,7 +4754,10 @@ def _sequential_readahead_worker_v145():
         except Exception:
             pass
 
-threading.Thread(target=_sequential_readahead_worker_v145, daemon=True).start()
+try:
+    threading.Thread(target=_sequential_readahead_worker_v145, daemon=True).start()
+except Exception:
+    pass
 
 @route('/api/torrent/stream_nudge', method='POST')
 def api_torrent_stream_nudge_v145():
