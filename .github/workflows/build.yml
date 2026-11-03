@@ -18,47 +18,15 @@ jobs:
         distribution: 'temurin'
         java-version: '11'
 
-    - name: Установка Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Подготовка 3D-иконки JPlay через Python Pillow
-      run: |
-        pip install pillow
-        mkdir -p app/src/main/res/mipmap-xxxhdpi
-        python3 - << 'PYEOF'
-        from PIL import Image
-        img = Image.open("icon_raw.jpg").convert("RGBA")
-        w, h = img.size
-        margin_x, margin_y = int(w * 0.10), int(h * 0.10)
-        cropped = img.crop((margin_x, margin_y, w - margin_x, h - margin_y))
-        resized = cropped.resize((512, 512), Image.Resampling.LANCZOS)
-        resized.save("app/src/main/res/mipmap-xxxhdpi/ic_launcher.png", "PNG")
-        PYEOF
-        rm -f icon_raw.jpg
-
     - name: Загрузка нативного Android FFmpeg (arm64-v8a)
       run: |
         mkdir -p app/src/main/jniLibs/arm64-v8a
         curl -fL -o ffmpeg-android.zip https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-android-arm64.zip
         unzip -p ffmpeg-android.zip ffmpeg > app/src/main/jniLibs/arm64-v8a/libffmpeg.so
         rm -f ffmpeg-android.zip
-        chmod 755 app/src/main/jniLibs/arm64-v8a/libffmpeg.so
+        chmod 755 app/src/main/jniLibs/arm64-v8a/*.so
         FILE_SIZE=$(stat -c%s app/src/main/jniLibs/arm64-v8a/libffmpeg.so)
         test "$FILE_SIZE" -gt 10000000
-
-    - name: Компиляция нативного движка libxflac.so (C++17 arm64-v8a)
-      run: |
-        mkdir -p app/src/main/jniLibs/arm64-v8a
-        NDK_CLANG=$(find ${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk -name "aarch64-linux-android24-clang++" 2>/dev/null | sort -V | tail -n 1)
-        if [ -z "$NDK_CLANG" ]; then
-          NDK_CLANG=$(find / -name "aarch64-linux-android*-clang++" 2>/dev/null | sort -V | tail -n 1)
-        fi
-        echo "Using NDK Clang: $NDK_CLANG"
-        "$NDK_CLANG" -O3 -fPIC -shared -x c++ app/src/main/jniLibs/xflac.hpp -o app/src/main/jniLibs/arm64-v8a/libxflac.so -lm -static-libstdc++
-        chmod 755 app/src/main/jniLibs/arm64-v8a/libxflac.so
-        ls -lh app/src/main/jniLibs/arm64-v8a/libxflac.so
 
     - name: Подготовка Gradle
       uses: gradle/actions/setup-gradle@v3
