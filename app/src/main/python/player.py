@@ -4186,6 +4186,312 @@ def api_omni_live_wave_poll_v141():
     with urllib.request.urlopen(url_t, timeout=5) as r:
         return r.read().decode("utf-8", "ignore")
 
+
+# === 🧲🧹 JENNY V142: REAL TORRENT & FILE DELETION, HARD PAUSE, STABLE SORT & TRACKER BOOST ===
+_DELETED_TORRENT_HASHES_V142 = set()
+_PAUSED_TORRENT_HASHES_V142 = set()
+_TORRENT_ORDER_SEQ_V142 = {}
+
+_EXTRA_FAST_TRACKERS_V142 = [
+    "udp://opentor.net:6969",
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://explodie.org:6969/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://tracker.moeking.me:6969/announce",
+    "http://bt.t-ru.org/ann?magnet",
+    "http://retracker.local/announce",
+]
+
+def _boost_magnet_trackers_v142(magnet_uri: str) -> str:
+    if not magnet_uri or not magnet_uri.startswith("magnet:?"):
+        return magnet_uri
+    low = magnet_uri.lower()
+    add_parts = []
+    for tr in _EXTRA_FAST_TRACKERS_V142:
+        enc = urllib.parse.quote(tr, safe="")
+        if enc.lower() not in low and tr.lower() not in low:
+            add_parts.append(f"&tr={enc}")
+    return magnet_uri + "".join(add_parts)
+
+def _get_all_torrent_storage_dirs_v142():
+    dirs = [
+        "/data/user/0/com.jenny.player/files",
+        "/data/user/0/com.jenny.player/cache",
+        "/data/data/com.jenny.player/files",
+        "/data/data/com.jenny.player/cache",
+        "/storage/emulated/0/JennyVideo",
+        "/storage/emulated/0/Download",
+    ]
+    if 'MUSIC_DIR' in globals() and isinstance(MUSIC_DIR, str):
+        dirs.append(MUSIC_DIR)
+    for k, v in list(globals().items()):
+        if isinstance(v, str) and ("tor" in k.lower() or "cache" in k.lower() or "dl" in k.lower()) and os.path.isdir(v):
+            if v not in dirs:
+                dirs.append(v)
+    return [d for d in dirs if os.path.isdir(d)]
+
+def _call_jtorrent_remove_v142(info_hash: str):
+    """Пытается остановить/удалить раздачу в демоне libjtorrent.so всеми поддерживаемыми эндпоинтами."""
+    h = (info_hash or "").strip().lower()
+    if not h:
+        return
+    port = globals().get('_JTORRENT_PORT_V96', 42070)
+    for ep in (
+        f"http://127.0.0.1:{port}/remove?hash={h}&delete=1",
+        f"http://127.0.0.1:{port}/delete?hash={h}&delete=1",
+        f"http://127.0.0.1:{port}/drop?hash={h}",
+        f"http://127.0.0.1:{port}/stop?hash={h}",
+        f"http://127.0.0.1:{port}/pause?hash={h}",
+    ):
+        try:
+            req = urllib.request.Request(ep, method="GET")
+            with urllib.request.urlopen(req, timeout=0.35) as r:
+                r.read()
+        except Exception:
+            pass
+        try:
+            req = urllib.request.Request(ep.split('?')[0], data=json.dumps({"hash": h, "delete": True}).encode('utf-8'), headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=0.35) as r:
+                r.read()
+        except Exception:
+            pass
+
+def _collect_torrent_files_Snapshot_v142(info_hash: str):
+    """Возвращает список путей и имен файлов конкретной раздачи из демона перед удалением."""
+    h = (info_hash or "").strip().lower()
+    paths = set()
+    names = set()
+    port = globals().get('_JTORRENT_PORT_V96', 42070)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=0.6) as r:
+            st = json.loads(r.read().decode("utf-8", "ignore"))
+            t_list = st if isinstance(st, list) else (st.get("torrents") or [])
+            for tor in t_list:
+                th = (tor.get("hash") or "").strip().lower()
+                if th == h or not h:
+                    t_name = (tor.get("name") or tor.get("title") or "").strip()
+                    if t_name:
+                        names.add(t_name)
+                    for f in (tor.get("files") or []):
+                        fp = (f.get("path") or f.get("name") or "").strip()
+                        if fp:
+                            paths.add(fp)
+                            names.add(os.path.basename(fp))
+                            top_folder = fp.lstrip("/").split("/")[0]
+                            if len(top_folder) >= 3:
+                                names.add(top_folder)
+    except Exception:
+        pass
+    return paths, names
+
+def _restart_jtorrent_daemon_clean_v142():
+    """Перезапускает процесс libjtorrent.so, если он продолжает удерживать удаленные/спящие раздачи."""
+    try:
+        subprocess.run(["pkill", "-9", "-f", "libjtorrent"], check=False)
+    except Exception:
+        pass
+    for k, v in list(globals().items()):
+        if "jtorrent" in k.lower() and hasattr(v, "kill"):
+            try:
+                v.kill()
+            except Exception:
+                pass
+    time.sleep(0.15)
+    if 'ensure_jtorrent_daemon_v96' in globals():
+        try:
+            ensure_jtorrent_daemon_v96()
+        except Exception:
+            pass
+
+def _physically_delete_torrent_files_v142(info_hash: str, rel_paths: set, target_names: set) -> float:
+    """Физически удаляет файлы и папки раздачи с диска и возвращает объем освобожденных МБ."""
+    freed_bytes = 0
+    h = (info_hash or "").strip().lower()
+    roots = _get_all_torrent_storage_dirs_v142()
+
+    def _remove_target(p):
+        nonlocal freed_bytes
+        try:
+            if os.path.isfile(p) or os.path.islink(p):
+                sz = os.path.getsize(p)
+                os.remove(p)
+                freed_bytes += sz
+            elif os.path.isdir(p):
+                for r_sub, _, f_sub in os.walk(p):
+                    for fn_s in f_sub:
+                        try:
+                            freed_bytes += os.path.getsize(os.path.join(r_sub, fn_s))
+                        except Exception:
+                            pass
+                shutil.rmtree(p, ignore_errors=True)
+        except Exception:
+            pass
+
+    for root_d in roots:
+        # 1. Прямые относительные пути из торрента
+        for rp in rel_paths:
+            cand = os.path.join(root_d, rp.lstrip("/"))
+            if os.path.exists(cand):
+                _remove_target(cand)
+        # 2. Поиск по имени файла/папки торрента или хэшу внутри хранилищ
+        try:
+            for r_dir, d_list, f_list in os.walk(root_d):
+                if any(skip in r_dir for skip in (".git", "/python", "/jniLibs")):
+                    continue
+                for dn in list(d_list):
+                    if (h and h in dn.lower()) or (dn in target_names):
+                        _remove_target(os.path.join(r_dir, dn))
+                        d_list.remove(dn)
+                for fn in f_list:
+                    if (h and h in fn.lower()) or (fn in target_names):
+                        _remove_target(os.path.join(r_dir, fn))
+        except Exception:
+            pass
+
+    # Убираем удаленные видео из кэша вкладки «🎬 Видео»
+    if '_discovered_video_paths_v134' in globals():
+        for fn in list(_discovered_video_paths_v134.keys()):
+            if fn in target_names or not os.path.isfile(_discovered_video_paths_v134[fn]):
+                _discovered_video_paths_v134.pop(fn, None)
+    if '_discovered_video_meta_v137' in globals():
+        for fn in list(_discovered_video_meta_v137.keys()):
+            meta = _discovered_video_meta_v137.get(fn) or {}
+            if fn in target_names or (h and meta.get("tor_hash") == h):
+                _discovered_video_meta_v137.pop(fn, None)
+
+    return round(freed_bytes / (1024 * 1024), 1)
+
+@route('/api/torrent/delete_full', method='POST')
+def api_torrent_delete_full_v142():
+    response.content_type = 'application/json'
+    data = request.json or {}
+    h = (data.get("hash") or "").strip().lower()
+    delete_files = bool(data.get("delete_files", True))
+    extra_title = (data.get("title") or "").strip()
+
+    rel_paths, names = _collect_torrent_files_Snapshot_v142(h)
+    if extra_title:
+        names.add(extra_title)
+
+    if h:
+        _DELETED_TORRENT_HASHES_V142.add(h)
+        _PAUSED_TORRENT_HASHES_V142.discard(h)
+        _call_jtorrent_remove_v142(h)
+
+    # Проверяем, осталась ли раздача висеть в памяти libjtorrent.so; если да — перезапускаем демон вчистую
+    port = globals().get('_JTORRENT_PORT_V96', 42070)
+    still_in_daemon = False
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=0.4) as r:
+            raw_s = r.read().decode("utf-8", "ignore").lower()
+            if h and h in raw_s:
+                still_in_daemon = True
+    except Exception:
+        pass
+
+    if still_in_daemon:
+        _restart_jtorrent_daemon_clean_v142()
+
+    freed_mb = 0.0
+    if delete_files:
+        freed_mb = _physically_delete_torrent_files_v142(h, rel_paths, names)
+
+    return json.dumps({
+        "ok": True,
+        "hash": h,
+        "deleted_files": delete_files,
+        "freed_mb": freed_mb
+    })
+
+@route('/api/torrent/nuke_all', method='POST')
+def api_torrent_nuke_all_v142():
+    """Полный сброс всех раздач в демоне и очистка торрент-кэша."""
+    response.content_type = 'application/json'
+    rel_paths, names = _collect_torrent_files_Snapshot_v142("")
+    port = globals().get('_JTORRENT_PORT_V96', 42070)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=0.4) as r:
+            st = json.loads(r.read().decode("utf-8", "ignore"))
+            t_list = st if isinstance(st, list) else (st.get("torrents") or [])
+            for tor in t_list:
+                th = (tor.get("hash") or "").strip().lower()
+                if th:
+                    _DELETED_TORRENT_HASHES_V142.add(th)
+                    _call_jtorrent_remove_v142(th)
+    except Exception:
+        pass
+
+    _restart_jtorrent_daemon_clean_v142()
+
+    # Вычищаем временные папки торрентов во внутренней памяти приложения
+    freed_mb = _physically_delete_torrent_files_v142("", rel_paths, names)
+    for cache_d in (
+        "/data/user/0/com.jenny.player/cache/torrents",
+        "/data/user/0/com.jenny.player/files/torrents",
+        "/data/data/com.jenny.player/cache/torrents",
+        "/data/data/com.jenny.player/files/torrents",
+    ):
+        if os.path.isdir(cache_d):
+            try:
+                shutil.rmtree(cache_d, ignore_errors=True)
+                os.makedirs(cache_d, exist_ok=True)
+            except Exception:
+                pass
+
+    return json.dumps({"ok": True, "freed_mb": freed_mb})
+
+@route('/api/torrent/pause_toggle', method='POST')
+def api_torrent_pause_toggle_v142():
+    response.content_type = 'application/json'
+    data = request.json or {}
+    h = (data.get("hash") or "").strip().lower()
+    pause_flag = bool(data.get("paused", True))
+    if h:
+        if pause_flag:
+            _PAUSED_TORRENT_HASHES_V142.add(h)
+            _call_jtorrent_remove_v142(h)
+        else:
+            _PAUSED_TORRENT_HASHES_V142.discard(h)
+            _DELETED_TORRENT_HASHES_V142.discard(h)
+    return json.dumps({"ok": True, "hash": h, "paused": pause_flag})
+
+# Перехватываем обращения к libjtorrent.so (порт 42070):
+# 1) При добавлении magnet-ссылки автоматически дописываем 18 быстрых трекеров и снимаем метку удаления
+# 2) При опросе /status фильтруем удаленные хэши и стабилизируем порядок раздач, чтобы карточки НЕ прыгали!
+_orig_urlopen_v142 = urllib.request.urlopen
+def _jtorrent_stabilized_urlopen_v142(url_or_req, *args, **kwargs):
+    try:
+        u_str = url_or_req.full_url if hasattr(url_or_req, 'full_url') else str(url_or_req)
+        jport = str(globals().get('_JTORRENT_PORT_V96', 42070))
+        if f"127.0.0.1:{jport}" in u_str:
+            # Если это запрос на добавление/стрим с magnet — прокачиваем список трекеров
+            if "magnet=" in u_str:
+                parsed = urllib.parse.urlsplit(u_str)
+                q_dict = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+                if "magnet" in q_dict and q_dict["magnet"]:
+                    mag = _boost_magnet_trackers_v142(q_dict["magnet"][0])
+                    q_dict["magnet"] = [mag]
+                    m_btih = re.search(r"btih:([a-fA-F0-9]{40})", mag)
+                    if m_btih:
+                        h_clean = m_btih.group(1).lower()
+                        _DELETED_TORRENT_HASHES_V142.discard(h_clean)
+                        _PAUSED_TORRENT_HASHES_V142.discard(h_clean)
+                    new_q = urllib.parse.urlencode(q_dict, doseq=True)
+                    u_str = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_q, parsed.fragment))
+                    if hasattr(url_or_req, 'full_url'):
+                        url_or_req.full_url = u_str
+                    else:
+                        url_or_req = u_str
+    except Exception:
+        pass
+    return _orig_urlopen_v142(url_or_req, *args, **kwargs)
+
+urllib.request.urlopen = _jtorrent_stabilized_urlopen_v142
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)

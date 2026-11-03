@@ -12024,3 +12024,213 @@ if (!document.getElementById('jennyOmniCoreSwitcherBarV139') || !document.getEle
 window.renderOmniCoreSwitcherBarV139();
 }
 }, 1500);
+
+// === 🧲🛡️ JENNY V142: ANTI-JUMP TORRENT UI, INSTANT CLICKS & REAL FILE DELETION ===
+(function() {
+// 1. CSS-замок против прыжков строк при клике на Воспр / Скачать и против потери тапов во время поллинга
+const styleId = 'jennyAntiJumpTorStyleV142';
+if (!document.getElementById(styleId)) {
+const st = document.createElement('style');
+st.id = styleId;
+st.textContent = `
+/* Фиксируем высоту статусной строки над мини-плеером торрента, чтобы она не сдвигала список треков вниз при старте */
+#torSwarmInfoBar, #torActiveStatsRow, [id*="torSwarm"], [id*="torStatusRow"] {
+min-height: 22px !important;
+display: flex !important;
+align-items: center !important;
+visibility: visible !important;
+box-sizing: border-box !important;
+}
+/* Фиксируем высоту карточки трека внутри раздачи, чтобы появление "Скачивание: 0.0 MB" не толкало соседние треки */
+#torFilesList > div, .tor-file-row, [id*="torTrackRow"] {
+min-height: 54px !important;
+box-sizing: border-box !important;
+contain: layout style;
+}
+`;
+document.head.appendChild(st);
+}
+
+// 2. Хранилище удаленных и поставленных на паузу хэшей + стабильный порядок карточек
+window._deletedTorHashesV142 = new Set(JSON.parse(localStorage.getItem('ytm_deleted_tor_hashes_v142') || '[]'));
+window._pausedTorHashesV142 = new Set(JSON.parse(localStorage.getItem('ytm_paused_tor_hashes_v142') || '[]'));
+window._stableTorOrderMapV142 = {};
+window._stableTorOrderSeqV142 = 1;
+window._lastTorModalTouchTsV142 = 0;
+
+// Отслеживаем касание экрана, чтобы во время нажатия кнопки поллинг НЕ перерисовывал DOM под пальцем!
+document.addEventListener('pointerdown', (ev) => {
+if (ev.target && ev.target.closest && (ev.target.closest('#torModal') || ev.target.closest('[id*="tor"]') || ev.target.closest('[id*="Download"]'))) {
+window._lastTorModalTouchTsV142 = Date.now();
+}
+}, true);
+
+window.saveTorSetsV142 = function() {
+try {
+localStorage.setItem('ytm_deleted_tor_hashes_v142', JSON.stringify(Array.from(window._deletedTorHashesV142)));
+localStorage.setItem('ytm_paused_tor_hashes_v142', JSON.stringify(Array.from(window._pausedTorHashesV142)));
+} catch (e) {}
+};
+
+// Стабилизатор массива раздач от демона: убирает удаленные и жестко фиксирует порядок карточек, чтобы они НЕ прыгали!
+window.stabilizeDaemonTorrentsV142 = function(list) {
+if (!Array.isArray(list)) return [];
+const filtered = [];
+for (const item of list) {
+if (!item) continue;
+const h = String(item.hash || item.info_hash || '').toLowerCase();
+if (h && window._deletedTorHashesV142.has(h)) continue;
+if (h && !window._stableTorOrderMapV142[h]) {
+window._stableTorOrderMapV142[h] = window._stableTorOrderSeqV142++;
+}
+if (h && window._pausedTorHashesV142.has(h)) {
+item.paused = true;
+item.status = 'paused';
+item.seeds = 0;
+item.seeders = 0;
+item.peers = 0;
+}
+filtered.push(item);
+}
+filtered.sort((a, b) => {
+const ha = String(a.hash || a.info_hash || '').toLowerCase();
+const hb = String(b.hash || b.info_hash || '').toLowerCase();
+return (window._stableTorOrderMapV142[ha] || 9999) - (window._stableTorOrderMapV142[hb] || 9999);
+});
+return filtered;
+};
+
+// Перехватываем fetch('/api/torrent/...') или чтение снимка демона, чтобы всегда отдавать отсортированный список без удаленных
+const _origFetchV142 = window.fetch;
+window.fetch = async function(input, init) {
+const urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+// Если добавляется или стримится торрент — снимаем его хэш из удаленных/паузы
+if (urlStr.includes('/api/torrent/') && (urlStr.includes('stream') || urlStr.includes('add') || urlStr.includes('start'))) {
+const mHash = urlStr.match(/([a-fA-F0-9]{40})/);
+if (mHash) {
+const h = mHash[1].toLowerCase();
+window._deletedTorHashesV142.delete(h);
+window._pausedTorHashesV142.delete(h);
+window.saveTorSetsV142();
+}
+}
+const resp = await _origFetchV142.apply(this, arguments);
+if (urlStr.includes('/api/torrent/status') || urlStr.includes('/api/torrent/list') || urlStr.includes('/api/jtorrent/status')) {
+try {
+const clone = resp.clone();
+const data = await clone.json();
+if (Array.isArray(data)) {
+const clean = window.stabilizeDaemonTorrentsV142(data);
+window._torLiveDaemonSnapV128 = clean;
+return new Response(JSON.stringify(clean), { status: resp.status, headers: resp.headers });
+} else if (data && Array.isArray(data.torrents)) {
+data.torrents = window.stabilizeDaemonTorrentsV142(data.torrents);
+window._torLiveDaemonSnapV128 = data.torrents;
+return new Response(JSON.stringify(data), { status: resp.status, headers: resp.headers });
+}
+} catch (e) {}
+}
+return resp;
+};
+
+// 3. Честное удаление торрента вместе со всеми скачанными файлами
+window.deleteTorrentWithFilesV142 = async function(hash, title, ev) {
+if (ev && ev.stopPropagation) ev.stopPropagation();
+const h = String(hash || '').trim().toLowerCase();
+if (h) {
+window._deletedTorHashesV142.add(h);
+window._pausedTorHashesV142.delete(h);
+window.saveTorSetsV142();
+}
+// Чистим все локальные очереди и кэши в localStorage
+for (let i = 0; i < localStorage.length; i++) {
+const k = localStorage.key(i);
+if (k && (k.includes('tor') || k.includes('p2p') || k.includes('dl'))) {
+const v = localStorage.getItem(k) || '';
+if ((h && v.toLowerCase().includes(h)) || (title && v.includes(title))) {
+try {
+const parsed = JSON.parse(v);
+if (Array.isArray(parsed)) {
+const next = parsed.filter(x => {
+const xh = String((x && (x.hash || x.info_hash)) || '').toLowerCase();
+const xt = String((x && (x.title || x.name)) || '');
+return (h ? xh !== h : true) && (title ? xt !== title : true);
+});
+localStorage.setItem(k, JSON.stringify(next));
+}
+} catch (e) {}
+}
+}
+}
+try {
+const res = await _origFetchV142('/api/torrent/delete_full', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ hash: h, title: title || '', delete_files: true })
+});
+const d = await res.json();
+if (typeof window.showToast === 'function') {
+window.showToast(`🗑️ Удалено с диска (${d.freed_mb ert{}ert{} 0} МБ освобождено)`); } } catch (e) {} if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') { window.syncDiscoveredVideosIntoPlaylistV134(true); } };  // 4. Полный сброс всех зависших закачек и кэша в 1 клик window.nukeAllTorrentsAndCacheV142 = async function() { try { const snap = window._torLiveDaemonSnapV128 ert{}ert{} []; snap.forEach(t => { const h = String(t.hash ert{}ert{} t.info_hash ert{}ert{} '').toLowerCase(); if (h) window._deletedTorHashesV142.add(h); }); window.saveTorSetsV142(); for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && (k.includes('tor_queue') ert{}ert{} k.includes('tor_active') ert{}ert{} k.includes('p2p') ert{}ert{} k.includes('jtorrent'))) { localStorage.removeItem(k); } } const res = await _origFetchV142('/api/torrent/nuke_all', { method: 'POST' }); const d = await res.json(); window._torLiveDaemonSnapV128 = []; if (typeof window.showToast === 'function') { window.showToast(`🧹 Все закачки остановлены, очищено ${d.freed_mb || 0} МБ кэша!`);
+}
+} catch (e) {}
+};
+
+// 5. Перехватываем клики по кнопкам «🗑» (Удалить) и «⏸» (Пауза) в Центре закачек, чтобы они реально останавливали демон и удаляли файлы!
+document.addEventListener('click', (ev) => {
+const btn = ev.target && ev.target.closest ? ev.target.closest('button, [onclick]') : null;
+if (!btn) return;
+const txt = (btn.innerText || btn.textContent || '').trim();
+const oc = String(btn.getAttribute('onclick') || '');
+
+// Если нажата корзина удаления внутри Центра закачек P2P
+if ((txt.includes('🗑') || oc.toLowerCase().includes('remove') || oc.toLowerCase().includes('delete')) && (oc.includes('Tor') || oc.includes('P2P') || btn.closest('[id*="P2P"], [id*="Download"], [id*="Center"], #torModal'))) {
+const mHash = oc.match(/['"]([a-fA-F0-9]{40})['"]/);
+const card = btn.closest('div[style*="border"]');
+const titleEl = card ? card.querySelector('b, strong, [style*="font-weight"]') : null;
+const title = titleEl ? (titleEl.innerText || '').trim() : '';
+if (mHash || title) {
+window.deleteTorrentWithFilesV142(mHash ? mHash[1] : '', title, ev);
+if (card) card.remove();
+}
+}
+
+// Если нажата кнопка Паузы внутри Центра закачек P2P
+if ((txt.includes('⏸') || txt.includes('▶')) && (oc.includes('Tor') || oc.includes('P2P') || btn.closest('[id*="P2P"], [id*="Download"], [id*="Center"]'))) {
+const mHash = oc.match(/['"]([a-fA-F0-9]{40})['"]/);
+if (mHash) {
+const h = mHash[1].toLowerCase();
+const willPause = !window._pausedTorHashesV142.has(h);
+if (willPause) window._pausedTorHashesV142.add(h);
+else window._pausedTorHashesV142.delete(h);
+window.saveTorSetsV142();
+_origFetchV142('/api/torrent/pause_toggle', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ hash: h, paused: willPause })
+}).catch(() => {});
+}
+}
+}, true);
+
+// 6. Добавляем кнопку «🧹 Очистить все и сбросить кэш» в шапку Центра закачек и частей P2P
+setInterval(() => {
+const headers = Array.from(document.querySelectorAll('div, b, span')).filter(el => {
+const t = (el.innerText || '').trim();
+return t === 'ЦЕНТР ЗАКАЧЕК И ЧАСТЕЙ P2P' || t.includes('ЦЕНТР ЗАКАЧЕК И ЧАСТЕЙ P2P');
+});
+if (headers.length > 0) {
+const modalBox = headers[0].closest('div[style*="fixed"], div[style*="border"]') || headers[0].parentElement?.parentElement;
+if (modalBox && !document.getElementById('jennyNukeAllTorBtnV142')) {
+const bar = document.createElement('div');
+bar.id = 'jennyNukeAllTorBtnV142';
+bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0 8px 0;padding:6px 10px;background:#161018;border:1px solid #f85149;border-radius:10px;';
+bar.innerHTML = `
+<span
+ style="font-size:11px;color:#ffb4a9;font-weight:bold;">🧹 Сброс зависших раздач и диска</span>
+<button type="button" onclick="window.nukeAllTorrentsAndCacheV142()" style="padding:4px 10px;border-radius:7px;background:#f85149;border:1px solid #ff7b72;color:#fff;font-size:11px;font-weight:800;">🗑️ Очистить всё + файлы</button>
+`;
+modalBox.insertBefore(bar, modalBox.firstChild);
+}
+}
+}, 1200);
+})();
