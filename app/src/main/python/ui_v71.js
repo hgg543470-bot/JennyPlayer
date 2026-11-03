@@ -11627,3 +11627,47 @@ window.saveCurrentVideoProgressV135();
 
 setTimeout(window.mountV135VideoControlsAndMainBtn, 450);
 setInterval(window.mountV135VideoControlsAndMainBtn, 3000);
+
+// === 🎬 JENNY V136: PERSISTENT VIDEO LIST MERGE & TAB COUNTER ===
+window._cachedDiscoveredVideosV136 = window._cachedDiscoveredVideosV136 || [];
+
+window.mergeDiscoveredVideosIntoLastDataV136 = function() {
+if (!window.lastData || !Array.isArray(window.lastData.all_tracks)) return false;
+let changed = false;
+(window._cachedDiscoveredVideosV136 || []).forEach(fn => {
+if (fn && !window.lastData.all_tracks.includes(fn)) {
+window.lastData.all_tracks.unshift(fn);
+changed = true;
+}
+});
+return changed;
+};
+
+window.syncDiscoveredVideosIntoPlaylistV134 = async function() {
+try {
+const res = await fetch('/api/video/discovered_list');
+if (!res.ok) return;
+const data = await res.json();
+const vids = (data && data.videos) || [];
+window._cachedDiscoveredVideosV136 = vids;
+const changed = window.mergeDiscoveredVideosIntoLastDataV136();
+if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
+if (changed || window.activePlaylistTabV71 === 'videos') {
+if (typeof window.renderActivePlaylistTracksV71 === 'function') {
+window.renderActivePlaylistTracksV71(false);
+}
+}
+window.decorateVideoIconsInListV130();
+} catch (e) {}
+};
+
+// Следим, чтобы при любом фоновом обновлении window.lastData видео мгновенно вливались обратно в список
+setInterval(() => {
+if (window.mergeDiscoveredVideosIntoLastDataV136()) {
+if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
+if (window.activePlaylistTabV71 === 'videos' && typeof window.renderActivePlaylistTracksV71 === 'function') {
+window.renderActivePlaylistTracksV71(false);
+}
+window.decorateVideoIconsInListV130();
+}
+}, 900);

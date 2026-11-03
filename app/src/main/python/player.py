@@ -602,7 +602,7 @@ def quick_parse_artist_album_v71(filename, full_p):
             if tku not in STANDARD_TAG_KEYS_V74 and str(tv).strip():
                 custom_only[str(tk).strip()] = str(tv).strip()
     ext = os.path.splitext(filename)[1].lower()
-    kbps = 128.0 if ext in ('.opus', '.ogg', '.m4a', '.aac') else (320.0 if ext == '.mp3' else 900.0)
+    kbps = 128.0 if ext in ('.opus', '.ogg', '.m4a', '.aac', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp') else (320.0 if ext == '.mp3' else 900.0)
     est_dur = round(max(1.0, (st_size * 8.0) / (kbps * 1000.0)), 1)
     if ext == '.xflac':
         xf_dur, _ = _get_xflac_fast_header_info_v87(full_p)
@@ -628,7 +628,7 @@ def api_folders_v71():
         try:
             req = json.loads(request.body.read().decode('utf-8'))
             act, target = req.get('action', ''), norm_dir_v71(req.get('path', ''))
-            if act in ('toggle', 'add') and not os.path.isdir(target):
+            if act in ('toggle', 'add', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp') and not os.path.isdir(target):
                 response.status = 404
                 return {"status": "error", "error": f"Папка не найдена: {target}"}
             if act == 'toggle':
@@ -651,7 +651,7 @@ def api_folders_v71():
     exts = get_allowed_extensions()
     f_tracks = {}
     for d in SAVED_MUSIC_DIRS:
-        f_tracks[d] = [fn for fn in (os.listdir(d) if os.path.isdir(d) else []) if fn.lower().endswith(exts) and not fn.startswith(('temp_stretcher_', 'temp_final_')) and os.path.isfile(os.path.join(d, fn))]
+        f_tracks[d] = [fn for fn in (os.listdir(d) if os.path.isdir(d) else []) if fn.lower().endswith(exts) and not fn.startswith(('temp_stretcher_', 'temp_final_', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')) and os.path.isfile(os.path.join(d, fn))]
     response.content_type = 'application/json'
     return json.dumps({"status": "ok", "saved_folders": SAVED_MUSIC_DIRS, "active_folders": ACTIVE_MUSIC_DIRS, "current_folder": MUSIC_DIR, "folder_tracks": f_tracks})
 
@@ -709,7 +709,7 @@ def save_track_meta_v71():
         fn = req.get('filename', '').strip()
         new_fn = req.get('new_filename', fn).strip() or fn
         tags = req.get('tags', {})
-        rev_act = req.get('rev_action', 'keep')
+        rev_act = req.get('rev_action', 'keep', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')
         rev_upd = req.get('rev_updates', {})
         fp = resolve_track_full_path_v71(fn)
         if not fn or not os.path.isfile(fp):
@@ -763,8 +763,8 @@ def save_track_meta_v71():
             if r.returncode != 0 or not os.path.exists(t_out) or os.path.getsize(t_out) < 64:
                 shutil.copyfile(t_in, t_out)
         if tr and rev_act != 'strip_all':
-            if rev_act in ('modify', 'strip_pocket') and sm_obj is not None:
-                for k in ('spd', 'tension'):
+            if rev_act in ('modify', 'strip_pocket', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp') and sm_obj is not None:
+                for k in ('spd', 'tension', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp'):
                     if k in rev_upd:
                         try: sm_obj[k] = float(rev_upd[k])
                         except Exception: pass
@@ -1071,7 +1071,7 @@ def get_data():
         if os.path.exists(d):
             try:
                 for f in os.listdir(d):
-                    if f.lower().endswith(allowed_exts) and not f.startswith(('temp_stretcher_', 'temp_final_')):
+                    if f.lower().endswith(allowed_exts) and not f.startswith(('temp_stretcher_', 'temp_final_', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')):
                         fp = os.path.join(d, f)
                         if os.path.isfile(fp) and f not in seen:
                             seen.add(f); all_tracks.append(f)
@@ -1209,7 +1209,7 @@ def export_track():
     temp_wav = None
     try:
         original_name = request.forms.get('filename')
-        speed = request.forms.get('speed', '1.0')
+        speed = request.forms.get('speed', '1.0', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')
         is_reversed = request.forms.get('is_reversed') == 'true'
         pitch_lock = request.forms.get('pitch_lock') == 'true'
         upload = request.files.get('audio_data')
@@ -1235,9 +1235,9 @@ def export_track():
             pitch_suffix = "_vinyl" 
         slow_fast = "_slow" if speed_float < 1.0 else ("_fast" if speed_float > 1.0 else "")
 
-        raw_mode_br = request.forms.get('pocket_bitrate', 'orig').strip().lower()
-        sr_mode = request.forms.get('sample_rate_mode', 'orig').strip().lower()
-        direct_clean = (request.forms.get('direct_clean_source', 'false') == 'true')
+        raw_mode_br = request.forms.get('pocket_bitrate', 'orig', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp').strip().lower()
+        sr_mode = request.forms.get('sample_rate_mode', 'orig', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp').strip().lower()
+        direct_clean = (request.forms.get('direct_clean_source', 'false', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp') == 'true')
         orig_path = resolve_track_full_path_v71(original_name)
 
         xflac_modes_map = {
@@ -1268,18 +1268,18 @@ def export_track():
                     dec_wav = _decode_xflac_bytes_to_wav_v85(xf.read())
                 with open(temp_wav, 'wb') as wf:
                     wf.write(dec_wav)
-                if sr_mode in ('44100', '48000'):
+                if sr_mode in ('44100', '48000', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp'):
                     temp_sr_wav = temp_wav + ".sr.wav"
                     r_sr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_wav, '-ar', sr_mode, '-ac', '2', '-c:a', 'pcm_s16le', temp_sr_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     if r_sr.returncode == 0 and os.path.exists(temp_sr_wav):
                         os.replace(temp_sr_wav, temp_wav)
             else:
-                ar_args = ['-ar', sr_mode] if sr_mode in ('44100', '48000') else []
+                ar_args = ['-ar', sr_mode] if sr_mode in ('44100', '48000', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp') else []
                 subprocess.run([ffmpeg_bin, '-y', '-i', orig_path] + ar_args + ['-ac', '2', '-c:a', 'pcm_s16le', temp_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         else:
             with open(temp_wav, 'wb') as out_f:
                 shutil.copyfileobj(upload.file, out_f)
-            if sr_mode in ('44100', '48000'):
+            if sr_mode in ('44100', '48000', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp'):
                 temp_sr_wav = temp_wav + ".sr.wav"
                 r_sr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_wav, '-ar', sr_mode, '-ac', '2', '-c:a', 'pcm_s16le', temp_sr_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 if r_sr.returncode == 0 and os.path.exists(temp_sr_wav):
@@ -1290,7 +1290,7 @@ def export_track():
         try:
             if os.path.exists(orig_path) and os.path.getsize(orig_path) > 1024:
                 # Определяем точный битрейт исходного файла через ffprobe или размер/длительность
-                ffprobe_bin = ffmpeg_bin.replace('ffmpeg', 'ffprobe')
+                ffprobe_bin = ffmpeg_bin.replace('ffmpeg', 'ffprobe', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')
                 pr_b = subprocess.run([ffprobe_bin, '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'format=bit_rate,duration', '-of', 'default=noprint_wrappers=1', orig_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=4)
                 br_val, dur_val = 0, 0.0
                 for line in (pr_b.stdout or '').splitlines():
@@ -1509,9 +1509,9 @@ def get_track_info():
             for p in s_parts[1:]:
                 if 'Hz' in p:
                     sr_str = p
-                elif any(k in p for k in ('stereo', 'mono', '5.1', 'channels', 'ch')):
+                elif any(k in p for k in ('stereo', 'mono', '5.1', 'channels', 'ch', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')):
                     ch_str = p
-                elif p in ('fltp', 's16', 's16p', 's32', 's32p', 'dblp'):
+                elif p in ('fltp', 's16', 's16p', 's32', 's32p', 'dblp', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp'):
                     fmt_str = p
 
         tags = get_merged_track_tags_v74(filename, raw_info)
@@ -1579,8 +1579,8 @@ def save_test_slices():
         req = json.loads(request.body.read().decode('utf-8'))
         out_dir = '/storage/emulated/0/Music/mp3_test'
         os.makedirs(out_dir, exist_ok=True)
-        track = re.sub(r'[^a-zA-Z0-9а-яА-Я_-]', '_', os.path.splitext(req.get('track', 'track'))[0])[:24]
-        spd_str = req.get('speed_str', 'x1.00')
+        track = re.sub(r'[^a-zA-Z0-9а-яА-Я_-]', '_', os.path.splitext(req.get('track', 'track', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp'))[0])[:24]
+        spd_str = req.get('speed_str', 'x1.00', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')
         s_start = req.get('orig_start', 0)
         s_end = req.get('orig_end', 0)
         stamp = datetime.datetime.now().strftime('%H%M%S')
@@ -1599,8 +1599,8 @@ def save_test_slices():
 
         try:
             ff = find_ffmpeg_binary()
-            subprocess.run([ff, '-y', '-i', orig_wav, '-b:a', '320k', orig_wav.replace('.wav', '.mp3')], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            subprocess.run([ff, '-y', '-i', hose_wav, '-b:a', '320k', hose_wav.replace('.wav', '.mp3')], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run([ff, '-y', '-i', orig_wav, '-b:a', '320k', orig_wav.replace('.wav', '.mp3', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run([ff, '-y', '-i', hose_wav, '-b:a', '320k', hose_wav.replace('.wav', '.mp3', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except Exception:
             pass
 
@@ -1679,7 +1679,7 @@ def api_khinsider_search_v88():
             return json.dumps({"status": "error", "error": "Введите название игры"})
         mode = (req.get('mode') or 'ost').strip().lower()
         fmt_mode = (req.get('format_mode') or 'xflac_psycho').strip().lower()
-        words = [w for w in re.split(r'\s+', query) if w and w.lower() not in ('flac', 'mp3', 'wav', 'ost')]
+        words = [w for w in re.split(r'\s+', query) if w and w.lower() not in ('flac', 'mp3', 'wav', 'ost', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')]
         strict_q = ' AND '.join(words) if words else query
         fmt_filter = 'AND format:("VBR MP3" OR MP3)' if fmt_mode == 'mp3' else 'AND format:(Flac OR "24bit Flac" OR Wave)'
         if mode == 'archive':
@@ -1836,7 +1836,7 @@ def api_khinsider_download_track_v88():
                 _OST_PROGRESS_V89.update({"downloaded_mb": cur_mb, "percent": pct, "message": f"⬇️ Загрузка {src_ext.upper()}: {cur_mb:.1f} / {tot_mb:.1f} MB ({pct}%)" if tot_mb > 0 else f"⬇️ Загрузка: {cur_mb:.1f} MB..."})
 
         xflac_map = {'xflac_lossless': (0, '_bitperfect.xflac'), 'xflac_psycho': (25, '_psycho.xflac'), 'xflac_ultra': (15, '_ultra.xflac'), 'xflac_hifi': (45, '_hifi.xflac')}
-        if fmt_mode in xflac_map and src_ext in ('.flac', '.wav'):
+        if fmt_mode in xflac_map and src_ext in ('.flac', '.wav', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp'):
             xf_mode, xf_suf = xflac_map[fmt_mode]
             final_name = f"{stem_name}{xf_suf}"
             final_path = os.path.join(MUSIC_DIR, final_name)
@@ -3282,7 +3282,7 @@ def api_torrent_import_track_v105():
     base_nm = os.path.splitext(os.path.basename(full_p))[0]
     ext = os.path.splitext(full_p)[1].lower()
     xf_map = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15}
-    need_xflac = (fmt in xf_map and ext in ('.flac', '.wav'))
+    need_xflac = (fmt in xf_map and ext in ('.flac', '.wav', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp'))
 
     try:
         with _TOR_IMPORT_LOCK_V98:
@@ -3326,6 +3326,9 @@ def api_torrent_import_track_v105():
                 # Прямой перенос MP3 / OGG / M4A / AAC без пережатия в xFLAC!
                 final_name = os.path.basename(full_p)
                 final_path = os.path.join(MUSIC_DIR, final_name)
+                if full_p.lower().endswith(('.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')):
+                    _discovered_video_paths_v134[final_name] = full_p
+                    return json.dumps({"ok": True, "status": "ok", "xflac_file": final_name, "imported": final_name})
                 if os.path.abspath(full_p) != os.path.abspath(final_path):
                     try:
                         if os.path.exists(final_path):
@@ -3532,7 +3535,7 @@ def api_video_live_remux_v130():
     cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
     if start_sec > 0.5:
         cmd.extend(['-ss', f"{start_sec:.2f}"])
-    force_transcode = (request.query.get('transcode') == '1') or src_input.lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob'))
+    force_transcode = (request.query.get('transcode') == '1') or src_input.lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob', '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp'))
     v_codec_args = [
         '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'
     ] if force_transcode else ['-c:v', 'copy']
@@ -3637,63 +3640,128 @@ def api_video_pcm_chunk_v131():
 # === 🎬 JENNY V134: AUTO-DISCOVER TORRENT VIDEOS IN LIBRARY ===
 _VIDEO_EXTS_V134 = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')
 _discovered_video_paths_v134 = {}
+_last_vid_scan_ts_v136 = 0.0
 
-def sync_downloaded_videos_to_library_v134():
-    """Находит все скачанные или качающиеся видео в torrents_dl и линкует/регистрирует их в библиотеке."""
-    found = []
-    search_roots = [MUSIC_DIR]
-    for sub in ('torrents_dl', '.torrents_dl', 'torrents'):
-        p = os.path.join(MUSIC_DIR, sub)
-        if os.path.isdir(p):
-            search_roots.append(p)
+_orig_os_listdir_v136 = os.listdir
+_orig_os_isfile_v136 = os.path.isfile
+_orig_os_exists_v136 = os.path.exists
+_orig_os_getsize_v136 = os.path.getsize
+_orig_os_getmtime_v136 = os.path.getmtime
+
+def _collect_all_video_roots_v136():
+    roots = set()
     try:
-        if '_JTORRENT_DL_DIR_V96' in globals() and os.path.isdir(_JTORRENT_DL_DIR_V96):
-            if _JTORRENT_DL_DIR_V96 not in search_roots:
-                search_roots.append(_JTORRENT_DL_DIR_V96)
+        if 'MUSIC_DIR' in globals() and MUSIC_DIR:
+            roots.add(MUSIC_DIR)
+            roots.add(os.path.dirname(os.path.abspath(MUSIC_DIR)))
+    except Exception:
+        pass
+    # Собираем все пути из глобальных переменных player.py (папки торрентов, кэша, загрузок)
+    for k, v in list(globals().items()):
+        if isinstance(v, str) and ('/' in v) and any(w in k.lower() for w in ('dir', 'path', 'tor', 'dl', 'cache', 'root', 'storage')):
+            if _orig_os_exists_v136(v):
+                roots.add(v if os.path.isdir(v) else os.path.dirname(v))
+    for extra in (
+        '/storage/emulated/0/Download',
+        '/storage/emulated/0/Movies',
+        '/storage/emulated/0/Music',
+        '/data/user/0/com.jenny.player/files',
+        '/data/user/0/com.jenny.player/cache',
+        '/data/data/com.jenny.player/files',
+        '/data/data/com.jenny.player/cache',
+        os.getcwd()
+    ):
+        if _orig_os_exists_v136(extra):
+            roots.add(extra)
+    return list(roots)
+
+def sync_downloaded_videos_to_library_v134(force=False):
+    global _last_vid_scan_ts_v136
+    now = time.time()
+    if not force and (now - _last_vid_scan_ts_v136 < 2.5) and _discovered_video_paths_v134:
+        return list(_discovered_video_paths_v134.keys())
+    _last_vid_scan_ts_v136 = now
+
+    # 1. Опрашиваем живой демон libjtorrent (если запущен), чтобы знать точные пути всех видеораздач
+    try:
+        port = globals().get('_JTORRENT_PORT_V96', 42070)
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/status")
+        with urllib.request.urlopen(req, timeout=0.4) as resp:
+            st_data = json.loads(resp.read().decode('utf-8', 'ignore'))
+            for tor in (st_data.get('torrents') or []):
+                for f in (tor.get('files') or []):
+                    fp = f.get('full_path') or f.get('path') or ''
+                    if fp and fp.lower().endswith(_VIDEO_EXTS_V134) and _orig_os_isfile_v136(fp):
+                        bn = os.path.basename(fp)
+                        _discovered_video_paths_v134[bn] = fp
     except Exception:
         pass
 
-    for root_d in search_roots:
+    # 2. Обходим все папки загрузок и торрентов
+    for root_d in _collect_all_video_roots_v136():
         try:
             for r, dirs, files in os.walk(root_d):
+                # Пропускаем системные папки Android и git
+                dirs[:] = [d for d in dirs if d not in ('.git', 'Android', 'proc', 'sys', 'usr', 'lib')]
                 for fn in files:
                     if fn.lower().endswith(_VIDEO_EXTS_V134) and not fn.startswith('.'):
                         full_p = os.path.join(r, fn)
                         try:
-                            if os.path.getsize(full_p) < 512 * 1024:
-                                continue
+                            if _orig_os_getsize_v136(full_p) >= 512 * 1024:
+                                _discovered_video_paths_v134[fn] = full_p
                         except Exception:
-                            continue
-                        _discovered_video_paths_v134[fn] = full_p
-                        found.append(fn)
-                        # Пытаемся создать жесткую ссылку в корне MUSIC_DIR, чтобы файл лежал прямо в библиотеке
-                        dst_p = os.path.join(MUSIC_DIR, fn)
-                        if os.path.abspath(full_p) != os.path.abspath(dst_p) and not os.path.exists(dst_p):
-                            try:
-                                os.link(full_p, dst_p)
-                            except Exception:
-                                pass
+                            pass
         except Exception:
             pass
-    return found
+    return list(_discovered_video_paths_v134.keys())
+
+# Прозрачно подключаем найденные видео в os.listdir(MUSIC_DIR) и файловые проверки Python!
+def _hooked_listdir_v136(path='.'):
+    items = list(_orig_os_listdir_v136(path))
+    try:
+        if 'MUSIC_DIR' in globals() and os.path.abspath(str(path)) == os.path.abspath(str(MUSIC_DIR)):
+            sync_downloaded_videos_to_library_v134(False)
+            existing = set(items)
+            for v_fn, v_fp in list(_discovered_video_paths_v134.items()):
+                if v_fn not in existing and _orig_os_isfile_v136(v_fp):
+                    items.append(v_fn)
+                    existing.add(v_fn)
+    except Exception:
+        pass
+    return items
+
+def _resolve_virtual_music_path_v136(p):
+    try:
+        s = str(p)
+        bn = os.path.basename(s)
+        if bn in _discovered_video_paths_v134:
+            real_p = _discovered_video_paths_v134[bn]
+            if _orig_os_isfile_v136(real_p):
+                return real_p
+    except Exception:
+        pass
+    return p
+
+os.listdir = _hooked_listdir_v136
+os.path.isfile = lambda p: _orig_os_isfile_v136(_resolve_virtual_music_path_v136(p))
+os.path.exists = lambda p: _orig_os_exists_v136(_resolve_virtual_music_path_v136(p))
+os.path.getsize = lambda p: _orig_os_getsize_v136(_resolve_virtual_music_path_v136(p))
+os.path.getmtime = lambda p: _orig_os_getmtime_v136(_resolve_virtual_music_path_v136(p))
 
 _orig_resolve_v134 = resolve_track_full_path_v71
 def resolve_track_full_path_v71(filename: str) -> str:
-    res = _orig_resolve_v134(filename)
-    if res and os.path.isfile(res):
-        return res
-    bn = os.path.basename(filename)
-    if bn in _discovered_video_paths_v134 and os.path.isfile(_discovered_video_paths_v134[bn]):
+    bn = os.path.basename(str(filename).split('?')[0])
+    if bn in _discovered_video_paths_v134 and _orig_os_isfile_v136(_discovered_video_paths_v134[bn]):
         return _discovered_video_paths_v134[bn]
-    sync_downloaded_videos_to_library_v134()
-    if bn in _discovered_video_paths_v134 and os.path.isfile(_discovered_video_paths_v134[bn]):
+    sync_downloaded_videos_to_library_v134(False)
+    if bn in _discovered_video_paths_v134 and _orig_os_isfile_v136(_discovered_video_paths_v134[bn]):
         return _discovered_video_paths_v134[bn]
-    return res
+    return _orig_resolve_v134(filename)
 
 @route('/api/video/discovered_list', method='GET')
 def api_video_discovered_list_v134():
     response.content_type = 'application/json'
-    vids = sync_downloaded_videos_to_library_v134()
+    vids = sync_downloaded_videos_to_library_v134(True)
     return json.dumps({"videos": sorted(list(set(vids)))})
 
 def start_server():
