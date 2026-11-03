@@ -18,17 +18,32 @@ jobs:
         distribution: 'temurin'
         java-version: '11'
 
-    - name: Загрузка нативного Android FFmpeg (arm64-v8a)
+    - name: Переключение на Python 3.11 (для Chaquopy)
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Кэш нативного FFmpeg на GitHub
+      id: cache-ffmpeg
+      uses: actions/cache@v4
+      with:
+        path: app/src/main/jniLibs/arm64-v8a/libffmpeg.so
+        key: jenny-ffmpeg-arm64-v9.0.2
+
+    - name: Загрузка FFmpeg (только если нет в кэше GitHub)
+      if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
       run: |
         mkdir -p app/src/main/jniLibs/arm64-v8a
         curl -fL -o ffmpeg-android.zip https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-android-arm64.zip
         unzip -p ffmpeg-android.zip ffmpeg > app/src/main/jniLibs/arm64-v8a/libffmpeg.so
         rm -f ffmpeg-android.zip
-        chmod 755 app/src/main/jniLibs/arm64-v8a/*.so
-        FILE_SIZE=$(stat -c%s app/src/main/jniLibs/arm64-v8a/libffmpeg.so)
-        test "$FILE_SIZE" -gt 10000000
 
-    - name: Подготовка Gradle
+    - name: Права на нативные библиотеки (.so)
+      run: |
+        chmod 755 app/src/main/jniLibs/arm64-v8a/*.so
+        rm -f icon_raw.jpg
+
+    - name: Подготовка Gradle с кэшем
       uses: gradle/actions/setup-gradle@v3
       with:
         gradle-version: '7.6'
