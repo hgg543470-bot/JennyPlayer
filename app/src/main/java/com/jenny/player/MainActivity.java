@@ -205,7 +205,7 @@ public class MainActivity extends AppCompatActivity {
     private void enterDesktopOverlayInternalV133() {
         runOnUiThread(() -> {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !true) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
                     return;
                 }
                 if (isDesktopOverlayActiveV132 || webView == null) return;
@@ -558,7 +558,7 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public boolean canDrawOverlays() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                return true;
+                return Settings.canDrawOverlays(MainActivity.this);
             }
             return true;
         }
@@ -811,87 +811,4 @@ public class MainActivity extends AppCompatActivity {
             webView.loadUrl("http://127.0.0.1:8080");
         }
     }
-
-    // === 🔊 JENNY V144: NATIVE ANDROID MEDIAPLAYER AUDIO COMPANION FOR MKV / AC3 TORRENTS ===
-    private android.media.MediaPlayer jennyMkvAudioPlayerV144 = null;
-    private String jennyMkvAudioUrlV144 = "";
-
-    @android.webkit.JavascriptInterface
-    public void jennyNativeAudioStartV144(final String urlOrPath, final int startMs) {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (jennyMkvAudioPlayerV144 != null && urlOrPath != null && urlOrPath.equals(jennyMkvAudioUrlV144)) {
-                        if (!jennyMkvAudioPlayerV144.isPlaying()) {
-                            if (startMs > 0) jennyMkvAudioPlayerV144.seekTo(startMs);
-                            jennyMkvAudioPlayerV144.start();
-                        }
-                        return;
-                    }
-                    jennyNativeAudioStopV144();
-                    if (urlOrPath == null || urlOrPath.isEmpty()) return;
-                    jennyMkvAudioUrlV144 = urlOrPath;
-                    jennyMkvAudioPlayerV144 = new android.media.MediaPlayer();
-                    jennyMkvAudioPlayerV144.setAudioStreamType(android.media.AudioManager.STREAM_MUSIC);
-                    jennyMkvAudioPlayerV144.setDataSource(urlOrPath);
-                    jennyMkvAudioPlayerV144.setOnPreparedListener(new android.media.MediaPlayer.OnPreparedListener() {
-                        @Override
-                        public void onPrepared(android.media.MediaPlayer mp) {
-                            try {
-                                if (startMs > 0) mp.seekTo(startMs);
-                                mp.setVolume(1.0f, 1.0f);
-                                mp.start();
-                            } catch (Exception ignored) {}
-                        }
-                    });
-                    jennyMkvAudioPlayerV144.prepareAsync();
-                } catch (Exception ignored) {}
-            }
-        });
-    }
-
-    @android.webkit.JavascriptInterface
-    public void jennyNativeAudioSyncV144(final int posMs, final boolean shouldPlay, final float speed) {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (jennyMkvAudioPlayerV144 == null) return;
-                    if (!shouldPlay) {
-                        if (jennyMkvAudioPlayerV144.isPlaying()) jennyMkvAudioPlayerV144.pause();
-                        return;
-                    }
-                    if (!jennyMkvAudioPlayerV144.isPlaying()) {
-                        jennyMkvAudioPlayerV144.start();
-                    }
-                    int cur = jennyMkvAudioPlayerV144.getCurrentPosition();
-                    if (Math.abs(cur - posMs) > 450) {
-                        jennyMkvAudioPlayerV144.seekTo(posMs);
-                    }
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && speed > 0.2f) {
-                        jennyMkvAudioPlayerV144.setPlaybackParams(jennyMkvAudioPlayerV144.getPlaybackParams().setSpeed(speed));
-                    }
-                } catch (Exception ignored) {}
-            }
-        });
-    }
-
-    @android.webkit.JavascriptInterface
-    public void jennyNativeAudioStopV144() {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (jennyMkvAudioPlayerV144 != null) {
-                        try { jennyMkvAudioPlayerV144.stop(); } catch (Exception ignored) {}
-                        try { jennyMkvAudioPlayerV144.release(); } catch (Exception ignored) {}
-                        jennyMkvAudioPlayerV144 = null;
-                    }
-                    jennyMkvAudioUrlV144 = "";
-                } catch (Exception ignored) {}
-            }
-        });
-    }
-
 }
