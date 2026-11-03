@@ -11888,11 +11888,20 @@ config: window._omniCoreStateV139.config
 if (res.ok) {
 const d = await res.json();
 if (d.active_core) window._omniCoreStateV139.active_core = d.active_core;
+window._omniCoreStateV139.alive = Boolean(d.alive);
+window._omniCoreStateV139.port = d.port || 0;
+window._omniCoreStateV139.version = d.version || '';
+window._omniCoreStateV139.so_name = d.so_name || '';
 }
 const listRes = await fetch('/api/omni/cores');
 if (listRes.ok) {
 const ld = await listRes.json();
 if (Array.isArray(ld.cores) && ld.cores.length) window._omniCoreStateV139.cores = ld.cores;
+if (ld.active_core) window._omniCoreStateV139.active_core = ld.active_core;
+window._omniCoreStateV139.alive = Boolean(ld.alive);
+window._omniCoreStateV139.port = ld.port || 0;
+window._omniCoreStateV139.version = ld.version || '';
+window._omniCoreStateV139.so_name = ld.so_name || '';
 if (ld.config) Object.assign(window._omniCoreStateV139.config, ld.config);
 }
 window.renderOmniCoreSwitcherBarV139();
@@ -11963,7 +11972,7 @@ return `
 <span style="font-size:11px;color:#8b949e;font-weight:bold;">🧠 Ядро P2P:</span>
 ${chipsHtml}
 </div>
-<button type="button" onclick="window._omniCoreStateV139.panelOpen=!window._omniCoreStateV139.panelOpen;window.renderOmniCoreSwitcherBarV139();" style="padding:4px 8px;border-radius:8px;font-size:10.5px;border:1px solid #58a6ff;background:#161b22;color:#58a6ff;font-weight:bold;">⚙️ v3.6-ir ${st.panelOpen ? '▴' : '▾'}</button>
+<button type="button" onclick="window._omniCoreStateV139.panelOpen=!window._omniCoreStateV139.panelOpen;window.renderOmniCoreSwitcherBarV139();" style="padding:4px 8px;border-radius:8px;font-size:10.5px;border:1px solid ${st.alive ? '#58a6ff' : '#f85149'};background:#161b22;color:${st.alive ? '#58a6ff' : '#f85149'};font-weight:bold;">⚙️ ${(st.cores.find(x=>x.id===st.active_core)||{}).title || st.active_core} [${st.alive ? '🟢' : '🔴'} :${st.port || '?'}${st.version ? ' v'+st.version : ''}] ${st.panelOpen ? '▴' : '▾'}</button>
 </div>
 ${cfgPanelHtml}`;
 };
