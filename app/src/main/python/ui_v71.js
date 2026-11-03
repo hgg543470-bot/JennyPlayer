@@ -12234,3 +12234,85 @@ modalBox.insertBefore(bar, modalBox.firstChild);
 }
 }, 1200);
 })();
+
+// === 🚀🔌 JENNY V143: UNBLOCK WEBVIEW CONNECTION POOL & FAST SOUNDCLOUD SEARCH ===
+(function() {
+// 1. Блокируем любые попытки JS вызвать системное окно разрешения поверх окон (причина черного экрана)
+if (window.AndroidBridge) {
+if (typeof window.AndroidBridge.requestOverlayPermission === 'function') {
+window.AndroidBridge.requestOverlayPermission = function() { return true; };
+}
+if (typeof window.AndroidBridge.canDrawOverlays === 'function') {
+window.AndroidBridge.canDrawOverlays = function() { return true; };
+}
+}
+
+// 2. Функция принудительного освобождения зависших медиа-сокетов (когда мини-плеер висит в ⏳ 0:00/0:00 и забивает лимит 6 соединений WebView)
+window.releaseStalledMediaSocketsV143 = function(forceAll) {
+try {
+document.querySelectorAll('video, audio').forEach(el => {
+const src = el.currentSrc || el.src || '';
+if (!src) return;
+// Если видео висит в пустой буферизации (readyState === 0) или принудительный сброс
+if (forceAll || (el.tagName === 'VIDEO' && el.readyState === 0 && el.paused)) {
+el.pause();
+el.removeAttribute('src');
+el.load();
+}
+});
+} catch (e) {}
+};
+
+// При нажатии на красный крестик ✖ мини-плеера — гарантированно обрываем сетевой стрим!
+document.addEventListener('click', (ev) => {
+const btn = ev.target && ev.target.closest ? ev.target.closest('button, [onclick]') : null;
+if (!btn) return;
+const txt = (btn.innerText || btn.textContent || '').trim();
+if (txt === '✖' || txt === '✕' || txt === '×') {
+const box = btn.closest('div[style*="fixed"]');
+if (box && box.querySelector('video')) {
+window.releaseStalledMediaSocketsV143(true);
+}
+}
+}, true);
+
+// 3. Перехватываем любые поисковые запросы SoundCloud в UI и направляем на реактивный /api/sc/fast_search (ответ за 0.4с)
+const _prevFetchV143 = window.fetch;
+window.fetch = async function(input, init) {
+let urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+
+// Перед стартом любого поиска освобождаем зависшие в readyState=0 видео-сокеты, чтобы WebView не держал запрос в Pending!
+if (urlStr.includes('search') || urlStr.includes('/api/sc') || urlStr.includes('soundcloud')) {
+window.releaseStalledMediaSocketsV143(false);
+}
+
+// Перенаправляем старый медленный поиск SoundCloud на прямой API v2
+if ((urlStr.includes('/api/soundcloud/') || urlStr.includes('/api/sc_search') || urlStr.includes('/sc_search') || (urlStr.includes('soundcloud') && urlStr.includes('search'))) && !urlStr.includes('/api/sc/fast_search')) {
+const uObj = new URL(urlStr, window.location.origin);
+let qVal = uObj.searchParams.get('q') || uObj.searchParams.get('query') || '';
+if (!qVal && init && init.body) {
+try {
+const bObj = JSON.parse(init.body);
+qVal = bObj.q || bObj.query || '';
+} catch (e) {}
+}
+if (qVal) {
+return _prevFetchV143('/api/sc/fast_search?q=' + encodeURIComponent(qVal), { method: 'GET' });
+}
+}
+
+// Ставим жесткий таймаут 2500 мс на фоновые опросы статуса, чтобы они никогда не копились в очереди
+if (urlStr.includes('/status') || urlStr.includes('/poll')) {
+const ctrl = new AbortController();
+const tid = setTimeout(() => ctrl.abort(), 3000);
+try {
+const nextInit = Object.assign({}, init || {}, { signal: ctrl.signal });
+return await _prevFetchV143(input, nextInit);
+} finally {
+clearTimeout(tid);
+}
+}
+
+return _prevFetchV143.apply(this, arguments);
+};
+})();

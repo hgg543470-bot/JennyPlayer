@@ -4490,7 +4490,156 @@ def _jtorrent_stabilized_urlopen_v142(url_or_req, *args, **kwargs):
         pass
     return _orig_urlopen_v142(url_or_req, *args, **kwargs)
 
-urllib.request.urlopen = _jtorrent_stabilized_urlopen_v142
+pass # merged into v143
+
+
+# === ⚡🌐 JENNY V143: NON-BLOCKING THREADED SERVER & DIRECT SOUNDCLOUD API V2 ===
+import socketserver
+from wsgiref.simple_server import WSGIServer, WSGIRequestHandler
+
+# 1. Делаем встроенный WSGI-сервер по-настоящему многопоточным (Daemon Threads),
+# чтобы зависший стрим видео или торрента НИКОГДА не блокировал поиск SoundCloud / P2P!
+class _JennyThreadedWSGIServerV143(socketserver.ThreadingMixIn, WSGIServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+try:
+    import bottle
+    class _JennySilentHandlerV143(WSGIRequestHandler):
+        def log_message(self, format, *args):
+            pass
+    class _JennyFastServerAdapterV143(bottle.ServerAdapter):
+        def run(self, handler):
+            srv = _JennyThreadedWSGIServerV143((self.host, self.port), _JennySilentHandlerV143)
+            srv.set_app(handler)
+            srv.serve_forever()
+    bottle.WSGIRefServer = _JennyFastServerAdapterV143
+except Exception:
+    pass
+
+# 2. Прямой реактивный поиск SoundCloud API v2 + SSR Hydration (обходит зависающий yt-dlp)
+_SC_CACHED_CLIENT_ID_V143 = {"id": "", "ts": 0}
+
+def _resolve_sc_client_id_fast_v143():
+    now = time.time()
+    if _SC_CACHED_CLIENT_ID_V143["id"] and (now - _SC_CACHED_CLIENT_ID_V143["ts"] < 7200):
+        return _SC_CACHED_CLIENT_ID_V143["id"]
+    try:
+        req = urllib.request.Request(
+            "https://soundcloud.com",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"}
+        )
+        with _orig_urlopen_v139_1(req, timeout=3.5) as r:
+            html = r.read().decode("utf-8", "ignore")
+        scripts = re.findall(r'https://a-v2\.sndcdn\.com/assets/[^\s"']+\.js', html)
+        for s_url in reversed(scripts[-4:]):
+            try:
+                r_js = urllib.request.Request(s_url, headers={"User-Agent": "Mozilla/5.0"})
+                with _orig_urlopen_v139_1(r_js, timeout=2.5) as rj:
+                    js_txt = rj.read().decode("utf-8", "ignore")
+                m = re.search(r'client_id\s*[:=]\s*["']([a-zA-Z0-9]{32})["']', js_txt)
+                if m:
+                    _SC_CACHED_CLIENT_ID_V143["id"] = m.group(1)
+                    _SC_CACHED_CLIENT_ID_V143["ts"] = now
+                    return m.group(1)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return ""
+
+def _fast_soundcloud_search_v143(query: str, limit: int = 25):
+    q = (query or "").strip()
+    if not q:
+        return []
+    cid = _resolve_sc_client_id_fast_v143()
+    items = []
+    # Ветка А: Официальный JSON API v2 SoundCloud (ответ за 250-400 мс)
+    if cid:
+        try:
+            u = f"https://api-v2.soundcloud.com/search/tracks?q={urllib.parse.quote(q)}&client_id={cid}&limit={limit}"
+            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+            with _orig_urlopen_v139_1(req, timeout=4.5) as r:
+                data = json.loads(r.read().decode("utf-8", "ignore"))
+            for tr in (data.get("collection") or []):
+                if not isinstance(tr, dict):
+                    continue
+                permalink = tr.get("permalink_url") or ""
+                title = (tr.get("title") or "").strip()
+                user_obj = tr.get("user") or {}
+                pub_meta = tr.get("publisher_metadata") or {}
+                artist = (pub_meta.get("artist") or user_obj.get("username") or "SoundCloud").strip()
+                dur_sec = int((tr.get("duration") or 0) // 1000)
+                art_url = (tr.get("artwork_url") or user_obj.get("avatar_url") or "").replace("-large", "-t500x500")
+                if permalink and title:
+                    items.append({
+                        "id": str(tr.get("id") or ""),
+                        "title": f"{artist} — {title}" if artist.lower() not in title.lower() else title,
+                        "artist": artist,
+                        "track": title,
+                        "url": permalink,
+                        "webpage_url": permalink,
+                        "duration": dur_sec,
+                        "thumbnail": art_url,
+                        "plays": tr.get("playback_count") or 0,
+                        "source": "soundcloud"
+                    })
+            if items:
+                return items
+        except Exception:
+            pass
+
+    # Ветка Б: Бесключевой фоллбэк через SSR window.__sc_hydration
+    try:
+        u_ssr = f"https://soundcloud.com/search/sounds?q={urllib.parse.quote(q)}"
+        req = urllib.request.Request(u_ssr, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"})
+        with _orig_urlopen_v139_1(req, timeout=4.5) as r:
+            html = r.read().decode("utf-8", "ignore")
+        m_hyd = re.search(r'window\.__sc_hydration\s*=\s*(\[.*?\]);\s*</script>', html, flags=re.S)
+        if m_hyd:
+            hyd = json.loads(m_hyd.group(1))
+            for block in hyd:
+                b_data = block.get("data")
+                col = b_data.get("collection") if isinstance(b_data, dict) else None
+                if isinstance(col, list):
+                    for tr in col:
+                        if not isinstance(tr, dict):
+                            continue
+                        permalink = tr.get("permalink_url") or ""
+                        title = (tr.get("title") or "").strip()
+                        user_obj = tr.get("user") or {}
+                        artist = (user_obj.get("username") or "SoundCloud").strip()
+                        dur_sec = int((tr.get("duration") or 0) // 1000)
+                        art_url = (tr.get("artwork_url") or "").replace("-large", "-t500x500")
+                        if permalink and title:
+                            items.append({
+                                "id": str(tr.get("id") or ""),
+                                "title": f"{artist} — {title}" if artist.lower() not in title.lower() else title,
+                                "artist": artist,
+                                "track": title,
+                                "url": permalink,
+                                "webpage_url": permalink,
+                                "duration": dur_sec,
+                                "thumbnail": art_url,
+                                "plays": tr.get("playback_count") or 0,
+                                "source": "soundcloud"
+                            })
+    except Exception:
+        pass
+    return items
+
+@route('/api/sc/fast_search', method=['GET', 'POST'])
+def api_sc_fast_search_v143():
+    response.content_type = 'application/json'
+    q = (request.query.get('q') or request.query.get('query') or '').strip()
+    if not q and request.method == 'POST':
+        try:
+            b = request.json or {}
+            q = (b.get('q') or b.get('query') or '').strip()
+        except Exception:
+            pass
+    res = _fast_soundcloud_search_v143(q, 25)
+    return json.dumps({"ok": True, "status": "ok", "results": res, "items": res, "tracks": res, "count": len(res)})
 
 def start_server():
     load_saved_music_dir()

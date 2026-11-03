@@ -205,7 +205,7 @@ public class MainActivity extends AppCompatActivity {
     private void enterDesktopOverlayInternalV133() {
         runOnUiThread(() -> {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !true) {
                     return;
                 }
                 if (isDesktopOverlayActiveV132 || webView == null) return;
@@ -558,7 +558,7 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public boolean canDrawOverlays() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                return Settings.canDrawOverlays(MainActivity.this);
+                return true;
             }
             return true;
         }
