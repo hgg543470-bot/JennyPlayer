@@ -11159,3 +11159,162 @@ setTimeout(() => {
 window.cleanUpDesktopButtonsV133();
 window.installCleanStageTouchV133();
 }, 400);
+
+// === 🧠🎬 JENNY V134: FULL VIDEO RAM UNPACK (3X PARALLEL) & AUTO VIDEO LIBRARY SYNC ===
+
+// 1. Автоподхват всех скачанных торрент-видео (включая «Матрицу») прямо во вкладку «🎬 Видео»!
+window.syncDiscoveredVideosIntoPlaylistV134 = async function() {
+try {
+const res = await fetch('/api/video/discovered_list');
+if (!res.ok) return;
+const data = await res.json();
+const vids = (data && data.videos) || [];
+if (vids.length && window.lastData && Array.isArray(window.lastData.all_tracks)) {
+let added = false;
+vids.forEach(fn => {
+if (!window.lastData.all_tracks.includes(fn)) {
+window.lastData.all_tracks.unshift(fn);
+added = true;
+}
+});
+if (added) {
+if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
+if (window.activePlaylistTabV71 === 'videos' && typeof window.renderActivePlaylistTracksV71 === 'function') {
+window.renderActivePlaylistTracksV71(false);
+}
+}
+}
+} catch (e) {}
+};
+
+setInterval(window.syncDiscoveredVideosIntoPlaylistV134, 4500);
+setTimeout(window.syncDiscoveredVideosIntoPlaylistV134, 800);
+
+// 2. Полная и агрессивная распаковка ВСЕЙ аудиодорожки видео в RAM (в 3 параллельных потока FFmpeg без пауз!)
+window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
+window.initVideoDeckAudioV131();
+const vd = window.videoDeckV131;
+const mySess = ++vd.ramDecodeSession;
+if (vd.pieceAbortCtrl) { try { vd.pieceAbortCtrl.abort(); } catch (e) {} }
+vd.studioBuffer = null;
+
+const vid = document.getElementById('jennyVideoElV130');
+let dur = 0;
+try {
+const mr = await fetch(`/api/video/pcm_meta?src=${encodeURIComponent(streamUrl)}`);
+if (mr.ok) { const md = await mr.json(); dur = parseFloat(md.duration) || 0; }
+} catch (e) {}
+
+if (!dur && vid) {
+for (let w = 0; w < 30; w++) {
+if (mySess !== vd.ramDecodeSession) return null;
+if (isFinite(vid.duration) && vid.duration > 0) { dur = vid.duration; break; }
+await new Promise(r => setTimeout(r, 120));
+}
+}
+if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
+
+// Выбираем максимальную частоту дискретизации, которая целиком помещается в Float32 AudioBuffer
+const srCandidates = (dur > 5400) ? [32000, 24000] : [44100, 32000, 24000];
+let sr = srCandidates[0], totalFrames = 0, audioBuf = null;
+for (const candSr of srCandidates) {
+try {
+sr = candSr;
+totalFrames = Math.floor(dur * sr);
+audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+if (audioBuf) break;
+} catch (e) {}
+}
+if (!audioBuf || mySess !== vd.ramDecodeSession) return null;
+
+const chL = audioBuf.getChannelData(0), chR = audioBuf.getChannelData(1);
+const PIECE_SEC = 60; // Крупные 60-секундные блоки для быстрой полной распаковки в ОЗУ
+const numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
+const pieceMap = new Uint8Array(numPieces); // 0 = пусто, 1 = в работе, 2 = готово в RAM
+const failCounts = new Uint8Array(numPieces);
+
+audioBuf._pieceSecV72 = PIECE_SEC;
+audioBuf._pieceMapV72 = pieceMap;
+audioBuf._loadedCountV72 = 0;
+audioBuf._allPiecesLoadedV72 = false;
+audioBuf._trueDurationV72 = dur;
+audioBuf._ramTotalMbV134 = Math.round((totalFrames * 8) / (1024 * 1024));
+vd.studioBuffer = audioBuf;
+
+const fetchVideoPiece = async (pIdx) => {
+if (pIdx < 0 || pIdx >= numPieces || pieceMap[pIdx] === 2) return true;
+pieceMap[pIdx] = 1;
+const stSec = pIdx * PIECE_SEC;
+const dSec = Math.min(PIECE_SEC, dur - stSec);
+try {
+const u = `/api/video/pcm_chunk?src=${encodeURIComponent(streamUrl)}&start=${stSec}&dur=${dSec}&sr=${sr}`;
+const res = await fetch(u);
+if (!res.ok) { pieceMap[pIdx] = 0; return false; }
+const ab = await res.arrayBuffer();
+const frames = Math.floor(ab.byteLength / 8);
+if (frames <= 0) { pieceMap[pIdx] = 0; return false; }
+const startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
+const maxCopy = Math.min(frames, totalFrames - startFrame);
+if (maxCopy > 0) {
+const leftArr = new Float32Array(ab, 0, frames);
+const rightArr = new Float32Array(ab, frames * 4, frames);
+chL.set(leftArr.subarray(0, maxCopy), startFrame);
+chR.set(rightArr.subarray(0, maxCopy), startFrame);
+}
+pieceMap[pIdx] = 2;
+audioBuf._loadedCountV72++;
+if (audioBuf._loadedCountV72 === 1 && vd.config && vd.config.opt_autoRms) {
+window.computeBufferAutoGain(audioBuf, vd.config.val_autoRms);
+window.buildVideoAudioGraphV131();
+}
+return true;
+} catch (e) {
+pieceMap[pIdx] = 0;
+return false;
+}
+};
+
+// Выбирает следующий кусок: сначала под курсором воспроизведения, затем подряд весь фильм до 100%
+const pickNextPieceIdx = () => {
+const curSec = (vid && isFinite(vid.currentTime)) ? vid.currentTime : 0;
+const curPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(curSec / PIECE_SEC)));
+const stepDir = vd.isReversed ? -1 : 1;
+for (let look = 0; look < 3; look++) {
+const cand = curPiece + look * stepDir;
+if (cand >= 0 && cand < numPieces && pieceMap[cand] === 0 && failCounts[cand] < 4) {
+return { idx: cand, urgent: look <= 1 };
+}
+}
+for (let offset = 0; offset < numPieces; offset++) {
+const cand = (curPiece + offset) % numPieces;
+if (pieceMap[cand] === 0 && failCounts[cand] < 4) {
+return { idx: cand, urgent: false };
+}
+}
+return null;
+};
+
+// Запускаем 3 параллельных воркера для максимальной скорости распаковки всего фильма в ОЗУ!
+const workerLoop = async () => {
+while (mySess === vd.ramDecodeSession && window._vidStateV130.active) {
+const task = pickNextPieceIdx();
+if (!task) break;
+const ok = await fetchVideoPiece(task.idx);
+if (mySess !== vd.ramDecodeSession) return;
+if (ok) {
+if (task.urgent) window.syncVideoRamEngineV131(false);
+} else {
+failCounts[task.idx]++;
+await new Promise(r => setTimeout(r, 300));
+}
+}
+};
+
+await Promise.all([workerLoop(), workerLoop(), workerLoop()]);
+if (mySess === vd.ramDecodeSession && audioBuf._loadedCountV72 >= numPieces) {
+audioBuf._allPiecesLoadedV72 = true;
+window.syncVideoRamEngineV131(false);
+window.showVideoFeedbackV130(`🧠 Весь звук видео в RAM: 100% (${audioBuf._ramTotalMbV134} МБ) 🚀`);
+}
+return audioBuf;
+};

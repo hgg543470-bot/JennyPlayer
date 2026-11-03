@@ -207,9 +207,13 @@ public class MainActivity extends AppCompatActivity {
                 }
                 if (isDesktopOverlayActiveV132 || webView == null) return;
                 wmV132 = (android.view.WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
-                float density = getResources().getDisplayMetrics().density;
-                int wPx = (savedOverlayW > 48) ? savedOverlayW : Math.round(300 * density);
-                int hPx = (savedOverlayH > 32) ? savedOverlayH : Math.round(176 * density);
+                android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+                float density = dm.density;
+                final int maxHwW = Math.max(1080, dm.widthPixels);
+                final int maxHwH = Math.max(1920, dm.heightPixels);
+
+                int wPx = (savedOverlayW > 48) ? Math.min(maxHwW, savedOverlayW) : Math.round(300 * density);
+                int hPx = (savedOverlayH > 32) ? Math.min(maxHwH, savedOverlayH) : Math.round(176 * density);
 
                 int type = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                         ? android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -229,6 +233,8 @@ public class MainActivity extends AppCompatActivity {
                 if (webView.getParent() instanceof android.view.ViewGroup) {
                     ((android.view.ViewGroup) webView.getParent()).removeView(webView);
                 }
+                webView.setScaleX(1.0f);
+                webView.setScaleY(1.0f);
 
                 overlayContainerV132 = new android.widget.FrameLayout(getApplicationContext()) {
                     private float downRawX = 0f, downRawY = 0f;
@@ -237,6 +243,22 @@ public class MainActivity extends AppCompatActivity {
                     private boolean isPinching = false;
                     private float initSpan = 1f, initFocusX = 0f, initFocusY = 0f;
                     private int pinchStartW = 0, pinchStartH = 0, pinchStartX = 0, pinchStartY = 0;
+                    private int virtualW = wPx, virtualH = hPx;
+                    private long lastLayoutUpdateMs = 0L;
+
+                    private float getRawXSafe(android.view.MotionEvent ev, int idx) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            return ev.getRawX(idx);
+                        }
+                        return (ev.getRawX() - ev.getX()) + ev.getX(idx);
+                    }
+
+                    private float getRawYSafe(android.view.MotionEvent ev, int idx) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            return ev.getRawY(idx);
+                        }
+                        return (ev.getRawY() - ev.getY()) + ev.getY(idx);
+                    }
 
                     private void cancelWebViewTouch(android.view.MotionEvent ev) {
                         android.view.MotionEvent cancelEv = android.view.MotionEvent.obtain(ev);
@@ -245,20 +267,56 @@ public class MainActivity extends AppCompatActivity {
                         cancelEv.recycle();
                     }
 
+                    private void applyVirtualSizeAndPos(int targetW, int targetH, int targetX, int targetY, boolean forceSync) {
+                        virtualW = Math.max(48, Math.min(maxHwW * 3, targetW));
+                        virtualH = Math.max(32, Math.min(maxHwH * 3, targetH));
+
+                        // Ограничиваем физический буфер SurfaceFlinger размером экрана, а все что больше — дожимаем GPU-масштабом WebView!
+                        int hwW = Math.min(maxHwW, virtualW);
+                        int hwH = Math.min(maxHwH, virtualH);
+                        float extraScaleX = (float) virtualW / Math.max(1, hwW);
+                        float extraScaleY = (float) virtualH / Math.max(1, hwH);
+
+                        if (webView != null) {
+                            webView.setPivotX(0f);
+                            webView.setPivotY(0f);
+                            webView.setScaleX(extraScaleX);
+                            webView.setScaleY(extraScaleY);
+                        }
+
+                        overlayParamsV132.x = targetX;
+                        overlayParamsV132.y = targetY;
+                        savedOverlayX = targetX;
+                        savedOverlayY = targetY;
+
+                        long now = android.os.SystemClock.uptimeMillis();
+                        boolean sizeChanged = (Math.abs(hwW - overlayParamsV132.width) >= 6) || (Math.abs(hwH - overlayParamsV132.height) >= 6);
+                        if (forceSync || !sizeChanged || (now - lastLayoutUpdateMs >= 28L)) {
+                            overlayParamsV132.width = hwW;
+                            overlayParamsV132.height = hwH;
+                            savedOverlayW = hwW;
+                            savedOverlayH = hwH;
+                            if (sizeChanged) lastLayoutUpdateMs = now;
+                            try {
+                                wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+
                     @Override
                     public boolean dispatchTouchEvent(android.view.MotionEvent ev) {
                         if (!isDesktopOverlayActiveV132 || wmV132 == null || overlayParamsV132 == null) {
                             return super.dispatchTouchEvent(ev);
                         }
                         int action = ev.getActionMasked();
-                        float viewOriginX = ev.getRawX() - ev.getX();
-                        float viewOriginY = ev.getRawY() - ev.getY();
 
                         if (action == android.view.MotionEvent.ACTION_DOWN) {
-                            downRawX = ev.getRawX();
-                            downRawY = ev.getRawY();
+                            downRawX = getRawXSafe(ev, 0);
+                            downRawY = getRawYSafe(ev, 0);
                             startWinX = overlayParamsV132.x;
                             startWinY = overlayParamsV132.y;
+                            if (virtualW < 48) virtualW = overlayParamsV132.width;
+                            if (virtualH < 32) virtualH = overlayParamsV132.height;
                             isDragging = false;
                             isPinching = false;
                             return super.dispatchTouchEvent(ev);
@@ -270,15 +328,15 @@ public class MainActivity extends AppCompatActivity {
                             }
                             isPinching = true;
                             isDragging = false;
-                            float rx0 = viewOriginX + ev.getX(0);
-                            float ry0 = viewOriginY + ev.getY(0);
-                            float rx1 = viewOriginX + ev.getX(1);
-                            float ry1 = viewOriginY + ev.getY(1);
-                            initSpan = (float) Math.max(8.0, Math.hypot(rx1 - rx0, ry1 - ry0));
+                            float rx0 = getRawXSafe(ev, 0);
+                            float ry0 = getRawYSafe(ev, 0);
+                            float rx1 = getRawXSafe(ev, 1);
+                            float ry1 = getRawYSafe(ev, 1);
+                            initSpan = (float) Math.max(12.0, Math.hypot(rx1 - rx0, ry1 - ry0));
                             initFocusX = (rx0 + rx1) * 0.5f;
                             initFocusY = (ry0 + ry1) * 0.5f;
-                            pinchStartW = overlayParamsV132.width;
-                            pinchStartH = overlayParamsV132.height;
+                            pinchStartW = Math.max(48, virtualW);
+                            pinchStartH = Math.max(32, virtualH);
                             pinchStartX = overlayParamsV132.x;
                             pinchStartY = overlayParamsV132.y;
                             return true;
@@ -286,11 +344,11 @@ public class MainActivity extends AppCompatActivity {
 
                         if (action == android.view.MotionEvent.ACTION_MOVE) {
                             if (isPinching && ev.getPointerCount() >= 2) {
-                                float rx0 = viewOriginX + ev.getX(0);
-                                float ry0 = viewOriginY + ev.getY(0);
-                                float rx1 = viewOriginX + ev.getX(1);
-                                float ry1 = viewOriginY + ev.getY(1);
-                                float curSpan = (float) Math.max(8.0, Math.hypot(rx1 - rx0, ry1 - ry0));
+                                float rx0 = getRawXSafe(ev, 0);
+                                float ry0 = getRawYSafe(ev, 0);
+                                float rx1 = getRawXSafe(ev, 1);
+                                float ry1 = getRawYSafe(ev, 1);
+                                float curSpan = (float) Math.max(12.0, Math.hypot(rx1 - rx0, ry1 - ry0));
                                 float curFocusX = (rx0 + rx1) * 0.5f;
                                 float curFocusY = (ry0 + ry1) * 0.5f;
                                 float scale = curSpan / initSpan;
@@ -300,19 +358,13 @@ public class MainActivity extends AppCompatActivity {
                                 float actualScaleX = (float) newW / Math.max(1, pinchStartW);
                                 float actualScaleY = (float) newH / Math.max(1, pinchStartH);
 
-                                overlayParamsV132.width = newW;
-                                overlayParamsV132.height = newH;
-                                overlayParamsV132.x = Math.round(curFocusX - (initFocusX - pinchStartX) * actualScaleX);
-                                overlayParamsV132.y = Math.round(curFocusY - (initFocusY - pinchStartY) * actualScaleY);
-                                savedOverlayW = newW;
-                                savedOverlayH = newH;
-                                savedOverlayX = overlayParamsV132.x;
-                                savedOverlayY = overlayParamsV132.y;
-                                wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                                int newX = Math.round(curFocusX - (initFocusX - pinchStartX) * actualScaleX);
+                                int newY = Math.round(curFocusY - (initFocusY - pinchStartY) * actualScaleY);
+                                applyVirtualSizeAndPos(newW, newH, newX, newY, false);
                                 return true;
                             } else if (!isPinching && ev.getPointerCount() == 1) {
-                                float dx = ev.getRawX() - downRawX;
-                                float dy = ev.getRawY() - downRawY;
+                                float dx = getRawXSafe(ev, 0) - downRawX;
+                                float dy = getRawYSafe(ev, 0) - downRawY;
                                 if (!isDragging && Math.hypot(dx, dy) > 8.0) {
                                     isDragging = true;
                                     cancelWebViewTouch(ev);
@@ -322,7 +374,9 @@ public class MainActivity extends AppCompatActivity {
                                     overlayParamsV132.y = Math.round(startWinY + dy);
                                     savedOverlayX = overlayParamsV132.x;
                                     savedOverlayY = overlayParamsV132.y;
-                                    wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                                    try {
+                                        wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                                    } catch (Exception ignored) {}
                                     return true;
                                 }
                             }
@@ -332,10 +386,11 @@ public class MainActivity extends AppCompatActivity {
                         if (action == android.view.MotionEvent.ACTION_POINTER_UP) {
                             if (ev.getPointerCount() <= 2) {
                                 int remIdx = (ev.getActionIndex() == 0) ? 1 : 0;
-                                downRawX = viewOriginX + ev.getX(remIdx);
-                                downRawY = viewOriginY + ev.getY(remIdx);
+                                downRawX = getRawXSafe(ev, remIdx);
+                                downRawY = getRawYSafe(ev, remIdx);
                                 startWinX = overlayParamsV132.x;
                                 startWinY = overlayParamsV132.y;
+                                applyVirtualSizeAndPos(virtualW, virtualH, startWinX, startWinY, true);
                                 isPinching = false;
                                 isDragging = true;
                             }
@@ -344,6 +399,7 @@ public class MainActivity extends AppCompatActivity {
 
                         if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_CANCEL) {
                             if (isDragging || isPinching) {
+                                applyVirtualSizeAndPos(virtualW, virtualH, overlayParamsV132.x, overlayParamsV132.y, true);
                                 isDragging = false;
                                 isPinching = false;
                                 return true;
@@ -403,7 +459,9 @@ public class MainActivity extends AppCompatActivity {
             if (webView.getParent() instanceof android.view.ViewGroup) {
                 ((android.view.ViewGroup) webView.getParent()).removeView(webView);
             }
-            setContentView(webView);
+            webView.setScaleX(1.0f);
+                        webView.setScaleY(1.0f);
+                        setContentView(webView);
             evalJs("if(window.syncAndroidNotification) window.syncAndroidNotification(true);");
             evalJs("if(window.checkAndroidPendingTorrentV114) window.checkAndroidPendingTorrentV114();");
             return;
@@ -414,7 +472,9 @@ public class MainActivity extends AppCompatActivity {
                 super.onWindowVisibilityChanged(View.VISIBLE);
             }
         };
-        setContentView(webView);
+        webView.setScaleX(1.0f);
+                        webView.setScaleY(1.0f);
+                        setContentView(webView);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -519,6 +579,8 @@ public class MainActivity extends AppCompatActivity {
                         if (webView.getParent() instanceof android.view.ViewGroup) {
                             ((android.view.ViewGroup) webView.getParent()).removeView(webView);
                         }
+                        webView.setScaleX(1.0f);
+                        webView.setScaleY(1.0f);
                         setContentView(webView);
                     }
                     if (bringToFront) {

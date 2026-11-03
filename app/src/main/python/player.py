@@ -3633,6 +3633,69 @@ def api_video_pcm_chunk_v131():
         response.status = 500
         return str(e)
 
+
+# === 🎬 JENNY V134: AUTO-DISCOVER TORRENT VIDEOS IN LIBRARY ===
+_VIDEO_EXTS_V134 = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')
+_discovered_video_paths_v134 = {}
+
+def sync_downloaded_videos_to_library_v134():
+    """Находит все скачанные или качающиеся видео в torrents_dl и линкует/регистрирует их в библиотеке."""
+    found = []
+    search_roots = [MUSIC_DIR]
+    for sub in ('torrents_dl', '.torrents_dl', 'torrents'):
+        p = os.path.join(MUSIC_DIR, sub)
+        if os.path.isdir(p):
+            search_roots.append(p)
+    try:
+        if '_JTORRENT_DL_DIR_V96' in globals() and os.path.isdir(_JTORRENT_DL_DIR_V96):
+            if _JTORRENT_DL_DIR_V96 not in search_roots:
+                search_roots.append(_JTORRENT_DL_DIR_V96)
+    except Exception:
+        pass
+
+    for root_d in search_roots:
+        try:
+            for r, dirs, files in os.walk(root_d):
+                for fn in files:
+                    if fn.lower().endswith(_VIDEO_EXTS_V134) and not fn.startswith('.'):
+                        full_p = os.path.join(r, fn)
+                        try:
+                            if os.path.getsize(full_p) < 512 * 1024:
+                                continue
+                        except Exception:
+                            continue
+                        _discovered_video_paths_v134[fn] = full_p
+                        found.append(fn)
+                        # Пытаемся создать жесткую ссылку в корне MUSIC_DIR, чтобы файл лежал прямо в библиотеке
+                        dst_p = os.path.join(MUSIC_DIR, fn)
+                        if os.path.abspath(full_p) != os.path.abspath(dst_p) and not os.path.exists(dst_p):
+                            try:
+                                os.link(full_p, dst_p)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+    return found
+
+_orig_resolve_v134 = resolve_track_full_path_v71
+def resolve_track_full_path_v71(filename: str) -> str:
+    res = _orig_resolve_v134(filename)
+    if res and os.path.isfile(res):
+        return res
+    bn = os.path.basename(filename)
+    if bn in _discovered_video_paths_v134 and os.path.isfile(_discovered_video_paths_v134[bn]):
+        return _discovered_video_paths_v134[bn]
+    sync_downloaded_videos_to_library_v134()
+    if bn in _discovered_video_paths_v134 and os.path.isfile(_discovered_video_paths_v134[bn]):
+        return _discovered_video_paths_v134[bn]
+    return res
+
+@route('/api/video/discovered_list', method='GET')
+def api_video_discovered_list_v134():
+    response.content_type = 'application/json'
+    vids = sync_downloaded_videos_to_library_v134()
+    return json.dumps({"videos": sorted(list(set(vids)))})
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
