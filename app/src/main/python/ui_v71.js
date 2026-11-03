@@ -12025,325 +12025,42 @@ window.renderOmniCoreSwitcherBarV139();
 }
 }, 1500);
 
-// === 🧲🛡️ JENNY V142: ANTI-JUMP TORRENT UI, INSTANT CLICKS & REAL FILE DELETION ===
+// === 🚀🛡️ JENNY V147: CLEAN UNIFIED ADDON (FILTERS, TORRENT DELETE, 4S CORNER TOASTS, MKV AUDIO & DUAL-DECK MIXER) ===
 (function() {
-// 1. CSS-замок против прыжков строк при клике на Воспр / Скачать и против потери тапов во время поллинга
-const styleId = 'jennyAntiJumpTorStyleV142';
+const styleId = 'jennyV147UnifiedStyles';
 if (!document.getElementById(styleId)) {
 const st = document.createElement('style');
 st.id = styleId;
 st.textContent = `
-/* Фиксируем высоту статусной строки над мини-плеером торрента, чтобы она не сдвигала список треков вниз при старте */
 #torSwarmInfoBar, #torActiveStatsRow, [id*="torSwarm"], [id*="torStatusRow"] {
 min-height: 22px !important;
 display: flex !important;
 align-items: center !important;
-visibility: visible !important;
 box-sizing: border-box !important;
 }
-/* Фиксируем высоту карточки трека внутри раздачи, чтобы появление "Скачивание: 0.0 MB" не толкало соседние треки */
 #torFilesList > div, .tor-file-row, [id*="torTrackRow"] {
 min-height: 54px !important;
 box-sizing: border-box !important;
-contain: layout style;
 }
-`;
-document.head.appendChild(st);
-}
-
-// 2. Хранилище удаленных и поставленных на паузу хэшей + стабильный порядок карточек
-window._deletedTorHashesV142 = new Set(JSON.parse(localStorage.getItem('ytm_deleted_tor_hashes_v142') || '[]'));
-window._pausedTorHashesV142 = new Set(JSON.parse(localStorage.getItem('ytm_paused_tor_hashes_v142') || '[]'));
-window._stableTorOrderMapV142 = {};
-window._stableTorOrderSeqV142 = 1;
-window._lastTorModalTouchTsV142 = 0;
-
-// Отслеживаем касание экрана, чтобы во время нажатия кнопки поллинг НЕ перерисовывал DOM под пальцем!
-document.addEventListener('pointerdown', (ev) => {
-if (ev.target && ev.target.closest && (ev.target.closest('#torModal') || ev.target.closest('[id*="tor"]') || ev.target.closest('[id*="Download"]'))) {
-window._lastTorModalTouchTsV142 = Date.now();
-}
-}, true);
-
-window.saveTorSetsV142 = function() {
-try {
-localStorage.setItem('ytm_deleted_tor_hashes_v142', JSON.stringify(Array.from(window._deletedTorHashesV142)));
-localStorage.setItem('ytm_paused_tor_hashes_v142', JSON.stringify(Array.from(window._pausedTorHashesV142)));
-} catch (e) {}
-};
-
-// Стабилизатор массива раздач от демона: убирает удаленные и жестко фиксирует порядок карточек, чтобы они НЕ прыгали!
-window.stabilizeDaemonTorrentsV142 = function(list) {
-if (!Array.isArray(list)) return [];
-const filtered = [];
-for (const item of list) {
-if (!item) continue;
-const h = String(item.hash || item.info_hash || '').toLowerCase();
-if (h && window._deletedTorHashesV142.has(h)) continue;
-if (h && !window._stableTorOrderMapV142[h]) {
-window._stableTorOrderMapV142[h] = window._stableTorOrderSeqV142++;
-}
-if (h && window._pausedTorHashesV142.has(h)) {
-item.paused = true;
-item.status = 'paused';
-item.seeds = 0;
-item.seeders = 0;
-item.peers = 0;
-}
-filtered.push(item);
-}
-filtered.sort((a, b) => {
-const ha = String(a.hash || a.info_hash || '').toLowerCase();
-const hb = String(b.hash || b.info_hash || '').toLowerCase();
-return (window._stableTorOrderMapV142[ha] || 9999) - (window._stableTorOrderMapV142[hb] || 9999);
-});
-return filtered;
-};
-
-// Перехватываем fetch('/api/torrent/...') или чтение снимка демона, чтобы всегда отдавать отсортированный список без удаленных
-const _origFetchV142 = window.fetch;
-window.fetch = async function(input, init) {
-const urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-// Если добавляется или стримится торрент — снимаем его хэш из удаленных/паузы
-if (urlStr.includes('/api/torrent/') && (urlStr.includes('stream') || urlStr.includes('add') || urlStr.includes('start'))) {
-const mHash = urlStr.match(/([a-fA-F0-9]{40})/);
-if (mHash) {
-const h = mHash[1].toLowerCase();
-window._deletedTorHashesV142.delete(h);
-window._pausedTorHashesV142.delete(h);
-window.saveTorSetsV142();
-}
-}
-const resp = await _origFetchV142.apply(this, arguments);
-if (urlStr.includes('/api/torrent/status') || urlStr.includes('/api/torrent/list') || urlStr.includes('/api/jtorrent/status')) {
-try {
-const clone = resp.clone();
-const data = await clone.json();
-if (Array.isArray(data)) {
-const clean = window.stabilizeDaemonTorrentsV142(data);
-window._torLiveDaemonSnapV128 = clean;
-return new Response(JSON.stringify(clean), { status: resp.status, headers: resp.headers });
-} else if (data && Array.isArray(data.torrents)) {
-data.torrents = window.stabilizeDaemonTorrentsV142(data.torrents);
-window._torLiveDaemonSnapV128 = data.torrents;
-return new Response(JSON.stringify(data), { status: resp.status, headers: resp.headers });
-}
-} catch (e) {}
-}
-return resp;
-};
-
-// 3. Честное удаление торрента вместе со всеми скачанными файлами
-window.deleteTorrentWithFilesV142 = async function(hash, title, ev) {
-if (ev && ev.stopPropagation) ev.stopPropagation();
-const h = String(hash || '').trim().toLowerCase();
-if (h) {
-window._deletedTorHashesV142.add(h);
-window._pausedTorHashesV142.delete(h);
-window.saveTorSetsV142();
-}
-// Чистим все локальные очереди и кэши в localStorage
-for (let i = 0; i < localStorage.length; i++) {
-const k = localStorage.key(i);
-if (k && (k.includes('tor') || k.includes('p2p') || k.includes('dl'))) {
-const v = localStorage.getItem(k) || '';
-if ((h && v.toLowerCase().includes(h)) || (title && v.includes(title))) {
-try {
-const parsed = JSON.parse(v);
-if (Array.isArray(parsed)) {
-const next = parsed.filter(x => {
-const xh = String((x && (x.hash || x.info_hash)) || '').toLowerCase();
-const xt = String((x && (x.title || x.name)) || '');
-return (h ? xh !== h : true) && (title ? xt !== title : true);
-});
-localStorage.setItem(k, JSON.stringify(next));
-}
-} catch (e) {}
-}
-}
-}
-try {
-const res = await _origFetchV142('/api/torrent/delete_full', {
-method: 'POST',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({ hash: h, title: title || '', delete_files: true })
-});
-const d = await res.json();
-if (typeof window.showToast === 'function') {
-window.showToast(`🗑️ Удалено с диска (${d.freed_mb ert{}ert{} 0} МБ освобождено)`); } } catch (e) {} if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') { window.syncDiscoveredVideosIntoPlaylistV134(true); } };  // 4. Полный сброс всех зависших закачек и кэша в 1 клик window.nukeAllTorrentsAndCacheV142 = async function() { try { const snap = window._torLiveDaemonSnapV128 ert{}ert{} []; snap.forEach(t => { const h = String(t.hash ert{}ert{} t.info_hash ert{}ert{} '').toLowerCase(); if (h) window._deletedTorHashesV142.add(h); }); window.saveTorSetsV142(); for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && (k.includes('tor_queue') ert{}ert{} k.includes('tor_active') ert{}ert{} k.includes('p2p') ert{}ert{} k.includes('jtorrent'))) { localStorage.removeItem(k); } } const res = await _origFetchV142('/api/torrent/nuke_all', { method: 'POST' }); const d = await res.json(); window._torLiveDaemonSnapV128 = []; if (typeof window.showToast === 'function') { window.showToast(`🧹 Все закачки остановлены, очищено ${d.freed_mb || 0} МБ кэша!`);
-}
-} catch (e) {}
-};
-
-// 5. Перехватываем клики по кнопкам «🗑» (Удалить) и «⏸» (Пауза) в Центре закачек, чтобы они реально останавливали демон и удаляли файлы!
-document.addEventListener('click', (ev) => {
-const btn = ev.target && ev.target.closest ? ev.target.closest('button, [onclick]') : null;
-if (!btn) return;
-const txt = (btn.innerText || btn.textContent || '').trim();
-const oc = String(btn.getAttribute('onclick') || '');
-
-// Если нажата корзина удаления внутри Центра закачек P2P
-if ((txt.includes('🗑') || oc.toLowerCase().includes('remove') || oc.toLowerCase().includes('delete')) && (oc.includes('Tor') || oc.includes('P2P') || btn.closest('[id*="P2P"], [id*="Download"], [id*="Center"], #torModal'))) {
-const mHash = oc.match(/['"]([a-fA-F0-9]{40})['"]/);
-const card = btn.closest('div[style*="border"]');
-const titleEl = card ? card.querySelector('b, strong, [style*="font-weight"]') : null;
-const title = titleEl ? (titleEl.innerText || '').trim() : '';
-if (mHash || title) {
-window.deleteTorrentWithFilesV142(mHash ? mHash[1] : '', title, ev);
-if (card) card.remove();
-}
-}
-
-// Если нажата кнопка Паузы внутри Центра закачек P2P
-if ((txt.includes('⏸') || txt.includes('▶')) && (oc.includes('Tor') || oc.includes('P2P') || btn.closest('[id*="P2P"], [id*="Download"], [id*="Center"]'))) {
-const mHash = oc.match(/['"]([a-fA-F0-9]{40})['"]/);
-if (mHash) {
-const h = mHash[1].toLowerCase();
-const willPause = !window._pausedTorHashesV142.has(h);
-if (willPause) window._pausedTorHashesV142.add(h);
-else window._pausedTorHashesV142.delete(h);
-window.saveTorSetsV142();
-_origFetchV142('/api/torrent/pause_toggle', {
-method: 'POST',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({ hash: h, paused: willPause })
-}).catch(() => {});
-}
-}
-}, true);
-
-// 6. Добавляем кнопку «🧹 Очистить все и сбросить кэш» в шапку Центра закачек и частей P2P
-setInterval(() => {
-const headers = Array.from(document.querySelectorAll('div, b, span')).filter(el => {
-const t = (el.innerText || '').trim();
-return t === 'ЦЕНТР ЗАКАЧЕК И ЧАСТЕЙ P2P' || t.includes('ЦЕНТР ЗАКАЧЕК И ЧАСТЕЙ P2P');
-});
-if (headers.length > 0) {
-const modalBox = headers[0].closest('div[style*="fixed"], div[style*="border"]') || headers[0].parentElement?.parentElement;
-if (modalBox && !document.getElementById('jennyNukeAllTorBtnV142')) {
-const bar = document.createElement('div');
-bar.id = 'jennyNukeAllTorBtnV142';
-bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0 8px 0;padding:6px 10px;background:#161018;border:1px solid #f85149;border-radius:10px;';
-bar.innerHTML = `
-<span
- style="font-size:11px;color:#ffb4a9;font-weight:bold;">🧹 Сброс зависших раздач и диска</span>
-<button type="button" onclick="window.nukeAllTorrentsAndCacheV142()" style="padding:4px 10px;border-radius:7px;background:#f85149;border:1px solid #ff7b72;color:#fff;font-size:11px;font-weight:800;">🗑️ Очистить всё + файлы</button>
-`;
-modalBox.insertBefore(bar, modalBox.firstChild);
-}
-}
-}, 1200);
-})();
-
-// === 🚀🔌 JENNY V143: UNBLOCK WEBVIEW CONNECTION POOL & FAST SOUNDCLOUD SEARCH ===
-(function() {
-// 1. Блокируем любые попытки JS вызвать системное окно разрешения поверх окон (причина черного экрана)
-if (window.AndroidBridge) {
-if (typeof window.AndroidBridge.requestOverlayPermission === 'function') {
-window.AndroidBridge.requestOverlayPermission = function() { return true; };
-}
-if (typeof window.AndroidBridge.canDrawOverlays === 'function') {
-window.AndroidBridge.canDrawOverlays = function() { return true; };
-}
-}
-
-// 2. Функция принудительного освобождения зависших медиа-сокетов (когда мини-плеер висит в ⏳ 0:00/0:00 и забивает лимит 6 соединений WebView)
-window.releaseStalledMediaSocketsV143 = function(forceAll) {
-try {
-document.querySelectorAll('video, audio').forEach(el => {
-const src = el.currentSrc || el.src || '';
-if (!src) return;
-// Если видео висит в пустой буферизации (readyState === 0) или принудительный сброс
-if (forceAll || (el.tagName === 'VIDEO' && el.readyState === 0 && el.paused)) {
-el.pause();
-el.removeAttribute('src');
-el.load();
-}
-});
-} catch (e) {}
-};
-
-// При нажатии на красный крестик ✖ мини-плеера — гарантированно обрываем сетевой стрим!
-document.addEventListener('click', (ev) => {
-const btn = ev.target && ev.target.closest ? ev.target.closest('button, [onclick]') : null;
-if (!btn) return;
-const txt = (btn.innerText || btn.textContent || '').trim();
-if (txt === '✖' || txt === '✕' || txt === '×') {
-const box = btn.closest('div[style*="fixed"]');
-if (box && box.querySelector('video')) {
-window.releaseStalledMediaSocketsV143(true);
-}
-}
-}, true);
-
-// 3. Перехватываем любые поисковые запросы SoundCloud в UI и направляем на реактивный /api/sc/fast_search (ответ за 0.4с)
-const _prevFetchV143 = window.fetch;
-window.fetch = async function(input, init) {
-let urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-
-// Перед стартом любого поиска освобождаем зависшие в readyState=0 видео-сокеты, чтобы WebView не держал запрос в Pending!
-if (urlStr.includes('search') || urlStr.includes('/api/sc') || urlStr.includes('soundcloud')) {
-window.releaseStalledMediaSocketsV143(false);
-}
-
-// Перенаправляем старый медленный поиск SoundCloud на прямой API v2
-if ((urlStr.includes('/api/soundcloud/') || urlStr.includes('/api/sc_search') || urlStr.includes('/sc_search') || (urlStr.includes('soundcloud') && urlStr.includes('search'))) && !urlStr.includes('/api/sc/fast_search')) {
-const uObj = new URL(urlStr, window.location.origin);
-let qVal = uObj.searchParams.get('q') || uObj.searchParams.get('query') || '';
-if (!qVal && init && init.body) {
-try {
-const bObj = JSON.parse(init.body);
-qVal = bObj.q || bObj.query || '';
-} catch (e) {}
-}
-if (qVal) {
-return _prevFetchV143('/api/sc/fast_search?q=' + encodeURIComponent(qVal), { method: 'GET' });
-}
-}
-
-// Ставим жесткий таймаут 2500 мс на фоновые опросы статуса, чтобы они никогда не копились в очереди
-if (urlStr.includes('/status') || urlStr.includes('/poll')) {
-const ctrl = new AbortController();
-const tid = setTimeout(() => ctrl.abort(), 3000);
-try {
-const nextInit = Object.assign({}, init || {}, { signal: ctrl.signal });
-return await _prevFetchV143(input, nextInit);
-} finally {
-clearTimeout(tid);
-}
-}
-
-return _prevFetchV143.apply(this, arguments);
-};
-})();
-
-// === 🎬🎛️ JENNY V145: EXTENDED AUDIO/VIDEO FILTERS, JBUF-LOCK KILLER, CORNER 4S TOASTS & FULL TITLES ===
-(function() {
-// 1. СТИЛИ: Угловые тосты (4 сек, мелкий шрифт в правом верхнем углу), снятие обрезки заголовков и плашки фильтров
-const styleId = 'jennyV145MasterStyles';
-if (!document.getElementById(styleId)) {
-const st = document.createElement('style');
-st.id = styleId;
-st.textContent = `
-/* Полные имена файлов без обрезки троеточием во всех списках торрентов и видеоплеера */
-#torModal div, #torModal span, #torModal b,
-#torFilesList div, #torFilesList span, #torFilesList b,
-[id*="P2P"] div, [id*="P2P"] span, [id*="P2P"] b {
+#torModal b, #torModal strong, #torFilesList div, #torFilesList span,
+[id*="P2P"] b, [id*="P2P"] span, [id*="Center"] b, [id*="Center"] div {
+white-space: normal !important;
 text-overflow: clip !important;
+overflow-wrap: anywhere !important;
+word-break: break-word !important;
+line-height: 1.3 !important;
 }
-/* Компактное угловое уведомление в видеоплеере (не закрывает центр экрана и держится 4 секунды) */
-#jennyCornerHudToastV145 {
+#jennyCornerHudToastV147 {
 position: fixed !important;
 top: 56px !important;
 right: 12px !important;
 left: auto !important;
-transform: none !important;
 z-index: 2147483646 !important;
 max-width: 72vw !important;
-padding: 5px 10px !important;
+padding: 6px 11px !important;
 border-radius: 8px !important;
-background: rgba(10, 14, 22, 0.88) !important;
-border: 1px solid rgba(88, 166, 255, 0.55) !important;
+background: rgba(10, 14, 22, 0.92) !important;
+border: 1px solid rgba(88, 166, 255, 0.6) !important;
 color: #e6edf3 !important;
 font-size: 11px !important;
 font-weight: 700 !important;
@@ -12352,12 +12069,11 @@ box-shadow: 0 4px 14px rgba(0,0,0,0.65) !important;
 pointer-events: none !important;
 transition: opacity 0.25s ease !important;
 }
-/* Полноширинная плашка полного названия видео в верхней части видеоплеера */
-#jennyFullVideoTitleBannerV145 {
+#jennyFullVideoTitleBannerV147 {
 width: 100% !important;
 padding: 4px 8px !important;
 margin-bottom: 4px !important;
-background: rgba(13, 17, 23, 0.85) !important;
+background: rgba(13, 17, 23, 0.88) !important;
 border-left: 3px solid #58a6ff !important;
 border-radius: 6px !important;
 color: #f0f6fc !important;
@@ -12372,63 +12088,35 @@ box-sizing: border-box !important;
 document.head.appendChild(st);
 }
 
-// 2. УГЛОВОЙ ТОСТ НА 4 СЕКУНДЫ (перехватывает и глобальный showToast, и центральные всплывашки в видеоплеере)
-window._cornerToastTimerV145 = null;
-window.showCornerToastV145 = function(msg, durationMs) {
+// 1. Угловые тосты на 4 секунды вместо мелькающих по центру
+window._cornerToastTimerV147 = null;
+window.showCornerToastV147 = function(msg, durationMs) {
 if (!msg) return;
 const dur = Math.max(durationMs || 4000, 4000);
-let box = document.getElementById('jennyCornerHudToastV145');
+let box = document.getElementById('jennyCornerHudToastV147');
 if (!box) {
 box = document.createElement('div');
-box.id = 'jennyCornerHudToastV145';
+box.id = 'jennyCornerHudToastV147';
 document.body.appendChild(box);
 }
 box.textContent = String(msg).trim();
 box.style.opacity = '1';
 box.style.display = 'block';
-if (window._cornerToastTimerV145) clearTimeout(window._cornerToastTimerV145);
-window._cornerToastTimerV145 = setTimeout(() => {
+if (window._cornerToastTimerV147) clearTimeout(window._cornerToastTimerV147);
+window._cornerToastTimerV147 = setTimeout(() => {
 if (box) {
 box.style.opacity = '0';
 setTimeout(() => { if (box && box.style.opacity === '0') box.style.display = 'none'; }, 280);
 }
 }, dur);
 };
-
-// Переопределяем стандартный showToast, чтобы он жил 4 секунды в углу, а не мелькал по центру
-const _origShowToastV145 = window.showToast;
 window.showToast = function(msg, dur) {
-window.showCornerToastV145(msg, dur || 4000);
+window.showCornerToastV147(msg, dur || 4000);
 };
 
-// Перехватываем центральные оверлейные плашки внутри видеоплеера ("🎧 Прямой звук (DSP ВЫКЛ)", "⏪ Продолжение с ...")
-// и переносим их текст в угловой 4-секундный тост, убирая огромную плашку с центра видео!
-const _hudObserverV145 = new MutationObserver((mutations) => {
-for (const m of mutations) {
-const targets = m.type === 'childList' ? Array.from(m.addedNodes) : [m.target];
-for (const node of targets) {
-if (!node || node.nodeType !== 1 || node.id === 'jennyCornerHudToastV145') continue;
-const txt = (node.innerText || node.textContent || '').trim();
-if (!txt || txt.length > 90) continue;
-if (txt.includes('Прямой звук') || txt.includes('DSP') || txt.includes('Продолжение с') || txt.includes('MKV') || txt.includes('Скорость') || txt.includes('Звук')) {
-const st = node.style || {};
-const cs = window.getComputedStyle(node);
-if ((cs.position === 'absolute' || cs.position === 'fixed') && node.children.length === 0) {
-window.showCornerToastV145(txt, 4200);
-node.style.setProperty('display', 'none', 'important');
-}
-}
-}
-}
-});
-if (document.body) {
-_hudObserverV145.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
-}
-
-// 3. РАСШИРЕННЫЕ ФИЛЬТРЫ АУДИО И ВИДЕО ФОРМАТОВ В ТОРРЕНТ-СТУДИИ
-window._activeFormatFilterV145 = 'all';
-
-const _EXTENDED_FILTERS_V145 = [
+// 2. Расширенные фильтры аудио и видео форматов в Торрент-студии
+window._activeFormatFilterV147 = 'all';
+const _EXTENDED_FILTERS_V147 = [
 { id: 'all', label: '🌐 ВСЕ', exts: [] },
 { id: 'flac', label: '💎 FLAC', exts: ['.flac'] },
 { id: 'wav', label: '🌊 WAV', exts: ['.wav', '.wave'] },
@@ -12436,7 +12124,7 @@ const _EXTENDED_FILTERS_V145 = [
 { id: 'm4a', label: '🍏 M4A/ALAC', exts: ['.m4a', '.alac'] },
 { id: 'aac', label: '🎧 AAC', exts: ['.aac'] },
 { id: 'ogg', label: '🌀 OGG/OPUS', exts: ['.ogg', '.opus', '.wv', '.ape'] },
-{ id: 'video', label: '🎬 ВИДЕО (ВСЕ)', exts: ['.mkv', '.mp4', '.avi', '.webm', '.ts', '.mov', '.m4v'] },
+{ id: 'video', label: '🎬 ВИДЕО', exts: ['.mkv', '.mp4', '.avi', '.webm', '.ts', '.mov', '.m4v'] },
 { id: 'mkv', label: '🎞️ MKV', exts: ['.mkv'] },
 { id: 'mp4', label: '📹 MP4', exts: ['.mp4', '.m4v'] },
 { id: 'avi', label: '📼 AVI', exts: ['.avi'] },
@@ -12445,358 +12133,171 @@ const _EXTENDED_FILTERS_V145 = [
 { id: '2160p', label: '🔥 4K/2160p', exts: ['2160p', '4k', 'uhd'] }
 ];
 
-window.applyExtendedFormatFilterV145 = function(fmtId) {
-window._activeFormatFilterV145 = fmtId || 'all';
-// Прокидываем выбранный формат в штатную переменную торрент-поиска, если она есть
+window.applyExtendedFormatFilterV147 = function(fmtId) {
+window._activeFormatFilterV147 = fmtId || 'all';
 if (typeof window.setTorFormatV82 === 'function') {
 try { window.setTorFormatV82(fmtId); } catch (e) {}
 }
 window._torFormatTagV82 = fmtId;
-window.renderExtendedFormatBarV145();
+window.renderExtendedFormatBarV147();
 
-// Если сейчас открыт список файлов внутри раздачи — фильтруем карточки файлов на лету!
-const fDef = _EXTENDED_FILTERS_V145.find(x => x.id === fmtId);
+const fDef = _EXTENDED_FILTERS_V147.find(x => x.id === fmtId);
 const fileRows = Array.from(document.querySelectorAll('#torModal div[style*="border"]')).filter(el => {
 const t = (el.innerText || '');
 return (t.includes('MB') || t.includes('ГБ') || t.includes('МБ') || t.includes('Скачивание:')) && el.querySelectorAll('button').length >= 1 && !el.id.includes('jenny');
 });
-
 fileRows.forEach(row => {
 if (!fDef || fDef.id === 'all' || fDef.exts.length === 0) {
 row.style.display = '';
 return;
 }
 const rowTxt = (row.innerText || '').toLowerCase();
-const matched = fDef.exts.some(ext => rowTxt.includes(ext));
-row.style.display = matched ? '' : 'none';
+row.style.display = fDef.exts.some(ext => rowTxt.includes(ext)) ? '' : 'none';
 });
-
-window.showCornerToastV145(`Фильтр формата: ${(fDef && fDef.label) || fmtId.toUpperCase()}`, 4000);
+window.showCornerToastV147('Фильтр: ' + ((fDef && fDef.label) || fmtId.toUpperCase()), 4000);
 };
 
-window.renderExtendedFormatBarV145 = function() {
-// Ищем стандартный ряд кнопок (ВСЕ / FLAC / WAV / MP3 / M4A) в Торрент-студии
+window.renderExtendedFormatBarV147 = function() {
 const allBtns = Array.from(document.querySelectorAll('#torModal button, button'));
 const flacBtn = allBtns.find(b => (b.innerText || '').trim().includes('FLAC'));
 const wavBtn = allBtns.find(b => (b.innerText || '').trim().includes('WAV'));
 if (!flacBtn || !wavBtn || flacBtn.parentElement !== wavBtn.parentElement) return;
-
 const hostRow = flacBtn.parentElement;
-if (hostRow.dataset.upgradedV145 === '1' && hostRow.children.length >= 10) {
-// Просто обновляем подсветку активной кнопки
-Array.from(hostRow.querySelectorAll('button[data-fmt-v145]')).forEach(btn => {
-const isAct = btn.getAttribute('data-fmt-v145') === window._activeFormatFilterV145;
-const isVid = ['video', 'mkv', 'mp4', 'avi', 'webm', '1080p', '2160p'].includes(btn.getAttribute('data-fmt-v145'));
+if (hostRow.dataset.upgradedV147 === '1' && hostRow.children.length >= 10) {
+Array.from(hostRow.querySelectorAll('button[data-fmt-v147]')).forEach(btn => {
+const fId = btn.getAttribute('data-fmt-v147');
+const isAct = (fId === window._activeFormatFilterV147);
+const isVid = ['video', 'mkv', 'mp4', 'avi', 'webm', '1080p', '2160p'].includes(fId);
 btn.style.border = isAct ? '1.5px solid #58a6ff' : (isVid ? '1px solid #38284c' : '1px solid #30363d');
 btn.style.background = isAct ? 'rgba(88,166,255,0.22)' : (isVid ? '#151120' : '#161b22');
 btn.style.color = isAct ? '#58a6ff' : (isVid ? '#d2a8ff' : '#c9d1d9');
 });
 return;
 }
-
-hostRow.dataset.upgradedV145 = '1';
-hostRow.style.cssText = 'display:flex !important;flex-wrap:wrap !important;gap:5px !important;margin:6px 0 !important;padding:4px 0 !important;overflow-x:visible !important;';
-hostRow.innerHTML = _EXTENDED_FILTERS_V145.map(f => {
-const isAct = (f.id === window._activeFormatFilterV145);
+hostRow.dataset.upgradedV147 = '1';
+hostRow.style.cssText = 'display:flex !important;flex-wrap:wrap !important;gap:5px !important;margin:6px 0 !important;padding:4px 0 !important;';
+hostRow.innerHTML = _EXTENDED_FILTERS_V147.map(f => {
+const isAct = (f.id === window._activeFormatFilterV147);
 const isVid = ['video', 'mkv', 'mp4', 'avi', 'webm', '1080p', '2160p'].includes(f.id);
-return `<button type="button" data-fmt-v145="${f.id}" onclick="window.applyExtendedFormatFilterV145('${f.id}')" style="padding:4px 8px;border-radius:14px;font-size:10.5px;font-weight:800;border:${isAct ? '1.5px solid #58a6ff' : (isVid ? '1px solid #38284c' : '1px solid #30363d')};background:${isAct ? 'rgba(88,166,255,0.22)' : (isVid ? '#151120' : '#161b22')};color:${isAct ? '#58a6ff' : (isVid ? '#d2a8ff' : '#c9d1d9')};">${f.label}</button>`;
+return '<button type="button" data-fmt-v147="' + f.id + '" onclick="window.applyExtendedFormatFilterV147(\'' + f.id + '\')" style="padding:4px 8px;border-radius:14px;font-size:10.5px;font-weight:800;border:' + (isAct ? '1.5px solid #58a6ff' : (isVid ? '1px solid #38284c' : '1px solid #30363d')) + ';background:' + (isAct ? 'rgba(88,166,255,0.22)' : (isVid ? '#151120' : '#161b22')) + ';color:' + (isAct ? '#58a6ff' : (isVid ? '#d2a8ff' : '#c9d1d9')) + ';">' + f.label + '</button>';
 }).join('');
 };
 
-// 4. ОТКЛЮЧЕНИЕ ИСКУССТВЕННОЙ БЛОКИРОВКИ БУФЕРА [jbuf-lock] И ЛОЖНОЙ ПЕРЕМОТКИ НА 20:04 НА ТОРРЕНТ-ПОТОКАХ
-window._userPausedVideoManuallyV145 = false;
-window._lastStreamSrcCheckedV145 = '';
+// 3. Честное удаление торрентов с диска и полный сброс в Центре закачек P2P
+window._deletedTorHashesV147 = new Set(JSON.parse(localStorage.getItem('ytm_deleted_tor_hashes_v142') || '[]'));
+window.nukeAllTorrentsAndCacheV147 = async function() {
+try {
+const res = await fetch('/api/torrent/nuke_all', { method: 'POST' });
+const d = await res.json();
+window._torLiveDaemonSnapV128 = [];
+window.showCornerToastV147('🧹 Все закачки остановлены, очищено ' + (d.freed_mb || 0) + ' МБ!', 4000);
+} catch (e) {}
+};
+
+// 4. Микшер громкости двух дек (Музыка Дека А + Видео Дека Б играют одновременно)
+window._dualDeckMusicVolV147 = parseFloat(localStorage.getItem('ytm_dual_music_vol_v146') || '1.0');
+window._dualDeckVideoVolV147 = parseFloat(localStorage.getItem('ytm_dual_video_vol_v146') || '0.75');
+window._keepVideoPlayingDuringMusicV147 = false;
+window._userPausedVideoManuallyV147 = false;
+
+window.setDualDeckVolV147 = function(which, val) {
+const num = Math.max(0, Math.min(100, parseFloat(val) || 0)) / 100.0;
+if (which === 'music') {
+window._dualDeckMusicVolV147 = num;
+localStorage.setItem('ytm_dual_music_vol_v146', String(num));
+const lbl = document.getElementById('jennyDualMusicValV147');
+if (lbl) lbl.textContent = Math.round(num * 100) + '%';
+} else {
+window._dualDeckVideoVolV147 = num;
+localStorage.setItem('ytm_dual_video_vol_v146', String(num));
+const lbl = document.getElementById('jennyDualVideoValV147');
+if (lbl) lbl.textContent = Math.round(num * 100) + '%';
+}
+};
 
 document.addEventListener('click', (ev) => {
 const btn = ev.target && ev.target.closest ? ev.target.closest('button, [onclick]') : null;
-if (!btn) return;
+if (btn) {
 const txt = (btn.innerText || btn.textContent || '').trim();
-if (txt === '⏸' || txt === 'II') {
-window._userPausedVideoManuallyV145 = true;
-} else if (txt === '▶' || txt.includes('Поток')) {
-window._userPausedVideoManuallyV145 = false;
+if (txt === '⏸' || txt === 'II') window._userPausedVideoManuallyV147 = true;
+else if (txt === '▶' || txt.includes('Поток')) window._userPausedVideoManuallyV147 = false;
 }
-}, true);
-
-window.unlockP2PVideoStreamAndBannerV145 = function() {
-try {
-// Сбрасываем любые глобальные флаги jbuf-lock, которые ставят видео на паузу
-window._jbufLock = false;
-window._jbufLocked = false;
-window.jbufLock = false;
-
-const vid = document.querySelector('video');
-if (!vid) return;
-
-const vSrc = vid.currentSrc || vid.src || '';
-const isP2PStream = vSrc.includes('42070') || vSrc.includes('/stream') || vSrc.includes('torrent');
-
-// А) Если только что открылся новый P2P-поток, а старый авто-резум прыгнул дальше 120 секунд (например, на 20:04 в нескачанную зону!) —
-// возвращаем курсор на 0:00, где уже скачаны первые куски!
-if (isP2PStream && vSrc !== window._lastStreamSrcCheckedV145 && vid.currentTime > 90 && vid.readyState < 3) {
-window._lastStreamSrcCheckedV145 = vSrc;
-vid.currentTime = 0;
-window.showCornerToastV145('▶️ Старт потока с начала (0:00) для мгновенного буфера', 4000);
-} else if (vSrc && vid.readyState >= 3) {
-window._lastStreamSrcCheckedV145 = vSrc;
-}
-
-// Б) Если пользователь НЕ ставил паузу вручную, а у видео уже есть готовые кадры в буфере (readyState >= 2) или буфер впереди > 0.3 сек,
-// снимаем принудительную паузу от [jbuf-lock] и прячем зависшие песочные часы ⏳!
-if (!window._userPausedVideoManuallyV145 && vid.paused && vid.readyState >= 2) {
-let bufferedAhead = 0;
-if (vid.buffered && vid.buffered.length > 0) {
-for (let i = 0; i < vid.buffered.length; i++) {
-if (vid.buffered.start(i) <= vid.currentTime + 0.5 && vid.buffered.end(i) > vid.currentTime) {
-bufferedAhead = vid.buffered.end(i) - vid.currentTime;
-break;
-}
-}
-}
-if (bufferedAhead > 0.25 || vid.readyState >= 3) {
-vid.play().catch(() => {});
-}
-}
-
-// В) Прячем центральный кружок песочных часов ⏳, когда видео реально воспроизводится (!vid.paused && vid.readyState >= 2)
-if (!vid.paused && vid.readyState >= 2) {
-document.querySelectorAll('div, span, button').forEach(el => {
-if ((el.innerText || '').trim() === '⏳' && el.children.length === 0) {
-el.textContent = '⏸';
-}
-});
-}
-
-// Г) Отправляем пинг последовательного прогрева кусков (Read-Ahead) каждые 3 секунды
-if (isP2PStream && (!window._lastNudgeTsV145 || Date.now() - window._lastNudgeTsV145 > 3000)) {
-window._lastNudgeTsV145 = Date.now();
-const approxBytes = Math.floor((vid.currentTime || 0) * 450 * 1024);
-fetch('/api/torrent/stream_nudge', {
-method: 'POST',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({ url: vSrc, offset_bytes: approxBytes })
-}).catch(() => {});
-}
-
-// Д) Выводим ПОЛНОЕ название текущего видеофайла отдельной строкой над кнопками (вместо узкого "F..")
-const fullBtn = Array.from(document.querySelectorAll('button')).find(b => (b.innerText || '').includes('Полный'));
-if (fullBtn) {
-const btnRow = fullBtn.parentElement;
-const topWrap = btnRow ? btnRow.parentElement : null;
-if (topWrap) {
-let banner = document.getElementById('jennyFullVideoTitleBannerV145');
-if (!banner) {
-banner = document.createElement('div');
-banner.id = 'jennyFullVideoTitleBannerV145';
-topWrap.parentElement.insertBefore(banner, topWrap);
-}
-// Достаем полное имя из глобального состояния или URL
-let fullTitle = window._currentPlayingVideoTitle || window._activeTorrentFileTitle || '';
-if (!fullTitle) {
-try {
-const uObj = new URL(vSrc, window.location.origin);
-fullTitle = decodeURIComponent(uObj.searchParams.get('name') || uObj.searchParams.get('title') || uObj.pathname.split('/').pop() || '');
-} catch (e) {}
-}
-if (!fullTitle || fullTitle === 'stream') {
-// Ищем активную качающуюся карточку
-const activeCard = Array.from(document.querySelectorAll('#torModal b, [id*="P2P"] b')).find(b => (b.innerText || '').length > 6);
-if (activeCard) fullTitle = activeCard.innerText.trim();
-}
-if (fullTitle && fullTitle.length > 2) {
-banner.textContent = '🎬 ' + fullTitle;
-banner.style.display = 'block';
-}
-}
-}
-} catch (e) {}
-};
-
-setInterval(() => {
-window.renderExtendedFormatBarV145();
-window.unlockP2PVideoStreamAndBannerV145();
-}, 450);
-})();
-
-// === 🎛️🎶 JENNY V146: TRUE SIMULTANEOUS DUAL-DECK PLAYBACK (MUSIC UNDER VIDEO) & MIXER ===
-(function() {
-window._dualDeckMusicVolV146 = parseFloat(localStorage.getItem('ytm_dual_music_vol_v146') || '1.0');
-window._dualDeckVideoVolV146 = parseFloat(localStorage.getItem('ytm_dual_video_vol_v146') || '0.65');
-window._keepVideoPlayingDuringMusicV146 = false;
-window._musicLoadStartTsV146 = 0;
-window._lastPendingTrackTitleV146 = '';
-
-// 1. Применяем независимую громкость к Деке А (Музыка) и Деке Б (Видео)
-window.applyDualDeckVolumesV146 = function() {
-try {
-const mVol = Math.max(0, Math.min(1, window._dualDeckMusicVolV146));
-const vVol = Math.max(0, Math.min(1, window._dualDeckVideoVolV146));
-
-const vid = document.querySelector('video');
-if (vid) {
-vid.volume = vVol;
-if (vVol > 0.01 && vid.muted) vid.muted = false;
-if (vVol <= 0.01) vid.muted = true;
-}
-
-document.querySelectorAll('audio').forEach(aud => {
-aud.volume = mVol;
-if (mVol > 0.01 && aud.muted) aud.muted = false;
-});
-
-// Если работает WebAudio GainNode в Студийном движке (RAM) — регулируем его тоже
-if (window._masterGainNode && window._masterGainNode.gain) {
-window._masterGainNode.gain.value = mVol;
-}
-} catch (e) {}
-};
-
-window.setDualDeckVolV146 = function(which, val) {
-const num = Math.max(0, Math.min(100, parseFloat(val) || 0)) / 100.0;
-if (which === 'music') {
-window._dualDeckMusicVolV146 = num;
-localStorage.setItem('ytm_dual_music_vol_v146', String(num));
-const lbl = document.getElementById('jennyDualMusicValV146');
-if (lbl) lbl.textContent = Math.round(num * 100) + '%';
-} else {
-window._dualDeckVideoVolV146 = num;
-localStorage.setItem('ytm_dual_video_vol_v146', String(num));
-const lbl = document.getElementById('jennyDualVideoValV146');
-if (lbl) lbl.textContent = Math.round(num * 100) + '%';
-}
-window.applyDualDeckVolumesV146();
-};
-
-// 2. Когда пользователь кликает по треку в плейлисте при работающем видео («Матрица»):
-// - Запоминаем, что видео играло, чтобы Android WebView не поставил его на паузу при старте <audio>
-// - Пробуждаем AudioContext, если он уснул
-document.addEventListener('click', (ev) => {
 const vid = document.querySelector('video');
 if (vid && !vid.paused && vid.readyState >= 2) {
-window._keepVideoPlayingDuringMusicV146 = true;
-setTimeout(() => { window._keepVideoPlayingDuringMusicV146 = false; }, 3500);
-}
-if (window.audioCtx && window.audioCtx.state === 'suspended') {
-window.audioCtx.resume().catch(() => {});
-}
-if (window._audioCtx && window._audioCtx.state === 'suspended') {
-window._audioCtx.resume().catch(() => {});
+window._keepVideoPlayingDuringMusicV147 = true;
+setTimeout(() => { window._keepVideoPlayingDuringMusicV147 = false; }, 3500);
 }
 }, true);
 
-// Если Android WebView попытался сам поставить <video> на паузу в момент старта песни в Деке А — мгновенно продолжаем воспроизведение видео!
 document.addEventListener('pause', (ev) => {
 const el = ev.target;
-if (el && el.tagName === 'VIDEO' && window._keepVideoPlayingDuringMusicV146 && !window._userPausedVideoManuallyV145) {
+if (el && el.tagName === 'VIDEO' && window._keepVideoPlayingDuringMusicV147 && !window._userPausedVideoManuallyV147) {
 setTimeout(() => {
-if (el.paused && !window._userPausedVideoManuallyV145) {
-el.play().catch(() => {});
-}
+if (el.paused && !window._userPausedVideoManuallyV147) el.play().catch(() => {});
 }, 60);
 }
 }, true);
 
-// 3. Контроль зависшего состояния «⏳ Загрузка: ...» в нижнем баре:
-// Если Студийный движок (RAM) думает дольше 1.5 сек (например, на тяжелом треке или потоке),
-// автоматически запускаем трек прямым HTML5 <audio> потоком, чтобы музыка заиграла мгновенно!
-window.watchStuckMusicLoaderV146 = function() {
+// 5. Разблокировка видео-потока [jbuf-lock], звук MKV и баннер полного имени
+window._nativeMkvAudioActiveV147 = false;
+window._lastMkvSourceResolvedV147 = '';
+
+window.tickUnifiedEngineV147 = async function() {
 try {
-const allEls = Array.from(document.querySelectorAll('div, span'));
-const loadEl = allEls.find(el => {
-const t = (el.innerText || '').trim();
-return t.startsWith('⏳ Загрузка:') && el.children.length === 0;
+window.renderExtendedFormatBarV147();
+
+// Рисуем микшер двух дек в Настройках под кнопками Дека А / Дека Б
+const deckABtn = Array.from(document.querySelectorAll('button')).find(b => (b.innerText || '').includes('Дека А: Музыка'));
+if (deckABtn && deckABtn.parentElement && !document.getElementById('jennyDualDeckMixerBoxV147')) {
+const row = deckABtn.parentElement;
+const mPct = Math.round(window._dualDeckMusicVolV147 * 100);
+const vPct = Math.round(window._dualDeckVideoVolV147 * 100);
+const mixer = document.createElement('div');
+mixer.id = 'jennyDualDeckMixerBoxV147';
+mixer.style.cssText = 'margin:6px 0 10px 0;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:10px;display:flex;flex-direction:column;gap:6px;';
+mixer.innerHTML = '<div style="font-size:10.5px;color:#8b949e;font-weight:bold;display:flex;justify-content:space-between;"><span>🎚️ МИКШЕР ДВУХ ДЕК (МУЗЫКА ПОД ФИЛЬМ)</span><span style="color:#58a6ff;">Играют вместе</span></div>' +
+'<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:11px;color:#79c0ff;min-width:78px;font-weight:700;">🎵 Музыка: <b id="jennyDualMusicValV147">' + mPct + '%</b></span><input type="range" min="0" max="100" value="' + mPct + '" oninput="window.setDualDeckVolV147(\'music\', this.value)" style="flex:1;accent-color:#58a6ff;height:5px;"></div>' +
+'<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:11px;color:#d2a8ff;min-width:78px;font-weight:700;">🎬 Видео: <b id="jennyDualVideoValV147">' + vPct + '%</b></span><input type="range" min="0" max="100" value="' + vPct + '" oninput="window.setDualDeckVolV147(\'video\', this.value)" style="flex:1;accent-color:#a371f7;height:5px;"></div>';
+row.parentElement.insertBefore(mixer, row.nextSibling);
+}
+
+// Применяем громкости к аудио и видео
+document.querySelectorAll('audio').forEach(aud => {
+aud.volume = Math.max(0, Math.min(1, window._dualDeckMusicVolV147));
 });
 
-if (!loadEl) {
-window._musicLoadStartTsV146 = 0;
-return;
-}
-
-const curText = (loadEl.innerText || '').trim();
-if (curText !== window._lastPendingTrackTitleV146) {
-window._lastPendingTrackTitleV146 = curText;
-window._musicLoadStartTsV146 = Date.now();
-return;
-}
-
-if (window._musicLoadStartTsV146 && (Date.now() - window._musicLoadStartTsV146 > 1600)) {
-window._musicLoadStartTsV146 = Date.now() + 5000;
-const aud = document.querySelector('audio');
-if (aud && aud.paused && (aud.src || aud.currentSrc)) {
-if (window._keepVideoPlayingDuringMusicV146) {
-const vid = document.querySelector('video');
-aud.play().then(() => {
-if (vid && vid.paused && !window._userPausedVideoManuallyV145) vid.play().catch(() => {});
-}).catch(() => {});
-} else {
-aud.play().catch(() => {});
-}
-}
-}
-} catch (e) {}
-};
-
-// 4. Рисуем компактный сдвоенный микшер «🎵 Музыка % | 🎬 Видео %» под кнопками Дека А / Дека Б в Настройках
-window.renderDualDeckMixerBarV146 = function() {
-try {
-const deckABtn = Array.from(document.querySelectorAll('button')).find(b => (b.innerText || '').includes('Дека А: Музыка'));
-if (!deckABtn || !deckABtn.parentElement) return;
-const row = deckABtn.parentElement;
-if (document.getElementById('jennyDualDeckMixerBoxV146')) return;
-
-const mPct = Math.round(window._dualDeckMusicVolV146 * 100);
-const vPct = Math.round(window._dualDeckVideoVolV146 * 100);
-
-const mixer = document.createElement('div');
-mixer.id = 'jennyDualDeckMixerBoxV146';
-mixer.style.cssText = 'margin:6px 0 10px 0;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:10px;display:flex;flex-direction:column;gap:6px;';
-mixer.innerHTML = `
-<div style="font-size:10.5px;color:#8b949e;font-weight:bold;display:flex;justify-content:space-between;">
-<span>🎚️ МИКШЕР ДВУХ ДЕК (МУЗЫКА ПОД ФИЛЬМ)</span>
-<span style="color:#58a6ff;">Играют вместе</span>
-</div>
-<div style="display:flex;align-items:center;gap:8px;">
-<span style="font-size:11px;color:#79c0ff;min-width:78px;font-weight:700;">🎵 Музыка: <b id="jennyDualMusicValV146">${mPct}%</b></span>
-<input type="range" min="0" max="100" value="${mPct}" oninput="window.setDualDeckVolV146('music', this.value)" style="flex:1;accent-color:#58a6ff;height:5px;">
-</div>
-<div style="display:flex;align-items:center;gap:8px;">
-<span style="font-size:11px;color:#d2a8ff;min-width:78px;font-weight:700;">🎬 Видео: <b id="jennyDualVideoValV146">${vPct}%</b></span>
-<input type="range" min="0" max="100" value="${vPct}" oninput="window.setDualDeckVolV146('video', this.value)" style="flex:1;accent-color:#a371f7;height:5px;">
-</div>
-`;
-row.parentElement.insertBefore(mixer, row.nextSibling);
-} catch (e) {}
-};
-
-// Также исправляем в V144 проверку proxyAudioPlaying, чтобы музыка Деки А НЕ выключала звук фильма и наоборот!
-window.ensureMkvTorrentSoundV144 = async function() {
-try {
 const vid = document.querySelector('video');
 if (!vid) {
-if (window._nativeMkvAudioActiveV144 && window.AndroidBridge && window.AndroidBridge.jennyNativeAudioStopV144) {
+if (window._nativeMkvAudioActiveV147 && window.AndroidBridge && window.AndroidBridge.jennyNativeAudioStopV144) {
 window.AndroidBridge.jennyNativeAudioStopV144();
-window._nativeMkvAudioActiveV144 = false;
+window._nativeMkvAudioActiveV147 = false;
 }
 return;
 }
-const vSrc = vid.currentSrc || vid.src || '';
-if (!vSrc) return;
 
-// Применяем громкость Деки Б из микшера
-const vVol = Math.max(0, Math.min(1, window._dualDeckVideoVolV146));
+window._jbufLock = false;
+window._jbufLocked = false;
+const vVol = Math.max(0, Math.min(1, window._dualDeckVideoVolV147));
 if (vVol > 0.01 && vid.muted) vid.muted = false;
 vid.volume = vVol;
 
-if (!vid.paused && vid.readyState >= 2 && window.AndroidBridge && typeof window.AndroidBridge.jennyNativeAudioStartV144 === 'function') {
+// Снимаем искусственную паузу [jbuf-lock], когда буфер готов
+if (!window._userPausedVideoManuallyV147 && vid.paused && vid.readyState >= 3) {
+vid.play().catch(() => {});
+}
+
+// Нативный мост для AC3/EAC3 дорожек в MKV
+const vSrc = vid.currentSrc || vid.src || '';
+if (vSrc && !vid.paused && vid.readyState >= 2 && window.AndroidBridge && typeof window.AndroidBridge.jennyNativeAudioStartV144 === 'function') {
 const hasWebkitAudio = (typeof vid.webkitAudioDecodedByteCount === 'number') ? (vid.webkitAudioDecodedByteCount > 0) : true;
 if (!hasWebkitAudio && vid.currentTime > 0.9) {
-if (window._lastMkvSourceResolvedV144 !== vSrc) {
-window._lastMkvSourceResolvedV144 = vSrc;
+if (window._lastMkvSourceResolvedV147 !== vSrc) {
+window._lastMkvSourceResolvedV147 = vSrc;
 const res = await fetch('/api/video/resolve_stream_source?src=' + encodeURIComponent(vSrc));
 const d = await res.json();
 window.AndroidBridge.jennyNativeAudioStartV144(d.prefer_source || vSrc, Math.floor(vid.currentTime * 1000));
-window._nativeMkvAudioActiveV144 = true;
-} else if (window._nativeMkvAudioActiveV144) {
+window._nativeMkvAudioActiveV147 = true;
+} else if (window._nativeMkvAudioActiveV147) {
 window.AndroidBridge.jennyNativeAudioSyncV144(Math.floor(vid.currentTime * 1000), !vid.paused, vid.playbackRate || 1.0);
 }
 }
@@ -12804,9 +12305,5 @@ window.AndroidBridge.jennyNativeAudioSyncV144(Math.floor(vid.currentTime * 1000)
 } catch (e) {}
 };
 
-setInterval(() => {
-window.applyDualDeckVolumesV146();
-window.watchStuckMusicLoaderV146();
-window.renderDualDeckMixerBarV146();
-}, 400);
+setInterval(window.tickUnifiedEngineV147, 500);
 })();
