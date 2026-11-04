@@ -50,6 +50,8 @@ public class MainActivity extends AppCompatActivity {
     private static long permFlowLockUntilMsV152 = 0L;
     private static long overlayGrantProtectionUntilMsV153 = 0L;
     private static boolean subSettingsLaunchedV154 = false;
+    private static int bringBackTicksV155 = 0;
+    private static Runnable bringBackRunnableV155 = null;
     private static int permWatchTicksV147 = 0;
     private static final android.os.Handler permWatchHandlerV147 = new android.os.Handler(android.os.Looper.getMainLooper());
     private static Runnable permWatchRunnableV147 = null;
@@ -445,7 +447,15 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private void stopBringBackLoopV155() {
+        if (bringBackRunnableV155 != null) {
+            permWatchHandlerV147.removeCallbacks(bringBackRunnableV155);
+            bringBackRunnableV155 = null;
+        }
+    }
+
     private void stopOverlayPermWatcherV147() {
+        stopBringBackLoopV155();
         if (permWatchRunnableV147 != null) {
             permWatchHandlerV147.removeCallbacks(permWatchRunnableV147);
             permWatchRunnableV147 = null;
@@ -454,12 +464,28 @@ public class MainActivity extends AppCompatActivity {
 
     private void bringMainActivityToFrontV149() {
         if (subSettingsLaunchedV154 || !waitingForPermScreenV148) {
+            stopBringBackLoopV155();
             return;
         }
         try {
+            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(android.content.Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                am.moveTaskToFront(getTaskId(), android.app.ActivityManager.MOVE_TASK_WITH_HOME);
+            }
+        } catch (Exception ignored) {}
+        try {
             Intent i = new Intent(getApplicationContext(), MainActivity.class);
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            getApplicationContext().startActivity(i);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
+                getApplicationContext(), 149, i,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+            );
+            pi.send();
+        } catch (Exception ignored) {}
+        try {
+            Intent i2 = new Intent(getApplicationContext(), MainActivity.class);
+            i2.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            getApplicationContext().startActivity(i2);
         } catch (Exception ignored) {}
     }
 
@@ -591,17 +617,24 @@ public class MainActivity extends AppCompatActivity {
 
                 if (fromHomeButton) {
                     waitingForPermScreenV148 = true;
-                    // Авто-разворот через 240 мс после нажатия Домой (и контрольный на 550 мс ТОЛЬКО если окно тумблера ещё не открылось)
-                    permWatchHandlerV147.postDelayed(() -> {
-                        if (waitingForPermScreenV148 && !subSettingsLaunchedV154 && !Settings.canDrawOverlays(MainActivity.this)) {
+                    stopBringBackLoopV155();
+                    bringBackTicksV155 = 0;
+                    bringBackRunnableV155 = new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!waitingForPermScreenV148 || subSettingsLaunchedV154 || Settings.canDrawOverlays(MainActivity.this)) {
+                                stopBringBackLoopV155();
+                                return;
+                            }
+                            bringBackTicksV155++;
                             bringMainActivityToFrontV149();
+                            if (bringBackTicksV155 < 12 && waitingForPermScreenV148 && !subSettingsLaunchedV154) {
+                                permWatchHandlerV147.postDelayed(this, 180);
+                            }
                         }
-                    }, 240);
-                    permWatchHandlerV147.postDelayed(() -> {
-                        if (waitingForPermScreenV148 && !subSettingsLaunchedV154 && !Settings.canDrawOverlays(MainActivity.this)) {
-                            bringMainActivityToFrontV149();
-                        }
-                    }, 550);
+                    };
+                    // Первый импульс через 220 мс, дальше каждые 180 мс, пока анимация лаунчера не отпустит окно плеера
+                    permWatchHandlerV147.postDelayed(bringBackRunnableV155, 220);
                 } else {
                     waitingForPermScreenV148 = false;
                     subSettingsLaunchedV154 = true;
@@ -996,6 +1029,7 @@ public class MainActivity extends AppCompatActivity {
         if (waitingForPermScreenV148 && !subSettingsLaunchedV154 && !granted && isVideoActiveV132) {
             waitingForPermScreenV148 = false;
             subSettingsLaunchedV154 = true;
+            stopBringBackLoopV155();
             isOpeningSettingsV146 = true;
             pendingOverlayAfterGrantV147 = true;
             permFlowLockUntilMsV152 = android.os.SystemClock.uptimeMillis() + 6000L;
