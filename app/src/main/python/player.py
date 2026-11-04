@@ -358,6 +358,60 @@ def _save_p2p_last1_cache_v162(orig_src_path: str, wav_src_path: str, display_or
     except Exception as e:
         print("V162 cache save error:", e)
 
+
+# === V162 (Attempt 2): СКРЫТЫЙ КЭШ ПОСЛЕДНЕЙ 1 СКАЧАННОЙ ПЕСНИ С ТОРРЕНТА ===
+def _get_p2p_last1_cache_dir_v162():
+    d = os.path.join(MUSIC_DIR, ".jenny_p2p_last1_cache")
+    os.makedirs(d, exist_ok=True)
+    nm = os.path.join(d, ".nomedia")
+    if not os.path.exists(nm):
+        try:
+            open(nm, "w").close()
+        except Exception:
+            pass
+    return d
+
+def _capture_last1_before_xflac_v162(wav_bytes: bytes):
+    """Автоматически сохраняет чистый WAV и находит живой исходный файл (.flac/.mp3) в стеке вызова до его удаления."""
+    try:
+        cdir = _get_p2p_last1_cache_dir_v162()
+        jwav_path = os.path.join(cdir, "last_track.jwav_bin")
+        jorig_path = os.path.join(cdir, "last_track.jorig_bin")
+        jmeta_path = os.path.join(cdir, "last_track.jmeta.json")
+
+        if wav_bytes and len(wav_bytes) > 44:
+            with open(jwav_path, "wb") as wf:
+                wf.write(wav_bytes)
+
+        found_src = None
+        for depth in (1, 2, 3):
+            try:
+                fr = sys._getframe(depth)
+            except ValueError:
+                break
+            for val in list(fr.f_locals.values()):
+                if isinstance(val, str) and len(val) > 4 and os.path.isfile(val):
+                    low = val.lower()
+                    if low.endswith((".flac", ".mp3", ".m4a", ".ogg", ".opus", ".ape", ".wv", ".wav")):
+                        if not low.endswith((".xflac", ".tmp.wav", ".sr.wav", "temp_final_xflac_stream_cache.wav")) and "temp_export" not in low:
+                            found_src = val
+                            break
+            if found_src:
+                break
+
+        if found_src and os.path.isfile(found_src):
+            shutil.copy2(found_src, jorig_path)
+            orig_ext = os.path.splitext(found_src)[1].lower() or ".flac"
+            meta = {
+                "orig_name": os.path.basename(found_src),
+                "orig_ext": orig_ext,
+                "ts": int(time.time())
+            }
+            with open(jmeta_path, "w", encoding="utf-8") as mf:
+                json.dump(meta, mf, ensure_ascii=False)
+    except Exception as e:
+        print("V162 capture warning:", e)
+
 def _sanitize_canonical_wav_file_v159(wav_path: str):
     """Приводит любой WAV (включая WAVE_FORMAT_EXTENSIBLE 0xFFFE от FFmpeg) к строгому 44-байтному каноническому заголовку RIFF WAVE,
     чтобы исключить заикания и ошибки чтения частоты/битности/длительности при ручной смене параметров."""

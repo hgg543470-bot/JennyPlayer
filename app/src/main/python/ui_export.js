@@ -766,3 +766,115 @@ setTimeout(window.bindSrAndBdButtonsV161, 250);
 document.addEventListener('pointerdown', function() {
     if (typeof window.bindSrAndBdButtonsV161 === 'function') window.bindSrAndBdButtonsV161();
 }, { passive: true });
+
+// === V162 (Attempt 2): Кнопки «Добавить ориг» и «Добавить WAV» под «Готов» в Центре закачек P2P ===
+window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl) {
+    if (!trackName) return;
+    var origLabel = btnEl ? btnEl.innerHTML : "";
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = "⏳ Жди...";
+        btnEl.style.opacity = "0.7";
+    }
+    try {
+        var res = await fetch("/api/p2p/add_compare_file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: trackName, mode: mode })
+        });
+        var data = await res.json();
+        if (data && data.status === "ok") {
+            if (btnEl) {
+                btnEl.innerHTML = (mode === "orig") ? "✅ Ориг добавлен" : "✅ WAV добавлен";
+                btnEl.style.borderColor = "#3fb950";
+                btnEl.style.color = "#3fb950";
+                btnEl.style.opacity = "1";
+            }
+            if (typeof window.showToast === "function") {
+                window.showToast("✅ В плеере: " + data.added_file);
+            }
+            if (typeof window.loadTracks === "function") {
+                window.loadTracks();
+            }
+        } else {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerHTML = origLabel;
+                btnEl.style.opacity = "1";
+            }
+            alert("Ошибка: " + ((data && data.error) || "Не удалось добавить файл"));
+        }
+    } catch (e) {
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.innerHTML = origLabel;
+            btnEl.style.opacity = "1";
+        }
+        alert("Ошибка сети: " + e);
+    }
+};
+
+window.scanAndInjectP2pCompareBtnsV162 = function() {
+    try {
+        var nlChar = String.fromCharCode(10);
+        var divs = document.querySelectorAll("div");
+        for (var i = 0; i < divs.length; i++) {
+            var el = divs[i];
+            if (el._hasP2pCmpV162) continue;
+            var txt = el.textContent || "";
+            if (txt.indexOf("Готов (") === -1 || txt.indexOf("#") === -1) continue;
+            // Ищем карточку трека, внутри которой есть кнопка ▶ и не более 5 вложенных div
+            var btns = el.querySelectorAll("button");
+            if (btns.length !== 1) continue;
+            var innerDivs = el.querySelectorAll("div");
+            if (innerDivs.length > 5) continue;
+
+            var rawLines = txt.split(nlChar);
+            var trackName = "";
+            for (var j = 0; j < rawLines.length; j++) {
+                var candidate = rawLines[j].trim();
+                if (candidate && candidate.indexOf("Готов (") === -1 && candidate.indexOf(".") !== -1) {
+                    trackName = candidate;
+                    break;
+                }
+            }
+            if (!trackName) continue;
+
+            el._hasP2pCmpV162 = true;
+            var textCol = innerDivs.length > 0 ? innerDivs[0] : el;
+
+            var row = document.createElement("div");
+            row.style.cssText = "display:flex;gap:6px;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(63,185,80,0.3);width:100%;";
+
+            var bOrig = document.createElement("button");
+            bOrig.type = "button";
+            bOrig.innerHTML = "📥 Добавить ориг";
+            bOrig.style.cssText = "flex:1;padding:4px 6px;font-size:10px;font-weight:bold;border-radius:6px;border:1px solid #a371f7;background:rgba(163,113,247,0.18);color:#d2a8ff;cursor:pointer;touch-action:manipulation;";
+            bOrig.onclick = (function(tName, bRef) {
+                return function(ev) {
+                    ev.stopPropagation();
+                    window.addP2pCompareFileToPlayerV162(tName, "orig", bRef);
+                };
+            })(trackName, bOrig);
+
+            var bWav = document.createElement("button");
+            bWav.type = "button";
+            bWav.innerHTML = "💿 Добавить WAV";
+            bWav.style.cssText = "flex:1;padding:4px 6px;font-size:10px;font-weight:bold;border-radius:6px;border:1px solid #e3b341;background:rgba(227,179,65,0.18);color:#f2cc60;cursor:pointer;touch-action:manipulation;";
+            bWav.onclick = (function(tName, bRef) {
+                return function(ev) {
+                    ev.stopPropagation();
+                    window.addP2pCompareFileToPlayerV162(tName, "wav", bRef);
+                };
+            })(trackName, bWav);
+
+            row.appendChild(bOrig);
+            row.appendChild(bWav);
+            textCol.appendChild(row);
+        }
+    } catch (e) {}
+};
+
+if (!window._p2pCmpIntervalV162) {
+    window._p2pCmpIntervalV162 = setInterval(window.scanAndInjectP2pCompareBtnsV162, 650);
+}
