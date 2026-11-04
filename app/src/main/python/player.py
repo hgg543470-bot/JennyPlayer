@@ -1657,8 +1657,8 @@ def _ost_fetch_json_v88(url: str, timeout: int = 18):
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 def _ost_make_stem_v89(album_title: str, track_num: int, track_title: str):
-    safe_alb = re.sub(r'[\\/:*?"<>|]+', '_', (album_title or 'Game OST')).strip()[:42]
-    safe_trk = re.sub(r'[\\/:*?"<>|]+', '_', (track_title or 'Track')).strip()[:68]
+    safe_alb = re.sub(r'[\\/:*?"<>|]+', '_', (album_title or 'Game OST')).strip()[:90]
+    safe_trk = re.sub(r'[\\/:*?"<>|]+', '_', (track_title or 'Track')).strip()[:150]
     return f"{safe_alb} - {int(track_num):02d}. {safe_trk}", safe_alb
 
 def _ost_find_existing_track_v89(album_title: str, track_num: int, track_title: str):
@@ -2030,7 +2030,7 @@ def api_radio_rec_stop_v91():
             err_detail = _RADIO_REC_V91.get("err") or "Поток станции не отдал аудиоданных"
             return json.dumps({"status": "error", "error": f"Мало данных ({err_detail})"})
 
-        safe_st = re.sub(r'[\\/:*?"<>|\[\]]+', '_', _RADIO_REC_V91.get("station") or "Radio").strip()[:34]
+        safe_st = re.sub(r'[\\/:*?"<>|\[\]]+', '_', _RADIO_REC_V91.get("station") or "Radio").strip()[:100]
         stamp = time.strftime("%H%M%S")
         if not _RADIO_REC_V91.get("lossless", True):
             final_name = f"Radio - {safe_st}_{stamp}.mp3"
@@ -2378,7 +2378,7 @@ def api_soundcloud_download_track_v105():
                             _SC_DL_STATE_V99["pct"] = min(88, int((done_b * 85) / tot_b))
 
         _SC_DL_STATE_V99["pct"] = 92
-        safe_t = re.sub(r'[\\/:*?"<>|\[\]]+', '_', track_title).strip()[:65]
+        safe_t = re.sub(r'[\\/:*?"<>|\[\]]+', '_', track_title).strip()[:160]
         base_dst = os.path.join(MUSIC_DIR, f"SoundCloud - {track_num:02d}. {safe_t}")
         final_path, ext_label = _mux_clean_sc_stream_v107(tmp_raw, base_dst)
         final_name = os.path.basename(final_path)

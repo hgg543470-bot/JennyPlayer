@@ -4259,7 +4259,7 @@ window.openKhinsiderModalV88 = function(ev) {
             </div>
             <div id="khMiniPlayerBarV90" style="display:none;flex-direction:column;gap:3px;padding:6px 8px;background:#0d1117;border:1px solid rgba(88,166,255,0.4);border-radius:8px;margin-top:2px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#79c0ff;">
-                    <span id="khMiniTitleV90" style="font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:75%;">🎧 Предпрослушка</span>
+                    <span id="khMiniTitleV90" style="font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;max-width:75%;">🎧 Предпрослушка</span>
                     <span style="color:#8b949e;">🔉 -30% от осн.</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -4452,7 +4452,7 @@ window.renderKhAlbumTracksV88 = function(alb) {
         return `<div id="khTrackRowV89_${t.index}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid ${isDl ? 'rgba(63,185,80,0.55)' : '#21262d'};border-radius:8px;">
             <input type="checkbox" class="kh-trk-chk-v88" ${isChk ? 'checked' : ''} onchange="window.toggleKhTrackCheckV88(${t.index}, this.checked)">
             <div style="flex:1;min-width:0;" onclick="this.previousElementSibling.click()">
-                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.index}. ${t.title}</div>
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${t.index}. ${t.title}</div>
                 <div style="color:#8b949e;font-size:10px;margin-top:2px;display:flex;align-items:center;flex-wrap:wrap;"><span>⏱ ${t.duration || '—'} ${sz ? ' • ' + sz : ''}</span>${bHtml}</div>
             </div>
             <button type="button" class="kh-prev-btn-v88" onclick="window.previewKhTrackV88(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
@@ -4787,7 +4787,7 @@ window.renderRadioFiltersAndStationsV92 = function() {
         const clr = s.lossless ? '#3fb950' : '#e3b341';
         return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid ${isPlayingThis ? '#3fb950' : '#262c36'};border-radius:9px;">
             <div style="flex:1;min-width:0;" onclick="window.playFlacRadioStationV91(${origIdx}, this.nextElementSibling)">
-                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px;">${badgeSvg}<span>${s.title}</span></div>
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;display:flex;align-items:center;gap:6px;">${badgeSvg}<span>${s.title}</span></div>
                 <div style="font-size:10px;margin-top:3px;color:#8b949e;"><span style="color:${clr};font-weight:bold;">${s.codec}</span> • ${s.genre}</div>
             </div>
             <button type="button" class="rad-play-btn-v91" onclick="window.playFlacRadioStationV91(${origIdx}, this)" style="padding:5px 10px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">${isPlayingThis ? '⏹' : '▶'}</button>
@@ -4992,7 +4992,7 @@ window.runScDedicatedSearchV93 = async function() {
         window._khStateV88.currentAlbum = { slug: 'sc_search', album_title: 'SoundCloud', has_flac: false, tracks };
         body.innerHTML = tracks.map(t => `<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;">
             <div style="flex:1;min-width:0;">
-                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.index}. ${t.title}</div>
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${t.index}. ${t.title}</div>
                 <div style="color:#8b949e;font-size:10px;margin-top:2px;">⏱ ${t.duration} • SoundCloud Stream</div>
             </div>
             <button type="button" class="kh-prev-btn-v88" onclick="window.previewKhTrackV88(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
@@ -5369,7 +5369,7 @@ window.runScDedicatedSearchV93 = async function() {
         }
         body.innerHTML = tracks.map(t => `<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid ${t.downloaded ? 'rgba(63,185,80,0.6)' : '#21262d'};border-radius:8px;">
             <div style="flex:1;min-width:0;">
-                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.index}. ${t.title}</div>
+                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${t.index}. ${t.title}</div>
                 <div style="color:#8b949e;font-size:10px;margin-top:2px;">⏱ ${t.duration} • Полный MP3 поток ${t.downloaded ? '• ✅ В плеере' : ''}</div>
             </div>
             <button type="button" class="kh-prev-btn-v88" onclick="window.previewScTrackV96(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
@@ -5417,7 +5417,7 @@ window.openTorrentHubPreviewModalV91 = function(ev) {
                 <input type="text" id="torMagnetInpV91" value="" placeholder="Поиск FLAC-раздачи или вставь magnet:?xt=..." onkeydown="if(event.key==='Enter') window.runTorrentActionV96()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
                 <button type="button" onclick="window.runTorrentActionV96()" style="padding:7px 12px;background:#8957e5;color:#fff;border:none;border-radius:8px;font-weight:bold;">🔍 / 🧲</button>
             </div>
-            <div id="torStatusLineV96" style="font-size:11px;color:#d2a8ff;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px;">⚡ Введи название альбома/игры или вставь Magnet-ссылку</div>
+            <div id="torStatusLineV96" style="font-size:11px;color:#d2a8ff;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;height:16px;line-height:16px;">⚡ Введи название альбома/игры или вставь Magnet-ссылку</div>
         </div>
         <div id="torBodyListV96" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-height:230px;"></div>
         <div id="torFooterBarV96" style="display:none;padding:10px 12px;border-top:1px solid #21262d;background:#090c10;gap:8px;">
@@ -5494,7 +5494,7 @@ window.renderTorrentFilesListV96 = function() {
         return `<div id="torFileRowV96_${f.index}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;">
             <input type="checkbox" ${chk} onchange="if(this.checked) window._torStateV96.selectedFiles.add(${f.index}); else window._torStateV96.selectedFiles.delete(${f.index});">
             <div style="flex:1;min-width:0;">
-                <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.path}</div>
+                <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${f.path}</div>
                 <div id="torFileProgV96_${f.index}" style="color:#8b949e;font-size:10px;margin-top:2px;">💾 ${mb} MB • Ожидание</div>
             </div>
         </div>`;
@@ -5751,7 +5751,7 @@ window.renderTorrentFilesListV96 = function() {
         return `<div id="torFileRowV96_${f.index}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;transition:background 0.25s ease;">
             <input type="checkbox" ${chk} onchange="if(this.checked) window._torStateV96.selectedFiles.add(${f.index}); else window._torStateV96.selectedFiles.delete(${f.index});">
             <div style="flex:1;min-width:0;">
-                <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.path}</div>
+                <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${f.path}</div>
                 <div id="torFileProgV96_${f.index}" style="color:#8b949e;font-size:10px;margin-top:2px;">💾 ${mb} MB • Нажми ▶ для потока или ⬇️ для закачки</div>
             </div>
             <button type="button" class="tor-prev-btn-v97" onclick="window.previewTorrentFileStreamV97(${f.index}, this, event)" title="Слушать в потоке прямо сейчас" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
@@ -5833,7 +5833,7 @@ window.ensureModalMiniPlayerV98 = function(modalId, insertAfterEl) {
         bar.style.cssText = 'display:none;flex-direction:column;gap:4px;padding:7px 12px;background:#0b111b;border-bottom:1px solid #3fb950;';
         bar.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <span class="ump-title" style="font-size:11px;color:#3fb950;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">🎧 Предпрослушка</span>
+                <span class="ump-title" style="font-size:11px;color:#3fb950;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;flex:1;">🎧 Предпрослушка</span>
                 <span style="font-size:10px;color:#8b949e;">🔉 -30% от осн.</span>
                 <button type="button" class="ump-play-btn" onclick="window.toggleKhMiniPlayPauseV90()" style="padding:2px 8px;font-size:11px;background:#161b22;border:1px solid #30363d;color:#fff;border-radius:6px;">⏸</button>
                 <button type="button" onclick="window.stopAllExternalStreamsV97()" style="padding:2px 7px;font-size:10px;background:rgba(248,81,73,0.18);border:1px solid #f85149;color:#ff7b72;border-radius:6px;">✖</button>
@@ -5967,8 +5967,8 @@ window.renderTorrentFilesListV96 = function() {
         return `<div id="torFileRowV96_${f.index}" style="display:flex;align-items:center;gap:6px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;transition:background 0.25s ease;">
             <input type="checkbox" ${chk} onchange="if(this.checked) window._torStateV96.selectedFiles.add(${f.index}); else window._torStateV96.selectedFiles.delete(${f.index});">
             <div style="flex:1;min-width:0;">
-                <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.path}</div>
-                <div id="torFileProgV96_${f.index}" style="color:#8b949e;font-size:10px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:14px;line-height:14px;">💾 ${mb} MB • ▶ Поток / ⬇️ Скачать</div>
+                <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${f.path}</div>
+                <div id="torFileProgV96_${f.index}" style="color:#8b949e;font-size:10px;margin-top:2px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;height:14px;line-height:14px;">💾 ${mb} MB • ▶ Поток / ⬇️ Скачать</div>
             </div>
             <button type="button" class="tor-prev-btn-v97" onclick="window.previewTorrentFileStreamV97(${f.index}, this, event)" title="Слушать в потоке" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
             <button type="button" id="torDlSingleBtnV98_${f.index}" onclick="window.downloadSingleTorrentTrackV98(${f.index}, this, event)" title="Скачать этот трек в xFLAC" style="padding:4px 8px;font-size:11px;background:rgba(63,185,80,0.16);color:#3fb950;border:1px solid rgba(63,185,80,0.6);">⬇️</button>
@@ -6163,7 +6163,7 @@ window.showMainPageEncodingBannerV98 = function(msgText, pctVal) {
         const p = Math.max(0, Math.min(100, pctVal || 0));
         b.style.display = 'flex';
         b.style.background = `linear-gradient(90deg, rgba(63,185,80,0.35) ${p}%, rgba(137,87,229,0.22) ${p}%)`;
-        b.innerHTML = `<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:8px;">${msgText}</span><span style="color:#3fb950;font-size:10.5px;flex-shrink:0;">Общий: ${p}%</span>`;
+        b.innerHTML = `<span style="white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;margin-right:8px;">${msgText}</span><span style="color:#3fb950;font-size:10.5px;flex-shrink:0;">Общий: ${p}%</span>`;
     }
 };
 
@@ -9115,7 +9115,7 @@ if (!hdr || document.getElementById('btnTorHeaderHubMenuV128')) return;
 hdr.style.gap = '6px';
 hdr.innerHTML = `<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
 <span style="color:#d2a8ff;font-weight:900;font-size:12.5px;display:inline-flex;align-items:center;gap:5px;flex-shrink:0;">${window.JENNY_NEON_SVGS_V92.torrent}<span>ТОРРЕНТ</span></span>
-<button type="button" id="btnTorHeaderHubMenuV128" onclick="window.toggleTorrentInspectorHubV128(event)" style="flex:1;min-width:0;padding:4px 8px;font-size:10.5px;border-radius:8px;background:linear-gradient(90deg,rgba(137,87,229,0.28),rgba(31,111,235,0.28));border:1px solid #d2a8ff;color:#e6edf3;font-weight:900;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+<button type="button" id="btnTorHeaderHubMenuV128" onclick="window.toggleTorrentInspectorHubV128(event)" style="flex:1;min-width:0;padding:4px 8px;font-size:10.5px;border-radius:8px;background:linear-gradient(90deg,rgba(137,87,229,0.28),rgba(31,111,235,0.28));border:1px solid #d2a8ff;color:#e6edf3;font-weight:900;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">
 <span>📊</span><span id="lblTorHeaderHubMenuV128">Раздачи • Треки • Части</span></button></div>
 <button type="button" onclick="document.getElementById('jennyTorrentModalV91').style.setProperty('display','none','important')" style="padding:4px 9px;font-size:11px;border-radius:7px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;flex-shrink:0;">➖ В фон</button>`;
 };
@@ -9391,7 +9391,7 @@ const sUrl = `/api/torrent/stream/${item.hash}/${item.index}`;
 const playIcon = (window._torStreamBufferingUrlV129 === sUrl) ? '⏳' : (curPlayingPath === sUrl ? '⏹' : '▶');
 const stB = item.done ? `<span style="color:#3fb950;font-weight:bold;">✅ Готов (${totMb} МБ)</span>` : (item.isLead ? `<span style="color:#d2a8ff;font-weight:900;">🔥 КАЧАЕТСЯ: ${doneMb}/${totMb} МБ (${item.percent}%)</span>` : `<span>⏳ ${doneMb}/${totMb} МБ (${item.percent}%)</span>`);
 return `<div style="padding:7px 9px;border-radius:8px;border:1px solid ${item.isLead ? '#d2a8ff' : (item.done ? 'rgba(63,185,80,0.5)' : '#21262d')};background:linear-gradient(90deg, ${item.done ? 'rgba(63,185,80,0.22)' : 'rgba(137,87,229,0.28)'} ${item.percent}%, #0b0f16 ${item.percent}%);display:flex;align-items:center;gap:6px;">
-<div style="flex:1;min-width:0;"><div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${item.title}</div>
+<div style="flex:1;min-width:0;"><div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${item.title}</div>
 <div style="font-size:10px;color:#8b949e;margin-top:2px;display:flex;gap:6px;">${stB}<span style="color:#58a6ff;cursor:pointer;" onclick="window.switchTorHubTabV128('pieces','${item.hash}');window.selectPieceOnMapV128('${item.hash}',${item.begPiece});">${pRange}</span></div></div>
 ${!item.done ? `<button type="button" onclick="window.controlTorrentJobV128('${item.hash}','boost_file',${item.index})" style="padding:4px 7px;font-size:10px;background:rgba(210,168,255,0.2);color:#d2a8ff;border:1px solid #d2a8ff;border-radius:6px;font-weight:bold;">⚡ Первым</button>` : ''}
 <button type="button" onclick="window._torStateV96.currentHash='${item.hash}';window.previewTorrentFileStreamV97(${item.index},this,event)" style="padding:4px 8px;font-size:10.5px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:6px;">${playIcon}</button></div>`;
@@ -10086,7 +10086,7 @@ root.innerHTML = `<div id="jennyVideoStageV130">
 <div id="v130CenterFeedback" style="display:none;position:absolute;padding:10px 18px;border-radius:12px;background:rgba(9,13,20,0.92);border:1.5px solid #58a6ff;color:#fff;font-size:14px;font-weight:900;z-index:20;pointer-events:none;box-shadow:0 0 20px rgba(0,0,0,0.9);"></div>
 <div id="v130HudOverlay" class="v130-hud-overlay">
 <div class="v130-hud-bar" id="v130TopDragBar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;">
-<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;"><span style="font-size:15px;">🎬</span><div style="min-width:0;flex:1;"><div id="v130VideoTitle" style="color:#fff;font-size:12.5px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Видеоплеер</div><div id="v130VideoSubTelemetry" class="v130-hide-in-pip" style="color:#79c0ff;font-size:10px;font-weight:bold;">Дека Б (RAM + DSP)</div></div></div>
+<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;"><span style="font-size:15px;">🎬</span><div style="min-width:0;flex:1;"><div id="v130VideoTitle" style="color:#fff;font-size:12.5px;font-weight:900;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">Видеоплеер</div><div id="v130VideoSubTelemetry" class="v130-hide-in-pip" style="color:#79c0ff;font-size:10px;font-weight:bold;">Дека Б (RAM + DSP)</div></div></div>
 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
 <button type="button" class="v130-btn v130-hide-in-pip" id="v131BtnMixMode" onclick="window.cycleDualDeckMixModeV131(event)" style="border-color:#3fb950 !important;color:#3fb950 !important;">🎚️ А+Б</button>
 <button type="button" class="v130-btn v130-hide-in-pip" id="v130BtnTorHub" onclick="window.openTorHubFromVideoV130(event)" style="display:none;border-color:#d2a8ff !important;color:#d2a8ff !important;">🧩 Части</button>
@@ -12374,4 +12374,38 @@ window.renderTorrentFilesListV96 = function() {
         }
     }
 };
+})();
+
+// === 📝🌐 JENNY V144: FULL UNTRUNCATED MULTI-LINE TITLES ACROSS ALL STUDIOS ===
+(function() {
+const styleId = 'jennyFullNamesEverywhereV144';
+if (!document.getElementById(styleId)) {
+    const st = document.createElement('style');
+    st.id = styleId;
+    st.textContent = `
+        /* Полные многострочные названия в Торрент-студии, Центре закачек P2P, SoundCloud, Game OST, Архивах, Радио и Видеоплеере */
+        #jennyTorrentModalV91 div,
+        #jennyTorInspectorModalV128 div,
+        #jennySoundCloudModalV93 div,
+        #jennyKhinsiderModalV88 div,
+        #jennyFlacRadioModalV91 div,
+        .jenny-univ-mini-player-v98 .ump-title,
+        #khMiniTitleV90,
+        #v130VideoTitle,
+        #v130VideoSubTelemetry {
+            white-space: normal !important;
+            text-overflow: clip !important;
+            overflow-wrap: anywhere !important;
+            word-break: break-word !important;
+        }
+        /* Стабильная высота статусной строки в Торрент-студии, чтобы список не прыгал при появлении 2-й строки */
+        #torStatusLineV96 {
+            min-height: 30px !important;
+            display: flex !important;
+            align-items: center !important;
+            line-height: 1.28 !important;
+        }
+    `;
+    document.head.appendChild(st);
+}
 })();
