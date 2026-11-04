@@ -480,7 +480,17 @@ public class MainActivity extends AppCompatActivity {
                 getApplicationContext(), 149, i,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
             );
-            pi.send();
+            if (Build.VERSION.SDK_INT >= 34) {
+                android.app.ActivityOptions opts = android.app.ActivityOptions.makeBasic();
+                try {
+                    android.app.ActivityOptions.class
+                        .getMethod("setPendingIntentBackgroundActivityStartMode", int.class)
+                        .invoke(opts, 1);
+                } catch (Throwable ignored) {}
+                pi.send(getApplicationContext(), 0, null, null, null, null, opts.toBundle());
+            } else {
+                pi.send();
+            }
         } catch (Exception ignored) {}
         try {
             Intent i2 = new Intent(getApplicationContext(), MainActivity.class);
@@ -503,26 +513,31 @@ public class MainActivity extends AppCompatActivity {
                     waitingForPermScreenV148 = false;
                     permFlowLockUntilMsV152 = 0L;
 
-                    if (pendingOverlayAfterGrantV147 && isVideoActiveV132) {
-                        pendingOverlayAfterGrantV147 = false;
-                        // Защищаем созданный оверлей на 3 секунды, пока закрывается окно SubSettings
-                        overlayGrantProtectionUntilMsV153 = android.os.SystemClock.uptimeMillis() + 3000L;
-                        enterDesktopOverlayInternalV133();
-                        evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
-                    }
+                    boolean shouldGoToDesktopOverlay = pendingOverlayAfterGrantV147 && isVideoActiveV132;
+                    pendingOverlayAfterGrantV147 = false;
 
                     try {
                         finishActivity(REQ_OVERLAY_PERM);
                     } catch (Exception ignored) {}
-                    try {
-                        moveTaskToBack(true);
-                    } catch (Exception ignored) {}
-                    try {
-                        Intent home = new Intent(Intent.ACTION_MAIN);
-                        home.addCategory(Intent.CATEGORY_HOME);
-                        home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(home);
-                    } catch (Exception ignored) {}
+
+                    if (shouldGoToDesktopOverlay) {
+                        // Защищаем созданный оверлей на 3 секунды, пока закрывается окно SubSettings
+                        overlayGrantProtectionUntilMsV153 = android.os.SystemClock.uptimeMillis() + 3000L;
+                        enterDesktopOverlayInternalV133();
+                        evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
+                        try {
+                            moveTaskToBack(true);
+                        } catch (Exception ignored) {}
+                        try {
+                            Intent home = new Intent(Intent.ACTION_MAIN);
+                            home.addCategory(Intent.CATEGORY_HOME);
+                            home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(home);
+                        } catch (Exception ignored) {}
+                    } else {
+                        // Запрос был открыт сразу при старте видео — закрываем SubSettings и продолжаем играть видео прямо в плеере!
+                        evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(true);");
+                    }
                     return;
                 }
                 if (permWatchTicksV147 < 500) {
@@ -536,12 +551,8 @@ public class MainActivity extends AppCompatActivity {
         permWatchHandlerV147.postDelayed(permWatchRunnableV147, 140);
     }
 
-    private Intent attachAutoScrollAndSelfCloseFlagsV151(Intent intent, String pkg, boolean separateTask) {
-        if (separateTask) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
-        } else {
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
-        }
+    private Intent attachAutoScrollAndSelfCloseFlagsV151(Intent intent, String pkg) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
         int appUid = getApplicationInfo().uid;
 
         Bundle showArgs = new Bundle();
@@ -563,87 +574,47 @@ public class MainActivity extends AppCompatActivity {
         return intent;
     }
 
-    private Intent buildOverlayPermSettingsIntentV163(boolean useSubSettings, boolean separateTask) {
-        String pkg = getPackageName();
-        Uri pkgUri = Uri.parse("package:" + pkg);
-        if (useSubSettings) {
-            Intent subDirect = new Intent(Intent.ACTION_MAIN);
-            subDirect.setClassName("com.android.settings", "com.android.settings.SubSettings");
-            subDirect.setData(pkgUri);
-            return attachAutoScrollAndSelfCloseFlagsV151(subDirect, pkg, separateTask);
-        } else {
-            Intent stdList = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
-            return attachAutoScrollAndSelfCloseFlagsV151(stdList, pkg, separateTask);
-        }
-    }
-
-    private void fireSettingsIntentImmediateV163(boolean separateTask) {
-        boolean launched = false;
-        // 1. Прямой вызов SubSettings (одиночный тумблер DrawOverlayDetails)
+    private void openMiuiOrSystemOverlayWindowV148() {
         try {
-            Intent subDirect = buildOverlayPermSettingsIntentV163(true, separateTask);
-            if (separateTask) {
-                startActivity(subDirect);
-            } else {
-                startActivityForResult(subDirect, REQ_OVERLAY_PERM);
-            }
-            launched = true;
-        } catch (Exception ignored) {}
+            String pkg = getPackageName();
+            Uri pkgUri = Uri.parse("package:" + pkg);
+            boolean launched = false;
 
-        // 2. Фоллбэк на стандартный ACTION_MANAGE_OVERLAY_PERMISSION
-        if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            // Шаг 1 (Проверено через Shizuku): Прямой запуск одиночного тумблера DrawOverlayDetails через SubSettings
+            // ВАЖНО: запускается строго через startActivityForResult БЕЗ FLAG_ACTIVITY_NEW_TASK, чтобы SubSettings видел callingPackage!
             try {
-                Intent stdList = buildOverlayPermSettingsIntentV163(false, separateTask);
-                if (separateTask) {
-                    startActivity(stdList);
-                } else {
-                    startActivityForResult(stdList, REQ_OVERLAY_PERM);
-                }
+                Intent subDirect = new Intent(Intent.ACTION_MAIN);
+                subDirect.setClassName("com.android.settings", "com.android.settings.SubSettings");
+                subDirect.setData(pkgUri);
+                attachAutoScrollAndSelfCloseFlagsV151(subDirect, pkg);
+                startActivityForResult(subDirect, REQ_OVERLAY_PERM);
                 launched = true;
             } catch (Exception ignored) {}
-        }
 
-        // 3. Добивающий выстрел через PendingIntent с явным разрешением Background Activity Start для Android 13-16 (API 33-35)
-        if (separateTask) {
-            try {
-                Intent piIntent = buildOverlayPermSettingsIntentV163(true, true);
-                android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
-                    getApplicationContext(), 163, piIntent,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
-                );
-                if (Build.VERSION.SDK_INT >= 34) {
-                    android.app.ActivityOptions opts = android.app.ActivityOptions.makeBasic();
-                    try {
-                        java.lang.reflect.Method m = android.app.ActivityOptions.class.getMethod(
-                            "setPendingIntentBackgroundActivityStartMode", int.class
-                        );
-                        m.invoke(opts, 1); // 1 == MODE_BACKGROUND_ACTIVITY_START_ALLOWED (совместимо с compileSdk 33)
-                    } catch (Throwable ignored) {}
-                    pi.send(getApplicationContext(), 0, null, null, null, null, opts.toBundle());
-                } else {
-                    pi.send();
-                }
-            } catch (Exception ignored) {}
+            // Шаг 2: Фоллбэк на стандартный список, если SubSettings недоступен
+            if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    Intent stdList = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
+                    attachAutoScrollAndSelfCloseFlagsV151(stdList, pkg);
+                    startActivityForResult(stdList, REQ_OVERLAY_PERM);
+                } catch (Exception ignored) {}
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-    }
-
-    private void openMiuiOrSystemOverlayWindowV148() {
-        fireSettingsIntentImmediateV163(false);
     }
 
     private void launchOverlayPermissionWithAutoWatchV147(final boolean fromHomeButton) {
-        Runnable action = () -> {
+        runOnUiThread(() -> {
             try {
                 long now = android.os.SystemClock.uptimeMillis();
                 if (now < permFlowLockUntilMsV152) {
                     return;
                 }
-                permFlowLockUntilMsV152 = now + 4000L;
+                permFlowLockUntilMsV152 = now + 5000L;
                 isOpeningSettingsV146 = true;
-                pendingOverlayAfterGrantV147 = true;
-                waitingForPermScreenV148 = false;
-                subSettingsLaunchedV154 = true;
-                stopBringBackLoopV155();
+                pendingOverlayAfterGrantV147 = fromHomeButton;
+                subSettingsLaunchedV154 = false;
                 evalJs("if(window.saveLiveWorkspaceSnapshotV146) window.saveLiveWorkspaceSnapshotV146(true);");
 
                 try {
@@ -660,24 +631,30 @@ public class MainActivity extends AppCompatActivity {
                     android.widget.Toast.LENGTH_SHORT
                 ).show();
 
-                startOverlayGrantRadarV149();
-
-                // V163 FIX: Открываем окно настроек СРАЗУ ЖЕ с первого раза (и при кнопке Домой, и из меню),
-                // не откладывая до повторного входа в приложение!
-                fireSettingsIntentImmediateV163(fromHomeButton);
-
                 if (fromHomeButton) {
-                    // Повторный импульс через 320 мс и 650 мс на случай, если анимация свайпа Домой перекрыла первый кадр Settings
-                    permWatchHandlerV147.postDelayed(() -> {
-                        if (isOpeningSettingsV146 && !Settings.canDrawOverlays(MainActivity.this)) {
-                            fireSettingsIntentImmediateV163(true);
+                    waitingForPermScreenV148 = true;
+                    stopBringBackLoopV155();
+                    bringBackTicksV155 = 0;
+                    bringBackRunnableV155 = new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!waitingForPermScreenV148 || subSettingsLaunchedV154 || Settings.canDrawOverlays(MainActivity.this)) {
+                                stopBringBackLoopV155();
+                                return;
+                            }
+                            bringBackTicksV155++;
+                            bringMainActivityToFrontV149();
+                            if (bringBackTicksV155 < 28 && waitingForPermScreenV148 && !subSettingsLaunchedV154) {
+                                permWatchHandlerV147.postDelayed(this, 180);
+                            }
                         }
-                    }, 320);
-                    permWatchHandlerV147.postDelayed(() -> {
-                        if (isOpeningSettingsV146 && !Settings.canDrawOverlays(MainActivity.this)) {
-                            fireSettingsIntentImmediateV163(true);
-                        }
-                    }, 680);
+                    };
+                    permWatchHandlerV147.postDelayed(bringBackRunnableV155, 180);
+                } else {
+                    waitingForPermScreenV148 = false;
+                    subSettingsLaunchedV154 = true;
+                    startOverlayGrantRadarV149();
+                    openMiuiOrSystemOverlayWindowV148();
                 }
             } catch (Exception e) {
                 isOpeningSettingsV146 = false;
@@ -687,12 +664,7 @@ public class MainActivity extends AppCompatActivity {
                 permFlowLockUntilMsV152 = 0L;
                 e.printStackTrace();
             }
-        };
-        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            action.run();
-        } else {
-            runOnUiThread(action);
-        }
+        });
     }
 
     @Override
@@ -854,6 +826,11 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void setVideoActiveState(boolean active) {
             isVideoActiveV132 = active;
+            if (active && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
+                // Открываем одиночное окно разрешения СРАЗУ при старте видео, пока MainActivity в фокусе на переднем плане!
+                // Тогда не нужно свайпать Домой и лишний раз перезаходить в плеер: включил тумблер -> окно само закрылось -> видео играет!
+                launchOverlayPermissionWithAutoWatchV147(false);
+            }
         }
 
         @JavascriptInterface
