@@ -613,9 +613,12 @@ public class MainActivity extends AppCompatActivity {
                 );
                 if (Build.VERSION.SDK_INT >= 34) {
                     android.app.ActivityOptions opts = android.app.ActivityOptions.makeBasic();
-                    opts.setPendingIntentBackgroundActivityStartMode(
-                        android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
-                    );
+                    try {
+                        java.lang.reflect.Method m = android.app.ActivityOptions.class.getMethod(
+                            "setPendingIntentBackgroundActivityStartMode", int.class
+                        );
+                        m.invoke(opts, 1); // 1 == MODE_BACKGROUND_ACTIVITY_START_ALLOWED (совместимо с compileSdk 33)
+                    } catch (Throwable ignored) {}
                     pi.send(getApplicationContext(), 0, null, null, null, null, opts.toBundle());
                 } else {
                     pi.send();
