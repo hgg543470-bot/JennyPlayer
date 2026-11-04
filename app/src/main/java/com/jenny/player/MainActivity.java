@@ -45,6 +45,7 @@ public class MainActivity extends AppCompatActivity {
     private static boolean isVideoActiveV132 = false;
     private static boolean isDesktopOverlayActiveV132 = false;
     private static boolean pendingOverlayAfterGrantV147 = false;
+    private static boolean waitingForPermScreenV148 = false;
     private static int permWatchTicksV147 = 0;
     private static final android.os.Handler permWatchHandlerV147 = new android.os.Handler(android.os.Looper.getMainLooper());
     private static Runnable permWatchRunnableV147 = null;
@@ -439,11 +440,66 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void launchOverlayPermissionWithAutoWatchV147(final boolean autoEnterOverlayOnGrant) {
+    private void openMiuiOrSystemOverlayWindowV148() {
+        try {
+            String pkg = getPackageName();
+            boolean launched = false;
+            int flags = Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP;
+
+            String[] miuiClasses = new String[]{
+                "com.miui.permcenter.permissions.PermissionsEditorActivity",
+                "com.miui.permcenter.permissions.AppPermissionsEditorActivity"
+            };
+            for (String cls : miuiClasses) {
+                try {
+                    Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
+                    miuiIntent.setClassName("com.miui.securitycenter", cls);
+                    miuiIntent.putExtra("extra_pkgname", pkg);
+                    miuiIntent.addFlags(flags);
+                    startActivity(miuiIntent);
+                    launched = true;
+                    break;
+                } catch (Exception ignored) {}
+            }
+
+            if (!launched) {
+                try {
+                    Intent miuiPkgIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
+                    miuiPkgIntent.setPackage("com.miui.securitycenter");
+                    miuiPkgIntent.putExtra("extra_pkgname", pkg);
+                    miuiPkgIntent.addFlags(flags);
+                    startActivity(miuiPkgIntent);
+                    launched = true;
+                } catch (Exception ignored) {}
+            }
+
+            if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + pkg));
+                    intent.addFlags(flags);
+                    startActivity(intent);
+                    launched = true;
+                } catch (Exception ignored) {}
+            }
+
+            if (!launched) {
+                Intent appDetails = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + pkg));
+                appDetails.addFlags(flags);
+                startActivity(appDetails);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void launchOverlayPermissionWithAutoWatchV147(final boolean fromHomeButton) {
         runOnUiThread(() -> {
             try {
                 isOpeningSettingsV146 = true;
-                pendingOverlayAfterGrantV147 = autoEnterOverlayOnGrant;
+                pendingOverlayAfterGrantV147 = true;
+                waitingForPermScreenV148 = fromHomeButton;
                 evalJs("if(window.saveLiveWorkspaceSnapshotV146) window.saveLiveWorkspaceSnapshotV146(true);");
 
                 try {
@@ -460,46 +516,15 @@ public class MainActivity extends AppCompatActivity {
                     android.widget.Toast.LENGTH_LONG
                 ).show();
 
-                String pkg = getPackageName();
-                boolean launched = false;
-
-                String[] miuiClasses = new String[]{
-                    "com.miui.permcenter.permissions.PermissionsEditorActivity",
-                    "com.miui.permcenter.permissions.AppPermissionsEditorActivity"
-                };
-                for (String cls : miuiClasses) {
-                    try {
-                        Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
-                        miuiIntent.setClassName("com.miui.securitycenter", cls);
-                        miuiIntent.putExtra("extra_pkgname", pkg);
-                        startActivity(miuiIntent);
-                        launched = true;
-                        break;
-                    } catch (Exception ignored) {}
-                }
-
-                if (!launched) {
-                    try {
-                        Intent miuiImplicit = new Intent("miui.intent.action.APP_PERM_EDITOR");
-                        miuiImplicit.putExtra("extra_pkgname", pkg);
-                        startActivity(miuiImplicit);
-                        launched = true;
-                    } catch (Exception ignored) {}
-                }
-
-                if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    try {
-                        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:" + pkg));
-                        startActivity(intent);
-                        launched = true;
-                    } catch (Exception ignored) {}
-                }
-
-                if (!launched) {
-                    Intent appDetails = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            Uri.parse("package:" + pkg));
-                    startActivity(appDetails);
+                if (fromHomeButton) {
+                    // Ждём 350 мс, чтобы завершилась системная анимация выхода на рабочий стол, и открываем окно поверх лаунчера!
+                    permWatchHandlerV147.postDelayed(() -> {
+                        if (!Settings.canDrawOverlays(MainActivity.this)) {
+                            openMiuiOrSystemOverlayWindowV148();
+                        }
+                    }, 350);
+                } else {
+                    openMiuiOrSystemOverlayWindowV148();
                 }
 
                 stopOverlayPermWatcherV147();
@@ -512,6 +537,7 @@ public class MainActivity extends AppCompatActivity {
                         if (granted) {
                             stopOverlayPermWatcherV147();
                             isOpeningSettingsV146 = false;
+                            waitingForPermScreenV148 = false;
                             if (pendingOverlayAfterGrantV147 && isVideoActiveV132) {
                                 pendingOverlayAfterGrantV147 = false;
                                 enterDesktopOverlayInternalV133();
@@ -534,6 +560,7 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 isOpeningSettingsV146 = false;
                 pendingOverlayAfterGrantV147 = false;
+                waitingForPermScreenV148 = false;
                 e.printStackTrace();
             }
         });
@@ -911,13 +938,24 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(this);
+
+        // Если после нажатия Home система не дала открыть окно поверх лаунчера и пользователь вернулся в плеер — открываем скр 2 прямо сейчас!
+        if (waitingForPermScreenV148 && !granted && isVideoActiveV132) {
+            waitingForPermScreenV148 = false;
+            isOpeningSettingsV146 = true;
+            pendingOverlayAfterGrantV147 = true;
+            permWatchHandlerV147.postDelayed(() -> openMiuiOrSystemOverlayWindowV148(), 120);
+            return;
+        }
+
         stopOverlayPermWatcherV147();
         boolean wasPermSettings = isOpeningSettingsV146;
         boolean wantAutoOverlay = pendingOverlayAfterGrantV147;
         isOpeningSettingsV146 = false;
         pendingOverlayAfterGrantV147 = false;
+        waitingForPermScreenV148 = false;
 
-        boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(this);
         if (wasPermSettings && wantAutoOverlay && granted && isVideoActiveV132 && !isDesktopOverlayActiveV132) {
             enterDesktopOverlayInternalV133();
             evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
