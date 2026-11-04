@@ -12776,3 +12776,517 @@ setTimeout(() => {
     window.restoreLiveWorkspaceSnapshotIfNeededV146();
 }, 400);
 })();
+
+// === 🎛️🎬 JENNY V150: SPLIT AUDIO/VIDEO FORMAT SLOTS, SMART REFRESH & CLEAN VIDEO TAB ===
+(function() {
+// 1. Исправляем геометрию мини-окна видеоплеера (mode-pip-v130), чтобы кнопка ✖ и правый таймер никогда не вылезали за край
+const pipStyleId = 'jennyV150PipAndVideoFixes';
+if (!document.getElementById(pipStyleId)) {
+    const st = document.createElement('style');
+    st.id = pipStyleId;
+    st.textContent = `
+        #jennyVideoStudioRootV130 .v130-hud-bar,
+        #jennyVideoStudioRootV130 #v130TopDragBar {
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+        }
+        #jennyVideoStudioRootV130 #v130SeekSlider {
+            min-width: 0 !important;
+            flex: 1 1 auto !important;
+        }
+        #jennyVideoStudioRootV130.mode-pip-v130 #v130TopDragBar {
+            padding: 6px 8px !important;
+            row-gap: 4px !important;
+        }
+        #jennyVideoStudioRootV130.mode-pip-v130 #v130VideoTitle {
+            font-size: 11.5px !important;
+            line-height: 1.22 !important;
+            display: -webkit-box !important;
+            -webkit-line-clamp: 1 !important;
+            -webkit-box-orient: vertical !important;
+            overflow: hidden !important;
+        }
+        #jennyVideoStudioRootV130.mode-pip-v130 .v130-hud-bar:last-child {
+            padding: 6px 8px !important;
+        }
+        #jennyVideoStudioRootV130.mode-pip-v130 #v130CurTime,
+        #jennyVideoStudioRootV130.mode-pip-v130 #v130DurTime {
+            min-width: 28px !important;
+            font-size: 10px !important;
+        }
+        #jennyVideoStudioRootV130.mode-pip-v130 .v130-btn {
+            padding: 3px 6px !important;
+            font-size: 10px !important;
+        }
+    `;
+    document.head.appendChild(st);
+}
+
+// 2. Два независимых набора форматов: для Деки А (Аудио) и для Деки Б (Видео)
+window.DEFAULT_AUDIO_FORMAT_SLOTS_V150 = [
+    { en: true, ext: '.mp3' },
+    { en: true, ext: '.opus' },
+    { en: true, ext: '.m4a' },
+    { en: true, ext: '.flac' },
+    { en: true, ext: '.wav' },
+    { en: true, ext: '.ogg' },
+    { en: true, ext: '.aac' },
+    { en: true, ext: '.xflac' }
+];
+
+window.DEFAULT_VIDEO_FORMAT_SLOTS_V150 = [
+    { en: true, ext: '.mp4' },
+    { en: true, ext: '.mkv' },
+    { en: true, ext: '.avi' },
+    { en: true, ext: '.webm' },
+    { en: true, ext: '.mov' },
+    { en: true, ext: '.m4v' },
+    { en: true, ext: '.3gp' },
+    { en: true, ext: '.flv' }
+];
+
+window.KNOWN_VIDEO_EXT_SET_V150 = new Set(['.mp4', '.mkv', '.avi', '.webm', '.mov', '.m4v', '.3gp', '.flv', '.wmv', '.ts', '.mpeg', '.mpg']);
+
+window.ensureDualDeckFormatSlotsV150 = function() {
+    const cfg = window._musicConfigRefV131 || window.appConfig || {};
+    if (!Array.isArray(cfg.formatSlotsAudioV150) || cfg.formatSlotsAudioV150.length === 0) {
+        const oldSlots = Array.isArray(cfg.formatSlots) ? cfg.formatSlots : [];
+        const fromOldAudio = oldSlots.filter(s => s && s.ext && !window.KNOWN_VIDEO_EXT_SET_V150.has(String(s.ext).toLowerCase().trim()));
+        cfg.formatSlotsAudioV150 = fromOldAudio.length >= 4
+            ? JSON.parse(JSON.stringify(fromOldAudio))
+            : JSON.parse(JSON.stringify(window.DEFAULT_AUDIO_FORMAT_SLOTS_V150));
+        if (!cfg.formatSlotsAudioV150.some(s => String(s.ext).toLowerCase() === '.xflac')) {
+            cfg.formatSlotsAudioV150.push({ en: true, ext: '.xflac' });
+        }
+    }
+    if (!Array.isArray(cfg.formatSlotsVideoV150) || cfg.formatSlotsVideoV150.length === 0) {
+        cfg.formatSlotsVideoV150 = JSON.parse(JSON.stringify(window.DEFAULT_VIDEO_FORMAT_SLOTS_V150));
+    }
+    // Синхронизируем объединённый массив formatSlots для бэкенда player.py
+    cfg.formatSlots = [...cfg.formatSlotsAudioV150, ...cfg.formatSlotsVideoV150];
+    if (window.appConfig && window.appConfig !== cfg) {
+        window.appConfig.formatSlotsAudioV150 = cfg.formatSlotsAudioV150;
+        window.appConfig.formatSlotsVideoV150 = cfg.formatSlotsVideoV150;
+        window.appConfig.formatSlots = cfg.formatSlots;
+    }
+    return { audioSlots: cfg.formatSlotsAudioV150, videoSlots: cfg.formatSlotsVideoV150 };
+};
+
+window.isVideoFileNameV130 = function(nameOrPath) {
+    const s = String(nameOrPath || '').split('?')[0].toLowerCase().trim();
+    if (!s) return false;
+    const { videoSlots } = window.ensureDualDeckFormatSlotsV150();
+    for (const slot of videoSlots) {
+        const ext = '.' + String(slot.ext || '').toLowerCase().trim().replace(/^\.+/, '');
+        if (ext.length > 1 && s.endsWith(ext)) return true;
+    }
+    for (const ext of window.KNOWN_VIDEO_EXT_SET_V150) {
+        if (s.endsWith(ext)) return true;
+    }
+    return false;
+};
+
+window.isAudioTrackAllowedByFormatSlotsV150 = function(filename) {
+    if (!filename) return true;
+    const { audioSlots } = window.ensureDualDeckFormatSlotsV150();
+    const activeExts = audioSlots
+        .filter(s => s && s.en && String(s.ext || '').trim())
+        .map(s => '.' + String(s.ext).trim().toLowerCase().replace(/^\.+/, ''));
+    if (activeExts.length === 0) return false;
+    const lower = String(filename).toLowerCase().trim();
+    return activeExts.some(ext => lower.endsWith(ext));
+};
+
+window.isVideoTrackAllowedByFormatSlotsV150 = function(filename) {
+    if (!filename) return true;
+    const { videoSlots } = window.ensureDualDeckFormatSlotsV150();
+    const activeExts = videoSlots
+        .filter(s => s && s.en && String(s.ext || '').trim())
+        .map(s => '.' + String(s.ext).trim().toLowerCase().replace(/^\.+/, ''));
+    if (activeExts.length === 0) return false;
+    const lower = String(filename).toLowerCase().trim();
+    return activeExts.some(ext => lower.endsWith(ext));
+};
+
+// Переопределяем глобальный фильтр форматов: видео проверяется по слотам Деки Б, аудио — по слотам Деки А!
+window.isTrackAllowedByFormatSlots = function(filename) {
+    if (!filename) return true;
+    if (window.isVideoFileNameV130(filename)) {
+        return window.isVideoTrackAllowedByFormatSlotsV150(filename);
+    }
+    return window.isAudioTrackAllowedByFormatSlotsV150(filename);
+};
+
+// 3. Отрисовка блока «Форматы файлов» в Настройках отдельно для Деки А (Аудио) и Деки Б (Видео)
+window.syncFormatSlotsUI = function() {
+    const { audioSlots, videoSlots } = window.ensureDualDeckFormatSlotsV150();
+    const isVideoDeck = (window._activeUiDeckV131 === 'video');
+    const activeList = isVideoDeck ? videoSlots : audioSlots;
+    const isEn = (typeof window.getLang === 'function' && window.getLang() === 'en');
+
+    const sec = document.getElementById('customFormatsSection');
+    if (sec) {
+        sec.style.borderLeftColor = isVideoDeck ? '#ff7b72' : '#58a6ff';
+        const sum = sec.querySelector('summary');
+        if (sum) {
+            const titleTxt = isVideoDeck
+                ? (isEn ? '🎬 Video File Formats (Deck B)' : '🎬 Форматы видеофайлов (Дека Б)')
+                : (isEn ? '🎵 Audio File Formats (Deck A)' : '🎵 Форматы аудиофайлов (Дека А)');
+            const firstSpan = sum.querySelector('span:not(.jenny-help-badge)');
+            if (firstSpan) firstSpan.innerText = titleTxt;
+            else sum.innerHTML = `<span>${titleTxt}</span>`;
+        }
+    }
+
+    const grid = document.getElementById('formatSlotsGrid');
+    if (!grid) return;
+
+    const accentColor = isVideoDeck ? '#ff7b72' : '#58a6ff';
+    grid.innerHTML = activeList.map((s, idx) => {
+        const i = idx + 1;
+        let extVal = String(s.ext || '').trim().toLowerCase();
+        if (extVal && !extVal.startsWith('.')) extVal = '.' + extVal;
+        const specialClr = (extVal === '.xflac') ? '#3fb950' : accentColor;
+        return `<div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid ${s.en ? '#30363d' : '#1c2128'};">
+            <input type="checkbox" id="cfg_fmt_${i}_en" ${s.en ? 'checked' : ''} onchange="window.saveFormatSlotsToConfig(true)">
+            <input type="text" id="cfg_fmt_${i}_val" value="${extVal}" oninput="window.saveFormatSlotsToConfig(false)" onchange="window.saveFormatSlotsToConfig(true)" style="width:65px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:${specialClr}; opacity:${s.en ? '1' : '0.4'}; border:none; outline:none; font-family:monospace;">
+        </div>`;
+    }).join('');
+};
+
+window.saveFormatSlotsToConfig = async function(triggerReload) {
+    const { audioSlots, videoSlots } = window.ensureDualDeckFormatSlotsV150();
+    const isVideoDeck = (window._activeUiDeckV131 === 'video');
+    const targetList = isVideoDeck ? videoSlots : audioSlots;
+    const newSlots = [];
+
+    for (let i = 1; i <= targetList.length; i++) {
+        const chk = document.getElementById(`cfg_fmt_${i}_en`);
+        const inp = document.getElementById(`cfg_fmt_${i}_val`);
+        let raw = inp ? inp.value.trim().toLowerCase() : (targetList[i - 1]?.ext || '');
+        if (raw && !raw.startsWith('.')) raw = '.' + raw;
+        if (!raw) continue;
+        const isEn = chk ? Boolean(chk.checked) : true;
+        if (inp) inp.style.opacity = isEn ? '1' : '0.4';
+        newSlots.push({ en: isEn, ext: raw });
+    }
+
+    const cfg = window._musicConfigRefV131 || window.appConfig || {};
+    if (isVideoDeck) {
+        cfg.formatSlotsVideoV150 = newSlots;
+        window.KNOWN_VIDEO_EXT_SET_V150 = new Set([...window.KNOWN_VIDEO_EXT_SET_V150, ...newSlots.map(s => s.ext)]);
+    } else {
+        cfg.formatSlotsAudioV150 = newSlots;
+    }
+    cfg.formatSlots = [...(cfg.formatSlotsAudioV150 || []), ...(cfg.formatSlotsVideoV150 || [])];
+
+    if (window.appConfig) {
+        window.appConfig.formatSlotsAudioV150 = cfg.formatSlotsAudioV150;
+        window.appConfig.formatSlotsVideoV150 = cfg.formatSlotsVideoV150;
+        window.appConfig.formatSlots = cfg.formatSlots;
+    }
+    localStorage.setItem('ytm_config', JSON.stringify(cfg));
+
+    try {
+        await fetch('/api/config/save_single', {
+            method: 'POST',
+            body: JSON.stringify({ category: 'main', key: 'formatSlots', value: cfg.formatSlots })
+        });
+    } catch (e) {}
+
+    window.renderPlaylistStripChipsV71();
+    window.renderActivePlaylistTracksV71(false);
+
+    if (triggerReload) {
+        await window.smartRefreshCurrentPlaylistV150(null, true);
+    }
+};
+
+window.resetFormatSlots = async function(ev) {
+    const isVideoDeck = (window._activeUiDeckV131 === 'video');
+    const cfg = window._musicConfigRefV131 || window.appConfig || {};
+    if (isVideoDeck) {
+        cfg.formatSlotsVideoV150 = JSON.parse(JSON.stringify(window.DEFAULT_VIDEO_FORMAT_SLOTS_V150));
+    } else {
+        cfg.formatSlotsAudioV150 = JSON.parse(JSON.stringify(window.DEFAULT_AUDIO_FORMAT_SLOTS_V150));
+    }
+    window.syncFormatSlotsUI();
+    await window.saveFormatSlotsToConfig(true);
+    try { navigator.vibrate(35); } catch (e) {}
+    if (typeof window.showToast === 'function') {
+        window.showToast(isVideoDeck ? '🔄 Форматы видео (Дека Б) сброшены!' : '🔄 Форматы аудио (Дека А) сброшены!', ev);
+    }
+};
+
+window.addNewFormatSlotV85 = function(ev) {
+    const btn = ev && ev.currentTarget ? ev.currentTarget : document.querySelector('#customFormatsSection button');
+    let box = document.getElementById('jennyInlineAddFormatBoxV138');
+    if (box) { box.remove(); return; }
+
+    const isVideoDeck = (window._activeUiDeckV131 === 'video');
+    box = document.createElement('div');
+    box.id = 'jennyInlineAddFormatBoxV138';
+    box.style.cssText = 'display:flex;align-items:center;gap:6px;margin:8px 0;padding:8px;background:#090d14;border:1.5px solid #3fb950;border-radius:10px;';
+    box.innerHTML = `
+        <input type="text" id="jennyNewExtInputV138" placeholder="${isVideoDeck ? '.mkv, .avi, .ts...' : '.wv, .ape, .alac...'}" style="flex:1;background:#161b22;border:1px solid #30363d;color:#fff;padding:6px 10px;border-radius:7px;font-size:12px;outline:none;text-align:left !important;">
+        <button type="button" id="jennyConfirmExtBtnV138" style="padding:6px 12px;border-radius:7px;background:#238636;border:1px solid #3fb950;color:#fff;font-size:11.5px;font-weight:bold;">✅ ОК</button>
+        <button type="button" onclick="this.parentElement.remove()" style="padding:6px 9px;border-radius:7px;background:#21262d;border:1px solid #30363d;color:#8b949e;font-size:11.5px;">✖</button>
+    `;
+    const grid = document.getElementById('formatSlotsGrid');
+    if (grid && grid.parentElement) {
+        grid.parentElement.insertBefore(box, grid);
+    }
+    const inp = document.getElementById('jennyNewExtInputV138');
+    const okBtn = document.getElementById('jennyConfirmExtBtnV138');
+    if (inp) setTimeout(() => inp.focus(), 40);
+
+    const submit = async () => {
+        let val = (inp ? inp.value : '').trim().toLowerCase();
+        if (!val) return;
+        if (!val.startsWith('.')) val = '.' + val;
+        const { audioSlots, videoSlots } = window.ensureDualDeckFormatSlotsV150();
+        const targetList = isVideoDeck ? videoSlots : audioSlots;
+        const ex = targetList.find(s => String(s.ext || '').toLowerCase() === val);
+        if (ex) ex.en = true;
+        else targetList.push({ en: true, ext: val });
+        if (isVideoDeck) window.KNOWN_VIDEO_EXT_SET_V150.add(val);
+        box.remove();
+        window.syncFormatSlotsUI();
+        await window.saveFormatSlotsToConfig(true);
+        if (typeof window.showToast === 'function') {
+            window.showToast(`✅ Добавлен формат ${val} в ${isVideoDeck ? 'Деку Б (Видео)' : 'Деку А (Аудио)'}`);
+        }
+    };
+    if (okBtn) okBtn.onclick = submit;
+    if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+};
+
+// При переключении между Декой А и Декой Б сразу переключаем и список форматов!
+const _prevSwitchDeckV131 = window.switchActiveUiDeckV131;
+window.switchActiveUiDeckV131 = function(deckName, ev) {
+    const r = _prevSwitchDeckV131.apply(this, arguments);
+    window.syncFormatSlotsUI();
+    return r;
+};
+
+// 4. Единый фильтр разрешённых видеофайлов и синхронизация вкладки «🎬 Видео» (убираем лишнюю строку папки сверху!)
+window.getFilteredVideoItemsV150 = function() {
+    const rawItems = window.collectClientTorrentVideosV137 ? window.collectClientTorrentVideosV137() : [];
+    return rawItems.filter(it => it && it.name && window.isVideoTrackAllowedByFormatSlotsV150(it.name));
+};
+
+window.getTrackCountForTabV71 = function(tabId) {
+    if (tabId === 'videos') {
+        return window.getFilteredVideoItemsV150().length;
+    }
+    const allAudio = ((window.lastData && window.lastData.all_tracks) || []).filter(fn =>
+        !window.isVideoFileNameV130(fn) && window.isAudioTrackAllowedByFormatSlotsV150(fn)
+    );
+    if (tabId === 'all') return allAudio.length;
+    if (tabId === 'fav') {
+        return (window.favorites || []).filter(fn => window.isTrackAllowedByFormatSlots(fn)).length;
+    }
+    if (tabId === 'artists') {
+        const s = new Set();
+        allAudio.forEach(fn => s.add(window.getTrackMetaV71(fn).artist));
+        return s.size;
+    }
+    if (tabId === 'albums') {
+        const s = new Set();
+        allAudio.forEach(fn => s.add(window.getTrackMetaV71(fn).album));
+        return s.size;
+    }
+    if (tabId === 'tags') {
+        const { groups } = window.collectAllCustomTagGroupsV74();
+        return Object.keys(groups).length;
+    }
+    const c = (window.appConfig.customPlaylistsV71 || []).find(p => p.id === tabId);
+    if (c && Array.isArray(c.tracks)) {
+        return c.tracks.filter(fn => window.isTrackAllowedByFormatSlots(fn)).length;
+    }
+    return 0;
+};
+
+// Дополняем updateScopedSearchPlaceholderV73 правильной подписью для вкладки «🎬 Видео»
+const _prevUpdatePlaceholderV74 = window.updateScopedSearchPlaceholderV73;
+window.updateScopedSearchPlaceholderV73 = function(baseCount) {
+    if (window.activePlaylistTabV71 === 'videos') {
+        const sInp = document.getElementById('trackSearchInput');
+        if (!sInp) return;
+        const cnt = (typeof baseCount === 'number') ? baseCount : window.getFilteredVideoItemsV150().length;
+        sInp.placeholder = window.tr(`🔍 Поиск в «Видео» (${cnt})...`, `🔍 Search in "Videos" (${cnt})...`);
+        const clrBtn = document.getElementById('btnClearTrackSearchV73');
+        if (clrBtn) clrBtn.style.display = (sInp.value && sInp.value.length > 0) ? 'inline-flex' : 'none';
+        return;
+    }
+    return _prevUpdatePlaceholderV74.apply(this, arguments);
+};
+
+// Переопределяем renderActivePlaylistTracksV71 для вкладки «🎬 Видео» (БЕЗ лишней плашки папки сверху и с единым счётчиком!)
+const _prevRenderActivePlV137 = window.renderActivePlaylistTracksV71;
+window.renderActivePlaylistTracksV71 = function(scrollSubChipToCenter) {
+    if (window.activePlaylistTabV71 === 'videos') {
+        const unifiedBox = document.getElementById('unifiedList');
+        if (!unifiedBox) return;
+        window.mountPlaylistStripDOMV71();
+
+        // Убираем ненужную плашку "📁 Папка: /storage/emulated/0/JennyVideo [🔄 Обновить]" над списком видео!
+        const subWrap = document.getElementById('jennySubFilterWrapV71');
+        if (subWrap) {
+            subWrap.innerHTML = '';
+        }
+        if (typeof window.syncHeaderHeightWithModalsV71 === 'function') {
+            window.syncHeaderHeightWithModalsV71();
+        }
+
+        const items = window.getFilteredVideoItemsV150();
+        const vids = items.map(x => x.name);
+        const sorted = window.sortTrackArrayForTabV71 ? window.sortTrackArrayForTabV71(vids, 'videos') : vids;
+        window.viewedFullTabListV73 = [...sorted];
+
+        window.updateScopedSearchPlaceholderV73(sorted.length);
+        const cntEl = document.getElementById('tracksCount');
+        if (cntEl) cntEl.innerText = sorted.length;
+
+        unifiedBox.innerHTML = sorted.length
+            ? sorted.map(fn => buildTrackRowHTML(fn, 'main', (window.favorites || []).includes(fn) ? '❤️' : '🤍')).join('')
+            : `<div style="padding:22px;color:#8b949e;text-align:center;line-height:1.5;">🎬 Видеофайлов по выбранным форматам и папкам нет.<br>Добавь папку через <b>📁</b> внизу или проверь форматы в <b>Деке Б</b>!</div>`;
+
+        window.decorateVideoIconsInListV130();
+        const sInp = document.getElementById('trackSearchInput');
+        if (sInp && sInp.value.trim() && typeof window.filterTracks === 'function') {
+            window.filterTracks(sInp.value);
+        }
+        return;
+    }
+    return _prevRenderActivePlV137.apply(this, arguments);
+};
+
+// 5. Умная кнопка обновления 🔄 (#tracksCount) внизу над плеером:
+// В «Видео» обновляет только видео, в аудио-вкладках — только аудио, в смешанных (Избранное / свои плейлисты) — и то и другое!
+window.smartRefreshCurrentPlaylistV150 = async function(ev, silentToast) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const tabId = window.activePlaylistTabV71 || 'all';
+    const cntEl = document.getElementById('tracksCount');
+    if (cntEl) cntEl.innerText = '⏳';
+
+    const isVideoTab = (tabId === 'videos');
+    const isMixedTab = (tabId === 'fav' || String(tabId).startsWith('pl_'));
+
+    try {
+        if (isVideoTab) {
+            await window.syncDiscoveredVideosIntoPlaylistV134(true);
+            window.renderPlaylistStripChipsV71();
+            window.renderActivePlaylistTracksV71(false);
+            const vCnt = window.getFilteredVideoItemsV150().length;
+            if (cntEl) cntEl.innerText = vCnt;
+            if (!silentToast && typeof window.showToast === 'function') {
+                window.showToast(`🔄 Видео обновлены: ${vCnt} шт. (по форматам Деки Б)`, ev);
+            }
+        } else if (isMixedTab) {
+            await Promise.all([
+                window.fetchData(),
+                window.syncDiscoveredVideosIntoPlaylistV134(true)
+            ]);
+            window.renderPlaylistStripChipsV71();
+            window.renderActivePlaylistTracksV71(false);
+            const mCnt = window.getTrackCountForTabV71(tabId);
+            if (cntEl) cntEl.innerText = mCnt;
+            if (!silentToast && typeof window.showToast === 'function') {
+                window.showToast(`🔄 Смешанный список обновлён (Аудио + Видео): ${mCnt} шт.`, ev);
+            }
+        } else {
+            await window.fetchData();
+            window.renderPlaylistStripChipsV71();
+            window.renderActivePlaylistTracksV71(false);
+            const aCnt = (window.viewedFullTabListV73 || []).length;
+            if (cntEl) cntEl.innerText = aCnt;
+            if (!silentToast && typeof window.showToast === 'function') {
+                window.showToast(`🔄 Аудио обновлено: ${aCnt} шт. (по форматам Деки А)`, ev);
+            }
+        }
+    } catch (e) {}
+};
+
+window.bindSmartRefreshBtnV150 = function() {
+    const cntEl = document.getElementById('tracksCount');
+    const btn = cntEl ? cntEl.closest('button') : null;
+    if (btn && !btn._smartRefreshBoundV150) {
+        btn._smartRefreshBoundV150 = true;
+        btn.onclick = (e) => window.smartRefreshCurrentPlaylistV150(e, false);
+    }
+};
+
+// 6. При выборе папки через системный проводник 📂 (onNativeFolderPicked) сразу обновляем и аудио, и видео,
+// и вновь открываем окно менеджера папок 📁, чтобы пользователь сразу увидел добавленную папку в списке!
+window._folderPickedFromManagerV150 = false;
+const _origTriggerSysPickerV62 = window.triggerSystemFolderPickerV62;
+window.triggerSystemFolderPickerV62 = function() {
+    window._folderPickedFromManagerV150 = true;
+    return _origTriggerSysPickerV62.apply(this, arguments);
+};
+
+window.onNativeFolderPicked = async function(folderPath) {
+    if (!folderPath) return;
+    try {
+        const res = await fetch('/api/folders_v71', {
+            method: 'POST',
+            body: JSON.stringify({ action: 'add', path: folderPath })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            await Promise.all([
+                window.fetchData(),
+                window.syncDiscoveredVideosIntoPlaylistV134(true)
+            ]);
+            window.renderPlaylistStripChipsV71();
+            window.renderActivePlaylistTracksV71(false);
+            let shortName = folderPath.split('/').filter(Boolean).pop() || folderPath;
+            if (typeof window.showToast === 'function') {
+                window.showToast('📁 Добавлена и включена папка: ' + shortName);
+            }
+            if (window._folderPickedFromManagerV150) {
+                window._folderPickedFromManagerV150 = false;
+                window.openFolderManagerModalV62();
+            }
+        }
+    } catch (e) {}
+};
+
+// Переопределяем toggleFolderActivePoolV71 и removeFolderFromPoolV71, чтобы переключение папок в 📁 сразу обновляло и видео тоже!
+window.toggleFolderActivePoolV71 = async function(fp, ev) {
+    const d = await (await fetch('/api/folders_v71', { method: 'POST', body: JSON.stringify({ action: 'toggle', path: fp }) })).json();
+    if (d.status === 'ok') {
+        await Promise.all([
+            window.fetchData(),
+            window.syncDiscoveredVideosIntoPlaylistV134(true)
+        ]);
+        window.renderPlaylistStripChipsV71();
+        window.renderActivePlaylistTracksV71(false);
+        window.openFolderManagerModalV62();
+    } else if (typeof window.showToast === 'function') {
+        window.showToast('❌ ' + (d.error || 'Ошибка'), ev);
+    }
+};
+
+window.removeFolderFromPoolV71 = async function(fp) {
+    const d = await (await fetch('/api/folders_v71', { method: 'POST', body: JSON.stringify({ action: 'remove', path: fp }) })).json();
+    if (d.status === 'ok') {
+        await Promise.all([
+            window.fetchData(),
+            window.syncDiscoveredVideosIntoPlaylistV134(true)
+        ]);
+        window.renderPlaylistStripChipsV71();
+        window.renderActivePlaylistTracksV71(false);
+        window.openFolderManagerModalV62();
+    }
+};
+
+setTimeout(() => {
+    window.ensureDualDeckFormatSlotsV150();
+    window.syncFormatSlotsUI();
+    window.bindSmartRefreshBtnV150();
+    window.syncDiscoveredVideosIntoPlaylistV134(true);
+}, 350);
+})();

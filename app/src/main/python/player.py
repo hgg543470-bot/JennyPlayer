@@ -535,7 +535,7 @@ def get_merged_track_tags_v74(filename, raw_info=None):
 # === JENNY V74 CUSTOM TAGS ENGINE END ===
 # === JENNY V71 BACKEND START ===
 ACTIVE_MUSIC_DIRS = [DEFAULT_MUSIC_DIR]
-SAVED_MUSIC_DIRS = ["/storage/emulated/0/Music", "/storage/emulated/0/Music/mp3_test", "/storage/emulated/0/Download"]
+SAVED_MUSIC_DIRS = ["/storage/emulated/0/Music", "/storage/emulated/0/JennyVideo", "/storage/emulated/0/Music/mp3_test", "/storage/emulated/0/Download"]
 TRACK_META_CACHE_V71 = {}
 
 def norm_dir_v71(p):
@@ -1079,7 +1079,7 @@ def get_allowed_extensions():
                     return tuple(exts)
         except Exception:
             pass
-    return ('.mp3', '.opus', '.m4a', '.flac', '.wav', '.xflac', '.ogg', '.mp4', '.aac', '.webm', '.3gp', '.mkv')
+    return ('.mp3', '.opus', '.m4a', '.flac', '.wav', '.xflac', '.ogg', '.mp4', '.aac', '.webm', '.3gp', '.mkv', '.avi', '.mov', '.m4v', '.flv')
 
 
 @route('/api/data')
@@ -3872,22 +3872,14 @@ def _migrate_videos_from_music_dir_v137():
         pass
 
 def _collect_video_scan_dirs_v137():
-    roots = [VIDEO_DIR_V137]
-    for extra in (
-        '/storage/emulated/0/Movies',
-        '/storage/emulated/0/Download',
-        '/data/user/0/com.jenny.player/files',
-        '/data/user/0/com.jenny.player/cache',
-        '/data/data/com.jenny.player/files',
-        '/data/data/com.jenny.player/cache',
-    ):
-        if os.path.isdir(extra) and extra not in roots:
-            roots.append(extra)
-    for k, v in list(globals().items()):
-        if isinstance(v, str) and ('/' in v) and any(w in k.lower() for w in ('dir', 'path', 'tor', 'dl', 'cache')):
-            d = v if os.path.isdir(v) else os.path.dirname(v)
-            if os.path.isdir(d) and d not in roots:
-                roots.append(d)
+    load_multi_dirs_v71()
+    roots = []
+    for d in list(ACTIVE_MUSIC_DIRS) + [VIDEO_DIR_V137]:
+        if d and os.path.isdir(d) and d not in roots:
+            roots.append(d)
+    tor_tmp = os.path.join(MUSIC_DIR, "torrents_tmp")
+    if os.path.isdir(tor_tmp) and tor_tmp not in roots:
+        roots.append(tor_tmp)
     return roots
 
 def sync_downloaded_videos_to_library_v134(force=False):
@@ -3896,6 +3888,9 @@ def sync_downloaded_videos_to_library_v134(force=False):
     if not force and (now - _last_vid_scan_ts_v136 < 2.0) and (_discovered_video_paths_v134 or _discovered_video_meta_v137):
         return list(_discovered_video_meta_v137.values())
     _last_vid_scan_ts_v136 = now
+    if force:
+        _discovered_video_paths_v134.clear()
+        _discovered_video_meta_v137.clear()
 
     _migrate_videos_from_music_dir_v137()
     scan_dirs = _collect_video_scan_dirs_v137()
@@ -3910,7 +3905,7 @@ def sync_downloaded_videos_to_library_v134(force=False):
                         full_p = os.path.join(r, fn)
                         try:
                             sz = os.path.getsize(full_p)
-                            if sz < 512 * 1024:
+                            if sz < 16 * 1024:
                                 continue
                         except Exception:
                             continue

@@ -557,7 +557,7 @@ public class MainActivity extends AppCompatActivity {
 
                 android.widget.Toast.makeText(
                     getApplicationContext(),
-                    "🔓 Включи «Отображение всплывающих окон» ➔ «Всегда разрешать»",
+                    "🔓 Разреши: Всплывающие окна ➔ Всегда",
                     android.widget.Toast.LENGTH_LONG
                 ).show();
 
