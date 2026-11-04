@@ -9390,11 +9390,21 @@ const pRange = item.endPiece > item.begPiece ? `🧩 #${item.begPiece}..#${item.
 const sUrl = `/api/torrent/stream/${item.hash}/${item.index}`;
 const playIcon = (window._torStreamBufferingUrlV129 === sUrl) ? '⏳' : (curPlayingPath === sUrl ? '⏹' : '▶');
 const stB = item.done ? `<span style="color:#3fb950;font-weight:bold;">✅ Готов (${totMb} МБ)</span>` : (item.isLead ? `<span style="color:#d2a8ff;font-weight:900;">🔥 КАЧАЕТСЯ: ${doneMb}/${totMb} МБ (${item.percent}%)</span>` : `<span>⏳ ${doneMb}/${totMb} МБ (${item.percent}%)</span>`);
-return `<div style="padding:7px 9px;border-radius:8px;border:1px solid ${item.isLead ? '#d2a8ff' : (item.done ? 'rgba(63,185,80,0.5)' : '#21262d')};background:linear-gradient(90deg, ${item.done ? 'rgba(63,185,80,0.22)' : 'rgba(137,87,229,0.28)'} ${item.percent}%, #0b0f16 ${item.percent}%);display:flex;align-items:center;gap:6px;">
+const cmpMap = window._p2pCompareStateV163 || {};
+const cmpKeyOrig = `${item.hash}_${item.index}_orig`;
+const cmpKeyWav = `${item.hash}_${item.index}_wav`;
+const stOrig = cmpMap[cmpKeyOrig] || '';
+const stWav = cmpMap[cmpKeyWav] || '';
+const safeTitleJs = String(item.title || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+const cmpRowHtml = item.done ? `<div style="width:100%;display:flex;gap:6px;margin-top:6px;padding-top:5px;border-top:1px dashed rgba(63,185,80,0.32);">
+<button type="button" onpointerdown="event.stopPropagation();window._torHubHoldRenderUntilV163=Date.now()+1800;" onclick="event.stopPropagation();window.addP2pCompareFileToPlayerV162('${safeTitleJs}','orig',this,'${item.hash}',${item.index})" style="flex:1;padding:5px 6px;font-size:10.5px;font-weight:bold;border-radius:6px;border:1px solid ${stOrig === 'done' ? '#3fb950' : '#a371f7'};background:${stOrig === 'done' ? 'rgba(63,185,80,0.22)' : 'rgba(163,113,247,0.18)'};color:${stOrig === 'done' ? '#3fb950' : '#d2a8ff'};cursor:pointer;touch-action:manipulation;">${stOrig === 'busy' ? '⏳ Добавляю...' : (stOrig === 'done' ? '✅ Ориг в плеере' : '📥 Добавить ориг')}</button>
+<button type="button" onpointerdown="event.stopPropagation();window._torHubHoldRenderUntilV163=Date.now()+1800;" onclick="event.stopPropagation();window.addP2pCompareFileToPlayerV162('${safeTitleJs}','wav',this,'${item.hash}',${item.index})" style="flex:1;padding:5px 6px;font-size:10.5px;font-weight:bold;border-radius:6px;border:1px solid ${stWav === 'done' ? '#3fb950' : '#e3b341'};background:${stWav === 'done' ? 'rgba(63,185,80,0.22)' : 'rgba(227,179,65,0.18)'};color:${stWav === 'done' ? '#3fb950' : '#f2cc60'};cursor:pointer;touch-action:manipulation;">${stWav === 'busy' ? '⏳ Конвертация...' : (stWav === 'done' ? '✅ WAV в плеере' : '💿 Добавить WAV')}</button>
+</div>` : '';
+return `<div style="padding:7px 9px;border-radius:8px;border:1px solid ${item.isLead ? '#d2a8ff' : (item.done ? 'rgba(63,185,80,0.5)' : '#21262d')};background:linear-gradient(90deg, ${item.done ? 'rgba(63,185,80,0.22)' : 'rgba(137,87,229,0.28)'} ${item.percent}%, #0b0f16 ${item.percent}%);display:flex;flex-wrap:wrap;align-items:center;gap:6px;">
 <div style="flex:1;min-width:0;"><div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${item.title}</div>
 <div style="font-size:10px;color:#8b949e;margin-top:2px;display:flex;gap:6px;">${stB}<span style="color:#58a6ff;cursor:pointer;" onclick="window.switchTorHubTabV128('pieces','${item.hash}');window.selectPieceOnMapV128('${item.hash}',${item.begPiece});">${pRange}</span></div></div>
 ${!item.done ? `<button type="button" onclick="window.controlTorrentJobV128('${item.hash}','boost_file',${item.index})" style="padding:4px 7px;font-size:10px;background:rgba(210,168,255,0.2);color:#d2a8ff;border:1px solid #d2a8ff;border-radius:6px;font-weight:bold;">⚡ Первым</button>` : ''}
-<button type="button" onclick="window._torStateV96.currentHash='${item.hash}';window.previewTorrentFileStreamV97(${item.index},this,event)" style="padding:4px 8px;font-size:10.5px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:6px;">${playIcon}</button></div>`;
+<button type="button" onclick="window._torStateV96.currentHash='${item.hash}';window.previewTorrentFileStreamV97(${item.index},this,event)" style="padding:4px 8px;font-size:10.5px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:6px;">${playIcon}</button>${cmpRowHtml}</div>`;
 }).join('');
 }
 } else if (activeTab === 'pieces') {
@@ -9438,6 +9448,7 @@ ${pieceDetailHtml}
 }
 }
 
+if (window._torHubHoldRenderUntilV163 && Date.now() < window._torHubHoldRenderUntilV163) { return; }
 scrollBody.innerHTML = bodyHtml;
 if (prevMainScroll > 0) scrollBody.scrollTop = prevMainScroll;
 const newGrid = document.getElementById('torHubPiecesGridBoxV129');
@@ -13291,113 +13302,82 @@ setTimeout(() => {
 }, 350);
 })();
 
-window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl) {
+window._p2pCompareStateV163 = window._p2pCompareStateV163 || {};
+
+window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, torHash, torIdx) {
     if (!trackName) return;
+    window._torHubHoldRenderUntilV163 = Date.now() + 2500;
+    const stateKey = (torHash !== undefined && torIdx !== undefined) ? `${torHash}_${torIdx}_${mode}` : `${trackName}_${mode}`;
+    if (window._p2pCompareStateV163[stateKey] === 'busy') return;
+    window._p2pCompareStateV163[stateKey] = 'busy';
+
     const origLabel = btnEl ? btnEl.innerHTML : '';
     if (btnEl) {
         btnEl.disabled = true;
-        btnEl.innerHTML = '⏳ Добавляю...';
-        btnEl.style.opacity = '0.7';
+        btnEl.innerHTML = (mode === 'wav') ? '⏳ Конвертация...' : '⏳ Добавляю...';
+        btnEl.style.opacity = '0.75';
     }
     try {
         const res = await fetch('/api/p2p/add_compare_file', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: trackName, mode: mode })
+            body: JSON.stringify({
+                name: trackName,
+                mode: mode,
+                hash: torHash || (window._torStateV96 && window._torStateV96.currentHash) || '',
+                index: (torIdx !== undefined) ? torIdx : -1
+            })
         });
         const data = await res.json();
+        window._torHubHoldRenderUntilV163 = 0;
         if (data && data.status === 'ok') {
+            window._p2pCompareStateV163[stateKey] = 'done';
             if (btnEl) {
+                btnEl.disabled = false;
                 btnEl.innerHTML = (mode === 'orig') ? '✅ Ориг в плеере' : '✅ WAV в плеере';
                 btnEl.style.borderColor = '#3fb950';
+                btnEl.style.background = 'rgba(63,185,80,0.22)';
                 btnEl.style.color = '#3fb950';
                 btnEl.style.opacity = '1';
             }
             if (typeof window.showToast === 'function') {
-                window.showToast('✅ Добавлен в плеер: ' + data.added_file);
+                window.showToast('✅ Добавлен в плеер: ' + data.added_file + (data.size_mb ? ' (' + data.size_mb + ' МБ)' : ''));
             }
-            if (typeof window.loadTracks === 'function') {
-                window.loadTracks();
+            if (typeof window.fetchData === 'function') {
+                await window.fetchData();
+            }
+            if (typeof window.renderPlaylistStripChipsV71 === 'function') {
+                window.renderPlaylistStripChipsV71();
+            }
+            if (typeof window.renderActivePlaylistTracksV71 === 'function') {
+                window.renderActivePlaylistTracksV71(false);
             }
         } else {
+            delete window._p2pCompareStateV163[stateKey];
             if (btnEl) {
                 btnEl.disabled = false;
-                btnEl.innerHTML = origLabel;
+                btnEl.innerHTML = origLabel || ((mode === 'orig') ? '📥 Добавить ориг' : '💿 Добавить WAV');
                 btnEl.style.opacity = '1';
             }
-            alert('Ошибка: ' + ((data && data.error) || 'Не удалось добавить файл'));
+            const errMsg = (data && data.error) || 'Не удалось добавить файл';
+            if (typeof window.showToast === 'function') {
+                window.showToast('❌ ' + errMsg);
+            } else {
+                alert('Ошибка: ' + errMsg);
+            }
         }
     } catch (e) {
+        window._torHubHoldRenderUntilV163 = 0;
+        delete window._p2pCompareStateV163[stateKey];
         if (btnEl) {
             btnEl.disabled = false;
-            btnEl.innerHTML = origLabel;
+            btnEl.innerHTML = origLabel || ((mode === 'orig') ? '📥 Добавить ориг' : '💿 Добавить WAV');
             btnEl.style.opacity = '1';
         }
-        alert('Ошибка сети: ' + e);
+        if (typeof window.showToast === 'function') {
+            window.showToast('❌ Ошибка сети: ' + e);
+        } else {
+            alert('Ошибка сети: ' + e);
+        }
     }
 };
-
-// Авто-инжектор кнопок «Добавить ориг» и «Добавить WAV» под строкой «Готов (...)» в Центре Закачек P2P
-window.injectP2pCompareButtonsObserverV162 = function() {
-    if (window._p2pCompareObserverV162) return;
-    const scanAndInject = () => {
-        // Ищем все карточки треков в модальном окне Центра закачек P2P, где есть статус «Готов»
-        document.querySelectorAll('div').forEach(card => {
-            if (card._hasCompareBtnsV162) return;
-            const txt = card.textContent || '';
-            if (!txt.includes('Готов (') || !txt.includes('#')) return;
-            // Проверяем, что это непосредственная карточка трека (содержит кнопку ▶ и всего 1-2 вложенных текстовых блока)
-            const playBtn = card.querySelector('button');
-            if (!playBtn) return;
-            const childDivs = card.querySelectorAll('div');
-            if (childDivs.length > 6) return;
-
-            // Извлекаем имя файла из первой строки карточки
-            let trackName = '';
-            const boldOrFirst = card.querySelector('div[style*="font-weight"], div[style*="color:#fff"], div[style*="color: #fff"]') || childDivs[0];
-            if (boldOrFirst) {
-                trackName = (boldOrFirst.textContent || '').trim().split('\n')[0].trim();
-            }
-            if (!trackName || trackName.includes('Готов (')) {
-                const lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
-                trackName = lines[0] || '';
-            }
-            if (!trackName || !trackName.includes('.')) return;
-
-            card._hasCompareBtnsV162 = true;
-            card.style.flexWrap = 'wrap';
-
-            const row = document.createElement('div');
-            row.className = 'p2p-compare-row-v162';
-            row.style.cssText = 'width:100%;display:flex;gap:6px;margin-top:6px;padding-top:5px;border-top:1px dashed rgba(63,185,80,0.28);';
-
-            const btnOrig = document.createElement('button');
-            btnOrig.type = 'button';
-            btnOrig.innerHTML = '📥 Добавить ориг';
-            btnOrig.style.cssText = 'flex:1;padding:4px 6px;font-size:10px;font-weight:bold;border-radius:6px;border:1px solid #a371f7;background:rgba(163,113,247,0.16);color:#d2a8ff;cursor:pointer;touch-action:manipulation;';
-            btnOrig.onclick = (ev) => {
-                ev.stopPropagation();
-                window.addP2pCompareFileToPlayerV162(trackName, 'orig', btnOrig);
-            };
-
-            const btnWav = document.createElement('button');
-            btnWav.type = 'button';
-            btnWav.innerHTML = '💿 Добавить WAV';
-            btnWav.style.cssText = 'flex:1;padding:4px 6px;font-size:10px;font-weight:bold;border-radius:6px;border:1px solid #e3b341;background:rgba(227,179,65,0.16);color:#f2cc60;cursor:pointer;touch-action:manipulation;';
-            btnWav.onclick = (ev) => {
-                ev.stopPropagation();
-                window.addP2pCompareFileToPlayerV162(trackName, 'wav', btnWav);
-            };
-
-            row.appendChild(btnOrig);
-            row.appendChild(btnWav);
-            card.appendChild(row);
-        });
-    };
-    window._p2pCompareObserverV162 = new MutationObserver(() => {
-        scanAndInject();
-    });
-    window._p2pCompareObserverV162.observe(document.body, { childList: true, subtree: true });
-    setInterval(scanAndInject, 600);
-};
-setTimeout(window.injectP2pCompareButtonsObserverV162, 300);

@@ -1,0 +1,32 @@
+[19:48:23 | +   0мс] ================================================================================
+[19:48:23 | +   0мс] 🔎 НОВЫЙ ПОИСК [2026-11-04 19:48:23.754] | Ввод пользователя: «Rage Against The Machine»
+[19:48:23 | +   0мс] ⚙️ Настройки: профиль=audio, формат=all, SoundCloud=true, скрывать 0 сидов=true, мин.порог=0.50
+[19:48:23 | +   1мс] 🦴 Функция phoneticSkeleton: звуковой скелет запроса «Rage Against The Machine» -> «rjknstmcn»
+[19:48:23 | +   1мс] 🗣️ Функция ruAngloPhoneticVariants: из «rage against the machine» построены фонетические варианты: [раге агаинст те мачине]
+[19:48:23 | +  27мс] 🧹 Функция rankAndFilter: из 0 уникальных раздач отрезано: [0 сидов: 0 шт., видео/книги: 0 шт., не тот аудиоформат: 0 шт., низкое сходство <0.50: 0 шт.] -> осталось 0 раздач
+[19:48:24 | + 298мс] ⚡ [Поток] Индексатор [Rutor] по «Rage Against The Machine» прислал 13 раздач (топ: «Rage Against The Machine - Дискография (1992-2000) MP3», ▲1)
+[19:48:24 | + 325мс] 🧹 Функция rankAndFilter: из 13 уникальных раздач отрезано: [0 сидов: 7 шт., видео/книги: 0 шт., не тот аудиоформат: 0 шт., низкое сходство <0.50: 0 шт.] -> осталось 6 раздач
+[19:48:24 | + 325мс] 📂 Категория #1 [primary_lossless]: «Rage Against The Machine — Альбомы и синглы в Lossless (FLAC / Hi-Res)» -> 4 раздач
+[19:48:24 | + 325мс] 📂 Категория #2 [primary_mp3_and_other]: «Rage Against The Machine — Отдельные релизы и MP3» -> 2 раздач
+[19:48:24 | + 426мс] ⚠️ Запрос к MusicBrainz с «раге агаинст те мачине» -> ошибка соединения: Get "https://musicbrainz.org/ws/2/artist/?query=%D1%80%D0%B0%D0%B3%D0%B5+%D0%B0%D0%B3%D0%B0%D0%B8%D0%BD%D1%81%D1%82+%D1%82%D0%B5+%D0%BC%D0%B0%D1%87%D0%B8%D0%BD%D0%B5&fmt=json&limit=5": tls: failed to verify certificate: x509: certificate signed by unknown authority
+[19:48:24 | + 426мс] ⚠️ Запрос к MusicBrainz с «Rage Against The Machine» -> ошибка соединения: Get "https://musicbrainz.org/ws/2/artist/?query=Rage+Against+The+Machine&fmt=json&limit=5": tls: failed to verify certificate: x509: certificate signed by unknown authority
+[19:48:24 | + 551мс] ⚠️ Запрос к Google Suggest (en) с «Rage Against The Machine» -> ошибка сети: Get "https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=en&q=Rage+Against+The+Machine": tls: failed to verify certificate: x509: certificate signed by unknown authority
+[19:48:24 | + 555мс] ⚠️ Запрос к Google Suggest (ru) с «Rage Against The Machine» -> ошибка сети: Get "https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=ru&q=Rage+Against+The+Machine": tls: failed to verify certificate: x509: certificate signed by unknown authority
+[19:48:24 | + 556мс] ⚠️ Запрос к Google Suggest (en) с «раге агаинст те мачине» -> ошибка сети: Get "https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&hl=en&q=%D1%80%D0%B0%D0%B3%D0%B5+%D0%B0%D0%B3%D0%B0%D0%B8%D0%BD%D1%81%D1%82+%D1%82%D0%B5+%D0%BC%D0%B0%D1%87%D0%B8%D0%BD%D0%B5": tls: failed to verify certificate: x509: certificate signed by unknown authority
+[19:48:24 | + 698мс] 🧹 Функция rankAndFilter: из 13 уникальных раздач отрезано: [0 сидов: 7 шт., видео/книги: 0 шт., не тот аудиоформат: 0 шт., низкое сходство <0.50: 0 шт.] -> осталось 6 раздач
+[19:48:24 | + 699мс] 📂 Категория #1 [primary_lossless]: «Rage Against The Machine — Альбомы и синглы в Lossless (FLAC / Hi-Res)» -> 4 раздач
+[19:48:24 | + 699мс] 📂 Категория #2 [primary_mp3_and_other]: «Rage Against The Machine — Отдельные релизы и MP3» -> 2 раздач
+[19:48:24 | + 714мс] 🧮 Распределение 20 слотов: SoundCloud (Ступень 1) = 0 слотов, Остальные алгоритмы (Ступени 2..5) = 2 слотов (всего: 2)
+[19:48:24 | + 714мс] 🪜 Ступенчатая лестница итоговых запросов (топ-2):
+[19:48:24 | + 714мс]    • #01 [Ступень 4 | 0.89] «раге агаинст те мачине» (собственный алгоритм дифтонгов/фонетики ядра)
+[19:48:24 | + 714мс]    • #02 [Ступень 5 | 0.80] «Rage Against The Machine» (исходный запрос пользователя)
+[19:48:24 | + 740мс] 🧹 Функция rankAndFilter: из 13 уникальных раздач отрезано: [0 сидов: 7 шт., видео/книги: 0 шт., не тот аудиоформат: 0 шт., низкое сходство <0.50: 0 шт.] -> осталось 6 раздач
+[19:48:24 | + 740мс] 📂 Категория #1 [primary_lossless]: «Rage Against The Machine — Альбомы и синглы в Lossless (FLAC / Hi-Res)» -> 4 раздач
+[19:48:24 | + 740мс] 📂 Категория #2 [primary_mp3_and_other]: «Rage Against The Machine — Отдельные релизы и MP3» -> 2 раздач
+[19:48:24 | + 776мс] 🧹 Функция rankAndFilter: из 13 уникальных раздач отрезано: [0 сидов: 7 шт., видео/книги: 0 шт., не тот аудиоформат: 0 шт., низкое сходство <0.50: 0 шт.] -> осталось 6 раздач
+[19:48:24 | + 777мс] 📂 Категория #1 [primary_lossless]: «Rage Against The Machine — Альбомы и синглы в Lossless (FLAC / Hi-Res)» -> 4 раздач
+[19:48:24 | + 777мс] 📂 Категория #2 [primary_mp3_and_other]: «Rage Against The Machine — Отдельные релизы и MP3» -> 2 раздач
+[19:48:24 | +1010мс] 🧹 Функция rankAndFilter: из 13 уникальных раздач отрезано: [0 сидов: 7 шт., видео/книги: 0 шт., не тот аудиоформат: 0 шт., низкое сходство <0.50: 0 шт.] -> осталось 6 раздач
+[19:48:24 | +1010мс] 📂 Категория #1 [primary_lossless]: «Rage Against The Machine — Альбомы и синглы в Lossless (FLAC / Hi-Res)» -> 4 раздач
+[19:48:24 | +1010мс] 📂 Категория #2 [primary_mp3_and_other]: «Rage Against The Machine — Отдельные релизы и MP3» -> 2 раздач
+[19:48:24 | +1010мс] 🏁 Все индексаторы завершили работу за 1010 мс (итого раздач: 6)

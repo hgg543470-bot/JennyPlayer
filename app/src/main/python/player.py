@@ -4891,6 +4891,131 @@ def _ensure_torrent_registered_in_daemon_v145(h: str, magnet_hint: str = ""):
     except Exception:
         pass
 
+
+
+# === 📥💿 JENNY V163: ДОБАВЛЕНИЕ ОРИГИНАЛА И WAV ИЗ ЦЕНТРА ЗАКАЧЕК P2P В ПЛЕЕР ===
+_P2P_COMPARE_ADDED_V163 = {}  # key -> {"orig": filename, "wav": filename}
+
+def _locate_downloaded_p2p_file_v163(target_name: str, target_hash: str = "", target_idx: int = -1):
+    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    target_base = os.path.basename((target_name or "").strip())
+    h_low = (target_hash or "").strip().lower()
+
+    # 1. Ищем через живой статус демона jtorrent
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=2.0) as r:
+            st = json.loads(r.read().decode("utf-8", "ignore"))
+            for tor in (st.get("torrents") or []):
+                th = (tor.get("hash") or "").strip().lower()
+                if h_low and th != h_low:
+                    continue
+                t_name = (tor.get("name") or "Torrent").strip()
+                for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                    f_idx = int(fobj.get("index", -1))
+                    f_path = (fobj.get("full_path") or fobj.get("path") or "").strip()
+                    f_base = os.path.basename(f_path)
+                    if (target_idx >= 0 and f_idx == target_idx) or (target_base and f_base.lower() == target_base.lower()):
+                        cands = [f_path, os.path.join(tor_dir, f_path.lstrip("/")), os.path.join(tor_dir, f_base)]
+                        for c in cands:
+                            if c and os.path.isfile(c):
+                                return c, t_name, th, f_idx
+    except Exception:
+        pass
+
+    # 2. Фоллбэк: рекурсивный обход папки torrents_tmp и MUSIC_DIR по имени файла
+    if target_base:
+        for search_root in (tor_dir, MUSIC_DIR):
+            if os.path.isdir(search_root):
+                for root_w, _, files_w in os.walk(search_root):
+                    for fn_w in files_w:
+                        if fn_w.lower() == target_base.lower():
+                            full_cand = os.path.join(root_w, fn_w)
+                            if os.path.isfile(full_cand):
+                                return full_cand, "Torrent P2P", h_low, target_idx
+
+    return "", "Torrent P2P", h_low, target_idx
+
+
+@post('/api/p2p/add_compare_file')
+def api_p2p_add_compare_file_v163():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        track_name = (req.get("name") or "").strip()
+        mode = (req.get("mode") or "orig").strip().lower()
+        t_hash = (req.get("hash") or "").strip().lower()
+        t_idx = int(req.get("index", -1)) if req.get("index") is not None and str(req.get("index")).lstrip("-").isdigit() else -1
+
+        src_path, tor_name, resolved_hash, resolved_idx = _locate_downloaded_p2p_file_v163(track_name, t_hash, t_idx)
+        if not src_path or not os.path.isfile(src_path):
+            return json.dumps({"status": "error", "error": f"Исходный файл «{track_name}» не найден в кэше торрента (возможно, ещё докачивается)"}, ensure_ascii=False)
+
+        load_multi_dirs_v71()
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        orig_basename = os.path.basename(src_path)
+        stem, ext = os.path.splitext(orig_basename)
+        if not ext:
+            ext = ".flac"
+
+        if mode == "orig":
+            # Сохраняем оригинал (.flac / .mp3 / .m4a / .ogg) в MUSIC_DIR без перезаписи .xflac
+            final_name = orig_basename
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            if os.path.abspath(src_path) != os.path.abspath(final_path):
+                try:
+                    if os.path.exists(final_path):
+                        os.remove(final_path)
+                    os.link(src_path, final_path)
+                except Exception:
+                    shutil.copy2(src_path, final_path)
+            tag_title = f"{stem} [ORIG {ext.upper().lstrip('.')}]"
+        elif mode == "wav":
+            # Конвертируем через FFmpeg в честный несжатый PCM WAV (16-bit / 44.1 kHz или исходная частота)
+            final_name = f"{stem}_compare.wav"
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            tmp_wav = os.path.join(MUSIC_DIR, f"temp_cmp_wav_{os.getpid()}_{threading.get_ident()}.wav")
+            try:
+                proc = subprocess.run(
+                    [find_ffmpeg_binary(), '-y', '-i', src_path, '-vn', '-c:a', 'pcm_s16le', tmp_wav],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120
+                )
+                if not os.path.isfile(tmp_wav) or os.path.getsize(tmp_wav) < 1024:
+                    return json.dumps({"status": "error", "error": "FFmpeg не смог распаковать файл в WAV"}, ensure_ascii=False)
+                shutil.move(tmp_wav, final_path)
+            finally:
+                if os.path.exists(tmp_wav):
+                    try:
+                        os.remove(tmp_wav)
+                    except Exception:
+                        pass
+            tag_title = f"{stem} [WAV PCM]"
+        else:
+            return json.dumps({"status": "error", "error": f"Неизвестный режим: {mode}"}, ensure_ascii=False)
+
+        # Прописываем теги и сбрасываем кэш метаданных, чтобы файл мгновенно появился в списке плеера
+        db = load_custom_tags_db_v74()
+        db[final_name] = {
+            "TITLE": tag_title,
+            "ARTIST": tor_name[:40],
+            "ALBUM": tor_name[:50],
+            "GENRE": "P2P Compare"
+        }
+        save_custom_tags_db_v74(db)
+        TRACK_META_CACHE_V71.pop(final_path, None)
+
+        cmp_key = f"{resolved_hash}_{resolved_idx}" if (resolved_hash and resolved_idx >= 0) else orig_basename.lower()
+        _P2P_COMPARE_ADDED_V163.setdefault(cmp_key, {})[mode] = final_name
+
+        sz_mb = round(os.path.getsize(final_path) / (1024.0 * 1024.0), 2)
+        return json.dumps({
+            "status": "ok",
+            "added_file": final_name,
+            "mode": mode,
+            "size_mb": sz_mb
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
 def start_server():
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
