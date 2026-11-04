@@ -44,6 +44,7 @@ public class MainActivity extends AppCompatActivity {
     private static boolean isVideoLockedV132 = false;
     private static boolean isVideoActiveV132 = false;
     private static boolean isDesktopOverlayActiveV132 = false;
+    private static boolean isOpeningSettingsV146 = false;
     private static int savedOverlayW = 0;
     private static int savedOverlayH = 0;
     private static int savedOverlayX = 24;
@@ -430,6 +431,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
+        if (isOpeningSettingsV146) {
+            return;
+        }
         if (isVideoActiveV132 && !isDesktopOverlayActiveV132) {
             enterDesktopOverlayInternalV133();
         }
@@ -441,6 +445,13 @@ public class MainActivity extends AppCompatActivity {
             try {
                 boolean wasOverlay = isDesktopOverlayActiveV132;
                 isDesktopOverlayActiveV132 = false;
+                if (!wasOverlay && overlayContainerV132 == null) {
+                    if (webView != null) {
+                        webView.onResume();
+                        webView.resumeTimers();
+                    }
+                    return;
+                }
                 if (overlayContainerV132 != null) {
                     overlayContainerV132.removeAllViews();
                     if (wmV132 != null) {
@@ -567,12 +578,58 @@ public class MainActivity extends AppCompatActivity {
         public void requestOverlayPermission() {
             runOnUiThread(() -> {
                 try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:" + getPackageName()));
-                        startActivity(intent);
+                    isOpeningSettingsV146 = true;
+                    try {
+                        android.view.Window win = getWindow();
+                        if (win != null) {
+                            win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                            win.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+                        }
+                    } catch (Exception ignored) {}
+
+                    String pkg = getPackageName();
+                    boolean launched = false;
+
+                    String[] miuiClasses = new String[]{
+                        "com.miui.permcenter.permissions.PermissionsEditorActivity",
+                        "com.miui.permcenter.permissions.AppPermissionsEditorActivity"
+                    };
+                    for (String cls : miuiClasses) {
+                        try {
+                            Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
+                            miuiIntent.setClassName("com.miui.securitycenter", cls);
+                            miuiIntent.putExtra("extra_pkgname", pkg);
+                            startActivity(miuiIntent);
+                            launched = true;
+                            break;
+                        } catch (Exception ignored) {}
+                    }
+
+                    if (!launched) {
+                        try {
+                            Intent miuiImplicit = new Intent("miui.intent.action.APP_PERM_EDITOR");
+                            miuiImplicit.putExtra("extra_pkgname", pkg);
+                            startActivity(miuiImplicit);
+                            launched = true;
+                        } catch (Exception ignored) {}
+                    }
+
+                    if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        try {
+                            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:" + pkg));
+                            startActivity(intent);
+                            launched = true;
+                        } catch (Exception ignored) {}
+                    }
+
+                    if (!launched) {
+                        Intent appDetails = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:" + pkg));
+                        startActivity(appDetails);
                     }
                 } catch (Exception e) {
+                    isOpeningSettingsV146 = false;
                     e.printStackTrace();
                 }
             });
@@ -792,7 +849,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        boolean wasPermSettings = isOpeningSettingsV146;
+        isOpeningSettingsV146 = false;
         restoreWebViewToActivityV135(false);
+        if (wasPermSettings && webView != null) {
+            final boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(this);
+            webView.postDelayed(() -> {
+                evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(" + granted + ");");
+                if (isVideoFullscreenV132 || isVideoLockedV132) {
+                    applyVideoSystemUiLockV132();
+                }
+            }, 180);
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
             startPythonServer();
         }
