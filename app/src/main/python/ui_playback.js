@@ -382,6 +382,7 @@ window.playTrack = async function(filename, listContext = 'main') {
                     throw new Error(errTxt);
                 }
                 const blob = await response.blob();
+                if (window.currentPlayingTrack !== filename) return;
                 const blobUrl = URL.createObjectURL(blob);
                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
                 if (player) {
