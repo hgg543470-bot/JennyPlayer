@@ -3411,6 +3411,8 @@ def api_torrent_import_track_v105():
 def api_torrent_stream_proxy_v97(hash_str, file_idx):
     ensure_jtorrent_daemon_v96()
     h_low = hash_str.strip().lower()
+    if '_ensure_torrent_registered_in_daemon_v145' in globals():
+        _ensure_torrent_registered_in_daemon_v145(h_low)
     # Добавляем прослушиваемый файл к уже качающемуся списку, НЕ отменяя загрузку остальных выбранных треков!
     cur_set = set(_JTORRENT_ACTIVE_FILES_V106.get(h_low, set()))
     _STREAM_ONLY_ACTIVE_V143.setdefault(h_low, set()).add(int(file_idx))
@@ -3537,6 +3539,8 @@ def api_torrent_download_v127():
   h = (req_obj.get("hash") or "").strip().lower()
   flist = [int(x) for x in (req_obj.get("files") or [])]
   if h:
+   if '_ensure_torrent_registered_in_daemon_v145' in globals():
+    _ensure_torrent_registered_in_daemon_v145(h, str(req_obj.get('magnet') or ''))
    _JTORRENT_ACTIVE_FILES_V106[h] = set(flist)
    if req_obj.get("explicit", True):
     _register_explicit_download_v143(h, flist, torrent_path=os.path.join(MUSIC_DIR, "torrents_tmp", f"{h}.torrent"))
@@ -3559,7 +3563,7 @@ def api_torrent_download_v127():
 
 
 # === 🧩 JENNY V128 + V142: TORRENT CONTROL ROUTE WITH PHYSICAL FILE DELETION ===
-def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = False) -> float:
+def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = False, keep_torrent_meta: bool = False) -> float:
     freed_bytes = 0
     h = (target_hash or "").strip().lower()
     tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
@@ -3613,7 +3617,8 @@ def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = Fals
     else:
         if h:
             _JTORRENT_ACTIVE_FILES_V106.pop(h, None)
-            _rm_item(os.path.join(tor_dir, f"{h}.torrent"))
+            if not keep_torrent_meta:
+                _rm_item(os.path.join(tor_dir, f"{h}.torrent"))
         for fp in target_paths:
             if os.path.isabs(fp) and os.path.exists(fp):
                 _rm_item(fp)
@@ -3623,6 +3628,8 @@ def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = Fals
                     _rm_item(cand)
         if os.path.isdir(tor_dir):
             for entry in os.listdir(tor_dir):
+                if keep_torrent_meta and entry.lower() == f"{h}.torrent":
+                    continue
                 if (h and h in entry.lower()) or (entry in target_names):
                     _rm_item(os.path.join(tor_dir, entry))
 
@@ -3675,7 +3682,7 @@ def api_torrent_control_v128():
         if act == "drop" and h:
             if '_remove_persisted_dl_v143' in globals():
                 _remove_persisted_dl_v143(h, nuke_all=False)
-            freed_mb = _delete_torrent_files_from_disk_v142(h, nuke_all=False)
+            freed_mb = _delete_torrent_files_from_disk_v142(h, nuke_all=False, keep_torrent_meta=True)
         elif act == "stop_or_pause" and h:
             # Если раздача была запущена только для потока (▶), останавливаем и чистим её кэш; если качалась (⬇️) — ставим на паузу без удаления кэша!
             st_dl = _load_persisted_dl_state_v143() if '_load_persisted_dl_state_v143' in globals() else {}
@@ -4605,6 +4612,43 @@ def _startup_resume_downloads_and_clean_streams_v143():
             pass
 
 threading.Thread(target=_startup_resume_downloads_and_clean_streams_v143, daemon=True).start()
+
+
+def _ensure_torrent_registered_in_daemon_v145(h: str, magnet_hint: str = ""):
+    h = (h or "").strip().lower()
+    if not h:
+        return
+    ensure_jtorrent_daemon_v96()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.0) as r:
+            st = json.loads(r.read().decode("utf-8", "ignore"))
+            for tor in (st.get("torrents") or []):
+                if (tor.get("hash") or "").strip().lower() == h:
+                    if (tor.get("num_pieces") or 0) > 0 or len(tor.get("all_files") or tor.get("files") or []) > 0:
+                        return
+    except Exception:
+        pass
+
+    cached_trs, _, _ = _load_trackers_state_v110()
+    tor_file = os.path.join(MUSIC_DIR, "torrents_tmp", f"{h}.torrent")
+    meta = _KNOWN_TORRENT_META_V143.get(h, {}) if "_KNOWN_TORRENT_META_V143" in globals() else {}
+    mag = magnet_hint or meta.get("magnet") or f"magnet:?xt=urn:btih:{h}"
+
+    add_payload = {"trackers": list(cached_trs or [])}
+    if os.path.isfile(tor_file):
+        add_payload["torrent_path"] = tor_file
+    else:
+        add_payload["magnet"] = enrich_magnet_with_cached_trackers_v109(mag)
+
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add",
+            data=json.dumps(add_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        urllib.request.urlopen(req, timeout=18).read()
+    except Exception:
+        pass
 
 def start_server():
     load_saved_music_dir()

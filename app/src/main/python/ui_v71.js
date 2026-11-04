@@ -12409,3 +12409,144 @@ if (!document.getElementById(styleId)) {
     document.head.appendChild(st);
 }
 })();
+
+// === 🛠️🎯 JENNY V145: FIX STREAM SELF-KILL, FOOTER 2-ROW LAYOUT, MINI-PLAYER TITLE & PIP BOUNDS ===
+(function() {
+// 1. CSS: Запрещаем посимвольный перенос внутри кнопок (чтобы "Качать выбранные" не плющило в столбик "Ка-ча")
+// и делаем название трека в мини-плеере на всю ширину верхней строкой!
+const styleId = 'jennyV145LayoutFixes';
+if (!document.getElementById(styleId)) {
+    const st = document.createElement('style');
+    st.id = styleId;
+    st.textContent = `
+        #jennyTorrentModalV91 button,
+        #jennyTorInspectorModalV128 button,
+        #jennySoundCloudModalV93 button,
+        #jennyKhinsiderModalV88 button,
+        #jennyFlacRadioModalV91 button {
+            overflow-wrap: normal !important;
+            word-break: normal !important;
+            white-space: nowrap !important;
+        }
+        /* В мини-плеере переносим название трека на отдельную полную строку сверху, а кнопки — справа снизу */
+        .jenny-univ-mini-player-v98 > div:first-child {
+            flex-wrap: wrap !important;
+            row-gap: 4px !important;
+        }
+        .jenny-univ-mini-player-v98 .ump-title {
+            flex: 1 1 100% !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            white-space: normal !important;
+            overflow-wrap: break-word !important;
+            word-break: break-word !important;
+            line-height: 1.3 !important;
+            margin-bottom: 2px !important;
+        }
+    `;
+    document.head.appendChild(st);
+}
+
+// 2. Убираем самосброс потока при вызове previewTorrentFileStreamV97:
+// Пока идет запуск или авто-повтор (attempt 1..6) потока ▶, stopAllExternalStreamsV97 НЕ должна убивать раздачу в демоне!
+window._startingTorStreamLockV145 = false;
+
+const _prevCleanupStreamV143 = window.cleanupActiveTorrentStreamV143;
+window.cleanupActiveTorrentStreamV143 = async function(reason) {
+    if (window._startingTorStreamLockV145 && reason === 'stop') {
+        return;
+    }
+    return await _prevCleanupStreamV143.apply(this, arguments);
+};
+
+// Переопределяем previewTorrentFileStreamV97 с защитой _startingTorStreamLockV145 и передачей magnet для реанимации после 🗑️
+const _basePreviewStreamV129 = window._origPreviewStreamV143 || window.previewTorrentFileStreamV97;
+window.previewTorrentFileStreamV97 = async function(fileIdx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const ts = window._torStateV96 || {};
+    const h = ts.currentHash || '';
+    const prevSess = window._activeStreamSessionV143;
+
+    // Если раньше играл поток из ДРУГОЙ раздачи — чистим старую раздачу, но если та же самая раздача — НЕ трогаем демон!
+    if (prevSess && prevSess.hash && prevSess.hash !== h) {
+        await window.cleanupActiveTorrentStreamV143('switch_torrent');
+    }
+
+    window._startingTorStreamLockV145 = true;
+    window._activeStreamSessionV143 = h ? { hash: h, fileIdx: Number(fileIdx) } : null;
+    try {
+        return await _basePreviewStreamV129.apply(this, arguments);
+    } finally {
+        setTimeout(() => { window._startingTorStreamLockV145 = false; }, 400);
+    }
+};
+
+// 3. При нажатии ⬇️ (одиночной или нижней кнопки) передаем также сохраненный magnet раздачи,
+// чтобы даже после нажатия 🗑️ раздача мгновенно оживала в демоне без ошибки 0/0!
+const _prevSingleDlV143 = window.downloadSingleTorrentTrackV98;
+window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
+    const h = window._torStateV96 && window._torStateV96.currentHash;
+    const job = h && window._torMapV112 ? window._torMapV112[h] : null;
+    if (job && job.magnet) {
+        fetch('/api/torrent/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: job.hash, magnet: job.magnet, files: [Number(fileIdx)], explicit: true })
+        }).catch(() => {});
+    }
+    return await _prevSingleDlV143.apply(this, arguments);
+};
+
+// 4. Аккуратная 2-рядная нижняя панель #torFooterBarV96 в Торрент-студии (ни одна кнопка не плющится!)
+const _prevRenderTorFilesV143 = window.renderTorrentFilesListV96;
+window.renderTorrentFilesListV96 = function() {
+    _prevRenderTorFilesV143.apply(this, arguments);
+    const ftr = document.getElementById('torFooterBarV96');
+    if (!ftr) return;
+
+    const hasLossless = window.torrentHasLosslessFilesV106 ? window.torrentHasLosslessFilesV106() : false;
+    const selSet = window.getActiveTorrentSelectSetV117 ? window.getActiveTorrentSelectSetV117() : new Set();
+    const hasSel = selSet.size > 0;
+
+    ftr.style.cssText = 'display:flex;flex-direction:column;padding:8px 12px;border-top:1px solid #21262d;background:#090c10;gap:6px;';
+    ftr.innerHTML = `
+        <div id="torXflacProgWrapV99" style="display:none;flex-direction:column;gap:2px;width:100%;">
+            <div id="torXflacProgLabelV99" style="font-size:10px;color:#3fb950;font-weight:bold;">🧬 Пережатие в xFLAC: 0%</div>
+            <div style="width:100%;height:7px;background:#161b22;border-radius:6px;overflow:hidden;border:1px solid #3fb950;">
+                <div id="torXflacProgFillV99" style="width:0%;height:100%;background:linear-gradient(90deg,#3fb950,#58a6ff);transition:width 0.2s ease;"></div>
+            </div>
+        </div>
+        <div id="torTotalProgWrapV97" style="display:none;width:100%;height:8px;background:#161b22;border-radius:6px;overflow:hidden;border:1px solid #30363d;">
+            <div id="torTotalProgFillV97" style="width:0%;height:100%;background:linear-gradient(90deg,#8957e5,#3fb950);transition:width 0.3s ease;"></div>
+        </div>
+        <div style="display:flex;gap:6px;width:100%;align-items:center;">
+            <button type="button" onclick="window.backToTorrentSearchListV97()" style="flex:1;padding:7px 8px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:8px;font-weight:bold;font-size:11px;">⬅ Раздачи</button>
+            <button type="button" id="btnTorToggleAllV117" onclick="window.toggleSelectAllTorrentFilesV117(event)" style="flex:1;padding:7px 8px;background:${hasSel ? '#161b22' : 'rgba(63,185,80,0.16)'};color:${hasSel ? '#8b949e' : '#3fb950'};border:1px solid ${hasSel ? '#30363d' : '#3fb950'};border-radius:8px;font-weight:bold;font-size:11px;">${hasSel ? '☐ Снять все' : '☑️ Выбрать все'}</button>
+            <button type="button" id="btnTorStopStreamOrDlV143" onclick="window.stopCurrentOpenTorrentV143()" style="padding:7px 10px;background:#161b22;color:#e3b341;border:1px solid #e3b341;border-radius:8px;font-weight:bold;font-size:11px;">⏹ Стоп</button>
+            <button type="button" id="btnTorDeleteFullV143" onclick="window.deleteCurrentOpenTorrentV143()" style="padding:7px 10px;background:rgba(248,81,73,0.16);color:#ff7b72;border:1px solid #f85149;border-radius:8px;font-weight:bold;font-size:11px;">🗑️</button>
+        </div>
+        <button type="button" id="btnTorStartDlV97" onclick="window.startSelectedTorrentDownloadV96()" style="width:100%;padding:9px 12px;background:linear-gradient(135deg,#8957e5,#238636);color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:12px;">
+            ${hasLossless ? '⬇️ Качать выбранные (➔ xFLAC)' : '⬇️ Качать выбранные в плеер (Прямой формат)'}
+        </button>
+    `;
+};
+
+// 5. Возвращаем на экран мини-окно видеоплеера (PiP), если его утащили за правый/нижний край экрана (00:29 на видео)
+window.clampPipVideoInsideScreenV145 = function() {
+    const root = document.getElementById('jennyVideoStudioRootV130');
+    const st = window._vidStateV130;
+    if (!root || !st || !st.active || !st.pipMode || st.desktopOverlay) return;
+    const r = root.getBoundingClientRect();
+    const W = window.innerWidth || 360;
+    const H = window.innerHeight || 740;
+    let curL = r.left;
+    let curT = r.top;
+    const maxL = Math.max(4, W - Math.min(r.width, 280) - 4);
+    const maxT = Math.max(4, H - Math.min(r.height, 170) - 4);
+    if (curL < 4 || curL > maxL || curT < 4 || curT > maxT) {
+        root.style.left = Math.max(4, Math.min(maxL, curL)) + 'px';
+        root.style.top = Math.max(4, Math.min(maxT, curT)) + 'px';
+    }
+};
+setInterval(window.clampPipVideoInsideScreenV145, 800);
+})();
