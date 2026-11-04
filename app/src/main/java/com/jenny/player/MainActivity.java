@@ -35,6 +35,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_PERM_NOTIF = 2;
     private static final int REQ_PICK_FOLDER = 42;
     private static final int REQ_PICK_TORRENT = 43;
+    private static final int REQ_OVERLAY_PERM = 44;
     private static MainActivity instance;
     private static WebView webView;
     private static boolean isPageLoaded = false;
@@ -475,10 +476,18 @@ public class MainActivity extends AppCompatActivity {
                     stopOverlayPermWatcherV147();
                     isOpeningSettingsV146 = false;
                     waitingForPermScreenV148 = false;
+                    // Принудительно закрываем открытое системное окно разрешений («как будто смахнул»)
+                    try {
+                        finishActivity(REQ_OVERLAY_PERM);
+                    } catch (Exception ignored) {}
+
                     if (pendingOverlayAfterGrantV147 && isVideoActiveV132) {
                         pendingOverlayAfterGrantV147 = false;
                         enterDesktopOverlayInternalV133();
                         evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
+                        try {
+                            moveTaskToBack(true);
+                        } catch (Exception ignored) {}
                         try {
                             Intent home = new Intent(Intent.ACTION_MAIN);
                             home.addCategory(Intent.CATEGORY_HOME);
@@ -488,52 +497,69 @@ public class MainActivity extends AppCompatActivity {
                     }
                     return;
                 }
-                if (permWatchTicksV147 < 240) {
-                    permWatchHandlerV147.postDelayed(this, 250);
+                if (permWatchTicksV147 < 500) {
+                    permWatchHandlerV147.postDelayed(this, 120);
                 }
             }
         };
-        permWatchHandlerV147.postDelayed(permWatchRunnableV147, 250);
+        permWatchHandlerV147.postDelayed(permWatchRunnableV147, 120);
+    }
+
+    private Intent attachAutoScrollAndSelfCloseFlagsV151(Intent intent, String pkg) {
+        int flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                | Intent.FLAG_ACTIVITY_NO_HISTORY
+                | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
+        intent.addFlags(flags);
+
+        Bundle showArgs = new Bundle();
+        showArgs.putString(":settings:fragment_args_key", pkg);
+        showArgs.putString("package", pkg);
+        showArgs.putString("app_package", pkg);
+        showArgs.putString("extra_pkgname", pkg);
+
+        intent.putExtra(":settings:fragment_args_key", pkg);
+        intent.putExtra(":settings:show_fragment_args", showArgs);
+        intent.putExtra(":settings:show_fragment_as_subsetting", true);
+        intent.putExtra("package", pkg);
+        intent.putExtra("app_package", pkg);
+        intent.putExtra("extra_pkgname", pkg);
+        intent.putExtra("android.provider.extra.APP_PACKAGE", pkg);
+        return intent;
     }
 
     private void openMiuiOrSystemOverlayWindowV148() {
         try {
             String pkg = getPackageName();
+            Uri pkgUri = Uri.parse("package:" + pkg);
             boolean launched = false;
 
+            // Шаг 1: Прямой пробой старого системного окна Android с одним тумблером (DrawOverlayDetails)
             try {
-                Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
-                miuiIntent.setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity");
-                miuiIntent.putExtra("extra_pkgname", pkg);
-                miuiIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                startActivity(miuiIntent);
+                Intent directSingle = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
+                directSingle.setClassName("com.android.settings", "com.android.settings.Settings$AppDrawOverlaySettingsActivity");
+                attachAutoScrollAndSelfCloseFlagsV151(directSingle, pkg);
+                startActivityForResult(directSingle, REQ_OVERLAY_PERM);
                 launched = true;
             } catch (Exception ignored) {}
 
-            if (!launched) {
-                try {
-                    Intent miuiIntent2 = new Intent("miui.intent.action.APP_PERM_EDITOR");
-                    miuiIntent2.setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.AppPermissionsEditorActivity");
-                    miuiIntent2.putExtra("extra_pkgname", pkg);
-                    miuiIntent2.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                    startActivity(miuiIntent2);
-                    launched = true;
-                } catch (Exception ignored) {}
-            }
-
+            // Шаг 2: Стандартное системное окно Поверх других приложений с автопрокруткой и подсветкой курсора на Jenny Player
             if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 try {
-                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + pkg));
-                    startActivity(intent);
+                    Intent stdList = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
+                    attachAutoScrollAndSelfCloseFlagsV151(stdList, pkg);
+                    startActivityForResult(stdList, REQ_OVERLAY_PERM);
                     launched = true;
                 } catch (Exception ignored) {}
             }
 
+            // Шаг 3: Резервный фоллбэк на случай нестандартной прошивки
             if (!launched) {
-                Intent appDetails = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.parse("package:" + pkg));
-                startActivity(appDetails);
+                try {
+                    Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
+                    miuiIntent.setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity");
+                    attachAutoScrollAndSelfCloseFlagsV151(miuiIntent, pkg);
+                    startActivityForResult(miuiIntent, REQ_OVERLAY_PERM);
+                } catch (Exception ignored) {}
             }
         } catch (Exception e) {
             e.printStackTrace();
