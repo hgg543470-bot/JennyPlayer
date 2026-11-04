@@ -22,13 +22,16 @@ def get_token():
 TOKEN = get_token()
 
 def fetch_runs():
-    res = subprocess.run(
-        ["gh", "run", "list", "-R", REPO, "-L", "5", "--json",
-         "databaseId,number,status,conclusion,headSha,displayTitle,createdAt"],
-        capture_output=True, text=True
-    )
-    if res.returncode == 0 and res.stdout.strip():
-        return json.loads(res.stdout)
+    try:
+        res = subprocess.run(
+            ["gh", "run", "list", "-R", REPO, "-L", "5", "--json",
+             "databaseId,number,status,conclusion,headSha,displayTitle,createdAt"],
+            capture_output=True, text=True
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return json.loads(res.stdout)
+    except Exception:
+        pass
     if not TOKEN:
         print("❌ Нет авторизации gh или токена.")
         sys.exit(1)
@@ -89,7 +92,10 @@ shutil.rmtree(TMP_DIR, ignore_errors=True)
 os.makedirs(TMP_DIR, exist_ok=True)
 os.makedirs(OUT_DIR, exist_ok=True)
 
-dl = subprocess.run(["gh", "run", "download", run_id, "-R", REPO, "-n", "JennyPlayer-APK", "-D", TMP_DIR])
+try:
+    subprocess.run(["gh", "run", "download", run_id, "-R", REPO, "-n", "JennyPlayer-APK", "-D", TMP_DIR])
+except Exception:
+    pass
 apk_src = os.path.join(TMP_DIR, "app-debug.apk")
 
 if not os.path.isfile(apk_src) and TOKEN:

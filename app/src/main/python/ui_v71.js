@@ -13381,3 +13381,389 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
         }
     }
 };
+
+
+
+// ============================================================================
+// 🧭 JENNY V165: 4-СТРАНИЧНЫЙ СТАРТОВЫЙ ГИД (ONBOARDING) + УПРАВЛЕНИЕ ПРАВАМИ И СПРАВКОЙ
+// ============================================================================
+(function initJennyOnboardingV165() {
+    window._onbStateV165 = {
+        page: 0,
+        storageOk: false,
+        notifOk: false,
+        overlayOk: false
+    };
+
+    window.checkPermStatusV165 = function() {
+        const br = window.AndroidBridge;
+        if (br) {
+            try {
+                window._onbStateV165.storageOk = (typeof br.hasStoragePermission === "function") ? Boolean(br.hasStoragePermission()) : true;
+            } catch (e) {}
+            try {
+                window._onbStateV165.notifOk = (typeof br.hasNotificationPermission === "function") ? Boolean(br.hasNotificationPermission()) : true;
+            } catch (e) {}
+            try {
+                window._onbStateV165.overlayOk = (typeof br.canDrawOverlays === "function") ? Boolean(br.canDrawOverlays()) : true;
+            } catch (e) {}
+        }
+        return window._onbStateV165;
+    };
+
+    window.syncOnboardingPermsV165 = function() {
+        window.checkPermStatusV165();
+        const modal = document.getElementById("jennyOnboardingModalV165");
+        if (modal && modal.style.display !== "none") {
+            window.renderOnboardingPageV165(window._onbStateV165.page);
+        }
+    };
+
+    window.onOnboardingPermUpdatedV165 = function(which, granted) {
+        if (which === "storage") window._onbStateV165.storageOk = Boolean(granted);
+        if (which === "notif") window._onbStateV165.notifOk = Boolean(granted);
+        if (which === "overlay") window._onbStateV165.overlayOk = Boolean(granted);
+        window.syncOnboardingPermsV165();
+        if (granted && typeof window.showToast === "function") {
+            const labels = {
+                storage: "✅ Доступ к медиафайлам выдан!",
+                notif: "✅ Пульт в шторке и фоновый режим активны!",
+                overlay: "✅ Режим «Поверх других окон» активирован!"
+            };
+            window.showToast(labels[which] || "✅ Разрешение получено!");
+        }
+    };
+
+    window.triggerOnboardingPermActionV165 = function(which) {
+        try { navigator.vibrate(25); } catch (e) {}
+        const br = window.AndroidBridge;
+        if (!br) {
+            if (typeof window.showToast === "function") {
+                window.showToast("ℹ️ В браузерном режиме системные права Android не требуются");
+            }
+            window.onOnboardingPermUpdatedV165(which, true);
+            return;
+        }
+        if (which === "storage" && typeof br.requestStoragePermission === "function") {
+            br.requestStoragePermission();
+        } else if (which === "notif" && typeof br.requestNotificationPermission === "function") {
+            br.requestNotificationPermission();
+        } else if (which === "overlay" && typeof br.requestOverlayPermission === "function") {
+            br.requestOverlayPermission();
+        }
+    };
+
+    window.onToggleOnboardingHideHelpV165 = function(chk, ev) {
+        try { navigator.vibrate(20); } catch (e) {}
+        const hide = Boolean(chk && chk.checked);
+        window.appConfig = window.appConfig || {};
+        window.appConfig.hideHelpBadges = hide;
+        localStorage.setItem("ytm_config", JSON.stringify(window.appConfig));
+        const cfgChk = document.getElementById("cfg_hideHelpV62");
+        if (cfgChk) cfgChk.checked = hide;
+        if (typeof window.onToggleHideHelpBadgesV62 === "function") {
+            window.onToggleHideHelpBadgesV62({ checked: hide }, ev);
+        } else if (typeof window.syncGuideButtonPositionV165 === "function") {
+            window.syncGuideButtonPositionV165();
+        }
+        const statusHint = document.getElementById("onbHideHelpStatusHintV165");
+        if (statusHint) {
+            statusHint.innerHTML = hide
+                ? "🙈 Активно: все значки <b>❓</b> скрыты, а единственная кнопка полного справочника перенесена в <b>самый конец настроек</b>."
+                : "📖 Не активно: значки подсказок <b>❓</b> включены, а кнопка полного справочника стоит <b>в самом начале настроек</b>.";
+            statusHint.style.color = hide ? "#e3b341" : "#3fb950";
+        }
+    };
+
+    window.finishOnboardingV165 = function() {
+        try { navigator.vibrate(35); } catch (e) {}
+        localStorage.setItem("jenny_onboarding_done_v165", "1");
+        if (typeof window.syncGuideButtonPositionV165 === "function") {
+            window.syncGuideButtonPositionV165();
+        }
+        const modal = document.getElementById("jennyOnboardingModalV165");
+        if (modal) {
+            modal.style.opacity = "0";
+            setTimeout(() => { modal.style.display = "none"; }, 180);
+        }
+        if (typeof window.fetchData === "function") {
+            window.fetchData();
+        }
+        if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === "function") {
+            window.syncDiscoveredVideosIntoPlaylistV134(true);
+        }
+    };
+
+    window.ensureOnboardingModalV165 = function() {
+        let m = document.getElementById("jennyOnboardingModalV165");
+        if (m) return m;
+
+        m = document.createElement("div");
+        m.id = "jennyOnboardingModalV165";
+        m.style.cssText = [
+            "display:none",
+            "position:fixed",
+            "inset:0",
+            "z-index:1000040",
+            "background:radial-gradient(circle at 50% 0%, #131c2e 0%, #070a10 70%)",
+            "color:#e6edf3",
+            "flex-direction:column",
+            "justify-content:space-between",
+            "padding:14px",
+            "box-sizing:border-box",
+            "overflow:hidden",
+            "transition:opacity 0.18s ease"
+        ].join(";");
+
+        m.innerHTML = `
+            <div style="max-width:500px;width:100%;margin:0 auto;display:flex;flex-direction:column;height:100%;gap:10px;">
+                <!-- Шапка в стиле главного окна -->
+                <div style="background:#11161f;border:1px solid #30363d;border-radius:14px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 6px 20px rgba(0,0,0,0.65);flex-shrink:0;">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <div style="width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#7341be,#1f6feb);border:1px solid #58a6ff;display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px rgba(88,166,255,0.35);">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+                        </div>
+                        <div>
+                            <div style="font-family:monospace;font-weight:900;font-size:14px;letter-spacing:1.5px;background:linear-gradient(90deg,#3fb950,#58a6ff,#d2a8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">JENNY PLAYER STUDIO</div>
+                            <div id="onbStepSubtitleV165" style="font-size:11px;color:#8b949e;">Человеческая настройка перед стартом</div>
+                        </div>
+                    </div>
+                    <div id="onbStepPillsV165" style="display:flex;gap:5px;align-items:center;"></div>
+                </div>
+
+                <!-- Контент текущей страницы -->
+                <div id="onbPageBodyV165" style="flex:1;background:#0d1117;border:1px solid #30363d;border-radius:14px;padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;box-shadow:inset 0 0 24px rgba(0,0,0,0.6);"></div>
+
+                <!-- Нижняя панель навигации Назад / Далее / Начать -->
+                <div id="onbFooterBarV165" style="background:#11161f;border:1px solid #30363d;border-radius:14px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;box-shadow:0 -4px 18px rgba(0,0,0,0.6);"></div>
+            </div>
+        `;
+        document.body.appendChild(m);
+        return m;
+    };
+
+    window.renderOnboardingPageV165 = function(pageIdx) {
+        const p = Math.max(0, Math.min(3, Number(pageIdx) || 0));
+        window._onbStateV165.page = p;
+        window.checkPermStatusV165();
+        const st = window._onbStateV165;
+
+        const pillsEl = document.getElementById("onbStepPillsV165");
+        const subEl = document.getElementById("onbStepSubtitleV165");
+        const bodyEl = document.getElementById("onbPageBodyV165");
+        const footEl = document.getElementById("onbFooterBarV165");
+        if (!bodyEl || !footEl) return;
+
+        const stepColors = ["#58a6ff", "#3fb950", "#d2a8ff", "#e3b341"];
+        if (pillsEl) {
+            pillsEl.innerHTML = [0, 1, 2, 3].map(i => {
+                const active = (i === p);
+                const c = stepColors[i];
+                return `<button type="button" onclick="window.renderOnboardingPageV165(${i})" style="width:${active ? '28px' : '22px'};height:22px;border-radius:11px;border:1px solid ${active ? c : '#30363d'};background:${active ? c : '#161b22'};color:${active ? '#05070a' : '#8b949e'};font-size:11px;font-weight:900;padding:0;cursor:pointer;transition:all 0.15s ease;">${i + 1}</button>`;
+            }).join("");
+        }
+
+        const subtitles = [
+            "Шаг 1 из 4 • Доступ к медиафайлам",
+            "Шаг 2 из 4 • Фоновый звук и пульт в шторке",
+            "Шаг 3 из 4 • Видео поверх других окон",
+            "Шаг 4 из 4 • Главные фишки, жесты и справка"
+        ];
+        if (subEl) subEl.textContent = subtitles[p];
+
+        if (p === 0) {
+            const ok = st.storageOk;
+            bodyEl.innerHTML = `
+                <div style="background:linear-gradient(135deg,rgba(88,166,255,0.14),rgba(31,111,235,0.04));border:1px solid rgba(88,166,255,0.45);border-radius:12px;padding:14px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+                        <span style="font-size:16px;font-weight:900;color:#58a6ff;">📁 1. Доступ к твоим файлам</span>
+                        <span style="font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:20px;border:1px solid ${ok ? '#3fb950' : '#e3b341'};background:${ok ? 'rgba(63,185,80,0.16)' : 'rgba(227,179,65,0.14)'};color:${ok ? '#3fb950' : '#e3b341'};">
+                            ${ok ? '✅ Уже выдано' : '⏳ Нужен 1 клик'}
+                        </span>
+                    </div>
+                    <div style="font-size:13px;line-height:1.5;color:#c9d1d9;">
+                        Давай сразу по-человечески: <b>JennyPlayer</b> — это локальная аудио/видео студия без облаков, рекламы и слежки. Мы не собираем аналитику и не лезем в твои личные переписки или фотки.
+                    </div>
+                </div>
+
+                <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #58a6ff;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12.8px;line-height:1.45;color:#e6edf3;">
+                    <div style="font-weight:800;color:#79c0ff;font-size:13px;">Зачем плееру это разрешение на самом деле:</div>
+                    <div>🎵 <b>Прямое чтение в 32-bit Float RAM:</b> чтобы мгновенно читать твои треки и клипы (<b>MP3, FLAC, WAV, OPUS, M4A, MP4, MKV, .xFLAC</b>) из папок телефона без урезания качества.</div>
+                    <div>🧲 <b>Сохранение закачек и экспорта:</b> чтобы складывать скачанные через встроенный P2P-торрент, SoundCloud и OST треки, а также твои рендеры с впечённым мастерингом (кнопка 💾) прямо в папку <code>/Music</code> или <code>/Download</code>.</div>
+                    <div>⚡ <b>Авто-возврат:</b> нажми кнопку ниже, включи тумблер — и окно настроек <b>само закроется</b>, вернув тебя прямо сюда!</div>
+                </div>
+
+                <div style="margin-top:auto;padding-top:6px;">
+                    <button type="button" onclick="window.triggerOnboardingPermActionV165('storage')" style="width:100%;padding:13px 16px;border-radius:11px;border:1px solid ${ok ? '#3fb950' : '#58a6ff'};background:${ok ? 'rgba(63,185,80,0.18)' : 'linear-gradient(135deg,#1f6feb,#1158c7)'};color:${ok ? '#3fb950' : '#ffffff'};font-size:14px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 16px rgba(31,111,235,0.35);">
+                        ${ok ? '✅ Доступ к файлам активен (проверить ещё раз)' : '🔓 Открыть и включить доступ к файлам'}
+                    </button>
+                </div>
+            `;
+        } else if (p === 1) {
+            const ok = st.notifOk;
+            bodyEl.innerHTML = `
+                <div style="background:linear-gradient(135deg,rgba(63,185,80,0.14),rgba(35,134,54,0.04));border:1px solid rgba(63,185,80,0.45);border-radius:12px;padding:14px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+                        <span style="font-size:16px;font-weight:900;color:#3fb950;">🔔 2. Уведомления (Без спама!)</span>
+                        <span style="font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:20px;border:1px solid ${ok ? '#3fb950' : '#e3b341'};background:${ok ? 'rgba(63,185,80,0.16)' : 'rgba(227,179,65,0.14)'};color:${ok ? '#3fb950' : '#e3b341'};">
+                            ${ok ? '✅ Уже выдано' : '⏳ Нужен 1 клик'}
+                        </span>
+                    </div>
+                    <div style="font-size:13px;line-height:1.5;color:#c9d1d9;">
+                        Сразу успокоим: в <b>JennyPlayer</b> физически нет пуш-рассылок, новостей или дурацких напоминаний. Мы никогда не потревожим тебя звуком уведомления.
+                    </div>
+                </div>
+
+                <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #3fb950;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12.8px;line-height:1.45;color:#e6edf3;">
+                    <div style="font-weight:800;color:#56d364;font-size:13px;">Зачем тогда Android просит это разрешение:</div>
+                    <div>🎛️ <b>Медиа-пульт на заблокированном экране:</b> в современных Android карточка плеера в шторке (с кнопками <b>⏮ ⏯ ⏭</b>, перемоткой и обложкой) технически считается «уведомлением».</div>
+                    <div>🛡️ <b>Защита от убийства звука в фоне:</b> пока висит мини-пульт в шторке, система знает, что ты слушаешь музыку или качаешь торрент, и не вырубает 32-bit DSP-движок, когда ты гасишь экран и кладёшь телефон в карман.</div>
+                    <div>🎧 <b>Кнопки наушников и автомагнитолы:</b> привязка системной сессии к гарнитуре работает именно через этот сервис.</div>
+                </div>
+
+                <div style="margin-top:auto;padding-top:6px;">
+                    <button type="button" onclick="window.triggerOnboardingPermActionV165('notif')" style="width:100%;padding:13px 16px;border-radius:11px;border:1px solid #3fb950;background:${ok ? 'rgba(63,185,80,0.18)' : 'linear-gradient(135deg,#238636,#2ea043)'};color:${ok ? '#3fb950' : '#ffffff'};font-size:14px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 16px rgba(46,160,67,0.35);">
+                        ${ok ? '✅ Фоновый пульт и уведомления активны' : '🔔 Разрешить медиа-пульт и работу в фоне'}
+                    </button>
+                </div>
+            `;
+        } else if (p === 2) {
+            const ok = st.overlayOk;
+            bodyEl.innerHTML = `
+                <div style="background:linear-gradient(135deg,rgba(210,168,255,0.15),rgba(115,65,190,0.05));border:1px solid rgba(163,113,247,0.5);border-radius:12px;padding:14px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+                        <span style="font-size:16px;font-weight:900;color:#d2a8ff;">🪟 3. Поверх других приложений</span>
+                        <span style="font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:20px;border:1px solid ${ok ? '#3fb950' : '#e3b341'};background:${ok ? 'rgba(63,185,80,0.16)' : 'rgba(227,179,65,0.14)'};color:${ok ? '#3fb950' : '#e3b341'};">
+                            ${ok ? '✅ Уже выдано' : '⏳ Нужен 1 клик'}
+                        </span>
+                    </div>
+                    <div style="font-size:13px;line-height:1.5;color:#c9d1d9;">
+                        Фирменная гордость <b>JennyPlayer</b> — плавающее видео-окно (Дека Б), которое продолжает играть со всем студийным звуком, когда ты сворачиваешь плеер и сидишь в мессенджере или браузере.
+                    </div>
+                </div>
+
+                <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #a371f7;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12.8px;line-height:1.45;color:#e6edf3;">
+                    <div style="font-weight:800;color:#d2a8ff;font-size:13px;">Как это работает без лишней головной боли:</div>
+                    <div>🤏 <b>Свободный зум и таскание:</b> в плавающем режиме окно двигается одним пальцем, а двумя пальцами (щипком) плавно меняет размер от крошечной марки до огромного экрана!</div>
+                    <div>🎯 <b>Прямой вход мимо списка из 200 приложений:</b> мы сделали прямой вызов скрытого системного окна — кнопка ниже откроет <b>сразу персональный тумблер JennyPlayer</b>.</div>
+                    <div>⚡ <b>Включил — и сразу дома:</b> как только переведёшь ползунок вправо, радар сам закроет системные настройки и мгновенно вернёт тебя обратно на эту страницу!</div>
+                </div>
+
+                <div style="margin-top:auto;padding-top:6px;">
+                    <button type="button" onclick="window.triggerOnboardingPermActionV165('overlay')" style="width:100%;padding:13px 16px;border-radius:11px;border:1px solid ${ok ? '#3fb950' : '#a371f7'};background:${ok ? 'rgba(63,185,80,0.18)' : 'linear-gradient(135deg,#7341be,#8957e5)'};color:${ok ? '#3fb950' : '#ffffff'};font-size:14px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 16px rgba(137,87,229,0.4);">
+                        ${ok ? '✅ Плавающее окно поверх приложений активно' : '🪟 Открыть одиночный тумблер «Поверх окон»'}
+                    </button>
+                </div>
+            `;
+        } else {
+            const hideHelp = Boolean(window.appConfig && window.appConfig.hideHelpBadges);
+            bodyEl.innerHTML = `
+                <div style="background:linear-gradient(135deg,rgba(227,179,65,0.15),rgba(88,166,255,0.08));border:1px solid rgba(227,179,65,0.5);border-radius:12px;padding:11px 13px;">
+                    <div style="font-size:15px;font-weight:900;color:#e3b341;margin-bottom:4px;">🎛️ 4. Карта главного окна: тапы, свайпы и зажатия</div>
+                    <div style="font-size:12px;color:#c9d1d9;line-height:1.4;">Все секретные зоны главного экрана, чтобы управлять скоростью, реверсом и звуком в одно касание:</div>
+                </div>
+
+                <!-- Интерактивная схема зон главного окна -->
+                <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;line-height:1.4;">
+                    <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #3fb950;border-radius:9px;padding:9px 11px;">
+                        <div style="color:#3fb950;font-weight:900;margin-bottom:3px;">🟢 ВЕРХНЯЯ ПАНЕЛЬ И ЛЕНТЫ ПЛЕЙЛИСТОВ</div>
+                        <div>• <b>🎮 OST / 📻 Радио / ☁️ SoundCloud / 🧲 P2P Торрент:</b> поиск и прямой стрим в 32-bit тракт без ожидания полной загрузки.</div>
+                        <div>• <b>📊 Центр закачек:</b> контроль P2P-раздач + кнопки <b>«📥 Добавить ориг»</b> и <b>«💿 Добавить WAV»</b> для мгновенного сравнения в плеере.</div>
+                        <div>• <b>Зажатие ленты вкладок (180 мс):</b> зажми любую вкладку (<i>Все, Избранное, Артисты, Альбомы</i>) — откроется полное окно со списком и сортировкой!</div>
+                    </div>
+
+                    <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #58a6ff;border-radius:9px;padding:9px 11px;">
+                        <div style="color:#58a6ff;font-weight:900;margin-bottom:3px;">🔵 КАРТОЧКА ТРЕКА И ДВЕ ДЕКИ (АУДИО / ВИДЕО)</div>
+                        <div>• <b>Кнопка [ℹ️] на треке:</b> открывает <i>Core Media Inspector</i> — честный FFT-срез частоты (кГц), битрейт, пики dB и кодек.</div>
+                        <div>• <b>Кнопка [💾] на треке:</b> офлайн-рендер трека со всеми твоими настройками баса, скорости или упаковка в психоакустический <b>.xFLAC</b>.</div>
+                    </div>
+
+                    <div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #e3b341;border-radius:9px;padding:9px 11px;">
+                        <div style="color:#e3b341;font-weight:900;margin-bottom:3px;">🟡 ПЕРЕМОТКА, ДУГА СКОРОСТЕЙ, РЕВЕРС И ЗАЖАТИЯ</div>
+                        <div>• <b>Зажатие края полосы перемотки + свайп вниз:</b> выбрасывает <b>радиальную дугу скоростей (Touch Arc)</b> для плавного разгона или замедления одним большим пальцем!</div>
+                        <div>• <b>Тап по левому / правому таймеру времени (0:00 / 3:45):</b> левый таймер мгновенно разворачивает трек задом наперёд (<b>Реверс ⏪ REV</b>), правый — возвращает вперёд (<b>⏩ FWD</b>) без пауз!</div>
+                        <div>• <b>Долгое зажатие кнопки Play/Pause [⏯]:</b> авто-прыжок списка прямо к играющему сейчас треку.</div>
+                        <div>• <b>Кнопки над пультом:</b> <b>📊 Спектр</b> (живой FFT + осциллограф), <b>🄠 Эквалайзер</b> (5 полос), <b>🔊/🔥 Громкость</b> (преамп до 300%).</div>
+                    </div>
+                </div>
+
+                <!-- Блок детальной справки с буквальной формулировкой по просьбе Дмитрия -->
+                <div style="background:linear-gradient(135deg,#1a132b,#121722);border:1px solid #7341be;border-radius:10px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;">
+                    <div style="font-size:12.5px;color:#e6edf3;line-height:1.45;">
+                        💡 Хочешь залезть под капот каждого фильтра, лимитера, кроссовера и фазового фокуса? Открой нашу <b>детальную справку, где каждая хуйня расписана и разжевана</b> простым языком:
+                    </div>
+                    <button type="button" onclick="if(window.showFullHelpGuide) window.showFullHelpGuide(event)" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #a371f7;background:#1f1633;color:#d2a8ff;font-weight:900;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 0 12px rgba(163,113,247,0.28);">
+                        📖 Прочесть детальную справку (где каждая хуйня расписана и разжевана)
+                    </button>
+                </div>
+
+                <!-- Синхронизированная галочка скрытия всех справочных материалов -->
+                <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;">
+                    <label style="display:flex;align-items:center;gap:9px;font-size:13px;font-weight:800;color:#e6edf3;cursor:pointer;user-select:none;">
+                        <input type="checkbox" id="onb_hideHelpChkV165" ${hideHelp ? 'checked' : ''} onchange="window.onToggleOnboardingHideHelpV165(this, event)" style="width:18px;height:18px;accent-color:#7341be;cursor:pointer;flex-shrink:0;">
+                        <span>🙈 Скрыть все справочные материалы</span>
+                    </label>
+                    <div id="onbHideHelpStatusHintV165" style="font-size:11.5px;line-height:1.35;color:${hideHelp ? '#e3b341' : '#3fb950'};padding-left:27px;">
+                        ${hideHelp
+                            ? '🙈 Активно: все значки <b>❓</b> скрыты, а единственная кнопка полного справочника перенесена в <b>самый конец настроек</b>.'
+                            : '📖 Не активно: значки подсказок <b>❓</b> включены, а кнопка полного справочника стоит <b>в самом начале настроек</b>.'}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Рендерим кнопки Назад / Далее / Начать
+        if (p < 3) {
+            footEl.innerHTML = `
+                <button type="button" onclick="window.renderOnboardingPageV165(${p - 1})" ${p === 0 ? 'disabled' : ''} style="flex:1;padding:11px 14px;border-radius:10px;border:1px solid #30363d;background:#161b22;color:${p === 0 ? '#484f58' : '#c9d1d9'};font-size:13px;font-weight:800;cursor:${p === 0 ? 'default' : 'pointer'};opacity:${p === 0 ? '0.5' : '1'};">
+                    ⬅ Назад
+                </button>
+                <div style="font-size:11.5px;font-weight:800;color:#8b949e;padding:0 6px;">${p + 1} / 4</div>
+                <button type="button" onclick="window.renderOnboardingPageV165(${p + 1})" style="flex:1.3;padding:11px 14px;border-radius:10px;border:1px solid #58a6ff;background:linear-gradient(135deg,#1f6feb,#388bfd);color:#ffffff;font-size:13.5px;font-weight:900;cursor:pointer;box-shadow:0 3px 12px rgba(56,139,253,0.35);">
+                    Далее ➔
+                </button>
+            `;
+        } else {
+            footEl.innerHTML = `
+                <button type="button" onclick="window.renderOnboardingPageV165(2)" style="flex:1;padding:11px 14px;border-radius:10px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;font-size:13px;font-weight:800;cursor:pointer;">
+                    ⬅ Назад
+                </button>
+                <button type="button" onclick="window.finishOnboardingV165()" style="flex:1.8;padding:12px 16px;border-radius:10px;border:1px solid #3fb950;background:linear-gradient(135deg,#238636,#2ea043);color:#ffffff;font-size:14.5px;font-weight:900;cursor:pointer;box-shadow:0 4px 16px rgba(46,160,67,0.45);letter-spacing:0.4px;">
+                    🚀 Начать
+                </button>
+            `;
+        }
+    };
+
+    window.openOnboardingGuideV165 = function(startPage, ev) {
+        if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+        const m = window.ensureOnboardingModalV165();
+        m.style.display = "flex";
+        m.style.opacity = "1";
+        window.renderOnboardingPageV165(startPage || 0);
+    };
+
+    // Также синхронизируем позицию кнопки справочника при каждом открытии модального окна настроек
+    const origToggleModalV165 = window.toggleModal;
+    if (typeof origToggleModalV165 === "function" && !window._toggleModalOnbHookV165) {
+        window._toggleModalOnbHookV165 = true;
+        window.toggleModal = function(id) {
+            const res = origToggleModalV165.apply(this, arguments);
+            if (id === "settingsModal" && typeof window.syncGuideButtonPositionV165 === "function") {
+                setTimeout(() => window.syncGuideButtonPositionV165(), 30);
+            }
+            return res;
+        };
+    }
+
+    // Автозапуск стартового гида при первом входе (или если ещё не нажимали «Начать»)
+    setTimeout(() => {
+        if (typeof window.syncGuideButtonPositionV165 === "function") {
+            window.syncGuideButtonPositionV165();
+        }
+        const done = localStorage.getItem("jenny_onboarding_done_v165") === "1";
+        if (!done) {
+            window.openOnboardingGuideV165(0);
+        }
+    }, 450);
+})();

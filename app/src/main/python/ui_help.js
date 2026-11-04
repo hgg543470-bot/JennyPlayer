@@ -571,7 +571,7 @@ window.JENNY_HELP_DB = window.JENNY_HELP_DB_RU;
 window.ensureHelpModal = function() {
     let m = document.getElementById('jennyHelpModal'); if (m) m.remove();
     m = document.createElement('div'); m.id = 'jennyHelpModal';
-    m.style.cssText = "display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.82);backdrop-filter:blur(5px);align-items:center;justify-content:center;padding:16px;box-sizing:border-box;";
+    m.style.cssText = "display:none;position:fixed;inset:0;z-index:1000090;background:rgba(0,0,0,0.82);backdrop-filter:blur(5px);align-items:center;justify-content:center;padding:16px;box-sizing:border-box;";
     m.onclick = (e) => { if (e.target === m) m.style.display = 'none'; };
     m.innerHTML = `<div onclick="event.stopPropagation()" style="background:#0d1117;border:1px solid #7341be;border-radius:14px;max-width:440px;width:100%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.95);overflow:hidden;">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#161b22;border-bottom:1px solid #30363d;">
@@ -639,7 +639,11 @@ window.mountJennyStudioUI = function() {
     langSwitchBtn.onclick = (e) => window.toggleLanguage(e);
     langSwitchBtn.style.cssText = "background:#161b22;border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;padding:0 14px;border-radius:8px;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;";
     langSwitchBtn.innerHTML = window.getLang() === 'en' ? '🌐 EN' : '🌐 RU';
-    topBarRow.appendChild(guideBtn); topBarRow.appendChild(langSwitchBtn);
+    const onbBtn = document.createElement('button'); onbBtn.type = 'button'; onbBtn.id = 'jennyOpenOnboardingBtnV165';
+    onbBtn.onclick = (e) => { if (window.openOnboardingGuideV165) window.openOnboardingGuideV165(0, e); };
+    onbBtn.style.cssText = "background:#161b22;border:1px solid #3fb950;color:#3fb950;font-weight:bold;padding:0 12px;border-radius:8px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;";
+    onbBtn.innerHTML = window.tr('🧭 Гид', '🧭 Guide');
+    topBarRow.appendChild(guideBtn); topBarRow.appendChild(onbBtn); topBarRow.appendChild(langSwitchBtn);
     container.insertBefore(topBarRow, container.firstChild);
 
     const studioInput = document.getElementById('cfg_studioMode');
@@ -4502,35 +4506,83 @@ window.initDefaultEngineModeJbufV62 = function() {
 };
 window.initDefaultEngineModeJbufV62();
 
+window.syncGuideButtonPositionV165 = function() {
+    const hide = Boolean(window.appConfig && window.appConfig.hideHelpBadges);
+    document.body.classList.toggle('hide-help-badges', hide);
+
+    const cfgChk = document.getElementById('cfg_hideHelpV62');
+    if (cfgChk && cfgChk.checked !== hide) cfgChk.checked = hide;
+
+    const onbChk = document.getElementById('onb_hideHelpChkV165');
+    if (onbChk && onbChk.checked !== hide) onbChk.checked = hide;
+
+    const sm = document.getElementById('settingsModal');
+    if (!sm) return;
+    const container = sm.querySelector('.container') || sm;
+    const guideBtn = document.getElementById('jennyFullGuideBtn');
+    const topBarRow = document.getElementById('jennyTopBarRow');
+    if (!guideBtn || !container) return;
+
+    let bottomSlot = document.getElementById('jennyBottomGuideSlotV165');
+    if (!bottomSlot) {
+        bottomSlot = document.createElement('div');
+        bottomSlot.id = 'jennyBottomGuideSlotV165';
+        bottomSlot.style.cssText = 'margin-top:14px;margin-bottom:18px;padding-top:10px;border-top:1px dashed #30363d;display:none;';
+        container.appendChild(bottomSlot);
+    } else if (bottomSlot.parentElement === container && container.lastElementChild !== bottomSlot) {
+        container.appendChild(bottomSlot);
+    }
+
+    if (hide) {
+        bottomSlot.style.display = 'block';
+        guideBtn.style.width = '100%';
+        if (guideBtn.parentElement !== bottomSlot) {
+            bottomSlot.appendChild(guideBtn);
+        }
+    } else {
+        bottomSlot.style.display = 'none';
+        guideBtn.style.width = '';
+        if (topBarRow && guideBtn.parentElement !== topBarRow) {
+            topBarRow.insertBefore(guideBtn, topBarRow.firstChild);
+        }
+    }
+};
+
 window.onToggleHideHelpBadgesV62 = function(chk, ev) {
     const hide = Boolean(chk && chk.checked);
     window.appConfig = window.appConfig || {};
     window.appConfig.hideHelpBadges = hide;
-    document.body.classList.toggle('hide-help-badges', hide);
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+    window.syncGuideButtonPositionV165();
     if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
     if (typeof window.showToast === 'function' && ev) {
-        window.showToast(hide ? window.tr('🙈 Значки справок (❓) скрыты', '🙈 Help badges (❓) hidden') : window.tr('📖 Значки справок (❓) включены', '📖 Help badges (❓) visible'), ev);
+        window.showToast(
+            hide
+                ? window.tr('🙈 Подсказки (❓) скрыты, главный справочник перенесён в самый конец настроек', '🙈 Help badges hidden, main manual moved to the bottom of Settings')
+                : window.tr('📖 Все подсказки (❓) включены, справочник возвращён в начало настроек', '📖 Help badges enabled, manual moved to the top of Settings'),
+            ev
+        );
     }
 };
 
 window.injectHideHelpToggleV62 = function() {
-    document.body.classList.toggle('hide-help-badges', Boolean(window.appConfig && window.appConfig.hideHelpBadges));
-    const themeRow = document.getElementById('jennyThemeStudioBtnRow');
-    if (!themeRow || document.getElementById('hideHelpRowV62')) return;
-
     const isHidden = Boolean(window.appConfig && window.appConfig.hideHelpBadges);
-    const row = document.createElement('div');
-    row.id = 'hideHelpRowV62';
-    row.className = 'setting-row jenny-uniform-card';
-    row.style.cssText = 'padding:9px 12px;border-radius:8px;margin-bottom:12px;';
-    row.innerHTML = `
-        <label class="toggle-label" style="font-weight:bold;color:#e6edf3;width:100%;">
-            <input type="checkbox" id="cfg_hideHelpV62" ${isHidden ? 'checked' : ''} onchange="window.onToggleHideHelpBadgesV62(this, event)">
-            🙈 ${window.tr('Скрыть все справки и подсказки (❓)', 'Hide all help badges & manual (❓)')}
-        </label>
-    `;
-    themeRow.insertAdjacentElement('afterend', row);
+    document.body.classList.toggle('hide-help-badges', isHidden);
+    const themeRow = document.getElementById('jennyThemeStudioBtnRow');
+    if (themeRow && !document.getElementById('hideHelpRowV62')) {
+        const row = document.createElement('div');
+        row.id = 'hideHelpRowV62';
+        row.className = 'setting-row jenny-uniform-card';
+        row.style.cssText = 'padding:9px 12px;border-radius:8px;margin-bottom:12px;';
+        row.innerHTML = `
+            <label class="toggle-label" style="font-weight:bold;color:#e6edf3;width:100%;">
+                <input type="checkbox" id="cfg_hideHelpV62" ${isHidden ? 'checked' : ''} onchange="window.onToggleHideHelpBadgesV62(this, event)">
+                🙈 ${window.tr('Скрыть все справочные материалы (оставить 1 справочник в конце)', 'Hide all help badges (move main manual to bottom)')}
+            </label>
+        `;
+        themeRow.insertAdjacentElement('afterend', row);
+    }
+    window.syncGuideButtonPositionV165();
 };
 
 window.setAudioEngineModeV62 = function(mode, ev) {

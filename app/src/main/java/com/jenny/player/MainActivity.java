@@ -55,6 +55,10 @@ public class MainActivity extends AppCompatActivity {
     private static int permWatchTicksV147 = 0;
     private static final android.os.Handler permWatchHandlerV147 = new android.os.Handler(android.os.Looper.getMainLooper());
     private static Runnable permWatchRunnableV147 = null;
+    private static Runnable storageWatchRunnableV165 = null;
+    private static int storageWatchTicksV165 = 0;
+    private static Runnable notifWatchRunnableV165 = null;
+    private static int notifWatchTicksV165 = 0;
     private static boolean isOpeningSettingsV146 = false;
     private static int savedOverlayW = 0;
     private static int savedOverlayH = 0;
@@ -499,6 +503,96 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception ignored) {}
     }
 
+    private boolean hasStoragePermissionInternalV165() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return Environment.isExternalStorageManager();
+        }
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasNotificationPermissionInternalV165() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+                if (nm != null) {
+                    return nm.areNotificationsEnabled();
+                }
+            } catch (Exception ignored) {}
+        }
+        return true;
+    }
+
+    private void stopStorageGrantRadarV165() {
+        if (storageWatchRunnableV165 != null) {
+            permWatchHandlerV147.removeCallbacks(storageWatchRunnableV165);
+            storageWatchRunnableV165 = null;
+        }
+    }
+
+    private void startStorageGrantRadarV165() {
+        stopStorageGrantRadarV165();
+        storageWatchTicksV165 = 0;
+        storageWatchRunnableV165 = new Runnable() {
+            @Override
+            public void run() {
+                storageWatchTicksV165++;
+                if (hasStoragePermissionInternalV165()) {
+                    stopStorageGrantRadarV165();
+                    isOpeningSettingsV146 = false;
+                    try {
+                        finishActivity(REQ_PERM_STORAGE);
+                    } catch (Exception ignored) {}
+                    evalJs("if(window.onOnboardingPermUpdatedV165) window.onOnboardingPermUpdatedV165('storage', true); if(window.fetchData) window.fetchData();");
+                    return;
+                }
+                if (storageWatchTicksV165 < 500) {
+                    permWatchHandlerV147.postDelayed(this, 140);
+                } else {
+                    isOpeningSettingsV146 = false;
+                }
+            }
+        };
+        permWatchHandlerV147.postDelayed(storageWatchRunnableV165, 140);
+    }
+
+    private void stopNotifGrantRadarV165() {
+        if (notifWatchRunnableV165 != null) {
+            permWatchHandlerV147.removeCallbacks(notifWatchRunnableV165);
+            notifWatchRunnableV165 = null;
+        }
+    }
+
+    private void startNotifGrantRadarV165() {
+        stopNotifGrantRadarV165();
+        notifWatchTicksV165 = 0;
+        notifWatchRunnableV165 = new Runnable() {
+            @Override
+            public void run() {
+                notifWatchTicksV165++;
+                if (hasNotificationPermissionInternalV165()) {
+                    stopNotifGrantRadarV165();
+                    isOpeningSettingsV146 = false;
+                    try {
+                        finishActivity(REQ_PERM_NOTIF);
+                    } catch (Exception ignored) {}
+                    evalJs("if(window.onOnboardingPermUpdatedV165) window.onOnboardingPermUpdatedV165('notif', true);");
+                    return;
+                }
+                if (notifWatchTicksV165 < 400) {
+                    permWatchHandlerV147.postDelayed(this, 150);
+                } else {
+                    isOpeningSettingsV146 = false;
+                }
+            }
+        };
+        permWatchHandlerV147.postDelayed(notifWatchRunnableV165, 150);
+    }
+
     private void startOverlayGrantRadarV149() {
         stopOverlayPermWatcherV147();
         permWatchTicksV147 = 0;
@@ -535,8 +629,8 @@ public class MainActivity extends AppCompatActivity {
                             startActivity(home);
                         } catch (Exception ignored) {}
                     } else {
-                        // Запрос был открыт сразу при старте видео — закрываем SubSettings и продолжаем играть видео прямо в плеере!
-                        evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(true);");
+                        // Запрос был открыт сразу при старте видео или со стартового гида — закрываем SubSettings и уведомляем UI!
+                        evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(true); if(window.onOnboardingPermUpdatedV165) window.onOnboardingPermUpdatedV165('overlay', true);");
                     }
                     return;
                 }
@@ -754,12 +848,8 @@ public class MainActivity extends AppCompatActivity {
         // Это мгновенно разблокирует серый тумблер в настройках Android 13-16
         PlaybackService.ensureChannel(this);
 
-        // 2. Запрашиваем разрешение на показ уведомлений
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, new String[]{"android.permission.POST_NOTIFICATIONS"}, REQ_PERM_NOTIF);
-            }
-        }
+        // 2. Разрешения запрашиваются дружелюбно со стартового экрана (Onboarding V165),
+        // чтобы не пугать пользователя системными окнами до загрузки интерфейса.
 
         if (webView != null) {
             if (webView.getParent() instanceof android.view.ViewGroup) {
@@ -808,6 +898,82 @@ public class MainActivity extends AppCompatActivity {
             isVideoFullscreenV132 = fullscreen;
             isVideoLockedV132 = locked;
             applyVideoSystemUiLockV132();
+        }
+
+        @JavascriptInterface
+        public boolean hasStoragePermission() {
+            return hasStoragePermissionInternalV165();
+        }
+
+        @JavascriptInterface
+        public void requestStoragePermission() {
+            runOnUiThread(() -> {
+                try {
+                    if (hasStoragePermissionInternalV165()) {
+                        evalJs("if(window.onOnboardingPermUpdatedV165) window.onOnboardingPermUpdatedV165('storage', true);");
+                        return;
+                    }
+                    isOpeningSettingsV146 = true;
+                    startStorageGrantRadarV165();
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        try {
+                            Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                            intent.setData(Uri.fromParts("package", getPackageName(), null));
+                            startActivityForResult(intent, REQ_PERM_STORAGE);
+                        } catch (Exception e1) {
+                            Intent intent2 = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                            startActivityForResult(intent2, REQ_PERM_STORAGE);
+                        }
+                    } else {
+                        ActivityCompat.requestPermissions(
+                            MainActivity.this,
+                            new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE},
+                            REQ_PERM_STORAGE
+                        );
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean hasNotificationPermission() {
+            return hasNotificationPermissionInternalV165();
+        }
+
+        @JavascriptInterface
+        public void requestNotificationPermission() {
+            runOnUiThread(() -> {
+                try {
+                    PlaybackService.ensureChannel(MainActivity.this);
+                    if (hasNotificationPermissionInternalV165()) {
+                        evalJs("if(window.onOnboardingPermUpdatedV165) window.onOnboardingPermUpdatedV165('notif', true);");
+                        return;
+                    }
+                    startNotifGrantRadarV165();
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        ActivityCompat.requestPermissions(
+                            MainActivity.this,
+                            new String[]{"android.permission.POST_NOTIFICATIONS"},
+                            REQ_PERM_NOTIF
+                        );
+                    } else {
+                        isOpeningSettingsV146 = true;
+                        Intent intent = new Intent();
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            intent.setAction(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                            intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+                        } else {
+                            intent.setAction(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                            intent.setData(Uri.fromParts("package", getPackageName(), null));
+                        }
+                        startActivityForResult(intent, REQ_PERM_NOTIF);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
         }
 
         @JavascriptInterface
@@ -1013,23 +1179,35 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void checkPermissionsAndStart() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-                Uri uri = Uri.fromParts("package", getPackageName(), null);
-                intent.setData(uri);
-                startActivity(intent);
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_PERM_STORAGE) {
+            boolean ok = hasStoragePermissionInternalV165();
+            evalJs("if(window.onOnboardingPermUpdatedV165) window.onOnboardingPermUpdatedV165('storage', " + ok + "); if(window.fetchData) window.fetchData();");
+        } else if (requestCode == REQ_PERM_NOTIF) {
+            boolean ok = hasNotificationPermissionInternalV165();
+            if (ok) {
+                stopNotifGrantRadarV165();
+                evalJs("if(window.onOnboardingPermUpdatedV165) window.onOnboardingPermUpdatedV165('notif', true);");
+            } else if (!ActivityCompat.shouldShowRequestPermissionRationale(this, "android.permission.POST_NOTIFICATIONS")) {
+                // Если Android заблокировал стандартный диалог — открываем системное окно уведомлений нашего приложения
+                try {
+                    isOpeningSettingsV146 = true;
+                    Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                    intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+                    startActivityForResult(intent, REQ_PERM_NOTIF);
+                } catch (Exception ignored) {}
             } else {
-                startPythonServer();
-            }
-        } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE}, REQ_PERM_STORAGE);
-            } else {
-                startPythonServer();
+                evalJs("if(window.onOnboardingPermUpdatedV165) window.onOnboardingPermUpdatedV165('notif', false);");
             }
         }
+    }
+
+    private void checkPermissionsAndStart() {
+        // Всегда сразу запускаем сервер и интерфейс, чтобы стартовый гид (Onboarding V165)
+        // встретил пользователя в фирменном стиле без резких перебросов в настройки!
+        startPythonServer();
     }
 
     @Override
@@ -1083,18 +1261,21 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        stopStorageGrantRadarV165();
+        stopNotifGrantRadarV165();
         restoreWebViewToActivityV135(false);
-        if (wasPermSettings && webView != null) {
+        if (webView != null) {
             webView.postDelayed(() -> {
-                evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(" + granted + ");");
+                if (wasPermSettings) {
+                    evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(" + granted + ");");
+                }
+                evalJs("if(window.syncOnboardingPermsV165) window.syncOnboardingPermsV165();");
                 if (isVideoFullscreenV132 || isVideoLockedV132) {
                     applyVideoSystemUiLockV132();
                 }
             }, 180);
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
-            startPythonServer();
-        }
+        startPythonServer();
     }
 
     private void startPythonServer() {

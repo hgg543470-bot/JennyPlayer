@@ -547,8 +547,7 @@ body[data-lefthanded="true"] #quickModalsGroup {
 
 
 /* === JENNY V62 STAGE 2: 3-WAY ENGINE TUMBLER & HIDE HELP BADGES === */
-body.hide-help-badges .jenny-help-badge,
-body.hide-help-badges #jennyFullGuideBtn {
+body.hide-help-badges .jenny-help-badge {
     display: none !important;
 }
 .jbuf-tumbler-track {
