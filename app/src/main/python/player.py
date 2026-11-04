@@ -1565,7 +1565,7 @@ def get_track_info():
                             "dur_str": f"{hh:02d}:{mm:02d}:{ss:05.2f}",
                             "dur_s": dur_s,
                             "br": f"{eff_kbps} kb/s (WAV экв. {wav_eq_kbps} kb/s)",
-                            "samples": f"{x_nf:,} PCM frames".replace(",", " ")
+                            "samples": f"{x_nf:,}".replace(",", " ")
                         }
             except Exception:
                 pass

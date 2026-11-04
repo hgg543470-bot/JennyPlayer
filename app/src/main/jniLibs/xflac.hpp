@@ -86,49 +86,89 @@ static void solve_linear_system(int n, double A[TOTAL_TAPS][TOTAL_TAPS], double 
     }
 }
 
-static void apply_dynamic_noise_floor_gate32(int32_t* ch, size_t n, double gate_div, int bits) {
+static void apply_dynamic_noise_floor_gate32(int32_t* ch, size_t n, double gate_div, int bits, uint32_t sr) {
     if (gate_div < 5.0) gate_div = 25.0;
+    if (sr < 8000) sr = 44100;
     double scale = (bits >= 24) ? 256.0 : 1.0;
     int32_t max_lim = (bits >= 24) ? 8388607 : 32767;
     int32_t min_lim = (bits >= 24) ? -8388608 : -32768;
+    double sr_factor = (double)sr / 44100.0;
+    int extra_hi_bits = (bits >= 24) ? 8 : 0;
 
     for (size_t s = 0; s < n; s += SUBBLOCK_SIZE) {
         size_t e = (s + SUBBLOCK_SIZE < n) ? (s + SUBBLOCK_SIZE) : n;
         size_t len = e - s;
-        double sum_sq = 0.0, diff_sq = 0.0;
+        double sum_sq = 0.0, diff_sq = 0.0, diff2_sq = 0.0;
+        double peak16 = 0.0;
         for (size_t i = s; i < e; ++i) {
             double v = (double)ch[i] / scale;
+            double av = fabs(v);
+            if (av > peak16) peak16 = av;
             sum_sq += v * v;
             if (i > s) {
-                double d = v - ((double)ch[i - 1] / scale);
-                diff_sq += d * d;
+                double d1 = v - ((double)ch[i - 1] / scale);
+                diff_sq += d1 * d1;
+                if (i > s + 1) {
+                    double d0 = ((double)ch[i - 1] - (double)ch[i - 2]) / scale;
+                    double d2 = d1 - d0;
+                    diff2_sq += d2 * d2;
+                }
             }
         }
         double rms = sqrt(sum_sq / (double)len);
-        double diff_rms = sqrt(diff_sq / (double)(len > 1 ? len - 1 : 1));
-        double hf_ratio = (rms > 1.0) ? (diff_rms / rms) : 0.0;
+        if (rms <= gate_div * 1.15) continue;
 
-        if (rms > gate_div * 1.25) {
-            double eff_div = gate_div * 18.0;
-            int tz = (int)floor(log2(rms / eff_div));
-            int max_tz = (gate_div <= 16.0) ? 5 : ((gate_div <= 26.0) ? 4 : 3);
-            if (hf_ratio < 0.22) {
-                max_tz = (gate_div <= 16.0) ? 3 : 2;
-            }
-            if (bits >= 24 && tz > 0) {
-                tz += 4;
-                max_tz += 4;
-            }
-            if (tz < 0) tz = 0;
-            else if (tz > max_tz) tz = max_tz;
+        double diff1_rms = sqrt(diff_sq / (double)(len > 1 ? len - 1 : 1)) * sr_factor;
+        double diff2_rms = sqrt(diff2_sq / (double)(len > 2 ? len - 2 : 1)) * (sr_factor * sr_factor);
+        // Кривизна второй производной: у чистого рояля/синуса очень гладкая волна (curv < 0.045), у микса с ударными/вокалом/гитарами > 0.08
+        double curv_ratio = (diff1_rms > 1.0) ? (diff2_rms / diff1_rms) : 0.0;
+        bool is_pure_solo_tone = (curv_ratio < 0.048 && diff1_rms < rms * 0.14);
 
-            if (tz > 0) {
-                int32_t half = 1 << (tz - 1), mask = ~((1 << tz) - 1);
-                int32_t max_pos = max_lim & mask;
-                for (size_t i = s; i < e; ++i) {
-                    int32_t v = (ch[i] + half) & mask;
-                    ch[i] = (v < min_lim) ? min_lim : ((v > max_pos) ? max_pos : v);
-                }
+        int tz = 0;
+        int max_tz = 0;
+
+        if (bits == 16 && sr <= 48000 && !is_pure_solo_tone) {
+            // ПРОФИЛЬ 1: Стандартный 16-bit 44.1/48 kHz (Roxette, Maxx, RATM и др.) — плотное сжатие как раньше (< 20 МБ)
+            double eff_div = gate_div * 1.35;
+            tz = (int)floor(log2(rms / eff_div));
+            max_tz = (gate_div <= 16.0) ? 8 : ((gate_div <= 26.0) ? 7 : 6);
+        } else if (bits >= 24 || sr >= 88200) {
+            // ПРОФИЛЬ 2: Hi-Res 24/32-bit или 88.2/96/192 kHz — адаптивный срез младших разрядов с учетом глубины 24 бит
+            double hi_div = gate_div * (is_pure_solo_tone ? 4.2 : 1.85);
+            int base_tz = (int)floor(log2(rms / hi_div));
+            if (base_tz < 1) base_tz = 1;
+            int base_max = is_pure_solo_tone
+                ? ((gate_div <= 16.0) ? 6 : ((gate_div <= 26.0) ? 5 : 4))
+                : ((gate_div <= 16.0) ? 8 : ((gate_div <= 26.0) ? 7 : 6));
+            if (base_tz > base_max) base_tz = base_max;
+            tz = base_tz + extra_hi_bits;
+            max_tz = base_max + extra_hi_bits;
+        } else {
+            // ПРОФИЛЬ 3: 16-bit сольный чистый академический инструмент (пианино/флейта)
+            double tone_div = gate_div * 3.8;
+            tz = (int)floor(log2(rms / tone_div));
+            max_tz = (gate_div <= 16.0) ? 6 : ((gate_div <= 26.0) ? 5 : 4);
+        }
+
+        if (tz < 0) tz = 0;
+        else if (tz > max_tz) tz = max_tz;
+
+        if (tz > 0) {
+            int32_t step = 1 << tz;
+            int32_t half = 1 << (tz - 1);
+            int32_t mask = ~(step - 1);
+            int32_t max_pos = max_lim & mask;
+            int32_t err_prev = 0;
+            for (size_t i = s; i < e; ++i) {
+                // Error-feedback шейпинг: убирает гармонический ступенчатый дребезг на пианино, оставляя младшие tz бит нулями!
+                int32_t shaped = ch[i] + ((err_prev * 3) >> 3);
+                int32_t q = (shaped + half) & mask;
+                if (q < min_lim) q = min_lim;
+                else if (q > max_pos) q = max_pos;
+                err_prev = ch[i] - q;
+                if (err_prev > step) err_prev = step;
+                else if (err_prev < -step) err_prev = -step;
+                ch[i] = q;
             }
         }
     }
@@ -360,8 +400,8 @@ int xflac_encode_wav_mem(const uint8_t* wav, size_t wav_sz, uint8_t** out_d, siz
     }
     if ((int)mode > 0) {
         double gdiv = ((int)mode >= 5) ? (double)((int)mode) : 25.0;
-        apply_dynamic_noise_floor_gate32(mid, n, gdiv, (int)bits);
-        if (eq) memcpy(side, mid, n * 4); else apply_dynamic_noise_floor_gate32(side, n, gdiv, (int)bits);
+        apply_dynamic_noise_floor_gate32(mid, n, gdiv, (int)bits, sr);
+        if (eq) memcpy(side, mid, n * 4); else apply_dynamic_noise_floor_gate32(side, n, gdiv, (int)bits, sr);
     }
 
     int64_t* ls = (int64_t*)malloc((n + 1) * 8);
