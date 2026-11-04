@@ -11153,9 +11153,7 @@ window.installCleanStageTouchV133();
 if (window.AndroidBridge) {
 try {
 window.AndroidBridge.setVideoActiveState(true);
-if (typeof window.AndroidBridge.canDrawOverlays === 'function' && !window.AndroidBridge.canDrawOverlays()) {
-window.AndroidBridge.requestOverlayPermission();
-}
+/* V143: disabled auto overlay permission redirect on video start */
 } catch (e) {}
 }
 return r;
@@ -12062,3 +12060,318 @@ window.nukeAllTorrentsV142 = async function() {
         }
     } catch (e) {}
 };
+
+// === 🎯🛑 JENNY V143: STREAM AUTO-CLEANUP, EXPLICIT DOWNLOADS & UI RESET ON DELETE ===
+(function() {
+// 1. Очищает экран открытой раздачи в Торрент-студии (сбрасывает старые проценты 82% и кнопку "Загрузка сети" после удаления/остановки)
+window.resetOpenTorrentScreenUI_V143 = function(targetHash) {
+    const ts = window._torStateV96 || {};
+    if (targetHash && ts.currentHash && ts.currentHash.toLowerCase() !== targetHash.toLowerCase()) return;
+
+    ts.dlActive = false;
+    ts.dlOverallPct = 0;
+    ts.activeDlSet = new Set();
+
+    const h = ts.currentHash;
+    if (h && window._torMapV112 && window._torMapV112[h]) {
+        const job = window._torMapV112[h];
+        job.dlActive = false;
+        job.completedAll = false;
+        job.netPct = 0;
+        job.readyCnt = 0;
+        job.targetSet = new Set();
+        job.explicitDlSet = new Set();
+        job.fileStatusMap = {};
+    }
+
+    const totWrap = document.getElementById('torTotalProgWrapV97');
+    const totFill = document.getElementById('torTotalProgFillV97');
+    if (totWrap) totWrap.style.display = 'none';
+    if (totFill) totFill.style.width = '0%';
+
+    const encWrap = document.getElementById('torXflacProgWrapV99');
+    if (encWrap) encWrap.style.display = 'none';
+
+    (ts.files || []).forEach(f => {
+        const fIdx = Number(f.index);
+        const rowEl = document.getElementById('torFileRowV96_' + fIdx);
+        const pEl = document.getElementById('torFileProgV96_' + fIdx);
+        const dlBtn = document.getElementById('torDlSingleBtnV98_' + fIdx);
+        const mb = ((f.length || 0) / (1024 * 1024)).toFixed(1);
+        if (rowEl) {
+            rowEl.style.background = '#0b0f16';
+            rowEl.style.borderColor = '#21262d';
+        }
+        if (pEl) {
+            pEl.innerText = `💾 ${mb} MB • ▶ Поток / ⬇️ Скачать`;
+        }
+        if (dlBtn) {
+            dlBtn.innerText = '⬇️';
+            dlBtn.style.color = '#3fb950';
+        }
+    });
+
+    const btn = document.getElementById('btnTorStartDlV97');
+    if (btn) {
+        btn.disabled = false;
+        btn.style.background = 'linear-gradient(135deg, #8957e5, #238636)';
+        const hasLossless = window.torrentHasLosslessFilesV106 ? window.torrentHasLosslessFilesV106(ts.files || []) : false;
+        btn.innerText = hasLossless ? '⬇️ Качать выбранные (➔ xFLAC)' : '⬇️ Качать выбранные в плеер';
+    }
+    const stEl = document.getElementById('torStatusLineV96');
+    if (stEl) {
+        stEl.innerText = `💿 ${ts.currentName || 'Раздача'} (треков: ${(ts.files || []).length}) • Остановлена / Очищена`;
+    }
+};
+
+// 2. Автоматическая остановка потока и удаление временного кэша, если трек только прослушивался через ▶ (не качался через ⬇️)
+window._activeStreamSessionV143 = null; // { hash, fileIdx }
+
+window.cleanupActiveTorrentStreamV143 = async function(reason) {
+    const sess = window._activeStreamSessionV143;
+    if (!sess || !sess.hash) return;
+    window._activeStreamSessionV143 = null;
+
+    const h = sess.hash;
+    const fIdx = sess.fileIdx;
+    const job = window._torMapV112 && window._torMapV112[h];
+    const isExplicit = Boolean(job && job.explicitDlSet && job.explicitDlSet.has(Number(fIdx)));
+
+    if (!isExplicit) {
+        try {
+            const res = await fetch('/api/torrent/stream_stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hash: h, file_index: fIdx })
+            }).then(r => r.json());
+            if (res && res.dropped_torrent) {
+                window.resetOpenTorrentScreenUI_V143(h);
+                if (res.cleaned_mb > 0 && typeof window.showToast === 'function' && reason === 'manual') {
+                    window.showToast(`🛑 Поток остановлен, временный кэш удалён (${res.cleaned_mb} МБ)`);
+                }
+            } else if (job && job.fileStatusMap) {
+                delete job.fileStatusMap[Number(fIdx)];
+                if (job.targetSet) job.targetSet.delete(Number(fIdx));
+            }
+            if (typeof window.refreshTorrentDaemonSnapV128 === 'function') {
+                window.refreshTorrentDaemonSnapV128();
+            }
+        } catch (e) {}
+    }
+};
+
+// Перехватываем stopAllExternalStreamsV97 (нажатие ✖ в мини-плеере или стоп потока)
+const _origStopStreamsV143 = window.stopAllExternalStreamsV97;
+window.stopAllExternalStreamsV97 = function() {
+    if (typeof _origStopStreamsV143 === 'function') _origStopStreamsV143.apply(this, arguments);
+    if (window._activeStreamSessionV143) {
+        window.cleanupActiveTorrentStreamV143('stop');
+    }
+};
+
+// Перехватываем closeVideoPlayerV130 (закрытие видеоплеера крестиком ✖): если видео смотрелось в потоке ▶ без скачивания ⬇️ — чистим кэш потока!
+const _origCloseVidV143 = window.closeVideoPlayerV130;
+window.closeVideoPlayerV130 = function(ev) {
+    const st = window._vidStateV130 || {};
+    const tHash = st.torHash;
+    const tIdx = st.torFileIdx;
+    const r = _origCloseVidV143.apply(this, arguments);
+    if (tHash && tIdx >= 0) {
+        window._activeStreamSessionV143 = { hash: tHash, fileIdx: tIdx };
+        window.cleanupActiveTorrentStreamV143('video_close');
+    }
+    return r;
+};
+
+// Перехватываем запуск потока ▶ (previewTorrentFileStreamV97):
+// перед стартом нового потока чистим предыдущий временный поток и запоминаем новый
+const _origPreviewStreamV143 = window.previewTorrentFileStreamV97;
+window.previewTorrentFileStreamV97 = async function(fileIdx, btnEl, ev) {
+    const ts = window._torStateV96 || {};
+    const h = ts.currentHash || '';
+    if (window._activeStreamSessionV143 && (window._activeStreamSessionV143.hash !== h || window._activeStreamSessionV143.fileIdx !== Number(fileIdx))) {
+        await window.cleanupActiveTorrentStreamV143('switch');
+    }
+    if (h) {
+        window._activeStreamSessionV143 = { hash: h, fileIdx: Number(fileIdx) };
+    }
+    return await _origPreviewStreamV143.apply(this, arguments);
+};
+
+// 3. Индивидуальная кнопка ⬇️ качает СТРОГО нажатый трек (снимая дефолтное выделение со всех 43 треков, даже если уже шел поток ▶!)
+window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const h = window._torStateV96 && window._torStateV96.currentHash;
+    const job = h ? window._torMapV112[h] : null;
+    if (!job) return;
+    const cleanIdx = Number(fileIdx);
+    if (!job.validIdxSet.has(cleanIdx)) return;
+
+    job.explicitDlSet = job.explicitDlSet || new Set();
+    // Если это первое явное нажатие ⬇️ в этой раздаче — сбрасываем дефолтные 43 галочки, чтобы качался ТОЛЬКО выбранный трек!
+    if (job.explicitDlSet.size === 0) {
+        job.selectedFiles.clear();
+        job.targetSet.clear();
+        document.querySelectorAll('#torBodyListV96 input[type="checkbox"]').forEach(c => { c.checked = false; });
+    }
+
+    job.explicitDlSet.add(cleanIdx);
+    job.selectedFiles.add(cleanIdx);
+    job.targetSet.add(cleanIdx);
+    job.dlActive = true;
+    job.completedAll = false;
+
+    const chk = document.querySelector(`#torFileRowV96_${cleanIdx} input[type="checkbox"]`);
+    if (chk) chk.checked = true;
+    if (typeof window.updateTorrentSelectAllBtnUIV117 === 'function') window.updateTorrentSelectAllBtnUIV117();
+    if (btnEl) { btnEl.innerText = '⏳'; btnEl.style.color = '#3fb950'; }
+
+    // Если этот трек уже успел докачаться во время потокового прослушивания ▶ — сразу импортируем его в плеер!
+    const fSt = job.fileStatusMap && job.fileStatusMap[cleanIdx];
+    const fMeta = (job.files || []).find(x => Number(x.index) === cleanIdx);
+    if (fSt && fSt.done && !fSt.xflac_file) {
+        window.enqueueTorrentTrackImportV112(job, { index: cleanIdx, full_path: fSt.full_path || (fMeta && fMeta.full_path) || '' }, job.name);
+    }
+
+    await fetch('/api/torrent/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hash: job.hash, files: Array.from(job.explicitDlSet), explicit: true })
+    }).catch(() => {});
+    window.ensureMultiTorrentWorkerV112();
+};
+
+// 4. Нижняя кнопка «⬇️ Качать выбранные» помечает все отмеченные галочками треки как явные закачки (explicitDlSet)
+window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
+    const h = window._torStateV96 && window._torStateV96.currentHash;
+    const job = h ? window._torMapV112[h] : null;
+    if (!job) return;
+    job.explicitDlSet = job.explicitDlSet || new Set();
+
+    const sel = Array.isArray(explicitFiles) && explicitFiles.length > 0
+        ? explicitFiles.map(Number)
+        : Array.from(job.selectedFiles || []).map(Number);
+    const validSel = sel.filter(x => job.validIdxSet.has(x));
+    if (!validSel.length) {
+        if (typeof window.showToast === 'function') window.showToast('⚠️ Отметь галочкой хотя бы один трек');
+        return;
+    }
+
+    validSel.forEach(idx => {
+        job.explicitDlSet.add(idx);
+        job.targetSet.add(idx);
+    });
+    job.dlActive = true;
+    job.completedAll = false;
+
+    await fetch('/api/torrent/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hash: job.hash, files: Array.from(job.explicitDlSet), explicit: true })
+    }).catch(() => {});
+    window.paintOpenedTorrentJobProgressV112(job, null);
+    window.ensureMultiTorrentWorkerV112();
+};
+
+// 5. Запрещаем авто-импорт в медиатеку тех треков, которые были запущены только через ▶ (без нажатия ⬇️)!
+const _origEnqueueImportV143 = window.enqueueTorrentTrackImportV112;
+window.enqueueTorrentTrackImportV112 = function(job, fObj, torName) {
+    const fIdx = Number(fObj && fObj.index);
+    const isExplicit = Boolean((fObj && fObj.explicit_dl) || (job && job.explicitDlSet && job.explicitDlSet.has(fIdx)));
+    if (!isExplicit) {
+        // Трек только играл в потоке ▶ — не засоряем им медиатеку плеера!
+        return;
+    }
+    return _origEnqueueImportV143.apply(this, arguments);
+};
+
+// 6. Кнопки «⏹ Стоп» и «🗑️ Удалить» для текущей открытой раздачи + сброс экрана при удалении из Центра закачек
+window.stopCurrentOpenTorrentV143 = async function() {
+    const h = window._torStateV96 && window._torStateV96.currentHash;
+    if (!h) return;
+    window.stopAllExternalStreamsV97();
+    const res = await fetch('/api/torrent/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hash: h, action: 'stop_or_pause' })
+    }).then(r => r.json()).catch(() => ({}));
+
+    if (res.mode === 'stream_cleaned') {
+        window.resetOpenTorrentScreenUI_V143(h);
+        if (typeof window.showToast === 'function') {
+            window.showToast(`🛑 Поток остановлен, временные данные удалены (${res.freed_mb || 0} МБ)`);
+        }
+    } else {
+        const job = window._torMapV112 && window._torMapV112[h];
+        if (job) { job.paused = true; job.dlActive = false; }
+        const btn = document.getElementById('btnTorStartDlV97');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = '▶️ Продолжить закачку выбранных';
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast('⏸ Закачка поставлена на паузу (кэш сохранён для докачки)');
+        }
+    }
+    if (typeof window.refreshTorrentDaemonSnapV128 === 'function') window.refreshTorrentDaemonSnapV128();
+};
+
+window.deleteCurrentOpenTorrentV143 = async function() {
+    const h = window._torStateV96 && window._torStateV96.currentHash;
+    if (!h) return;
+    window.stopAllExternalStreamsV97();
+    await window.controlTorrentJobV128(h, 'drop');
+    window.resetOpenTorrentScreenUI_V143(h);
+};
+
+// При любом вызове controlTorrentJobV128(hash, 'drop') или nukeAllTorrentsV142 сбрасываем экран Торрент-студии!
+const _origCtrlJobV143 = window.controlTorrentJobV128;
+window.controlTorrentJobV128 = async function(hash, action, idxVal) {
+    if (action === 'drop') {
+        window.stopAllExternalStreamsV97();
+    }
+    const r = await _origCtrlJobV143.apply(this, arguments);
+    if (action === 'drop') {
+        window.resetOpenTorrentScreenUI_V143(hash);
+    }
+    return r;
+};
+
+const _origNukeAllV143 = window.nukeAllTorrentsV142;
+window.nukeAllTorrentsV142 = async function() {
+    window.stopAllExternalStreamsV97();
+    const r = await _origNukeAllV143.apply(this, arguments);
+    window.resetOpenTorrentScreenUI_V143('');
+    return r;
+};
+
+// Добавляем кнопки «⏹ Стоп» и «🗑️» прямо в футер открытой раздачи (#torFooterBarV96)
+const _origRenderFilesV143 = window.renderTorrentFilesListV96;
+window.renderTorrentFilesListV96 = function() {
+    _origRenderFilesV143.apply(this, arguments);
+    const ftr = document.getElementById('torFooterBarV96');
+    if (ftr && !document.getElementById('btnTorStopStreamOrDlV143')) {
+        const btnRow = ftr.lastElementChild;
+        if (btnRow) {
+            const stopBtn = document.createElement('button');
+            stopBtn.type = 'button';
+            stopBtn.id = 'btnTorStopStreamOrDlV143';
+            stopBtn.title = 'Остановить (удалит кэш если был только поток ▶, или поставит на паузу если качалось ⬇️)';
+            stopBtn.onclick = () => window.stopCurrentOpenTorrentV143();
+            stopBtn.style.cssText = 'padding:8px 9px;background:#161b22;color:#e3b341;border:1px solid #e3b341;border-radius:8px;font-weight:bold;font-size:11px;flex-shrink:0;';
+            stopBtn.innerText = '⏹ Стоп';
+
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.id = 'btnTorDeleteFullV143';
+            delBtn.title = 'Остановить и полностью удалить все файлы этой раздачи с диска';
+            delBtn.onclick = () => window.deleteCurrentOpenTorrentV143();
+            delBtn.style.cssText = 'padding:8px 9px;background:rgba(248,81,73,0.16);color:#ff7b72;border:1px solid #f85149;border-radius:8px;font-weight:bold;font-size:11px;flex-shrink:0;';
+            delBtn.innerText = '🗑️';
+
+            btnRow.appendChild(stopBtn);
+            btnRow.appendChild(delBtn);
+        }
+    }
+};
+})();

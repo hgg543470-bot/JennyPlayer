@@ -3078,7 +3078,17 @@ def api_torrent_add_v96():
         out_body = json.dumps(req_obj).encode("utf-8")
         req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add", data=out_body, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=32) as r:
-            return r.read().decode("utf-8")
+            res_str = r.read().decode("utf-8")
+        try:
+            d_obj = json.loads(res_str)
+            if d_obj.get("hash"):
+                _KNOWN_TORRENT_META_V143[d_obj["hash"].lower()] = {
+                    "magnet": mag,
+                    "name": d_obj.get("name") or "Torrent"
+                }
+        except Exception:
+            pass
+        return res_str
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
@@ -3268,10 +3278,16 @@ def api_torrent_status_v96():
             return json.dumps({"status": "ok", "torrents": []})
         with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=3) as r:
             data = json.loads(r.read().decode("utf-8"))
+        persisted_st = _load_persisted_dl_state_v143() if '_load_persisted_dl_state_v143' in globals() else {}
         for t in (data.get("torrents") or []):
+            th = (t.get("hash") or "").strip().lower()
+            exp_set = set(int(x) for x in (persisted_st.get(th, {}).get("explicit_files") or []))
+            t["has_explicit_dl"] = bool(exp_set)
             for f in (t.get("files") or []):
-                key = f"{t.get('hash')}_{f.get('index')}"
+                f_idx = int(f.get("index", 0))
+                key = f"{th}_{f_idx}"
                 f["xflac_file"] = _JTORRENT_CONVERTED_V96.get(key, "")
+                f["explicit_dl"] = (f_idx in exp_set)
         return json.dumps(data, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
@@ -3372,6 +3388,8 @@ def api_torrent_import_track_v105():
                         shutil.copy2(full_p, final_path)
 
             _JTORRENT_CONVERTED_V96[key] = final_name
+            if '_mark_explicit_file_done_v143' in globals():
+                _mark_explicit_file_done_v143(str(req.get('hash') or ''), int(req.get('index') or 0))
             _TOR_ENC_PROGRESS_V99["track_pct"] = 100
             _TOR_ENC_PROGRESS_V99["done_count"] = _TOR_ENC_PROGRESS_V99.get("done_count", 0) + 1
             _recalc_tor_enc_overall_v99()
@@ -3395,6 +3413,7 @@ def api_torrent_stream_proxy_v97(hash_str, file_idx):
     h_low = hash_str.strip().lower()
     # Добавляем прослушиваемый файл к уже качающемуся списку, НЕ отменяя загрузку остальных выбранных треков!
     cur_set = set(_JTORRENT_ACTIVE_FILES_V106.get(h_low, set()))
+    _STREAM_ONLY_ACTIVE_V143.setdefault(h_low, set()).add(int(file_idx))
     if file_idx not in cur_set:
         cur_set.add(int(file_idx))
         _JTORRENT_ACTIVE_FILES_V106[h_low] = cur_set
@@ -3517,7 +3536,10 @@ def api_torrent_download_v127():
   req_obj = json.loads(raw_body.decode("utf-8") or "{}")
   h = (req_obj.get("hash") or "").strip().lower()
   flist = [int(x) for x in (req_obj.get("files") or [])]
-  if h: _JTORRENT_ACTIVE_FILES_V106[h] = set(flist)
+  if h:
+   _JTORRENT_ACTIVE_FILES_V106[h] = set(flist)
+   if req_obj.get("explicit", True):
+    _register_explicit_download_v143(h, flist, torrent_path=os.path.join(MUSIC_DIR, "torrents_tmp", f"{h}.torrent"))
   cached_trs, _, _ = _load_trackers_state_v110()
   req_obj["trackers"] = list(cached_trs or [])
   payload = json.dumps(req_obj).encode("utf-8")
@@ -3632,6 +3654,8 @@ def api_torrent_control_v128():
         h = (data.get("hash") or "").strip().lower()
 
         if act == "drop_all":
+            if '_remove_persisted_dl_v143' in globals():
+                _remove_persisted_dl_v143("", nuke_all=True)
             freed_mb = _delete_torrent_files_from_disk_v142("", nuke_all=True)
             try:
                 urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/kill_all", timeout=1.5).read()
@@ -3649,7 +3673,18 @@ def api_torrent_control_v128():
 
         freed_mb = 0.0
         if act == "drop" and h:
+            if '_remove_persisted_dl_v143' in globals():
+                _remove_persisted_dl_v143(h, nuke_all=False)
             freed_mb = _delete_torrent_files_from_disk_v142(h, nuke_all=False)
+        elif act == "stop_or_pause" and h:
+            # Если раздача была запущена только для потока (▶), останавливаем и чистим её кэш; если качалась (⬇️) — ставим на паузу без удаления кэша!
+            st_dl = _load_persisted_dl_state_v143() if '_load_persisted_dl_state_v143' in globals() else {}
+            exp_files = st_dl.get(h, {}).get("explicit_files") or []
+            if not exp_files:
+                res_clean = _stop_and_clean_stream_data_v143(h, None)
+                return json.dumps({"status": "ok", "mode": "stream_cleaned", "freed_mb": res_clean.get("cleaned_mb", 0.0)})
+            else:
+                raw_b = json.dumps({"hash": h, "action": "pause"}).encode("utf-8")
 
         req = urllib.request.Request(
             f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
@@ -4334,6 +4369,242 @@ def api_omni_live_wave_poll_v141():
     url_t = f"http://127.0.0.1:{port}/search_poll" + (f"?{qs}" if qs else "")
     with urllib.request.urlopen(url_t, timeout=5) as r:
         return r.read().decode("utf-8", "ignore")
+
+
+# === 🎯🧲 JENNY V143: STREAM-ONLY AUTO-CLEANUP VS EXPLICIT DOWNLOAD AUTO-RESUME ===
+TORRENT_DL_STATE_FILE_V143 = os.path.join(DEFAULT_MUSIC_DIR, "jenny_torrent_downloads.json")
+_TORRENT_DL_LOCK_V143 = threading.Lock()
+_STREAM_ONLY_ACTIVE_V143 = {}   # hash -> set(file_idx)
+_KNOWN_TORRENT_META_V143 = {}   # hash -> {"magnet": str, "torrent_path": str, "name": str}
+
+def _load_persisted_dl_state_v143() -> dict:
+    if os.path.isfile(TORRENT_DL_STATE_FILE_V143):
+        try:
+            with open(TORRENT_DL_STATE_FILE_V143, "r", encoding="utf-8") as f:
+                d = json.load(f)
+                if isinstance(d, dict):
+                    return d
+        except Exception:
+            pass
+    return {}
+
+def _save_persisted_dl_state_v143(state: dict):
+    try:
+        os.makedirs(os.path.dirname(TORRENT_DL_STATE_FILE_V143), exist_ok=True)
+        with open(TORRENT_DL_STATE_FILE_V143, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _register_explicit_download_v143(h: str, files_list: list, magnet: str = "", torrent_path: str = "", name: str = ""):
+    h = (h or "").strip().lower()
+    if not h:
+        return
+    with _TORRENT_DL_LOCK_V143:
+        st = _load_persisted_dl_state_v143()
+        meta = _KNOWN_TORRENT_META_V143.get(h, {})
+        entry = st.get(h) or {
+            "hash": h,
+            "name": name or meta.get("name") or "Torrent",
+            "magnet": magnet or meta.get("magnet") or "",
+            "torrent_path": torrent_path or meta.get("torrent_path") or "",
+            "explicit_files": [],
+            "completed_files": []
+        }
+        if magnet:
+            entry["magnet"] = magnet
+        if torrent_path:
+            entry["torrent_path"] = torrent_path
+        if name:
+            entry["name"] = name
+        cur_exp = set(int(x) for x in entry.get("explicit_files", []))
+        for f_idx in (files_list or []):
+            cur_exp.add(int(f_idx))
+            if h in _STREAM_ONLY_ACTIVE_V143:
+                _STREAM_ONLY_ACTIVE_V143[h].discard(int(f_idx))
+        entry["explicit_files"] = sorted(list(cur_exp))
+        st[h] = entry
+        _save_persisted_dl_state_v143(st)
+
+def _mark_explicit_file_done_v143(h: str, file_idx: int):
+    h = (h or "").strip().lower()
+    if not h:
+        return
+    with _TORRENT_DL_LOCK_V143:
+        st = _load_persisted_dl_state_v143()
+        if h in st:
+            comp = set(int(x) for x in st[h].get("completed_files", []))
+            comp.add(int(file_idx))
+            st[h]["completed_files"] = sorted(list(comp))
+            _save_persisted_dl_state_v143(st)
+
+def _remove_persisted_dl_v143(h: str = "", nuke_all: bool = False):
+    with _TORRENT_DL_LOCK_V143:
+        if nuke_all:
+            _STREAM_ONLY_ACTIVE_V143.clear()
+            _save_persisted_dl_state_v143({})
+            return
+        h = (h or "").strip().lower()
+        _STREAM_ONLY_ACTIVE_V143.pop(h, None)
+        st = _load_persisted_dl_state_v143()
+        if h in st:
+            st.pop(h, None)
+            _save_persisted_dl_state_v143(st)
+
+def _stop_and_clean_stream_data_v143(h: str, file_idx=None) -> dict:
+    """Если раздача запускалась только для потока (▶) без скачивания (⬇️) — останавливает торрент и удаляет кэш потока с диска."""
+    h = (h or "").strip().lower()
+    if not h:
+        return {"status": "ok", "cleaned_mb": 0.0, "dropped_torrent": False}
+
+    st = _load_persisted_dl_state_v143()
+    entry = st.get(h) or {}
+    explicit_set = set(int(x) for x in entry.get("explicit_files", []))
+    comp_set = set(int(x) for x in entry.get("completed_files", []))
+    pending_explicit = explicit_set - comp_set
+
+    if file_idx is not None:
+        f_i = int(file_idx)
+        if h in _STREAM_ONLY_ACTIVE_V143:
+            _STREAM_ONLY_ACTIVE_V143[h].discard(f_i)
+        if h in _JTORRENT_ACTIVE_FILES_V106 and f_i not in explicit_set:
+            _JTORRENT_ACTIVE_FILES_V106[h].discard(f_i)
+    else:
+        _STREAM_ONLY_ACTIVE_V143.pop(h, None)
+
+    # Если у торрента НЕТ активных скачиваний через ⬇️ — полностью гасим торрент и чистим его временные данные с диска!
+    if not pending_explicit:
+        freed_mb = _delete_torrent_files_from_disk_v142(h, nuke_all=False)
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                data=json.dumps({"hash": h, "action": "drop"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(req, timeout=2.5).read()
+        except Exception:
+            pass
+        return {"status": "ok", "cleaned_mb": freed_mb, "dropped_torrent": True}
+
+    # Если в этом же торренте качаются другие файлы через ⬇️ — оставляем качаться ТОЛЬКО их, а временный файл потока удаляем
+    freed_mb = 0.0
+    if file_idx is not None and int(file_idx) not in explicit_set:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.0) as r:
+                d_st = json.loads(r.read().decode("utf-8", "ignore"))
+                for tor in (d_st.get("torrents") or []):
+                    if (tor.get("hash") or "").strip().lower() == h:
+                        for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                            if int(fobj.get("index", -1)) == int(file_idx):
+                                fp = fobj.get("full_path") or os.path.join(MUSIC_DIR, "torrents_tmp", (fobj.get("path") or "").lstrip("/"))
+                                if fp and os.path.isfile(fp):
+                                    freed_mb = round(os.path.getsize(fp) / (1024.0 * 1024.0), 1)
+                                    os.remove(fp)
+        except Exception:
+            pass
+        try:
+            cached_trs, _, _ = _load_trackers_state_v110()
+            dl_req = urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                data=json.dumps({"hash": h, "files": sorted(list(pending_explicit)), "trackers": list(cached_trs or [])}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(dl_req, timeout=2.5).read()
+        except Exception:
+            pass
+
+    return {"status": "ok", "cleaned_mb": freed_mb, "dropped_torrent": False}
+
+@post('/api/torrent/stream_stop')
+def api_torrent_stream_stop_v143():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode("utf-8") or "{}")
+        h = (req.get("hash") or "").strip().lower()
+        f_idx = req.get("file_index")
+        res = _stop_and_clean_stream_data_v143(h, f_idx)
+        return json.dumps(res)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+def _startup_resume_downloads_and_clean_streams_v143():
+    """На старте плеера вычищает временный кэш потоков (▶) и автоматически докачивает недокачанные закачки (⬇️)."""
+    time.sleep(2.2)
+    if not ensure_jtorrent_daemon_v96():
+        return
+    st = _load_persisted_dl_state_v143()
+    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    active_hashes = set()
+    to_resume = []
+
+    for h, entry in list(st.items()):
+        exp = set(int(x) for x in entry.get("explicit_files", []))
+        comp = set(int(x) for x in entry.get("completed_files", []))
+        pending = sorted(list(exp - comp))
+        if pending:
+            active_hashes.add(h.lower())
+            to_resume.append((h.lower(), entry, pending))
+        else:
+            st.pop(h, None)
+    _save_persisted_dl_state_v143(st)
+
+    # 1. Останавливаем и удаляем из демона и torrents_tmp все раздачи, которые НЕ ставились на скачивание ⬇️
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=2.0) as r:
+            d_st = json.loads(r.read().decode("utf-8", "ignore"))
+            for tor in (d_st.get("torrents") or []):
+                th = (tor.get("hash") or "").strip().lower()
+                if th and th not in active_hashes:
+                    _delete_torrent_files_from_disk_v142(th, nuke_all=False)
+                    try:
+                        req = urllib.request.Request(
+                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                            data=json.dumps({"hash": th, "action": "drop"}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        )
+                        urllib.request.urlopen(req, timeout=2.0).read()
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    if not active_hashes and os.path.isdir(tor_dir):
+        try:
+            shutil.rmtree(tor_dir, ignore_errors=True)
+            os.makedirs(tor_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    # 2. Автоматически запускаем докачку всех недокачанных треков (⬇️) прямо на старте!
+    cached_trs, _, _ = _load_trackers_state_v110()
+    for h, entry, pending_files in to_resume:
+        try:
+            t_path = entry.get("torrent_path") or os.path.join(tor_dir, f"{h}.torrent")
+            mag = entry.get("magnet") or ""
+            add_payload = {"trackers": list(cached_trs or [])}
+            if os.path.isfile(t_path):
+                add_payload["torrent_path"] = t_path
+            elif mag:
+                add_payload["magnet"] = enrich_magnet_with_cached_trackers_v109(mag)
+            else:
+                continue
+            add_req = urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add",
+                data=json.dumps(add_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(add_req, timeout=15).read()
+            _JTORRENT_ACTIVE_FILES_V106[h] = set(pending_files)
+            dl_req = urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                data=json.dumps({"hash": h, "files": pending_files, "trackers": list(cached_trs or [])}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(dl_req, timeout=8).read()
+        except Exception:
+            pass
+
+threading.Thread(target=_startup_resume_downloads_and_clean_streams_v143, daemon=True).start()
 
 def start_server():
     load_saved_music_dir()
