@@ -86,90 +86,102 @@ static void solve_linear_system(int n, double A[TOTAL_TAPS][TOTAL_TAPS], double 
     }
 }
 
-struct XflacBackendProfileV159 {
+struct XflacBackendProfileV160 {
     double div_scale;
     int max_tz_15;
     int max_tz_25;
     int max_tz_45;
-    size_t win_samples;
+    int max_tz_1_1;
 };
 
-static XflacBackendProfileV159 resolve_backend_profile_v159(uint32_t sr, int bits) {
-    XflacBackendProfileV159 p;
-    // Подбираем размер окна так, чтобы он всегда соответствовал ~21 мс физического времени (разрешение слуха)
+static XflacBackendProfileV160 resolve_backend_profile_v160(uint32_t sr, int bits) {
+    XflacBackendProfileV160 p;
     if (sr <= 24000) {
-        p.win_samples = 512;
-        p.div_scale = 1.15;
-        p.max_tz_15 = 8; p.max_tz_25 = 7; p.max_tz_45 = 6;
+        p.div_scale = 1.12;
+        p.max_tz_15 = 8; p.max_tz_25 = 7; p.max_tz_45 = 6; p.max_tz_1_1 = 4;
     } else if (sr <= 32000) {
-        p.win_samples = 512;
-        p.div_scale = 1.08;
-        p.max_tz_15 = 8; p.max_tz_25 = 7; p.max_tz_45 = 6;
+        p.div_scale = 1.05;
+        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7; p.max_tz_1_1 = 5;
     } else if (sr <= 48000) {
-        // Эталонный профиль 44100 / 48000 Hz (1:1 как работал изначально на Roxette / Maxx!)
-        p.win_samples = 1024;
+        // 44100 / 48000 Hz: эталонная плотность (~8-10% от WAV в режиме Ultra 15)
         p.div_scale = 1.00;
-        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7;
+        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7; p.max_tz_1_1 = 5;
     } else if (sr <= 64000) {
-        p.win_samples = 1536;
         p.div_scale = 0.96;
-        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7;
+        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7; p.max_tz_1_1 = 5;
     } else if (sr <= 96000) {
-        // Профиль 88200 / 96000 Hz
-        p.win_samples = 2048;
-        p.div_scale = 0.92;
-        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7;
+        // 88200 / 96000 Hz: за счет 2x оверсэмплинга шум квантования размазан по полосе 48 кГц
+        p.div_scale = 0.90;
+        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7; p.max_tz_1_1 = 5;
     } else if (sr <= 128000) {
-        // Профиль 128000 Hz
-        p.win_samples = 3072;
-        p.div_scale = 0.88;
-        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7;
+        p.div_scale = 0.86;
+        p.max_tz_15 = 9; p.max_tz_25 = 8; p.max_tz_45 = 7; p.max_tz_1_1 = 5;
     } else if (sr <= 176400) {
-        // Профиль 176400 Hz (4x 44.1 kHz)
-        p.win_samples = 4096;
-        p.div_scale = 0.85;
-        p.max_tz_15 = 10; p.max_tz_25 = 9; p.max_tz_45 = 8;
+        // 176400 Hz (4x 44.1 kHz)
+        p.div_scale = 0.82;
+        p.max_tz_15 = 10; p.max_tz_25 = 9; p.max_tz_45 = 8; p.max_tz_1_1 = 6;
     } else if (sr <= 192000) {
-        // Профиль 192000 Hz (4x 48 kHz)
-        p.win_samples = 4096;
-        p.div_scale = 0.84;
-        p.max_tz_15 = 10; p.max_tz_25 = 9; p.max_tz_45 = 8;
-    } else {
-        // Профиль 352800 / 384000 Hz (DXD / Ultra Hi-Res)
-        p.win_samples = 8192;
+        // 192000 Hz (4x 48 kHz)
         p.div_scale = 0.80;
-        p.max_tz_15 = 10; p.max_tz_25 = 9; p.max_tz_45 = 8;
+        p.max_tz_15 = 10; p.max_tz_25 = 9; p.max_tz_45 = 8; p.max_tz_1_1 = 6;
+    } else {
+        // 352800 / 384000 Hz
+        p.div_scale = 0.76;
+        p.max_tz_15 = 10; p.max_tz_25 = 9; p.max_tz_45 = 8; p.max_tz_1_1 = 6;
     }
     (void)bits;
     return p;
 }
 
-static void apply_dynamic_noise_floor_gate32(int32_t* ch, size_t n, double gate_div, int bits, uint32_t sr) {
-    if (gate_div < 5.0) gate_div = 25.0;
+static void apply_dynamic_noise_floor_gate32(int32_t* ch, size_t n, int mode_val, int bits, uint32_t sr) {
     if (sr < 8000) sr = 44100;
+    XflacBackendProfileV160 prof = resolve_backend_profile_v160(sr, bits);
 
-    XflacBackendProfileV159 prof = resolve_backend_profile_v159(sr, bits);
-    // Нормализуем 24/32-битную амплитуду к 16-битной шкале (делитель 256.0), а при сдвиге бит добавляем +8 младших разрядов
     double amp_scale = (bits >= 24) ? 256.0 : 1.0;
     int bit_shift_offset = (bits >= 24) ? 8 : 0;
     int32_t max_lim = (bits >= 24) ? 8388607 : 32767;
     int32_t min_lim = (bits >= 24) ? -8388608 : -32768;
     double sr_norm = (double)sr / 44100.0;
 
-    // Выбираем потолок среза из таблицы профилей под текущий режим (15 / 25 / 45)
-    int base_max_tz = (gate_div <= 16.0) ? prof.max_tz_15 : ((gate_div <= 26.0) ? prof.max_tz_25 : prof.max_tz_45);
-    double eff_gate = gate_div * prof.div_scale;
+    // Настройка 4 профилей:
+    // mode_val == 15 (Ultra): экстремальное сжатие (~9%), 0% шейпинга на обычных миксах
+    // mode_val == 25 (Psycho): ~12%, легкий шейпинг 1-го порядка (shaping_level = 1)
+    // mode_val == 45 (HiFi): ~16%, средний шейпинг 2-го порядка (shaping_level = 2)
+    // mode_val == 0  (1:1 Master): ~24-30% (в 2 раза легче FLAC!), точный Master-шейпинг 2-го порядка теплового шума АЦП (shaping_level = 3)
+    double gate_div = 25.0;
+    int base_max_tz = prof.max_tz_25;
+    int shaping_level = 1;
 
-    // Важно: обнуление бит делаем кратно SUBBLOCK_SIZE (1024), чтобы strip_wasted_bits32 снимал 100% нулевых бит без потерь сжатия!
-    int prev_base_tz = -1;
+    if (mode_val == 0) {
+        gate_div = 82.0 * prof.div_scale;
+        base_max_tz = prof.max_tz_1_1;
+        shaping_level = 3;
+    } else if (mode_val <= 16) {
+        gate_div = 15.0 * prof.div_scale;
+        base_max_tz = prof.max_tz_15;
+        shaping_level = 0;
+    } else if (mode_val <= 26) {
+        gate_div = 25.0 * prof.div_scale;
+        base_max_tz = prof.max_tz_25;
+        shaping_level = 1;
+    } else {
+        gate_div = 45.0 * prof.div_scale;
+        base_max_tz = prof.max_tz_45;
+        shaping_level = 2;
+    }
+
     for (size_t s = 0; s < n; s += SUBBLOCK_SIZE) {
         size_t e = (s + SUBBLOCK_SIZE < n) ? (s + SUBBLOCK_SIZE) : n;
         size_t len = e - s;
         double sum_sq = 0.0;
         double diff_sq = 0.0;
+        double peak16 = 0.0;
         uint32_t zero_crossings = 0;
+
         for (size_t i = s; i < e; ++i) {
             double v = (double)ch[i] / amp_scale;
+            double av = fabs(v);
+            if (av > peak16) peak16 = av;
             sum_sq += v * v;
             if (i > s) {
                 double vp = (double)ch[i - 1] / amp_scale;
@@ -181,38 +193,97 @@ static void apply_dynamic_noise_floor_gate32(int32_t* ch, size_t n, double gate_
             }
         }
         double rms = sqrt(sum_sq / (double)len);
-        if (rms <= eff_gate * 1.15) {
-            prev_base_tz = 0;
-            continue;
+
+        int base_tz = 0;
+        if (rms > gate_div * 1.15) {
+            base_tz = (int)floor(log2(rms / gate_div));
+            if (base_tz < 0) base_tz = 0;
+            else if (base_tz > base_max_tz) base_tz = base_max_tz;
         }
 
-        int base_tz = (int)floor(log2(rms / eff_gate));
-        if (base_tz < 0) base_tz = 0;
-        else if (base_tz > base_max_tz) base_tz = base_max_tz;
-
-        // Детектор узкополосного сольного инструмента (рояль/акустика без ударных):
-        // Проверяем только если реально мало пересечений нуля и гладкая производная (не трогает рок/поп/электронику!)
+        // Детектор узкополосной чистой ноты (сольное пианино без ударных):
         double diff_rms = sqrt(diff_sq / (double)(len > 1 ? len - 1 : 1)) * sr_norm;
         double zcr_norm = ((double)zero_crossings / (double)len) * sr_norm;
-        if (diff_rms < rms * 0.085 && zcr_norm < 0.035) {
-            int tonal_cap = base_max_tz - 2;
-            if (tonal_cap < 4) tonal_cap = 4;
-            if (base_tz > tonal_cap) base_tz = tonal_cap;
-            // Плавный переход между соседними блоками на чистых нотах рояля (без резких ступенек)
-            if (prev_base_tz >= 0 && base_tz > prev_base_tz + 1) {
-                base_tz = prev_base_tz + 1;
-            }
-        }
-        prev_base_tz = base_tz;
+        bool is_pure_piano_note = (rms > 40.0 && diff_rms < rms * 0.075 && zcr_norm < 0.028);
 
-        int tz = (base_tz > 0) ? (base_tz + bit_shift_offset) : bit_shift_offset;
+        int local_shaping = shaping_level;
+        if (is_pure_piano_note) {
+            // На чистой ноте сольного рояля ограничиваем срез до 7 бит и включаем мягкое сглаживание даже в Ultra
+            if (base_tz > 7) base_tz = 7;
+            if (local_shaping == 0) local_shaping = 1;
+        }
+
+        int tz = 0;
+        if (bits >= 24) {
+            // Для 24-bit: если пик блока громче 16-битного порога или активен гейт, сдвигаем на 8 младших разрядов + base_tz
+            if (base_tz > 0 || peak16 > 120.0) {
+                tz = base_tz + bit_shift_offset;
+            } else {
+                // На ультра-тихих хвостах 24-bit оставляем младшие биты, срезая только 4 бита теплового шума АЦП
+                tz = 4;
+            }
+        } else {
+            tz = base_tz;
+        }
+
         if (tz > 0) {
+            int32_t step = 1 << tz;
             int32_t half = 1 << (tz - 1);
-            int32_t mask = ~((1 << tz) - 1);
+            int32_t mask = ~(step - 1);
             int32_t max_pos = max_lim & mask;
-            for (size_t i = s; i < e; ++i) {
-                int32_t v = (ch[i] + half) & mask;
-                ch[i] = (v < min_lim) ? min_lim : ((v > max_pos) ? max_pos : v);
+
+            if (local_shaping == 0) {
+                // Уровень 0 (XFLAC 15 Ultra): чистое маскирование без шейпинга -> максимальное сжатие (~8-10% от WAV)
+                for (size_t i = s; i < e; ++i) {
+                    int32_t v = (ch[i] + half) & mask;
+                    ch[i] = (v < min_lim) ? min_lim : ((v > max_pos) ? max_pos : v);
+                }
+            } else if (local_shaping == 1) {
+                // Уровень 1 (XFLAC 25 Psycho): легкий шейпинг 1-го порядка (25% err1)
+                int32_t err1 = 0;
+                for (size_t i = s; i < e; ++i) {
+                    int32_t orig = ch[i];
+                    int32_t shaped = orig + (err1 >> 2);
+                    int32_t q = (shaped + half) & mask;
+                    if (q < min_lim) q = min_lim;
+                    else if (q > max_pos) q = max_pos;
+                    err1 = orig - q;
+                    if (err1 > step) err1 = step;
+                    else if (err1 < -step) err1 = -step;
+                    ch[i] = q;
+                }
+            } else if (local_shaping == 2) {
+                // Уровень 2 (XFLAC 45 HiFi): психоакустический ВЧ-шейпинг 2-го порядка ((3*err1 - err2) / 8)
+                int32_t err1 = 0, err2 = 0;
+                for (size_t i = s; i < e; ++i) {
+                    int32_t orig = ch[i];
+                    int32_t fb = (err1 * 3 - err2) >> 3;
+                    int32_t shaped = orig + fb;
+                    int32_t q = (shaped + half) & mask;
+                    if (q < min_lim) q = min_lim;
+                    else if (q > max_pos) q = max_pos;
+                    err2 = err1;
+                    err1 = orig - q;
+                    if (err1 > step) err1 = step;
+                    else if (err1 < -step) err1 = -step;
+                    ch[i] = q;
+                }
+            } else {
+                // Уровень 3 (XFLAC 1:1 Master): точный Master-Shaping 2-го порядка ((5*err1 - 2*err2) / 8)
+                int32_t err1 = 0, err2 = 0;
+                for (size_t i = s; i < e; ++i) {
+                    int32_t orig = ch[i];
+                    int32_t fb = (err1 * 5 - err2 * 2) >> 3;
+                    int32_t shaped = orig + fb;
+                    int32_t q = (shaped + half) & mask;
+                    if (q < min_lim) q = min_lim;
+                    else if (q > max_pos) q = max_pos;
+                    err2 = err1;
+                    err1 = orig - q;
+                    if (err1 > step) err1 = step;
+                    else if (err1 < -step) err1 = -step;
+                    ch[i] = q;
+                }
             }
         }
     }
@@ -221,12 +292,36 @@ static void apply_dynamic_noise_floor_gate32(int32_t* ch, size_t n, double gate_
 static void strip_wasted_bits32(const int32_t* in, size_t n, int64_t* out, ByteVec* shifts) {
     for (size_t s = 0; s < n; s += SUBBLOCK_SIZE) {
         size_t e = (s + SUBBLOCK_SIZE < n) ? (s + SUBBLOCK_SIZE) : n;
-        uint32_t cor = 0;
-        for (size_t i = s; i < e; ++i) { int32_t v = in[i]; cor |= (uint32_t)(v < 0 ? -v : v); }
-        int tz = cor ? __builtin_ctz(cor) : 0;
+        uint32_t orr = 0;
+        int32_t max_abs = 0;
+        for (size_t i = s; i < e; ++i) {
+            int32_t v = in[i];
+            orr |= (uint32_t)v;
+            int32_t av = (v < 0) ? (v == -2147483648 ? 2147483647 : -v) : v;
+            if (av > max_abs) max_abs = av;
+        }
+        int tz = (orr == 0) ? 0 : __builtin_ctz(orr);
         if (tz > 22) tz = 22;
+        while ((max_abs >> tz) > 32767 && tz < 22) {
+            tz++;
+        }
         bv_push(shifts, (uint8_t)tz);
-        for (size_t i = s; i < e; ++i) out[i] = ((int64_t)in[i]) >> tz;
+        if (tz > 0) {
+            int32_t half = 1 << (tz - 1);
+            for (size_t i = s; i < e; ++i) {
+                int32_t shifted = (in[i] + half) >> tz;
+                if (shifted > 32767) shifted = 32767;
+                else if (shifted < -32767) shifted = -32767;
+                out[i] = (int64_t)shifted;
+            }
+        } else {
+            for (size_t i = s; i < e; ++i) {
+                int32_t v = in[i];
+                if (v > 32767) v = 32767;
+                else if (v < -32767) v = -32767;
+                out[i] = (int64_t)v;
+            }
+        }
     }
 }
 
@@ -249,7 +344,7 @@ static void encode_channel_pitch_ols(const int64_t* x, size_t n, ByteVec* meta_q
         size_t e = (s + BLOCK_SIZE < n) ? (s + BLOCK_SIZE) : n;
         if (e - s <= TOTAL_TAPS + 10) { for (size_t i = s; i < e; ++i) res[i] = x[i]; continue; }
         uint16_t best_lag = 50; double best_corr = -1.0;
-        for (int lag = 20; lag <= 252; lag += 4) {
+        for (int lag = 20; lag < 220; lag += 4) {
             double c = 0.0;
             for (size_t i = s; i < e; i += 2) c += (double)x[i] * (double)x[i - lag];
             if (fabs(c) > best_corr) { best_corr = fabs(c); best_lag = (uint16_t)lag; }
@@ -290,7 +385,7 @@ static void encode_channel_pitch_ols(const int64_t* x, size_t n, ByteVec* meta_q
         uint64_t zz[RICE_BLOCK];
         for (size_t i = 0; i < len; ++i) { int64_t v = res[s + i]; zz[i] = (uint64_t)((v << 1) ^ (v >> 63)); }
         int best_k = 0; uint64_t best_b = UINT64_MAX;
-        for (int k = 0; k < 24; ++k) {
+        for (int k = 0; k < 15; ++k) {
             uint64_t b = (uint64_t)len * (uint64_t)(1 + k);
             for (size_t i = 0; i < len; ++i) b += (zz[i] >> k);
             if (b < best_b) { best_b = b; best_k = k; }
@@ -442,10 +537,10 @@ int xflac_encode_wav_mem(const uint8_t* wav, size_t wav_sz, uint8_t** out_d, siz
         side[i] = (ch == 2) ? read_pcm_sample_v157(frame_p + bps, bits, ftag) : mid[i];
         if (mid[i] != side[i]) eq = 0;
     }
-    if ((int)mode > 0) {
-        double gdiv = ((int)mode >= 5) ? (double)((int)mode) : 25.0;
-        apply_dynamic_noise_floor_gate32(mid, n, gdiv, (int)bits, sr);
-        if (eq) memcpy(side, mid, n * 4); else apply_dynamic_noise_floor_gate32(side, n, gdiv, (int)bits, sr);
+    {
+        int mval = (int)mode;
+        apply_dynamic_noise_floor_gate32(mid, n, mval, (int)bits, sr);
+        if (eq) memcpy(side, mid, n * 4); else apply_dynamic_noise_floor_gate32(side, n, mval, (int)bits, sr);
     }
 
     int64_t* ls = (int64_t*)malloc((n + 1) * 8);

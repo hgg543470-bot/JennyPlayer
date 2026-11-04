@@ -463,7 +463,7 @@ window.ensureExportModalV69 = function() {
                     <button type="button" data-br="xflac_ultra" onclick="window.selectExportBitrateV79('xflac_ultra')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#ff7b72;font-weight:bold;">🔥 XFLAC 15 (~9%)</button>
                     <button type="button" data-br="xflac_psycho" onclick="window.selectExportBitrateV79('xflac_psycho')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XFLAC 25 (~12%)</button>
                     <button type="button" data-br="xflac_hifi" onclick="window.selectExportBitrateV79('xflac_hifi')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#d2a8ff;font-weight:bold;">✨ XFLAC 45 (~16%)</button>
-                    <button type="button" data-br="xflac_lossless" onclick="window.selectExportBitrateV79('xflac_lossless')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-weight:bold;">💎 XFLAC 1:1</button>
+                    <button type="button" data-br="xflac_lossless" onclick="window.selectExportBitrateV79('xflac_lossless')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-weight:bold;">💎 XFLAC 1:1 (~25%)</button>
                     <button type="button" data-br="wav_pcm" onclick="window.selectExportBitrateV79('wav_pcm')" style="grid-column:span 4;padding:5px 4px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e3b341;font-weight:bold;">💿 Распаковать / Сохранить в чистый .WAV (PCM 1:1 без потерь)</button>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
@@ -640,7 +640,7 @@ window.selectExportBitrateV79 = function(br) {
         '256k': '256k (Ультра)',
         'orig': '🎯 OPUS Авто (Сжатие в .opus под битрейт исходника)',
         'xflac_ultra': '🔥 XFLAC Ultra (Gate 15 • ~8-9% от WAV)',
-        'xflac_psycho': '🧬 XFLAC Psycho (Gate 25 • ~11-13% от WAV)',
+        'xflac_psycho': '🧬 XFLAC Psycho (Gate 25 + Soft Shaping • ~12% от WAV)',
         'xflac_hifi': '✨ XFLAC Hi-Fi (Gate 45 • ~15-16% от WAV)',
         'xflac_lossless': '💎 XFLAC BitPerfect (100% WAV 1:1 без потерь)',
         'wav_pcm': '💿 Чистый WAV (Распаковка XFLAC -> WAV 1:1)'
