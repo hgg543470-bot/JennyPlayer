@@ -460,10 +460,10 @@ window.ensureExportModalV69 = function() {
                     <button type="button" data-br="192k" onclick="window.selectExportBitrateV79('192k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🔥 192k</button>
                     <button type="button" data-br="256k" onclick="window.selectExportBitrateV79('256k')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 256k</button>
                     <button type="button" data-br="orig" onclick="window.selectExportBitrateV79('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-weight:bold;" title="Кодировать в .opus с битрейтом исходника">🎯 OPUS Авто</button>
-                    <button type="button" data-br="xflac_ultra" onclick="window.selectExportBitrateV79('xflac_ultra')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#ff7b72;font-weight:bold;">🔥 XFLAC 15 (~9%)</button>
-                    <button type="button" data-br="xflac_psycho" onclick="window.selectExportBitrateV79('xflac_psycho')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XFLAC 25 (~12%)</button>
-                    <button type="button" data-br="xflac_hifi" onclick="window.selectExportBitrateV79('xflac_hifi')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#d2a8ff;font-weight:bold;">✨ XFLAC 45 (~16%)</button>
-                    <button type="button" data-br="xflac_lossless" onclick="window.selectExportBitrateV79('xflac_lossless')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-weight:bold;">💎 XFLAC 1:1 (~25%)</button>
+                    <button type="button" data-br="xflac_ultra" onclick="window.selectExportBitrateV79('xflac_ultra')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#ff7b72;font-weight:bold;">🔥 XFLAC 15 (~26%)</button>
+                    <button type="button" data-br="xflac_psycho" onclick="window.selectExportBitrateV79('xflac_psycho')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XFLAC 25 (~32%)</button>
+                    <button type="button" data-br="xflac_hifi" onclick="window.selectExportBitrateV79('xflac_hifi')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#d2a8ff;font-weight:bold;">✨ XFLAC 45 (~38%)</button>
+                    <button type="button" data-br="xflac_lossless" onclick="window.selectExportBitrateV79('xflac_lossless')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-weight:bold;">💎 XFLAC 1:1 (Lossless)</button>
                     <button type="button" data-br="wav_pcm" onclick="window.selectExportBitrateV79('wav_pcm')" style="grid-column:span 4;padding:5px 4px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e3b341;font-weight:bold;">💿 Распаковать / Сохранить в чистый .WAV (PCM 1:1 без потерь)</button>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
@@ -608,6 +608,7 @@ window.exportCurrentTrack = function() {
     if (typeof window.selectExportBitrateV79 === 'function') window.selectExportBitrateV79((window.appConfig && window.appConfig.pocketBitrateV77) || 'xflac_psycho');
     if (typeof window.selectExportSampleRateV86 === 'function') window.selectExportSampleRateV86((window.appConfig && window.appConfig.exportSampleRateV86) || 'orig');
     if (typeof window.selectExportBitDepthV157 === 'function') window.selectExportBitDepthV157((window.appConfig && window.appConfig.exportBitDepthV157) || 'orig');
+    if (typeof window.bindSrAndBdButtonsV161 === 'function') window.bindSrAndBdButtonsV161();
     if (typeof window.selectExportSpeedV79 === 'function') window.selectExportSpeedV79(window._forcedExportSpeedV79 || 0);
     modal.style.display = 'flex';
 };
@@ -682,3 +683,86 @@ window.selectExportSampleRateV86 = function(sr) {
         b.style.fontWeight = act ? 'bold' : 'normal';
     });
 };
+
+window.selectExportSampleRateV86 = function(sr) {
+    const validSrs = ['orig', '44100', '48000', '88200', '96000', '176400', '192000'];
+    const cleanSr = validSrs.includes(String(sr)) ? String(sr) : 'orig';
+    window.appConfig = window.appConfig || {};
+    window.appConfig.exportSampleRateV86 = cleanSr;
+    try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch(e) {}
+    document.querySelectorAll('#srBtnGroupV86 button').forEach(b => {
+        const act = (b.getAttribute('data-sr') === cleanSr);
+        b.style.borderColor = act ? '#3fb950' : '#30363d';
+        b.style.background = act ? 'rgba(63, 185, 80, 0.24)' : '#161b22';
+        b.style.color = act ? '#ffffff' : '#8b949e';
+        b.style.fontWeight = act ? 'bold' : 'normal';
+    });
+    if (typeof window.updateExportModalSummaryBtnV69 === 'function') window.updateExportModalSummaryBtnV69();
+};
+
+window.selectExportBitDepthV157 = function(bd) {
+    const validBds = ['orig', '16', '24', '32'];
+    const cleanBd = validBds.includes(String(bd)) ? String(bd) : 'orig';
+    window.appConfig = window.appConfig || {};
+    window.appConfig.exportBitDepthV157 = cleanBd;
+    try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch(e) {}
+    document.querySelectorAll('#bdBtnGroupV157 button').forEach(b => {
+        const act = (b.getAttribute('data-bd') === cleanBd);
+        b.style.borderColor = act ? '#3fb950' : '#30363d';
+        b.style.background = act ? 'rgba(63, 185, 80, 0.24)' : '#161b22';
+        b.style.color = act ? '#ffffff' : '#8b949e';
+        b.style.fontWeight = act ? 'bold' : 'normal';
+    });
+    if (typeof window.updateExportModalSummaryBtnV69 === 'function') window.updateExportModalSummaryBtnV69();
+};
+
+window.bindSrAndBdButtonsV161 = function() {
+    if (!document.getElementById('exportSrBdTouchFixCssV161')) {
+        const st = document.createElement('style');
+        st.id = 'exportSrBdTouchFixCssV161';
+        st.textContent = `
+            #srBtnGroupV86, #bdBtnGroupV157 {
+                position: relative !important;
+                z-index: 2147483647 !important;
+                pointer-events: auto !important;
+            }
+            #srBtnGroupV86 button, #bdBtnGroupV157 button {
+                touch-action: manipulation !important;
+                user-select: none !important;
+                -webkit-user-select: none !important;
+                pointer-events: auto !important;
+                position: relative !important;
+                z-index: 2147483647 !important;
+            }
+        `;
+        document.head.appendChild(st);
+    }
+
+    const srGroup = document.getElementById('srBtnGroupV86');
+    if (srGroup && !srGroup._boundV161) {
+        srGroup._boundV161 = true;
+        srGroup.addEventListener('pointerdown', function(ev) {
+            const btn = ev.target.closest('button[data-sr]');
+            if (!btn) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            window.selectExportSampleRateV86(btn.getAttribute('data-sr'));
+        }, { passive: false, capture: true });
+    }
+
+    const bdGroup = document.getElementById('bdBtnGroupV157');
+    if (bdGroup && !bdGroup._boundV161) {
+        bdGroup._boundV161 = true;
+        bdGroup.addEventListener('pointerdown', function(ev) {
+            const btn = ev.target.closest('button[data-bd]');
+            if (!btn) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            window.selectExportBitDepthV157(btn.getAttribute('data-bd'));
+        }, { passive: false, capture: true });
+    }
+};
+setTimeout(window.bindSrAndBdButtonsV161, 250);
+document.addEventListener('pointerdown', function() {
+    if (typeof window.bindSrAndBdButtonsV161 === 'function') window.bindSrAndBdButtonsV161();
+}, { passive: true });
