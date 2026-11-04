@@ -57,6 +57,7 @@ window.executeTrackExportV69 = async function() {
 
         const brModeNow = (cfg.pocketBitrateV77 || 'orig').toLowerCase();
         const srModeNow = (cfg.exportSampleRateV86 || 'orig').toLowerCase();
+        const bdModeNow = (cfg.exportBitDepthV157 || 'orig').toLowerCase();
 
         if (!anyDspActive && Math.abs(userSpeed - 1.0) < 0.002 && !isRev && !hasRevMaster) {
             if (typeof window.showToast === 'function') window.showToast(`⏳ Прямое сжатие оригинала (${brModeNow}, частота: ${srModeNow})...`);
@@ -71,6 +72,7 @@ window.executeTrackExportV69 = async function() {
             formData.append('gear_key', gearKey);
             formData.append('pocket_bitrate', brModeNow);
             formData.append('sample_rate_mode', srModeNow);
+            formData.append('bit_depth_mode', bdModeNow);
             let res = await fetch('/api/export', { method: 'POST', body: formData });
             let json = await res.json();
             if (res.ok && json.status === 'ok') {
@@ -308,6 +310,7 @@ window.executeTrackExportV69 = async function() {
         formData.append('gear_key', gearKey);
         formData.append('pocket_bitrate', (window.appConfig && window.appConfig.pocketBitrateV77) || '48k');
         formData.append('sample_rate_mode', (window.appConfig && window.appConfig.exportSampleRateV86) || 'orig');
+        formData.append('bit_depth_mode', (window.appConfig && window.appConfig.exportBitDepthV157) || 'orig');
         const kInp = document.getElementById('inpPocketKeyV78');
         if (kInp && kInp.value.trim()) formData.append('pocket_key', kInp.value.trim());
         if (revExportPkg && revExportPkg.seamMapJson) {
@@ -461,7 +464,7 @@ window.ensureExportModalV69 = function() {
                     <button type="button" data-br="xflac_psycho" onclick="window.selectExportBitrateV79('xflac_psycho')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🧬 XFLAC 25 (~12%)</button>
                     <button type="button" data-br="xflac_hifi" onclick="window.selectExportBitrateV79('xflac_hifi')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#d2a8ff;font-weight:bold;">✨ XFLAC 45 (~16%)</button>
                     <button type="button" data-br="xflac_lossless" onclick="window.selectExportBitrateV79('xflac_lossless')" style="padding:6px 2px;font-size:9.5px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#58a6ff;font-weight:bold;">💎 XFLAC 1:1</button>
-                    <button type="button" data-br="wav_pcm" onclick="window.selectExportBitrateV79('wav_pcm')" style="grid-column:span 4;padding:5px 4px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e3b341;font-weight:bold;">💿 Распаковать / Сохранить в чистый .WAV (PCM 16-bit 1:1)</button>
+                    <button type="button" data-br="wav_pcm" onclick="window.selectExportBitrateV79('wav_pcm')" style="grid-column:span 4;padding:5px 4px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e3b341;font-weight:bold;">💿 Распаковать / Сохранить в чистый .WAV (PCM 1:1 без потерь)</button>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
                     <span style="font-size:11px;color:#58a6ff;font-weight:bold;">🎛️ Частота дискретизации (Sample Rate):</span>
@@ -470,6 +473,18 @@ window.ensureExportModalV69 = function() {
                     <button type="button" data-sr="orig" onclick="window.selectExportSampleRateV86('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🎯 Родная (из файла)</button>
                     <button type="button" data-sr="44100" onclick="window.selectExportSampleRateV86('44100')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💿 44100 Hz</button>
                     <button type="button" data-sr="48000" onclick="window.selectExportSampleRateV86('48000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">⚡ 48000 Hz</button>
+                    <button type="button" data-sr="88200" onclick="window.selectExportSampleRateV86('88200')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 88200 Hz</button>
+                    <button type="button" data-sr="96000" onclick="window.selectExportSampleRateV86('96000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🔥 96000 Hz</button>
+                    <button type="button" data-sr="192000" onclick="window.selectExportSampleRateV86('192000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 192000 Hz</button>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
+                    <span style="font-size:11px;color:#3fb950;font-weight:bold;">🎚️ Битовая глубина (Bit Depth):</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;" id="bdBtnGroupV157">
+                    <button type="button" data-bd="orig" onclick="window.selectExportBitDepthV157('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🎯 Родная</button>
+                    <button type="button" data-bd="16" onclick="window.selectExportBitDepthV157('16')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💿 16-bit</button>
+                    <button type="button" data-bd="24" onclick="window.selectExportBitDepthV157('24')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 24-bit</button>
+                    <button type="button" data-bd="32" onclick="window.selectExportBitDepthV157('32')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 32-bit</button>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
                     <span style="font-size:11px;color:#d2a8ff;font-weight:bold;">⏩ Скорость упаковки:</span>
@@ -591,6 +606,7 @@ window.exportCurrentTrack = function() {
     renderGrid();
     if (typeof window.selectExportBitrateV79 === 'function') window.selectExportBitrateV79((window.appConfig && window.appConfig.pocketBitrateV77) || 'xflac_psycho');
     if (typeof window.selectExportSampleRateV86 === 'function') window.selectExportSampleRateV86((window.appConfig && window.appConfig.exportSampleRateV86) || 'orig');
+    if (typeof window.selectExportBitDepthV157 === 'function') window.selectExportBitDepthV157((window.appConfig && window.appConfig.exportBitDepthV157) || 'orig');
     if (typeof window.selectExportSpeedV79 === 'function') window.selectExportSpeedV79(window._forcedExportSpeedV79 || 0);
     modal.style.display = 'flex';
 };

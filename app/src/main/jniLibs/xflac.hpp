@@ -86,45 +86,48 @@ static void solve_linear_system(int n, double A[TOTAL_TAPS][TOTAL_TAPS], double 
     }
 }
 
-static void apply_dynamic_noise_floor_gate(int16_t* ch, size_t n, double gate_div) {
+static void apply_dynamic_noise_floor_gate32(int32_t* ch, size_t n, double gate_div, int bits) {
     if (gate_div < 5.0) gate_div = 25.0;
+    double scale = (bits >= 24) ? 256.0 : 1.0;
+    int32_t max_lim = (bits >= 24) ? 8388607 : 32767;
+    int32_t min_lim = (bits >= 24) ? -8388608 : -32768;
+
     for (size_t s = 0; s < n; s += SUBBLOCK_SIZE) {
         size_t e = (s + SUBBLOCK_SIZE < n) ? (s + SUBBLOCK_SIZE) : n;
         size_t len = e - s;
-        double sum_sq = 0.0;
-        double diff_sq = 0.0;
+        double sum_sq = 0.0, diff_sq = 0.0;
         for (size_t i = s; i < e; ++i) {
-            double v = (double)ch[i];
+            double v = (double)ch[i] / scale;
             sum_sq += v * v;
             if (i > s) {
-                double d = v - (double)ch[i - 1];
+                double d = v - ((double)ch[i - 1] / scale);
                 diff_sq += d * d;
             }
         }
         double rms = sqrt(sum_sq / (double)len);
         double diff_rms = sqrt(diff_sq / (double)(len > 1 ? len - 1 : 1));
-        // Отношение ВЧ-шероховатости к основному тону: у чистого рояля/синуса ratio < 0.18, у шумного микса > 0.35
         double hf_ratio = (rms > 1.0) ? (diff_rms / rms) : 0.0;
 
         if (rms > gate_div * 1.25) {
-            // Масштабируем порог так, чтобы сохранять минимум 11-12 бит (66-72 дБ SNR) на широкополосном сигнале
-            // и минимум 13-14 бит (80-86 дБ SNR) на чистых тональных инструментах (пианино, акустика)
             double eff_div = gate_div * 18.0;
             int tz = (int)floor(log2(rms / eff_div));
             int max_tz = (gate_div <= 16.0) ? 5 : ((gate_div <= 26.0) ? 4 : 3);
             if (hf_ratio < 0.22) {
-                // Чистый тональный звук (рояль, флейта, вокал без шума) — снижаем срез бит, чтобы не было ступенек!
                 max_tz = (gate_div <= 16.0) ? 3 : 2;
+            }
+            if (bits >= 24 && tz > 0) {
+                tz += 4;
+                max_tz += 4;
             }
             if (tz < 0) tz = 0;
             else if (tz > max_tz) tz = max_tz;
 
             if (tz > 0) {
                 int32_t half = 1 << (tz - 1), mask = ~((1 << tz) - 1);
-                int32_t max_pos = 32767 & mask;
+                int32_t max_pos = max_lim & mask;
                 for (size_t i = s; i < e; ++i) {
-                    int32_t v = ((int32_t)ch[i] + half) & mask;
-                    ch[i] = (int16_t)(v < -32768 ? -32768 : (v > max_pos ? max_pos : v));
+                    int32_t v = (ch[i] + half) & mask;
+                    ch[i] = (v < min_lim) ? min_lim : ((v > max_pos) ? max_pos : v);
                 }
             }
         }
@@ -137,7 +140,7 @@ static void strip_wasted_bits32(const int32_t* in, size_t n, int64_t* out, ByteV
         uint32_t cor = 0;
         for (size_t i = s; i < e; ++i) { int32_t v = in[i]; cor |= (uint32_t)(v < 0 ? -v : v); }
         int tz = cor ? __builtin_ctz(cor) : 0;
-        if (tz > 14) tz = 14;
+        if (tz > 22) tz = 22;
         bv_push(shifts, (uint8_t)tz);
         for (size_t i = s; i < e; ++i) out[i] = ((int64_t)in[i]) >> tz;
     }
@@ -203,7 +206,7 @@ static void encode_channel_pitch_ols(const int64_t* x, size_t n, ByteVec* meta_q
         uint64_t zz[RICE_BLOCK];
         for (size_t i = 0; i < len; ++i) { int64_t v = res[s + i]; zz[i] = (uint64_t)((v << 1) ^ (v >> 63)); }
         int best_k = 0; uint64_t best_b = UINT64_MAX;
-        for (int k = 0; k < 15; ++k) {
+        for (int k = 0; k < 24; ++k) {
             uint64_t b = (uint64_t)len * (uint64_t)(1 + k);
             for (size_t i = 0; i < len; ++i) b += (zz[i] >> k);
             if (b < best_b) { best_b = b; best_k = k; }
@@ -276,14 +279,23 @@ static void decode_channel_pitch_ols(const uint8_t* meta_q, size_t m_sz, const u
     free(q_full); free(res);
 }
 
-static int find_wav_data_chunk(const uint8_t* wav, size_t sz, size_t* off, size_t* pcm_b, uint32_t* sr, uint16_t* ch) {
+static int find_wav_data_chunk(const uint8_t* wav, size_t sz, size_t* off, size_t* pcm_b, uint32_t* sr, uint16_t* ch, uint16_t* bits_out, uint16_t* ftag_out) {
     if (sz < 44 || memcmp(wav, "RIFF", 4) != 0 || memcmp(wav + 8, "WAVE", 4) != 0) return 0;
-    size_t pos = 12; *sr = 48000; *ch = 2;
+    size_t pos = 12; *sr = 48000; *ch = 2; *bits_out = 16; *ftag_out = 1;
     while (pos + 8 <= sz) {
         uint32_t csz = 0; memcpy(&csz, wav + pos + 4, 4);
         if (memcmp(wav + pos, "fmt ", 4) == 0 && pos + 24 <= sz) {
-            uint16_t bits = 0; memcpy(ch, wav + pos + 10, 2); memcpy(sr, wav + pos + 12, 4); memcpy(&bits, wav + pos + 22, 2);
-            if ((*ch != 1 && *ch != 2) || bits != 16) return 0;
+            uint16_t ftag = 1, bits = 16;
+            memcpy(&ftag, wav + pos + 8, 2);
+            memcpy(ch, wav + pos + 10, 2);
+            memcpy(sr, wav + pos + 12, 4);
+            memcpy(&bits, wav + pos + 22, 2);
+            if (ftag == 0xFFFE && csz >= 40 && pos + 8 + 26 <= sz) {
+                memcpy(&ftag, wav + pos + 8 + 24, 2);
+            }
+            if ((*ch != 1 && *ch != 2) || (bits != 16 && bits != 24 && bits != 32)) return 0;
+            *bits_out = bits;
+            *ftag_out = ftag;
         } else if (memcmp(wav + pos, "data", 4) == 0) {
             *off = pos + 8; *pcm_b = (csz < sz - *off) ? csz : (sz - *off); return 1;
         }
@@ -292,22 +304,65 @@ static int find_wav_data_chunk(const uint8_t* wav, size_t sz, size_t* off, size_
     return 0;
 }
 
+static inline int32_t read_pcm_sample_v157(const uint8_t* p, uint16_t bits, uint16_t ftag) {
+    if (bits == 16) {
+        int16_t v; memcpy(&v, p, 2); return (int32_t)v;
+    } else if (bits == 24) {
+        int32_t v = (int32_t)p[0] | ((int32_t)p[1] << 8) | ((int32_t)((int8_t)p[2]) << 16);
+        return v;
+    } else if (bits == 32) {
+        if (ftag == 3) {
+            float fv; memcpy(&fv, p, 4);
+            if (fv > 1.0f) fv = 1.0f; else if (fv < -1.0f) fv = -1.0f;
+            return (int32_t)llround((double)fv * 8388607.0);
+        } else {
+            int32_t iv; memcpy(&iv, p, 4);
+            return iv >> 8;
+        }
+    }
+    return 0;
+}
+
+static inline void write_pcm_sample_v157(uint8_t* p, int32_t v, uint16_t bits, uint16_t ftag) {
+    if (bits == 16) {
+        int16_t s = (int16_t)(v < -32768 ? -32768 : (v > 32767 ? 32767 : v));
+        memcpy(p, &s, 2);
+    } else if (bits == 24) {
+        int32_t c = (v < -8388608) ? -8388608 : ((v > 8388607) ? 8388607 : v);
+        p[0] = (uint8_t)(c & 0xFF);
+        p[1] = (uint8_t)((c >> 8) & 0xFF);
+        p[2] = (uint8_t)((c >> 16) & 0xFF);
+    } else if (bits == 32) {
+        int32_t c = (v < -8388608) ? -8388608 : ((v > 8388607) ? 8388607 : v);
+        if (ftag == 3) {
+            float fv = (float)((double)c / 8388607.0);
+            memcpy(p, &fv, 4);
+        } else {
+            int32_t iv = c << 8;
+            memcpy(p, &iv, 4);
+        }
+    }
+}
+
 int xflac_encode_wav_mem(const uint8_t* wav, size_t wav_sz, uint8_t** out_d, size_t* out_sz, xflac_mode_t mode, xflac_stats_t* st) {
-    size_t pcm_off = 0, pcm_b = 0; uint32_t sr = 48000; uint16_t ch = 2;
-    if (!find_wav_data_chunk(wav, wav_sz, &pcm_off, &pcm_b, &sr, &ch)) return -1;
-    size_t n = pcm_b / (ch * 2), suf_off = pcm_off + pcm_b, suf_len = wav_sz - suf_off;
-    int16_t* cl = (int16_t*)malloc((n + 1) * 2), *cr = (int16_t*)malloc((n + 1) * 2);
-    const int16_t* pcm = (const int16_t*)(wav + pcm_off);
+    size_t pcm_off = 0, pcm_b = 0; uint32_t sr = 48000; uint16_t ch = 2, bits = 16, ftag = 1;
+    if (!find_wav_data_chunk(wav, wav_sz, &pcm_off, &pcm_b, &sr, &ch, &bits, &ftag)) return -1;
+    size_t bps = bits / 8;
+    size_t n = pcm_b / (ch * bps), suf_off = pcm_off + pcm_b, suf_len = wav_sz - suf_off;
+    int32_t* mid = (int32_t*)malloc((n + 1) * 4), *side = (int32_t*)malloc((n + 1) * 4);
+    const uint8_t* pcm_ptr = wav + pcm_off;
     int eq = 1;
-    for (size_t i = 0; i < n; ++i) { cl[i] = pcm[ch * i]; cr[i] = (ch == 2) ? pcm[2 * i + 1] : cl[i]; if (cl[i] != cr[i]) eq = 0; }
+    for (size_t i = 0; i < n; ++i) {
+        const uint8_t* frame_p = pcm_ptr + i * ch * bps;
+        mid[i] = read_pcm_sample_v157(frame_p, bits, ftag);
+        side[i] = (ch == 2) ? read_pcm_sample_v157(frame_p + bps, bits, ftag) : mid[i];
+        if (mid[i] != side[i]) eq = 0;
+    }
     if ((int)mode > 0) {
         double gdiv = ((int)mode >= 5) ? (double)((int)mode) : 25.0;
-        apply_dynamic_noise_floor_gate(cl, n, gdiv);
-        if (eq) memcpy(cr, cl, n * 2); else apply_dynamic_noise_floor_gate(cr, n, gdiv);
+        apply_dynamic_noise_floor_gate32(mid, n, gdiv, (int)bits);
+        if (eq) memcpy(side, mid, n * 4); else apply_dynamic_noise_floor_gate32(side, n, gdiv, (int)bits);
     }
-    int32_t* mid = (int32_t*)malloc((n + 1) * 4), *side = (int32_t*)malloc((n + 1) * 4);
-    for (size_t i = 0; i < n; ++i) { mid[i] = (int32_t)cl[i]; side[i] = (int32_t)cr[i]; }
-    free(cl); free(cr);
 
     int64_t* ls = (int64_t*)malloc((n + 1) * 8);
     ByteVec sh_l, meta_l, rem_l; bv_init(&sh_l, (n / SUBBLOCK_SIZE) + 16);
@@ -329,7 +384,8 @@ int xflac_encode_wav_mem(const uint8_t* wav, size_t wav_sz, uint8_t** out_d, siz
     }
     free(side);
 
-    uint8_t flags = (eq ? 1 : 0) | ((ch == 1) ? 4 : 0);
+    uint8_t bit_flag = (bits == 24) ? 8 : ((bits == 32) ? 16 : 0);
+    uint8_t flags = (eq ? 1 : 0) | ((ch == 1) ? 4 : 0) | bit_flag;
     ByteVec fb; bv_init(&fb, 32 + rm.size + rem_l.size + rem_r.size);
     bv_append(&fb, "XFC3", 4); bv_push(&fb, flags); bv_u32(&fb, (uint32_t)n);
     bv_u32(&fb, (uint32_t)rm.size); bv_u32(&fb, (uint32_t)rm.size); bv_u32(&fb, (uint32_t)rem_l.size); bv_u32(&fb, (uint32_t)rem_r.size);
@@ -352,6 +408,25 @@ int xflac_decode_wav_mem(const uint8_t* xd, size_t x_sz, uint8_t** out_w, size_t
     const uint8_t* w_pre = mp; mp += p_len; const uint8_t* w_suf = mp; mp += s_len;
     const uint8_t* sh_l = mp; mp += shl_len; const uint8_t* meta_l = mp; mp += ml_len;
 
+    uint16_t bits = (flags & 8) ? 24 : ((flags & 16) ? 32 : 16);
+    uint16_t ftag = 1;
+    if (p_len >= 44 && memcmp(w_pre, "RIFF", 4) == 0) {
+        size_t pos = 12;
+        while (pos + 8 <= p_len) {
+            uint32_t csz = 0; memcpy(&csz, w_pre + pos + 4, 4);
+            if (memcmp(w_pre + pos, "fmt ", 4) == 0 && pos + 24 <= p_len) {
+                memcpy(&ftag, w_pre + pos + 8, 2);
+                memcpy(&bits, w_pre + pos + 22, 2);
+                if (ftag == 0xFFFE && csz >= 40 && pos + 8 + 26 <= p_len) {
+                    memcpy(&ftag, w_pre + pos + 8 + 24, 2);
+                }
+                break;
+            }
+            pos += 8 + csz + (csz & 1);
+        }
+    }
+    if (bits != 16 && bits != 24 && bits != 32) bits = 16;
+
     int64_t* ls = (int64_t*)malloc((n + 1) * 8);
     int32_t* mid = (int32_t*)malloc((n + 1) * 4), *side = (int32_t*)malloc((n + 1) * 4);
     decode_channel_pitch_ols(meta_l, ml_len, rl, rl_sz, n, ls); restore_wasted_bits32(ls, n, sh_l, mid); free(ls);
@@ -361,18 +436,15 @@ int xflac_decode_wav_mem(const uint8_t* xd, size_t x_sz, uint8_t** out_w, size_t
         int64_t* rs = (int64_t*)malloc((n + 1) * 8);
         decode_channel_pitch_ols(meta_r, mr_len, rr, rr_sz, n, rs); restore_wasted_bits32(rs, n, sh_r, side); free(rs);
     }
-    size_t ch = mono ? 1 : 2, pcm_b = (size_t)n * ch * 2;
+    size_t ch = mono ? 1 : 2, bps = bits / 8, pcm_b = (size_t)n * ch * bps;
     *out_sz = p_len + pcm_b + s_len; *out_w = (uint8_t*)malloc(*out_sz);
     memcpy(*out_w, w_pre, p_len);
-    int16_t* dst = (int16_t*)(*out_w + p_len);
+    uint8_t* dst = *out_w + p_len;
     for (size_t i = 0; i < n; ++i) {
-        if (eq) {
-            int32_t v = mid[i] < -32768 ? -32768 : (mid[i] > 32767 ? 32767 : mid[i]);
-            dst[ch * i] = (int16_t)v; if (ch == 2) dst[2 * i + 1] = (int16_t)v;
-        } else {
-            int32_t l = mid[i], r = side[i];
-            dst[2 * i] = (int16_t)(l < -32768 ? -32768 : (l > 32767 ? 32767 : l));
-            dst[2 * i + 1] = (int16_t)(r < -32768 ? -32768 : (r > 32767 ? 32767 : r));
+        uint8_t* frame_p = dst + i * ch * bps;
+        write_pcm_sample_v157(frame_p, mid[i], bits, ftag);
+        if (ch == 2) {
+            write_pcm_sample_v157(frame_p + bps, eq ? mid[i] : side[i], bits, ftag);
         }
     }
     if (s_len > 0) memcpy(*out_w + p_len + pcm_b, w_suf, s_len);

@@ -318,7 +318,29 @@ def _decode_xflac_bytes_to_wav_v85(xfc_bytes: bytes) -> bytes:
 
 _XFLAC_CACHE_LOCK_V87 = threading.Lock()
 
+def _extract_wav_meta_from_raw_hdr_v157(raw_hdr: bytes, flags: int = 0):
+    sr = 44100
+    bits = 24 if (flags & 8) else (32 if (flags & 16) else 16)
+    ch = 1 if (flags & 4) else 2
+    if len(raw_hdr) >= 44 and raw_hdr[16:20] == b'RIFF':
+        fmt_idx = raw_hdr.find(b'fmt ', 20, min(len(raw_hdr), 512))
+        if fmt_idx != -1 and fmt_idx + 24 <= len(raw_hdr):
+            cand_ch = struct.unpack('<H', raw_hdr[fmt_idx + 10:fmt_idx + 12])[0]
+            cand_sr = struct.unpack('<I', raw_hdr[fmt_idx + 12:fmt_idx + 16])[0]
+            cand_bits = struct.unpack('<H', raw_hdr[fmt_idx + 22:fmt_idx + 24])[0]
+            if cand_ch in (1, 2):
+                ch = int(cand_ch)
+            if 8000 <= cand_sr <= 384000:
+                sr = int(cand_sr)
+            if cand_bits in (16, 24, 32):
+                bits = int(cand_bits)
+    return sr, bits, ch
+
 def _extract_wav_sr_from_raw_meta_v156(raw_hdr: bytes) -> int:
+    sr, _, _ = _extract_wav_meta_from_raw_hdr_v157(raw_hdr, 0)
+    return sr
+
+def _old_extract_sr_unused(raw_hdr: bytes) -> int:
     if len(raw_hdr) >= 44 and raw_hdr[16:20] == b'RIFF':
         fmt_idx = raw_hdr.find(b'fmt ', 20, min(len(raw_hdr), 512))
         if fmt_idx != -1 and fmt_idx + 16 <= len(raw_hdr):
@@ -347,8 +369,8 @@ def _get_xflac_fast_header_info_v87(full_p: str):
                     sr = _extract_wav_sr_from_raw_meta_v156(raw_hdr)
                 except Exception:
                     pass
-                ch = 1 if (flags & 4) else 2
-                wav_sz = int(nf) * ch * 2 + 44
+                sr, bits_hdr, ch = _extract_wav_meta_from_raw_hdr_v157(raw_hdr if 'raw_hdr' in locals() else b'', flags)
+                wav_sz = int(nf) * ch * (bits_hdr // 8) + 44
                 dur_s = float(nf) / float(sr) if sr > 0 else 0.0
                 return dur_s, wav_sz
     except Exception:
@@ -1266,6 +1288,7 @@ def export_track():
 
         raw_mode_br = request.forms.get('pocket_bitrate', 'orig').strip().lower()
         sr_mode = request.forms.get('sample_rate_mode', 'orig').strip().lower()
+        bit_depth_mode = request.forms.get('bit_depth_mode', 'orig').strip().lower()
         direct_clean = (request.forms.get('direct_clean_source', 'false') == 'true')
         orig_path = resolve_track_full_path_v71(original_name)
 
@@ -1290,27 +1313,59 @@ def export_track():
         final_opus = os.path.join(MUSIC_DIR, new_filename)
         ffmpeg_bin = find_ffmpeg_binary()
 
-        # Если 0 эффектов DSP, скорость 1.0x и без реверса — берем 100% чистый исходник прямо с диска (сохраняя родные 44100 Hz!)
+        valid_srs = ('44100', '48000', '88200', '96000', '192000')
+        # Определяем родную битность исходника (16, 24 или 32 бит)
+        orig_bits = 16
+        if os.path.isfile(orig_path):
+            if orig_path.lower().endswith('.xflac'):
+                try:
+                    with open(orig_path, 'rb') as xff_b:
+                        xh = xff_b.read(25)
+                        if len(xh) >= 5 and xh[:4] == b'XFC3':
+                            fl_b = xh[4]
+                            orig_bits = 24 if (fl_b & 8) else (32 if (fl_b & 16) else 16)
+                except Exception:
+                    pass
+            else:
+                try:
+                    pr_bits = subprocess.run([ffmpeg_bin, '-hide_banner', '-i', orig_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=4)
+                    info_b = (pr_bits.stderr or '') + (pr_bits.stdout or '')
+                    if any(w in info_b for w in ('24 bit', 'pcm_s24', 's24')):
+                        orig_bits = 24
+                    elif any(w in info_b for w in ('32 bit', 'pcm_s32', 'pcm_f32', 's32 (32 bit)')):
+                        orig_bits = 32
+                except Exception:
+                    pass
+
+        target_bits = orig_bits if bit_depth_mode == 'orig' else (int(bit_depth_mode) if bit_depth_mode in ('16', '24', '32') else orig_bits)
+        pcm_codec = 'pcm_s24le' if target_bits == 24 else ('pcm_f32le' if (target_bits == 32 and is_wav_unpack) else ('pcm_s32le' if target_bits == 32 else 'pcm_s16le'))
+
         if direct_clean and os.path.isfile(orig_path):
             if orig_path.lower().endswith('.xflac'):
                 with open(orig_path, 'rb') as xf:
                     dec_wav = _decode_xflac_bytes_to_wav_v85(xf.read())
                 with open(temp_wav, 'wb') as wf:
                     wf.write(dec_wav)
-                if sr_mode in ('44100', '48000'):
+                if sr_mode in valid_srs or target_bits != orig_bits:
                     temp_sr_wav = temp_wav + ".sr.wav"
-                    r_sr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_wav, '-ar', sr_mode, '-ac', '2', '-c:a', 'pcm_s16le', temp_sr_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    ar_args = ['-ar', sr_mode] if sr_mode in valid_srs else []
+                    r_sr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_wav] + ar_args + ['-ac', '2', '-c:a', pcm_codec, temp_sr_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     if r_sr.returncode == 0 and os.path.exists(temp_sr_wav):
                         os.replace(temp_sr_wav, temp_wav)
+            elif orig_path.lower().endswith('.wav') and sr_mode not in valid_srs and target_bits == orig_bits:
+                # 100% побитовая копия исходного WAV (включая родной 24-bit 96000 Hz и все чанки) без перекодирования!
+                shutil.copyfile(orig_path, temp_wav)
             else:
-                ar_args = ['-ar', sr_mode] if sr_mode in ('44100', '48000') else []
-                subprocess.run([ffmpeg_bin, '-y', '-i', orig_path] + ar_args + ['-af', 'aresample=dither_method=triangular_hp', '-ac', '2', '-c:a', 'pcm_s16le', temp_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                ar_args = ['-ar', sr_mode] if sr_mode in valid_srs else []
+                af_args = ['-af', 'aresample=dither_method=triangular_hp'] if target_bits == 16 and orig_bits > 16 else []
+                subprocess.run([ffmpeg_bin, '-y', '-i', orig_path] + ar_args + af_args + ['-ac', '2', '-c:a', pcm_codec, temp_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         else:
             with open(temp_wav, 'wb') as out_f:
                 shutil.copyfileobj(upload.file, out_f)
-            if sr_mode in ('44100', '48000'):
+            if sr_mode in valid_srs or target_bits in (16, 24, 32):
                 temp_sr_wav = temp_wav + ".sr.wav"
-                r_sr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_wav, '-ar', sr_mode, '-ac', '2', '-c:a', 'pcm_s16le', temp_sr_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                ar_args = ['-ar', sr_mode] if sr_mode in valid_srs else []
+                r_sr = subprocess.run([ffmpeg_bin, '-y', '-i', temp_wav] + ar_args + ['-ac', '2', '-c:a', pcm_codec, temp_sr_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 if r_sr.returncode == 0 and os.path.exists(temp_sr_wav):
                     os.replace(temp_sr_wav, temp_wav)
 
@@ -1412,6 +1467,16 @@ def export_track():
                     rev_badge = f"[🧬 REV: {total_kb:.1f} KB]"
                 except Exception:
                     pass
+            try:
+                pr_meta = subprocess.run([ffmpeg_bin, '-hide_banner', '-i', orig_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=4)
+                orig_tags = get_merged_track_tags_v74(original_name, (pr_meta.stderr or '') + (pr_meta.stdout or ''))
+                orig_tags.pop('ENCODER', None)
+                if orig_tags:
+                    db_t = load_custom_tags_db_v74()
+                    db_t[new_filename] = orig_tags
+                    save_custom_tags_db_v74(db_t)
+            except Exception:
+                pass
             return {"status": "ok", "new_file": new_filename, "rev_badge": rev_badge}
 
         err_msg = (r1.stderr or r2.stderr or f"Код возврата {r1.returncode}")[-200:]
@@ -1479,25 +1544,27 @@ def get_track_info():
                             x_sr = _extract_wav_sr_from_raw_meta_v156(raw_hdr)
                         except Exception:
                             pass
-                        if x_sr < 8000 or x_sr > 192000:
+                        x_sr, x_bits, x_ch = _extract_wav_meta_from_raw_hdr_v157(raw_hdr if 'raw_hdr' in locals() else b'', x_flags)
+                        if x_sr < 8000 or x_sr > 384000:
                             x_sr = 44100
                         tr_xf = read_jenny_rev_trailer(full_path)
                         xf_audio_bytes = int(tr_xf["audio_end"]) if (tr_xf and tr_xf.get("audio_end")) else size_bytes
-                        wav_orig_bytes = int(x_nf) * 4 + 44
+                        wav_orig_bytes = int(x_nf) * x_ch * (x_bits // 8) + 44
                         dur_s = float(x_nf) / float(x_sr) if x_sr > 0 else 0.0
                         ratio_pct = (xf_audio_bytes * 100.0) / max(1, wav_orig_bytes)
                         eff_kbps = int((xf_audio_bytes * 8) / max(0.1, dur_s * 1000))
+                        wav_eq_kbps = int((x_sr * x_ch * x_bits) / 1000)
                         mm, ss = int(dur_s // 60), dur_s % 60
                         hh, mm = int(mm // 60), int(mm % 60)
                         xflac_custom_meta = {
                             "container": f"XFLAC (XFC3 + LZMA2) [{ratio_pct:.1f}% от WAV {wav_orig_bytes/(1024*1024):.2f} MB]",
-                            "codec": "libxflac C++17 (21-tap Pitch-OLS + Psycho-LSB)",
+                            "codec": f"libxflac C++17 ({x_bits}-bit 21-tap Pitch-OLS + Psycho-LSB)",
                             "sr": f"{x_sr} Hz",
-                            "ch": "stereo (2 ch)",
-                            "fmt": "s16p (Direct Time-Domain Wave)",
+                            "ch": "mono (1 ch)" if x_ch == 1 else "stereo (2 ch)",
+                            "fmt": f"s{x_bits}p ({x_bits}-bit Direct Time-Domain Wave)",
                             "dur_str": f"{hh:02d}:{mm:02d}:{ss:05.2f}",
                             "dur_s": dur_s,
-                            "br": f"{eff_kbps} kb/s (WAV экв. {int(x_sr*32/1000)} kb/s)",
+                            "br": f"{eff_kbps} kb/s (WAV экв. {wav_eq_kbps} kb/s)",
                             "samples": f"{x_nf:,} PCM frames".replace(",", " ")
                         }
             except Exception:
@@ -1543,8 +1610,15 @@ def get_track_info():
                     sr_str = p
                 elif any(k in p for k in ('stereo', 'mono', '5.1', 'channels', 'ch')):
                     ch_str = p
-                elif p in ('fltp', 's16', 's16p', 's32', 's32p', 'dblp'):
-                    fmt_str = p
+                elif any(p.startswith(fp) for fp in ('fltp', 'flt', 's16', 's24', 's32', 'dblp', 'u8')):
+                    if '24 bit' in p or 'pcm_s24' in codec_str.lower():
+                        fmt_str = 's24le (24-bit Signed Integer PCM)'
+                    elif p.startswith('s16') or 'pcm_s16' in codec_str.lower():
+                        fmt_str = 's16le (16-bit Signed Integer PCM)'
+                    elif p.startswith('s32') or 'pcm_s32' in codec_str.lower():
+                        fmt_str = 's32le (32-bit Signed Integer PCM)'
+                    else:
+                        fmt_str = p
 
         tags = get_merged_track_tags_v74(filename, raw_info)
 
