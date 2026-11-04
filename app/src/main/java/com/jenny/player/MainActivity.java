@@ -47,6 +47,7 @@ public class MainActivity extends AppCompatActivity {
     private static boolean isDesktopOverlayActiveV132 = false;
     private static boolean pendingOverlayAfterGrantV147 = false;
     private static boolean waitingForPermScreenV148 = false;
+    private static long permFlowLockUntilMsV152 = 0L;
     private static int permWatchTicksV147 = 0;
     private static final android.os.Handler permWatchHandlerV147 = new android.os.Handler(android.os.Looper.getMainLooper());
     private static Runnable permWatchRunnableV147 = null;
@@ -445,22 +446,8 @@ public class MainActivity extends AppCompatActivity {
         try {
             android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(android.content.Context.ACTIVITY_SERVICE);
             if (am != null) {
-                am.moveTaskToFront(getTaskId(), android.app.ActivityManager.MOVE_TASK_WITH_HOME);
+                am.moveTaskToFront(getTaskId(), 0);
             }
-        } catch (Exception ignored) {}
-        try {
-            Intent i = new Intent(getApplicationContext(), MainActivity.class);
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
-                getApplicationContext(), 149, i,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
-            );
-            pi.send();
-        } catch (Exception ignored) {}
-        try {
-            Intent i2 = new Intent(getApplicationContext(), MainActivity.class);
-            i2.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            getApplicationContext().startActivity(i2);
         } catch (Exception ignored) {}
     }
 
@@ -476,7 +463,7 @@ public class MainActivity extends AppCompatActivity {
                     stopOverlayPermWatcherV147();
                     isOpeningSettingsV146 = false;
                     waitingForPermScreenV148 = false;
-                    // Принудительно закрываем открытое системное окно разрешений («как будто смахнул»)
+                    permFlowLockUntilMsV152 = 0L;
                     try {
                         finishActivity(REQ_OVERLAY_PERM);
                     } catch (Exception ignored) {}
@@ -499,17 +486,17 @@ public class MainActivity extends AppCompatActivity {
                 }
                 if (permWatchTicksV147 < 500) {
                     permWatchHandlerV147.postDelayed(this, 120);
+                } else {
+                    isOpeningSettingsV146 = false;
+                    waitingForPermScreenV148 = false;
                 }
             }
         };
-        permWatchHandlerV147.postDelayed(permWatchRunnableV147, 120);
+        permWatchHandlerV147.postDelayed(permWatchRunnableV147, 150);
     }
 
     private Intent attachAutoScrollAndSelfCloseFlagsV151(Intent intent, String pkg) {
-        int flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-                | Intent.FLAG_ACTIVITY_NO_HISTORY
-                | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
-        intent.addFlags(flags);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
 
         Bundle showArgs = new Bundle();
         showArgs.putString(":settings:fragment_args_key", pkg);
@@ -519,7 +506,6 @@ public class MainActivity extends AppCompatActivity {
 
         intent.putExtra(":settings:fragment_args_key", pkg);
         intent.putExtra(":settings:show_fragment_args", showArgs);
-        intent.putExtra(":settings:show_fragment_as_subsetting", true);
         intent.putExtra("package", pkg);
         intent.putExtra("app_package", pkg);
         intent.putExtra("extra_pkgname", pkg);
@@ -533,7 +519,7 @@ public class MainActivity extends AppCompatActivity {
             Uri pkgUri = Uri.parse("package:" + pkg);
             boolean launched = false;
 
-            // Шаг 1: Прямой пробой старого системного окна Android с одним тумблером (DrawOverlayDetails)
+            // Шаг 1: Системное окно Поверх других приложений с передачей пакета и автопрокруткой курсора
             try {
                 Intent directSingle = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
                 directSingle.setClassName("com.android.settings", "com.android.settings.Settings$AppDrawOverlaySettingsActivity");
@@ -542,7 +528,7 @@ public class MainActivity extends AppCompatActivity {
                 launched = true;
             } catch (Exception ignored) {}
 
-            // Шаг 2: Стандартное системное окно Поверх других приложений с автопрокруткой и подсветкой курсора на Jenny Player
+            // Шаг 2: Стандартный ACTION_MANAGE_OVERLAY_PERMISSION
             if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 try {
                     Intent stdList = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
@@ -552,7 +538,7 @@ public class MainActivity extends AppCompatActivity {
                 } catch (Exception ignored) {}
             }
 
-            // Шаг 3: Резервный фоллбэк на случай нестандартной прошивки
+            // Шаг 3: Резервный фоллбэк MIUI
             if (!launched) {
                 try {
                     Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
@@ -569,6 +555,11 @@ public class MainActivity extends AppCompatActivity {
     private void launchOverlayPermissionWithAutoWatchV147(final boolean fromHomeButton) {
         runOnUiThread(() -> {
             try {
+                long now = android.os.SystemClock.uptimeMillis();
+                if (now < permFlowLockUntilMsV152) {
+                    return;
+                }
+                permFlowLockUntilMsV152 = now + 4500L;
                 isOpeningSettingsV146 = true;
                 pendingOverlayAfterGrantV147 = true;
                 evalJs("if(window.saveLiveWorkspaceSnapshotV146) window.saveLiveWorkspaceSnapshotV146(true);");
@@ -584,30 +575,27 @@ public class MainActivity extends AppCompatActivity {
                 android.widget.Toast.makeText(
                     getApplicationContext(),
                     "🔓 Разреши: Всплывающие окна ➔ Всегда",
-                    android.widget.Toast.LENGTH_LONG
+                    android.widget.Toast.LENGTH_SHORT
                 ).show();
 
                 if (fromHomeButton) {
                     waitingForPermScreenV148 = true;
-                    // Автоматически разворачиваем задачу Jenny Player обратно на экран после анимации кнопки Домой,
-                    // чтобы в onResume() сразу открылось окно разрешений без ручного нажатия на иконку!
-                    int[] delays = new int[]{120, 300, 520, 800};
-                    for (int d : delays) {
-                        permWatchHandlerV147.postDelayed(() -> {
-                            if (waitingForPermScreenV148 && !Settings.canDrawOverlays(MainActivity.this)) {
-                                bringMainActivityToFrontV149();
-                            }
-                        }, d);
-                    }
+                    // Ровно ОДИН вызов разворота задачи через 220 мс после нажатия Домой (без повторных импульсов!)
+                    permWatchHandlerV147.postDelayed(() -> {
+                        if (waitingForPermScreenV148 && !Settings.canDrawOverlays(MainActivity.this)) {
+                            bringMainActivityToFrontV149();
+                        }
+                    }, 220);
                 } else {
                     waitingForPermScreenV148 = false;
-                    openMiuiOrSystemOverlayWindowV148();
                     startOverlayGrantRadarV149();
+                    openMiuiOrSystemOverlayWindowV148();
                 }
             } catch (Exception e) {
                 isOpeningSettingsV146 = false;
                 pendingOverlayAfterGrantV147 = false;
                 waitingForPermScreenV148 = false;
+                permFlowLockUntilMsV152 = 0L;
                 e.printStackTrace();
             }
         });
@@ -616,7 +604,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
-        if (isOpeningSettingsV146) {
+        if (isOpeningSettingsV146 || waitingForPermScreenV148 || android.os.SystemClock.uptimeMillis() < permFlowLockUntilMsV152) {
             return;
         }
         if (isVideoActiveV132 && !isDesktopOverlayActiveV132) {
@@ -987,13 +975,13 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(this);
 
-        // Как только задача автоматически развернулась обратно на экран — сразу открываем меню разрешений и запускаем радар!
         if (waitingForPermScreenV148 && !granted && isVideoActiveV132) {
             waitingForPermScreenV148 = false;
             isOpeningSettingsV146 = true;
             pendingOverlayAfterGrantV147 = true;
+            permFlowLockUntilMsV152 = android.os.SystemClock.uptimeMillis() + 6000L;
             startOverlayGrantRadarV149();
-            permWatchHandlerV147.postDelayed(() -> openMiuiOrSystemOverlayWindowV148(), 60);
+            openMiuiOrSystemOverlayWindowV148();
             return;
         }
 
@@ -1003,6 +991,7 @@ public class MainActivity extends AppCompatActivity {
         isOpeningSettingsV146 = false;
         pendingOverlayAfterGrantV147 = false;
         waitingForPermScreenV148 = false;
+        permFlowLockUntilMsV152 = 0L;
 
         if (wasPermSettings && wantAutoOverlay && granted && isVideoActiveV132 && !isDesktopOverlayActiveV132) {
             enterDesktopOverlayInternalV133();
