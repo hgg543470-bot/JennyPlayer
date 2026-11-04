@@ -5417,7 +5417,7 @@ window.openTorrentHubPreviewModalV91 = function(ev) {
                 <input type="text" id="torMagnetInpV91" value="" placeholder="Поиск FLAC-раздачи или вставь magnet:?xt=..." onkeydown="if(event.key==='Enter') window.runTorrentActionV96()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">
                 <button type="button" onclick="window.runTorrentActionV96()" style="padding:7px 12px;background:#8957e5;color:#fff;border:none;border-radius:8px;font-weight:bold;">🔍 / 🧲</button>
             </div>
-            <div id="torStatusLineV96" style="font-size:11px;color:#d2a8ff;font-weight:bold;">⚡ Введи название альбома/игры или вставь Magnet-ссылку</div>
+            <div id="torStatusLineV96" style="font-size:11px;color:#d2a8ff;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:16px;line-height:16px;">⚡ Введи название альбома/игры или вставь Magnet-ссылку</div>
         </div>
         <div id="torBodyListV96" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-height:230px;"></div>
         <div id="torFooterBarV96" style="display:none;padding:10px 12px;border-top:1px solid #21262d;background:#090c10;gap:8px;">
@@ -5968,7 +5968,7 @@ window.renderTorrentFilesListV96 = function() {
             <input type="checkbox" ${chk} onchange="if(this.checked) window._torStateV96.selectedFiles.add(${f.index}); else window._torStateV96.selectedFiles.delete(${f.index});">
             <div style="flex:1;min-width:0;">
                 <div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.path}</div>
-                <div id="torFileProgV96_${f.index}" style="color:#8b949e;font-size:10px;margin-top:2px;">💾 ${mb} MB • ▶ Поток или ⬇️ Скачать</div>
+                <div id="torFileProgV96_${f.index}" style="color:#8b949e;font-size:10px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:14px;line-height:14px;">💾 ${mb} MB • ▶ Поток / ⬇️ Скачать</div>
             </div>
             <button type="button" class="tor-prev-btn-v97" onclick="window.previewTorrentFileStreamV97(${f.index}, this, event)" title="Слушать в потоке" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
             <button type="button" id="torDlSingleBtnV98_${f.index}" onclick="window.downloadSingleTorrentTrackV98(${f.index}, this, event)" title="Скачать этот трек в xFLAC" style="padding:4px 8px;font-size:11px;background:rgba(63,185,80,0.16);color:#3fb950;border:1px solid rgba(63,185,80,0.6);">⬇️</button>
@@ -9222,8 +9222,11 @@ pop.onclick = (e) => { if (e.target === pop) pop.remove(); };
 // Создаем каркас модалки ОДИН РАЗ, чтобы скролл никогда не сбрасывался при ежесекундном обновлении!
 pop.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:460px;max-height:86vh;display:flex;flex-direction:column;border:1.5px solid #d2a8ff;">
 <div class="jenny-modal-hdr-v71" style="background:linear-gradient(90deg,rgba(210,168,255,0.25),rgba(31,111,235,0.25));">
-<span style="color:#d2a8ff;font-weight:900;font-size:13px;">📊 ЦЕНТР ЗАКАЧЕК И ЧАСТЕЙ P2P</span>
-<button type="button" onclick="document.getElementById('jennyTorInspectorModalV128').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button></div>
+<span style="color:#d2a8ff;font-weight:900;font-size:12.5px;">📊 ЦЕНТР ЗАКАЧЕК P2P</span>
+<div style="display:flex;align-items:center;gap:6px;">
+<button type="button" onclick="window.nukeAllTorrentsV142()" style="padding:3px 8px;font-size:10px;border-radius:6px;background:rgba(248,81,73,0.18);border:1px solid #ff7b72;color:#ff7b72;font-weight:bold;">🧹 Сброс всех + файлы</button>
+<button type="button" onclick="document.getElementById('jennyTorInspectorModalV128').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>
+</div></div>
 <div id="torHubTabsHeaderV128" style="padding:8px 10px;background:#090d14;border-bottom:1px solid #21262d;display:flex;gap:6px;"></div>
 <div id="torHubScrollBodyV128" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:240px;"></div>
 </div>`;
@@ -9247,7 +9250,14 @@ try {
 const bodyObj = { hash: hash, action: action };
 if (action === 'boost_piece') bodyObj.piece_index = Number(idxVal || 0);
 else bodyObj.file_index = Number(idxVal || 0);
-await fetch('/api/torrent/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyObj) });
+const ctrlRes = await fetch('/api/torrent/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyObj) }).then(r => r.json()).catch(() => ({}));
+if (action === 'drop') {
+if (window._torMapV112) delete window._torMapV112[hash];
+if (window._torSnapshotsByHashV108) delete window._torSnapshotsByHashV108[hash];
+window._torLiveDaemonSnapV128 = (window._torLiveDaemonSnapV128 || []).filter(t => t.hash !== hash);
+if (typeof window.showToast === 'function') window.showToast('🗑️ Раздача и файлы удалены с диска (' + (ctrlRes.freed_mb || 0) + ' МБ освобождено)');
+if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') window.syncDiscoveredVideosIntoPlaylistV134(true);
+}
 const job = window._torMapV112 && window._torMapV112[hash];
 if (job) {
 if (action === 'drop') delete window._torMapV112[hash];
@@ -9292,7 +9302,11 @@ const prevGridScroll = oldGrid ? oldGrid.scrollTop : 0;
 
 const torList = window._torLiveDaemonSnapV128 || [];
 const mapJobs = Object.values(window._torMapV112 || {});
+window._torStableOrderV142 = window._torStableOrderV142 || {};
+window._torStableSeqV142 = window._torStableSeqV142 || 1;
 const allHashes = Array.from(new Set([...torList.map(t => t.hash), ...mapJobs.map(j => j.hash)])).filter(Boolean);
+allHashes.forEach(h => { if (!window._torStableOrderV142[h]) window._torStableOrderV142[h] = window._torStableSeqV142++; });
+allHashes.sort((a, b) => (window._torStableOrderV142[a] || 0) - (window._torStableOrderV142[b] || 0));
 if (!window._torHubSelectedHashV128 || !allHashes.includes(window._torHubSelectedHashV128)) {
 window._torHubSelectedHashV128 = window._torStateV96.currentHash || allHashes[0] || '';
 }
@@ -12024,3 +12038,27 @@ if (!document.getElementById('jennyOmniCoreSwitcherBarV139') || !document.getEle
 window.renderOmniCoreSwitcherBarV139();
 }
 }, 1500);
+
+window.nukeAllTorrentsV142 = async function() {
+    try {
+        const res = await fetch('/api/torrent/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'drop_all' })
+        }).then(r => r.json());
+        window._torMapV112 = {};
+        window._torSnapshotsByHashV108 = {};
+        window._torLiveDaemonSnapV128 = [];
+        if (window._torStateV96) {
+            window._torStateV96.currentHash = '';
+            window._torStateV96.dlActive = false;
+        }
+        window.renderTorrentInspectorHubV128();
+        if (typeof window.showToast === 'function') {
+            window.showToast('🧹 Все раздачи и кэш удалены с диска (' + (res.freed_mb || 0) + ' МБ освобождено)');
+        }
+        if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') {
+            window.syncDiscoveredVideosIntoPlaylistV134(true);
+        }
+    } catch (e) {}
+};

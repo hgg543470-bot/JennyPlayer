@@ -3073,6 +3073,8 @@ def api_torrent_add_v96():
         mag = (req_obj.get("magnet") or "").strip()
         if mag:
             req_obj["magnet"] = enrich_magnet_with_cached_trackers_v109(mag)
+        cached_trs, _, _ = _load_trackers_state_v110()
+        req_obj["trackers"] = list(cached_trs or [])
         out_body = json.dumps(req_obj).encode("utf-8")
         req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add", data=out_body, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=32) as r:
@@ -3397,12 +3399,19 @@ def api_torrent_stream_proxy_v97(hash_str, file_idx):
         cur_set.add(int(file_idx))
         _JTORRENT_ACTIVE_FILES_V106[h_low] = cur_set
         try:
+            cached_trs, _, _ = _load_trackers_state_v110()
             dl_req = urllib.request.Request(
                 f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
-                data=json.dumps({"hash": h_low, "files": sorted(list(cur_set))}).encode("utf-8"),
+                data=json.dumps({"hash": h_low, "files": sorted(list(cur_set)), "trackers": list(cached_trs or [])}).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
-            urllib.request.urlopen(dl_req, timeout=2).read()
+            urllib.request.urlopen(dl_req, timeout=3).read()
+            bst_req = urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                data=json.dumps({"hash": h_low, "action": "boost_file", "file_index": int(file_idx)}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(bst_req, timeout=2).read()
         except Exception:
             pass
 
@@ -3527,16 +3536,136 @@ def api_torrent_download_v127():
   return json.dumps({"status": "error", "error": str(e)})
 
 
-# === 🧩 JENNY V128: TORRENT CONTROL ROUTE ===
+# === 🧩 JENNY V128 + V142: TORRENT CONTROL ROUTE WITH PHYSICAL FILE DELETION ===
+def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = False) -> float:
+    freed_bytes = 0
+    h = (target_hash or "").strip().lower()
+    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    target_names = set()
+    target_paths = set()
+
+    # 1. Снимаем список файлов раздачи из демона перед удалением
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.5) as r:
+            st = json.loads(r.read().decode("utf-8", "ignore"))
+            for tor in (st.get("torrents") or []):
+                th = (tor.get("hash") or "").strip().lower()
+                if nuke_all or (h and th == h):
+                    if tor.get("name"):
+                        target_names.add(tor["name"].strip())
+                    for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                        for k in ("full_path", "path"):
+                            fp = (fobj.get(k) or "").strip()
+                            if fp:
+                                target_paths.add(fp)
+                                target_names.add(os.path.basename(fp))
+                                top_seg = fp.replace(tor_dir, "").lstrip("/").split("/")[0]
+                                if len(top_seg) >= 2:
+                                    target_names.add(top_seg)
+    except Exception:
+        pass
+
+    def _rm_item(p):
+        nonlocal freed_bytes
+        try:
+            if os.path.isfile(p) or os.path.islink(p):
+                freed_bytes += os.path.getsize(p)
+                os.remove(p)
+            elif os.path.isdir(p):
+                for root_w, _, files_w in os.walk(p):
+                    for fn_w in files_w:
+                        try:
+                            freed_bytes += os.path.getsize(os.path.join(root_w, fn_w))
+                        except Exception:
+                            pass
+                shutil.rmtree(p, ignore_errors=True)
+        except Exception:
+            pass
+
+    if nuke_all:
+        if os.path.isdir(tor_dir):
+            _rm_item(tor_dir)
+            os.makedirs(tor_dir, exist_ok=True)
+        _JTORRENT_ACTIVE_FILES_V106.clear()
+        _JTORRENT_CONVERTED_V96.clear()
+    else:
+        if h:
+            _JTORRENT_ACTIVE_FILES_V106.pop(h, None)
+            _rm_item(os.path.join(tor_dir, f"{h}.torrent"))
+        for fp in target_paths:
+            if os.path.isabs(fp) and os.path.exists(fp):
+                _rm_item(fp)
+            else:
+                cand = os.path.join(tor_dir, fp.lstrip("/"))
+                if os.path.exists(cand):
+                    _rm_item(cand)
+        if os.path.isdir(tor_dir):
+            for entry in os.listdir(tor_dir):
+                if (h and h in entry.lower()) or (entry in target_names):
+                    _rm_item(os.path.join(tor_dir, entry))
+
+    # Удаляем также перенесенные видеофайлы этой раздачи из JennyVideo и кэша вкладки Видео
+    if "VIDEO_DIR_V137" in globals() and os.path.isdir(VIDEO_DIR_V137):
+        for fn in list(os.listdir(VIDEO_DIR_V137)):
+            meta = _discovered_video_meta_v137.get(fn) or {}
+            if nuke_all or fn in target_names or (h and meta.get("tor_hash") == h):
+                _rm_item(os.path.join(VIDEO_DIR_V137, fn))
+                _discovered_video_paths_v134.pop(fn, None)
+                _discovered_video_meta_v137.pop(fn, None)
+
+    for fn in list(_discovered_video_meta_v137.keys()):
+        meta = _discovered_video_meta_v137.get(fn) or {}
+        if nuke_all or fn in target_names or (h and meta.get("tor_hash") == h):
+            _discovered_video_paths_v134.pop(fn, None)
+            _discovered_video_meta_v137.pop(fn, None)
+
+    return round(freed_bytes / (1024.0 * 1024.0), 1)
+
 @post('/api/torrent/control')
 def api_torrent_control_v128():
- response.content_type = 'application/json'
- try:
-  ensure_jtorrent_daemon_v96()
-  req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control", data=request.body.read(), headers={"Content-Type": "application/json"})
-  with urllib.request.urlopen(req, timeout=8) as r: return r.read().decode("utf-8")
- except Exception as e:
-  return json.dumps({"status": "error", "error": str(e)})
+    response.content_type = 'application/json'
+    try:
+        ensure_jtorrent_daemon_v96()
+        raw_b = request.body.read()
+        data = json.loads(raw_b.decode("utf-8") or "{}")
+        act = (data.get("action") or "").strip().lower()
+        h = (data.get("hash") or "").strip().lower()
+
+        if act == "drop_all":
+            freed_mb = _delete_torrent_files_from_disk_v142("", nuke_all=True)
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/kill_all", timeout=1.5).read()
+            except Exception:
+                pass
+            global _JTORRENT_PROC_V96
+            if _JTORRENT_PROC_V96:
+                try:
+                    _JTORRENT_PROC_V96.kill()
+                except Exception:
+                    pass
+                _JTORRENT_PROC_V96 = None
+            ensure_jtorrent_daemon_v96()
+            return json.dumps({"status": "ok", "freed_mb": freed_mb})
+
+        freed_mb = 0.0
+        if act == "drop" and h:
+            freed_mb = _delete_torrent_files_from_disk_v142(h, nuke_all=False)
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+            data=raw_b,
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            res_txt = r.read().decode("utf-8")
+        try:
+            res_obj = json.loads(res_txt)
+            res_obj["freed_mb"] = freed_mb
+            return json.dumps(res_obj)
+        except Exception:
+            return json.dumps({"status": "ok", "freed_mb": freed_mb})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
 
 
 # === 🎬 JENNY V130: VIDEO STREAM & LIVE FFMPEG REMUX ENGINE ===
