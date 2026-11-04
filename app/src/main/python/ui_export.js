@@ -469,19 +469,20 @@ window.ensureExportModalV69 = function() {
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
                     <span style="font-size:11px;color:#58a6ff;font-weight:bold;">🎛️ Частота дискретизации (Sample Rate):</span>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;" id="srBtnGroupV86">
-                    <button type="button" data-sr="orig" onclick="window.selectExportSampleRateV86('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🎯 Родная (из файла)</button>
-                    <button type="button" data-sr="44100" onclick="window.selectExportSampleRateV86('44100')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💿 44100 Hz</button>
-                    <button type="button" data-sr="48000" onclick="window.selectExportSampleRateV86('48000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">⚡ 48000 Hz</button>
-                    <button type="button" data-sr="88200" onclick="window.selectExportSampleRateV86('88200')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 88200 Hz</button>
-                    <button type="button" data-sr="96000" onclick="window.selectExportSampleRateV86('96000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🔥 96000 Hz</button>
-                    <button type="button" data-sr="192000" onclick="window.selectExportSampleRateV86('192000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 192000 Hz</button>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;" id="srBtnGroupV86">
+                    <button type="button" data-sr="orig" onclick="window.selectExportSampleRateV86('orig')" style="grid-column:span 2;padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🎯 Авто (Родная)</button>
+                    <button type="button" data-sr="44100" onclick="window.selectExportSampleRateV86('44100')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💿 44.1 kHz</button>
+                    <button type="button" data-sr="48000" onclick="window.selectExportSampleRateV86('48000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">⚡ 48 kHz</button>
+                    <button type="button" data-sr="88200" onclick="window.selectExportSampleRateV86('88200')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 88.2 kHz</button>
+                    <button type="button" data-sr="96000" onclick="window.selectExportSampleRateV86('96000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">🔥 96 kHz</button>
+                    <button type="button" data-sr="176400" onclick="window.selectExportSampleRateV86('176400')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">✨ 176.4 kHz</button>
+                    <button type="button" data-sr="192000" onclick="window.selectExportSampleRateV86('192000')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 192 kHz</button>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
                     <span style="font-size:11px;color:#3fb950;font-weight:bold;">🎚️ Битовая глубина (Bit Depth):</span>
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;" id="bdBtnGroupV157">
-                    <button type="button" data-bd="orig" onclick="window.selectExportBitDepthV157('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🎯 Родная</button>
+                    <button type="button" data-bd="orig" onclick="window.selectExportBitDepthV157('orig')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #3fb950;background:rgba(63,185,80,0.24);color:#fff;font-weight:bold;">🎯 Авто</button>
                     <button type="button" data-bd="16" onclick="window.selectExportBitDepthV157('16')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💿 16-bit</button>
                     <button type="button" data-bd="24" onclick="window.selectExportBitDepthV157('24')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">💎 24-bit</button>
                     <button type="button" data-bd="32" onclick="window.selectExportBitDepthV157('32')" style="padding:5px 2px;font-size:10px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;">👑 32-bit</button>

@@ -318,6 +318,72 @@ def _decode_xflac_bytes_to_wav_v85(xfc_bytes: bytes) -> bytes:
 
 _XFLAC_CACHE_LOCK_V87 = threading.Lock()
 
+def _sanitize_canonical_wav_file_v159(wav_path: str):
+    """Приводит любой WAV (включая WAVE_FORMAT_EXTENSIBLE 0xFFFE от FFmpeg) к строгому 44-байтному каноническому заголовку RIFF WAVE,
+    чтобы исключить заикания и ошибки чтения частоты/битности/длительности при ручной смене параметров."""
+    try:
+        if not os.path.isfile(wav_path):
+            return
+        with open(wav_path, 'rb') as f:
+            hdr = f.read(4096)
+            if len(hdr) < 44 or hdr[:4] != b'RIFF' or hdr[8:12] != b'WAVE':
+                return
+            pos = 12
+            ftag = 1
+            ch = 2
+            sr = 44100
+            bits = 16
+            data_off = -1
+            data_sz = 0
+            while pos + 8 <= len(hdr):
+                cid = hdr[pos:pos+4]
+                csz = struct.unpack('<I', hdr[pos+4:pos+8])[0]
+                if cid == b'fmt ' and pos + 24 <= len(hdr):
+                    ftag, ch, sr, _, _, bits = struct.unpack('<HHIIHH', hdr[pos+8:pos+24])
+                    if ftag == 0xFFFE and csz >= 40 and pos + 8 + 26 <= len(hdr):
+                        ftag = struct.unpack('<H', hdr[pos+32:pos+34])[0]
+                elif cid == b'data':
+                    data_off = pos + 8
+                    data_sz = csz
+                    break
+                pos += 8 + csz + (csz & 1)
+            if data_off == -1:
+                return
+            f.seek(0, os.SEEK_END)
+            total_file_sz = f.tell()
+            real_pcm_bytes = max(0, total_file_sz - data_off)
+            if data_sz <= 0 or data_sz > real_pcm_bytes or data_off != 44 or ftag not in (1, 3):
+                pass
+            if ch not in (1, 2):
+                ch = 2
+            if bits not in (16, 24, 32):
+                bits = 16
+            if sr < 8000 or sr > 384000:
+                sr = 44100
+            clean_ftag = 3 if (bits == 32 and ftag == 3) else 1
+            bps = bits // 8
+            frame_align = ch * bps
+            real_pcm_bytes = (real_pcm_bytes // frame_align) * frame_align
+            byte_rate = sr * frame_align
+            # Если заголовок уже 44-байтный канонический и все поля совпадают — ничего не перезаписываем
+            if data_off == 44 and ftag == clean_ftag and data_sz == real_pcm_bytes:
+                cur_br, cur_ba = struct.unpack('<IH', hdr[28:34])
+                if cur_br == byte_rate and cur_ba == frame_align:
+                    return
+            f.seek(data_off)
+            pcm_payload = f.read(real_pcm_bytes)
+        new_hdr = struct.pack(
+            '<4sI4s4sIHHIIHH4sI',
+            b'RIFF', 36 + len(pcm_payload), b'WAVE',
+            b'fmt ', 16, clean_ftag, ch, sr, byte_rate, frame_align, bits,
+            b'data', len(pcm_payload)
+        )
+        with open(wav_path, 'wb') as wf:
+            wf.write(new_hdr)
+            wf.write(pcm_payload)
+    except Exception:
+        pass
+
 def _extract_wav_meta_from_raw_hdr_v157(raw_hdr: bytes, flags: int = 0):
     sr = 44100
     bits = 24 if (flags & 8) else (32 if (flags & 16) else 16)
@@ -1313,7 +1379,7 @@ def export_track():
         final_opus = os.path.join(MUSIC_DIR, new_filename)
         ffmpeg_bin = find_ffmpeg_binary()
 
-        valid_srs = ('44100', '48000', '88200', '96000', '192000')
+        valid_srs = ('8000', '11025', '16000', '22050', '24000', '32000', '44100', '48000', '64000', '88200', '96000', '128000', '176400', '192000', '352800', '384000')
         # Определяем родную битность исходника (16, 24 или 32 бит)
         orig_bits = 16
         if os.path.isfile(orig_path):
