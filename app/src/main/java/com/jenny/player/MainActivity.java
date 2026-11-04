@@ -44,6 +44,10 @@ public class MainActivity extends AppCompatActivity {
     private static boolean isVideoLockedV132 = false;
     private static boolean isVideoActiveV132 = false;
     private static boolean isDesktopOverlayActiveV132 = false;
+    private static boolean pendingOverlayAfterGrantV147 = false;
+    private static int permWatchTicksV147 = 0;
+    private static final android.os.Handler permWatchHandlerV147 = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static Runnable permWatchRunnableV147 = null;
     private static boolean isOpeningSettingsV146 = false;
     private static int savedOverlayW = 0;
     private static int savedOverlayH = 0;
@@ -428,6 +432,113 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private void stopOverlayPermWatcherV147() {
+        if (permWatchRunnableV147 != null) {
+            permWatchHandlerV147.removeCallbacks(permWatchRunnableV147);
+            permWatchRunnableV147 = null;
+        }
+    }
+
+    private void launchOverlayPermissionWithAutoWatchV147(final boolean autoEnterOverlayOnGrant) {
+        runOnUiThread(() -> {
+            try {
+                isOpeningSettingsV146 = true;
+                pendingOverlayAfterGrantV147 = autoEnterOverlayOnGrant;
+                evalJs("if(window.saveLiveWorkspaceSnapshotV146) window.saveLiveWorkspaceSnapshotV146(true);");
+
+                try {
+                    android.view.Window win = getWindow();
+                    if (win != null) {
+                        win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        win.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+                    }
+                } catch (Exception ignored) {}
+
+                android.widget.Toast.makeText(
+                    getApplicationContext(),
+                    "🔓 Включи «Отображение всплывающих окон» ➔ «Всегда разрешать»",
+                    android.widget.Toast.LENGTH_LONG
+                ).show();
+
+                String pkg = getPackageName();
+                boolean launched = false;
+
+                String[] miuiClasses = new String[]{
+                    "com.miui.permcenter.permissions.PermissionsEditorActivity",
+                    "com.miui.permcenter.permissions.AppPermissionsEditorActivity"
+                };
+                for (String cls : miuiClasses) {
+                    try {
+                        Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
+                        miuiIntent.setClassName("com.miui.securitycenter", cls);
+                        miuiIntent.putExtra("extra_pkgname", pkg);
+                        startActivity(miuiIntent);
+                        launched = true;
+                        break;
+                    } catch (Exception ignored) {}
+                }
+
+                if (!launched) {
+                    try {
+                        Intent miuiImplicit = new Intent("miui.intent.action.APP_PERM_EDITOR");
+                        miuiImplicit.putExtra("extra_pkgname", pkg);
+                        startActivity(miuiImplicit);
+                        launched = true;
+                    } catch (Exception ignored) {}
+                }
+
+                if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + pkg));
+                        startActivity(intent);
+                        launched = true;
+                    } catch (Exception ignored) {}
+                }
+
+                if (!launched) {
+                    Intent appDetails = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + pkg));
+                    startActivity(appDetails);
+                }
+
+                stopOverlayPermWatcherV147();
+                permWatchTicksV147 = 0;
+                permWatchRunnableV147 = new Runnable() {
+                    @Override
+                    public void run() {
+                        permWatchTicksV147++;
+                        boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(MainActivity.this);
+                        if (granted) {
+                            stopOverlayPermWatcherV147();
+                            isOpeningSettingsV146 = false;
+                            if (pendingOverlayAfterGrantV147 && isVideoActiveV132) {
+                                pendingOverlayAfterGrantV147 = false;
+                                enterDesktopOverlayInternalV133();
+                                evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
+                                try {
+                                    Intent home = new Intent(Intent.ACTION_MAIN);
+                                    home.addCategory(Intent.CATEGORY_HOME);
+                                    home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                    startActivity(home);
+                                } catch (Exception ignored) {}
+                            }
+                            return;
+                        }
+                        if (permWatchTicksV147 < 240) {
+                            permWatchHandlerV147.postDelayed(this, 250);
+                        }
+                    }
+                };
+                permWatchHandlerV147.postDelayed(permWatchRunnableV147, 300);
+            } catch (Exception e) {
+                isOpeningSettingsV146 = false;
+                pendingOverlayAfterGrantV147 = false;
+                e.printStackTrace();
+            }
+        });
+    }
+
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
@@ -435,7 +546,12 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         if (isVideoActiveV132 && !isDesktopOverlayActiveV132) {
-            enterDesktopOverlayInternalV133();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
+                launchOverlayPermissionWithAutoWatchV147(true);
+            } else {
+                enterDesktopOverlayInternalV133();
+                evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
+            }
         }
     }
 
@@ -576,63 +692,7 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void requestOverlayPermission() {
-            runOnUiThread(() -> {
-                try {
-                    isOpeningSettingsV146 = true;
-                    try {
-                        android.view.Window win = getWindow();
-                        if (win != null) {
-                            win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                            win.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-                        }
-                    } catch (Exception ignored) {}
-
-                    String pkg = getPackageName();
-                    boolean launched = false;
-
-                    String[] miuiClasses = new String[]{
-                        "com.miui.permcenter.permissions.PermissionsEditorActivity",
-                        "com.miui.permcenter.permissions.AppPermissionsEditorActivity"
-                    };
-                    for (String cls : miuiClasses) {
-                        try {
-                            Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
-                            miuiIntent.setClassName("com.miui.securitycenter", cls);
-                            miuiIntent.putExtra("extra_pkgname", pkg);
-                            startActivity(miuiIntent);
-                            launched = true;
-                            break;
-                        } catch (Exception ignored) {}
-                    }
-
-                    if (!launched) {
-                        try {
-                            Intent miuiImplicit = new Intent("miui.intent.action.APP_PERM_EDITOR");
-                            miuiImplicit.putExtra("extra_pkgname", pkg);
-                            startActivity(miuiImplicit);
-                            launched = true;
-                        } catch (Exception ignored) {}
-                    }
-
-                    if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        try {
-                            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                    Uri.parse("package:" + pkg));
-                            startActivity(intent);
-                            launched = true;
-                        } catch (Exception ignored) {}
-                    }
-
-                    if (!launched) {
-                        Intent appDetails = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.parse("package:" + pkg));
-                        startActivity(appDetails);
-                    }
-                } catch (Exception e) {
-                    isOpeningSettingsV146 = false;
-                    e.printStackTrace();
-                }
-            });
+            launchOverlayPermissionWithAutoWatchV147(false);
         }
 
         @JavascriptInterface
@@ -696,6 +756,7 @@ public class MainActivity extends AppCompatActivity {
         public void pickTorrentFile() {
             runOnUiThread(() -> {
                 try {
+                    isOpeningSettingsV146 = true;
                     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                     intent.addCategory(Intent.CATEGORY_OPENABLE);
                     intent.setType("*/*");
@@ -711,6 +772,7 @@ public class MainActivity extends AppCompatActivity {
         public void pickFolder() {
             runOnUiThread(() -> {
                 try {
+                    isOpeningSettingsV146 = true;
                     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
                     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                     startActivityForResult(intent, REQ_PICK_FOLDER);
@@ -849,11 +911,22 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        stopOverlayPermWatcherV147();
         boolean wasPermSettings = isOpeningSettingsV146;
+        boolean wantAutoOverlay = pendingOverlayAfterGrantV147;
         isOpeningSettingsV146 = false;
+        pendingOverlayAfterGrantV147 = false;
+
+        boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(this);
+        if (wasPermSettings && wantAutoOverlay && granted && isVideoActiveV132 && !isDesktopOverlayActiveV132) {
+            enterDesktopOverlayInternalV133();
+            evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
+            moveTaskToBack(true);
+            return;
+        }
+
         restoreWebViewToActivityV135(false);
         if (wasPermSettings && webView != null) {
-            final boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(this);
             webView.postDelayed(() -> {
                 evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(" + granted + ");");
                 if (isVideoFullscreenV132 || isVideoLockedV132) {

@@ -12551,11 +12551,67 @@ window.clampPipVideoInsideScreenV145 = function() {
 setInterval(window.clampPipVideoInsideScreenV145, 800);
 })();
 
-// === 📌🛡️ JENNY V146: DIRECT MIUI OVERMISSION, ZERO BLACK SCREEN & LIVE SNAPSHOT RESUME ===
+// === 📌🛡️ JENNY V147: AUTO OVERLAY ON HOME, REMOVE DESKTOP BUTTON & FIX VERTICAL VIDEO TITLE ===
 (function() {
-window._permRequestInFlightV146 = false;
+// 1. Стили верхней шапки видеоплеера: полное удаление кнопки "На раб. стол" и запрет сплющивания названия в столбик по 1 букве!
+const styleId = 'jennyV147VideoHeaderFix';
+if (!document.getElementById(styleId)) {
+    const st = document.createElement('style');
+    st.id = styleId;
+    st.textContent = `
+        #v132BtnDesktop,
+        #v146BtnOverlayPerm {
+            display: none !important;
+        }
+        #v130TopDragBar {
+            flex-wrap: wrap !important;
+            align-items: flex-start !important;
+            row-gap: 6px !important;
+        }
+        #v130TopDragBar > div:first-child {
+            flex: 1 1 100% !important;
+            width: 100% !important;
+            min-width: 100% !important;
+        }
+        #v130TopDragBar > div:last-child {
+            flex: 1 1 100% !important;
+            width: 100% !important;
+            justify-content: flex-end !important;
+            flex-wrap: wrap !important;
+        }
+        #v130VideoTitle {
+            white-space: normal !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            line-height: 1.3 !important;
+            font-size: 13px !important;
+        }
+    `;
+    document.head.appendChild(st);
+}
 
-// 1. Сохранение полного слепка состояния (Музыка + Видео + Открытые окна) на случай перезапуска Activity системой
+window.removeDesktopOverlayButtonsFromHudV147 = function() {
+    document.getElementById('v132BtnDesktop')?.remove();
+    document.getElementById('v146BtnOverlayPerm')?.remove();
+};
+
+// 2. Гарантируем, что при авто-переходе на рабочий стол видео продолжает играть без паузы
+window.ensureVideoPlayingInOverlayV147 = function() {
+    const st = window._vidStateV130 || {};
+    const vid = document.getElementById('jennyVideoElV130');
+    if (!st.active || !vid) return;
+    if (!st.userPaused) {
+        window._vidPlayIntentV132 = true;
+        if (vid.paused && !(window.videoDeckV131 && window.videoDeckV131.isReversed)) {
+            vid.play().catch(() => {});
+        }
+        if (typeof window.syncVideoRamEngineV131 === 'function') {
+            window.syncVideoRamEngineV131(false);
+        }
+    }
+};
+
+// 3. Сохранение полного слепка рабочего состояния (Музыка + Видео + Открытые окна) на случай перезапуска Activity
 window.saveLiveWorkspaceSnapshotV146 = function(isPermRedirect) {
     try {
         const aud = document.getElementById('audioPlayer');
@@ -12597,7 +12653,6 @@ window.saveLiveWorkspaceSnapshotV146 = function(isPermRedirect) {
     } catch (e) {}
 };
 
-// Периодическое сохранение состояния во время воспроизведения
 setInterval(() => {
     const aud = document.getElementById('audioPlayer');
     const st = window._vidStateV130 || {};
@@ -12607,7 +12662,7 @@ setInterval(() => {
     }
 }, 1500);
 
-// 2. Авто-восстановление с той же секунды, если система перезагрузила WebView после выдачи разрешения
+// 4. Авто-восстановление с той же секунды, если система перезагрузила WebView
 window.restoreLiveWorkspaceSnapshotIfNeededV146 = function() {
     try {
         const raw = localStorage.getItem('ytm_live_workspace_v146');
@@ -12616,7 +12671,6 @@ window.restoreLiveWorkspaceSnapshotIfNeededV146 = function() {
         if (!snap || !snap.ts) return;
 
         const ageMs = Date.now() - snap.ts;
-        // Восстанавливаем автоматически, если был переход за разрешением (до 5 мин) или свежая перезагрузка (до 20 сек)
         const shouldRestore = (snap.permRedirect && ageMs < 300000) || (!snap.permRedirect && ageMs < 20000 && (snap.video?.active || !snap.music?.paused));
         if (!shouldRestore) return;
 
@@ -12624,14 +12678,12 @@ window.restoreLiveWorkspaceSnapshotIfNeededV146 = function() {
         localStorage.setItem('ytm_live_workspace_v146', JSON.stringify(snap));
 
         setTimeout(async () => {
-            // Восстанавливаем открытую Торрент-студию, если она была открыта
             if (snap.torrentModal && snap.torrentModal.open && typeof window.openTorrentHubPreviewModalV91 === 'function') {
                 window.openTorrentHubPreviewModalV91();
                 const inp = document.getElementById('torMagnetInpV91');
                 if (inp && snap.torrentModal.query) inp.value = snap.torrentModal.query;
             }
 
-            // Восстанавливаем Деку А (Музыка) с точной секунды
             if (snap.music && snap.music.track && !window.currentPlayingTrack && typeof window.playTrack === 'function') {
                 await window.playTrack(snap.music.track, 'main');
                 const aud = document.getElementById('audioPlayer');
@@ -12650,7 +12702,6 @@ window.restoreLiveWorkspaceSnapshotIfNeededV146 = function() {
                 }
             }
 
-            // Восстанавливаем Деку Б (Видео) с точной секунды
             if (snap.video && snap.video.active && snap.video.url && typeof window.openJennyVideoPlayerV130 === 'function') {
                 window.openJennyVideoPlayerV130(snap.video.url, snap.video.title || 'Видео', {
                     torHash: snap.video.torHash || '',
@@ -12674,62 +12725,9 @@ window.restoreLiveWorkspaceSnapshotIfNeededV146 = function() {
     } catch (e) {}
 };
 
-// 3. Безопасный вызов окна разрешения «Отображение всплывающих окон» (открывает сразу карточку Jenny Player на HyperOS/MIUI)
-window.requestOverlayPermissionSafelyV146 = function(ev) {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    if (!window.AndroidBridge || typeof window.AndroidBridge.requestOverlayPermission !== 'function') {
-        if (typeof window.showToast === 'function') window.showToast('⚠️ Доступно в установленном APK');
-        return;
-    }
-
-    const vid = document.getElementById('jennyVideoElV130');
-    const st = window._vidStateV130 || {};
-    if (st.active && vid) {
-        st._permSavedTimeV146 = (vid.currentTime || 0) + (st.remuxBaseOffset || 0);
-        st._permWasPlayingV146 = Boolean(!vid.paused && window._vidPlayIntentV132);
-        if (typeof window.saveCurrentVideoProgressV135 === 'function') {
-            window.saveCurrentVideoProgressV135();
-        }
-    }
-    window.saveLiveWorkspaceSnapshotV146(true);
-    window._permRequestInFlightV146 = true;
-
-    if (typeof window.showToast === 'function') {
-        window.showToast('🔓 Выбери «Отображение всплывающих окон» ➔ «Всегда разрешать» и нажми Назад');
-    }
-    try {
-        window.AndroidBridge.requestOverlayPermission();
-    } catch (e) {}
-};
-
-// 4. Действие по кнопке «🔓 Поверх окон / 📌 На раб. стол» в шапке видеоплеера
-window.onVideoOverlayActionBtnV146 = function(ev) {
-    if (window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-
-    if (!window.AndroidBridge) return;
-    const hasPerm = (typeof window.AndroidBridge.canDrawOverlays === 'function')
-        ? Boolean(window.AndroidBridge.canDrawOverlays())
-        : false;
-
-    if (!hasPerm) {
-        window.requestOverlayPermissionSafelyV146(ev);
-        return;
-    }
-
-    // Если разрешение уже есть — сворачиваем видео в плавающее окно поверх рабочего стола!
-    if (window._vidStateV130 && window._vidStateV130.desktopOverlay) {
-        window.exitDesktopOverlayModeV132(true, ev);
-    } else if (typeof window.enterDesktopOverlayModeV132 === 'function') {
-        window.enterDesktopOverlayModeV132(ev);
-    }
-};
-
-// 5. Коллбэк при возврате из системных настроек (без чёрного экрана и с продолжением с той же секунды)
+// 5. Плавный возврат из экрана разрешений без чёрного экрана
 window.onReturnedFromPermissionScreenV146 = function(granted) {
-    window._permRequestInFlightV146 = false;
-    window.syncOverlayPermButtonsUIV146();
-
+    window.removeDesktopOverlayButtonsFromHudV147();
     const st = window._vidStateV130 || {};
     const vid = document.getElementById('jennyVideoElV130');
 
@@ -12739,13 +12737,9 @@ window.onReturnedFromPermissionScreenV146 = function(granted) {
             : ((vid.currentTime || 0) + (st.remuxBaseOffset || 0));
         const shouldPlay = (st._permWasPlayingV146 !== undefined) ? st._permWasPlayingV146 : Boolean(window._vidPlayIntentV132);
 
-        // Принудительно будим композитор видеослоя Chromium WebView, чтобы не было чёрного кадра
         vid.style.transform = 'translateZ(0.01px)';
-        requestAnimationFrame(() => {
-            vid.style.transform = '';
-        });
+        requestAnimationFrame(() => { vid.style.transform = ''; });
 
-        // Если декодер сбросил буфер за время нахождения в Настройках — мягко восстанавливаем поток с той же секунды
         if (vid.readyState < 2 || vid.videoWidth === 0 || vid.error) {
             if (st.usingRemux) {
                 st.remuxBaseOffset = targetSec;
@@ -12758,8 +12752,6 @@ window.onReturnedFromPermissionScreenV146 = function(granted) {
                     try { vid.currentTime = targetSec; } catch (e) {}
                 }, { once: true });
             }
-        } else if (Math.abs((vid.currentTime || 0) - targetSec) > 1.5 && !st.usingRemux) {
-            try { vid.currentTime = targetSec; } catch (e) {}
         }
 
         if (shouldPlay) {
@@ -12769,87 +12761,18 @@ window.onReturnedFromPermissionScreenV146 = function(granted) {
                 window.syncVideoRamEngineV131(false);
             }
         }
-        if (typeof window.wakeVideoHudV130 === 'function') {
-            window.wakeVideoHudV130(false);
-        }
-    }
-
-    if (granted) {
-        if (typeof window.showVideoFeedbackV130 === 'function' && st.active) {
-            window.showVideoFeedbackV130('✅ Разрешение «Поверх окон» активно! Нажми Home или 📌');
-        } else if (typeof window.showToast === 'function') {
-            window.showToast('✅ Разрешение «Поверх других окон» успешно включено!');
-        }
     }
 };
 
-// 6. Отрисовка кнопки «🔓 Поверх окон / 📌 На раб. стол» в видеоплеере и в Настройках
-window.syncOverlayPermButtonsUIV146 = function() {
-    const hasBridge = Boolean(window.AndroidBridge && typeof window.AndroidBridge.canDrawOverlays === 'function');
-    const granted = hasBridge ? Boolean(window.AndroidBridge.canDrawOverlays()) : false;
-
-    const topDragBar = document.getElementById('v130TopDragBar');
-    const pipBtn = document.getElementById('v130BtnPipToggle');
-    if (topDragBar && pipBtn && pipBtn.parentElement) {
-        let btn = document.getElementById('v146BtnOverlayPerm');
-        if (!btn) {
-            btn = document.createElement('button');
-            btn.type = 'button';
-            btn.id = 'v146BtnOverlayPerm';
-            btn.className = 'v130-btn v130-hide-in-pip';
-            btn.onclick = (e) => window.onVideoOverlayActionBtnV146(e);
-            pipBtn.parentElement.insertBefore(btn, pipBtn);
-        }
-        if (granted) {
-            btn.innerHTML = '📌 На раб. стол';
-            btn.style.cssText = 'border-color:#d2a8ff !important;color:#d2a8ff !important;';
-        } else {
-            btn.innerHTML = '🔓 Поверх окон';
-            btn.style.cssText = 'border-color:#e3b341 !important;color:#e3b341 !important;background:rgba(227,179,65,0.18) !important;';
-        }
-    }
-
-    // Плашка статуса разрешения в окне Настроек (#settingsModal)
-    const sm = document.getElementById('settingsModal');
-    if (sm) {
-        const cont = sm.querySelector('.container') || sm;
-        let sRow = document.getElementById('jennyOverlayPermSettingsRowV146');
-        if (!sRow) {
-            sRow = document.createElement('div');
-            sRow.id = 'jennyOverlayPermSettingsRowV146';
-            sRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;margin:8px 0;background:#0d1117;border:1px solid #30363d;border-radius:10px;';
-            const coreBox = document.getElementById('jennyOmniCoreSettingsBoxV139');
-            if (coreBox && coreBox.nextSibling) cont.insertBefore(sRow, coreBox.nextSibling);
-            else cont.insertBefore(sRow, cont.firstChild);
-        }
-        sRow.style.borderColor = granted ? 'rgba(63,185,80,0.5)' : '#e3b341';
-        sRow.innerHTML = `
-            <div style="min-width:0;flex:1;">
-                <div style="color:${granted ? '#3fb950' : '#e3b341'};font-size:12px;font-weight:900;">
-                    ${granted ? '✅ Видео поверх других окон: РАЗРЕШЕНО' : '🔓 Видео поверх других окон: НЕ ВЫДАНО'}
-                </div>
-                <div style="color:#8b949e;font-size:10.5px;margin-top:2px;">
-                    ${granted ? 'При нажатии Home (●) или кнопки 📌 видео сворачивается на рабочий стол' : 'Открой карточку Jenny Player ➔ «Отображение всплывающих окон» ➔ «Всегда разрешать»'}
-                </div>
-            </div>
-            <button type="button" onclick="window.requestOverlayPermissionSafelyV146(event)" style="padding:6px 10px;border-radius:8px;font-size:11px;font-weight:bold;background:${granted ? '#161b22' : 'rgba(227,179,65,0.2)'};border:1px solid ${granted ? '#30363d' : '#e3b341'};color:${granted ? '#8b949e' : '#e3b341'};flex-shrink:0;">
-                ${granted ? '⚙️ Настройки' : '🔓 Разрешить'}
-            </button>
-        `;
-    }
-};
-
-// Не даём cleanUpDesktopButtonsV133 удалять нашу новую кнопку v146BtnOverlayPerm
-const _prevOpenVidV145 = window.openJennyVideoPlayerV130;
+const _prevOpenVidV147 = window.openJennyVideoPlayerV130;
 window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
-    const r = _prevOpenVidV145.apply(this, arguments);
-    window.syncOverlayPermButtonsUIV146();
+    const r = _prevOpenVidV147.apply(this, arguments);
+    window.removeDesktopOverlayButtonsFromHudV147();
     return r;
 };
 
 setTimeout(() => {
-    window.syncOverlayPermButtonsUIV146();
+    window.removeDesktopOverlayButtonsFromHudV147();
     window.restoreLiveWorkspaceSnapshotIfNeededV146();
-}, 500);
-setInterval(window.syncOverlayPermButtonsUIV146, 2500);
+}, 400);
 })();
