@@ -48,6 +48,7 @@ public class MainActivity extends AppCompatActivity {
     private static boolean pendingOverlayAfterGrantV147 = false;
     private static boolean waitingForPermScreenV148 = false;
     private static long permFlowLockUntilMsV152 = 0L;
+    private static long overlayGrantProtectionUntilMsV153 = 0L;
     private static int permWatchTicksV147 = 0;
     private static final android.os.Handler permWatchHandlerV147 = new android.os.Handler(android.os.Looper.getMainLooper());
     private static Runnable permWatchRunnableV147 = null;
@@ -188,7 +189,15 @@ public class MainActivity extends AppCompatActivity {
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus && isDesktopOverlayActiveV132) {
-            restoreWebViewToActivityV135(false);
+            if (android.os.SystemClock.uptimeMillis() < overlayGrantProtectionUntilMsV153) {
+                moveTaskToBack(true);
+                return;
+            }
+            if (isDesktopOverlayActiveV132 && android.os.SystemClock.uptimeMillis() < overlayGrantProtectionUntilMsV153) {
+            moveTaskToBack(true);
+            return;
+        }
+        restoreWebViewToActivityV135(false);
         }
         if (hasFocus && (isVideoFullscreenV132 || isVideoLockedV132)) {
             applyVideoSystemUiLockV132();
@@ -464,24 +473,27 @@ public class MainActivity extends AppCompatActivity {
                     isOpeningSettingsV146 = false;
                     waitingForPermScreenV148 = false;
                     permFlowLockUntilMsV152 = 0L;
-                    try {
-                        finishActivity(REQ_OVERLAY_PERM);
-                    } catch (Exception ignored) {}
 
                     if (pendingOverlayAfterGrantV147 && isVideoActiveV132) {
                         pendingOverlayAfterGrantV147 = false;
+                        // Защищаем созданный оверлей на 3 секунды, пока закрывается окно SubSettings
+                        overlayGrantProtectionUntilMsV153 = android.os.SystemClock.uptimeMillis() + 3000L;
                         enterDesktopOverlayInternalV133();
                         evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
-                        try {
-                            moveTaskToBack(true);
-                        } catch (Exception ignored) {}
-                        try {
-                            Intent home = new Intent(Intent.ACTION_MAIN);
-                            home.addCategory(Intent.CATEGORY_HOME);
-                            home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                            startActivity(home);
-                        } catch (Exception ignored) {}
                     }
+
+                    try {
+                        finishActivity(REQ_OVERLAY_PERM);
+                    } catch (Exception ignored) {}
+                    try {
+                        moveTaskToBack(true);
+                    } catch (Exception ignored) {}
+                    try {
+                        Intent home = new Intent(Intent.ACTION_MAIN);
+                        home.addCategory(Intent.CATEGORY_HOME);
+                        home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(home);
+                    } catch (Exception ignored) {}
                     return;
                 }
                 if (permWatchTicksV147 < 500) {
@@ -492,24 +504,29 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         };
-        permWatchHandlerV147.postDelayed(permWatchRunnableV147, 150);
+        permWatchHandlerV147.postDelayed(permWatchRunnableV147, 140);
     }
 
     private Intent attachAutoScrollAndSelfCloseFlagsV151(Intent intent, String pkg) {
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+        int appUid = getApplicationInfo().uid;
 
         Bundle showArgs = new Bundle();
-        showArgs.putString(":settings:fragment_args_key", pkg);
         showArgs.putString("package", pkg);
-        showArgs.putString("app_package", pkg);
-        showArgs.putString("extra_pkgname", pkg);
+        showArgs.putInt("uid", appUid);
+        showArgs.putString(":settings:show_fragment_title", "Поверх других приложений");
+        showArgs.putInt(":android:show_fragment_title", -1);
+        showArgs.putString(":settings:fragment_args_key", pkg);
+        Intent innerIntent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + pkg));
+        showArgs.putParcelable("intent", innerIntent);
 
-        intent.putExtra(":settings:fragment_args_key", pkg);
+        intent.putExtra(":settings:show_fragment", "com.android.settings.applications.appinfo.DrawOverlayDetails");
         intent.putExtra(":settings:show_fragment_args", showArgs);
+        intent.putExtra(":settings:show_fragment_title", "Поверх других приложений");
+        intent.putExtra(":android:show_fragment_title", -1);
+        intent.putExtra(":settings:fragment_args_key", pkg);
         intent.putExtra("package", pkg);
-        intent.putExtra("app_package", pkg);
-        intent.putExtra("extra_pkgname", pkg);
-        intent.putExtra("android.provider.extra.APP_PACKAGE", pkg);
+        intent.putExtra("uid", appUid);
         return intent;
     }
 
@@ -519,32 +536,22 @@ public class MainActivity extends AppCompatActivity {
             Uri pkgUri = Uri.parse("package:" + pkg);
             boolean launched = false;
 
-            // Шаг 1: Системное окно Поверх других приложений с передачей пакета и автопрокруткой курсора
+            // Шаг 1 (Проверено через Shizuku): Прямой запуск одиночного тумблера DrawOverlayDetails через SubSettings!
             try {
-                Intent directSingle = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
-                directSingle.setClassName("com.android.settings", "com.android.settings.Settings$AppDrawOverlaySettingsActivity");
-                attachAutoScrollAndSelfCloseFlagsV151(directSingle, pkg);
-                startActivityForResult(directSingle, REQ_OVERLAY_PERM);
+                Intent subDirect = new Intent(Intent.ACTION_MAIN);
+                subDirect.setClassName("com.android.settings", "com.android.settings.SubSettings");
+                subDirect.setData(pkgUri);
+                attachAutoScrollAndSelfCloseFlagsV151(subDirect, pkg);
+                startActivityForResult(subDirect, REQ_OVERLAY_PERM);
                 launched = true;
             } catch (Exception ignored) {}
 
-            // Шаг 2: Стандартный ACTION_MANAGE_OVERLAY_PERMISSION
+            // Шаг 2: Фоллбэк на стандартный список, если SubSettings недоступен
             if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 try {
                     Intent stdList = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
                     attachAutoScrollAndSelfCloseFlagsV151(stdList, pkg);
                     startActivityForResult(stdList, REQ_OVERLAY_PERM);
-                    launched = true;
-                } catch (Exception ignored) {}
-            }
-
-            // Шаг 3: Резервный фоллбэк MIUI
-            if (!launched) {
-                try {
-                    Intent miuiIntent = new Intent("miui.intent.action.APP_PERM_EDITOR");
-                    miuiIntent.setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity");
-                    attachAutoScrollAndSelfCloseFlagsV151(miuiIntent, pkg);
-                    startActivityForResult(miuiIntent, REQ_OVERLAY_PERM);
                 } catch (Exception ignored) {}
             }
         } catch (Exception e) {
