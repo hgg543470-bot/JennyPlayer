@@ -335,7 +335,7 @@ window.playTrack = async function(filename, listContext = 'main') {
     }
 
     let isRevMode = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-    if(typeof window.updateProgressUI === 'function') window.updateProgressUI(0, 100, isRevMode);
+    if(typeof window.updateProgressUI === 'function') window.updateProgressUI(0, 0, isRevMode);
     window.updateCenterCurrentTime(0, 0, isRevMode);
 
     if ('mediaSession' in navigator) {

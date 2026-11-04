@@ -318,6 +318,18 @@ def _decode_xflac_bytes_to_wav_v85(xfc_bytes: bytes) -> bytes:
 
 _XFLAC_CACHE_LOCK_V87 = threading.Lock()
 
+def _extract_wav_sr_from_raw_meta_v156(raw_hdr: bytes) -> int:
+    if len(raw_hdr) >= 44 and raw_hdr[16:20] == b'RIFF':
+        fmt_idx = raw_hdr.find(b'fmt ', 20, min(len(raw_hdr), 512))
+        if fmt_idx != -1 and fmt_idx + 16 <= len(raw_hdr):
+            cand_sr = struct.unpack('<I', raw_hdr[fmt_idx + 12:fmt_idx + 16])[0]
+            if 8000 <= cand_sr <= 384000:
+                return int(cand_sr)
+        cand_sr = struct.unpack('<I', raw_hdr[40:44])[0]
+        if 8000 <= cand_sr <= 384000:
+            return int(cand_sr)
+    return 44100
+
 def _get_xflac_fast_header_info_v87(full_p: str):
     try:
         with open(full_p, 'rb') as f:
@@ -329,13 +341,10 @@ def _get_xflac_fast_header_info_v87(full_p: str):
                     comp_chunk = f.read(min(int(cm_sz), 16384))
                     if flags & 2:
                         decomp = lzma.LZMADecompressor()
-                        raw_hdr = decomp.decompress(comp_chunk, max_length=64)
+                        raw_hdr = decomp.decompress(comp_chunk, max_length=512)
                     else:
-                        raw_hdr = comp_chunk[:64]
-                    if len(raw_hdr) >= 44 and raw_hdr[16:20] == b'RIFF':
-                        cand_sr = struct.unpack('<I', raw_hdr[40:44])[0]
-                        if 8000 <= cand_sr <= 192000:
-                            sr = int(cand_sr)
+                        raw_hdr = comp_chunk[:512]
+                    sr = _extract_wav_sr_from_raw_meta_v156(raw_hdr)
                 except Exception:
                     pass
                 ch = 1 if (flags & 4) else 2
@@ -1295,7 +1304,7 @@ def export_track():
                         os.replace(temp_sr_wav, temp_wav)
             else:
                 ar_args = ['-ar', sr_mode] if sr_mode in ('44100', '48000') else []
-                subprocess.run([ffmpeg_bin, '-y', '-i', orig_path] + ar_args + ['-ac', '2', '-c:a', 'pcm_s16le', temp_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run([ffmpeg_bin, '-y', '-i', orig_path] + ar_args + ['-af', 'aresample=dither_method=triangular_hp', '-ac', '2', '-c:a', 'pcm_s16le', temp_wav], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         else:
             with open(temp_wav, 'wb') as out_f:
                 shutil.copyfileobj(upload.file, out_f)
@@ -1461,10 +1470,13 @@ def get_track_info():
                         x_flags, x_nf, x_rm_sz, x_cm_sz, x_rl_sz, x_rr_sz = struct.unpack('<BIIIII', xhdr[4:25])
                         x_sr = 44100
                         try:
-                            comp_chunk = xff.read(min(x_cm_sz, 65536))
-                            raw_hdr = lzma.decompress(comp_chunk) if (x_flags & 2) else comp_chunk
-                            if len(raw_hdr) >= 44 and raw_hdr[16:20] == b'RIFF':
-                                x_sr = struct.unpack('<I', raw_hdr[40:44])[0]
+                            comp_chunk = xff.read(min(int(x_cm_sz), 65536))
+                            if x_flags & 2:
+                                decomp = lzma.LZMADecompressor()
+                                raw_hdr = decomp.decompress(comp_chunk, max_length=512)
+                            else:
+                                raw_hdr = comp_chunk[:512]
+                            x_sr = _extract_wav_sr_from_raw_meta_v156(raw_hdr)
                         except Exception:
                             pass
                         if x_sr < 8000 or x_sr > 192000:

@@ -16,7 +16,7 @@ typedef struct {
     double encode_ms;
 } xflac_stats_t;
 
-#define WARMUP 256
+#define WARMUP 440
 #define BLOCK_SIZE 2048
 #define AR_ORDER 16
 #define TOTAL_TAPS 21
@@ -90,13 +90,35 @@ static void apply_dynamic_noise_floor_gate(int16_t* ch, size_t n, double gate_di
     if (gate_div < 5.0) gate_div = 25.0;
     for (size_t s = 0; s < n; s += SUBBLOCK_SIZE) {
         size_t e = (s + SUBBLOCK_SIZE < n) ? (s + SUBBLOCK_SIZE) : n;
+        size_t len = e - s;
         double sum_sq = 0.0;
-        for (size_t i = s; i < e; ++i) { double v = (double)ch[i]; sum_sq += v * v; }
-        double rms = sqrt(sum_sq / (double)(e - s));
-        if (rms > gate_div * 1.15) {
-            int tz = (int)floor(log2(rms / gate_div));
-            int max_tz = (gate_div <= 16.0) ? 9 : ((gate_div <= 26.0) ? 8 : 7);
-            if (tz < 0) tz = 0; else if (tz > max_tz) tz = max_tz;
+        double diff_sq = 0.0;
+        for (size_t i = s; i < e; ++i) {
+            double v = (double)ch[i];
+            sum_sq += v * v;
+            if (i > s) {
+                double d = v - (double)ch[i - 1];
+                diff_sq += d * d;
+            }
+        }
+        double rms = sqrt(sum_sq / (double)len);
+        double diff_rms = sqrt(diff_sq / (double)(len > 1 ? len - 1 : 1));
+        // Отношение ВЧ-шероховатости к основному тону: у чистого рояля/синуса ratio < 0.18, у шумного микса > 0.35
+        double hf_ratio = (rms > 1.0) ? (diff_rms / rms) : 0.0;
+
+        if (rms > gate_div * 1.25) {
+            // Масштабируем порог так, чтобы сохранять минимум 11-12 бит (66-72 дБ SNR) на широкополосном сигнале
+            // и минимум 13-14 бит (80-86 дБ SNR) на чистых тональных инструментах (пианино, акустика)
+            double eff_div = gate_div * 18.0;
+            int tz = (int)floor(log2(rms / eff_div));
+            int max_tz = (gate_div <= 16.0) ? 5 : ((gate_div <= 26.0) ? 4 : 3);
+            if (hf_ratio < 0.22) {
+                // Чистый тональный звук (рояль, флейта, вокал без шума) — снижаем срез бит, чтобы не было ступенек!
+                max_tz = (gate_div <= 16.0) ? 3 : 2;
+            }
+            if (tz < 0) tz = 0;
+            else if (tz > max_tz) tz = max_tz;
+
             if (tz > 0) {
                 int32_t half = 1 << (tz - 1), mask = ~((1 << tz) - 1);
                 int32_t max_pos = 32767 & mask;
@@ -140,7 +162,7 @@ static void encode_channel_pitch_ols(const int64_t* x, size_t n, ByteVec* meta_q
         size_t e = (s + BLOCK_SIZE < n) ? (s + BLOCK_SIZE) : n;
         if (e - s <= TOTAL_TAPS + 10) { for (size_t i = s; i < e; ++i) res[i] = x[i]; continue; }
         uint16_t best_lag = 50; double best_corr = -1.0;
-        for (int lag = 20; lag < 220; lag += 4) {
+        for (int lag = 20; lag < 420; lag += 4) {
             double c = 0.0;
             for (size_t i = s; i < e; i += 2) c += (double)x[i] * (double)x[i - lag];
             if (fabs(c) > best_corr) { best_corr = fabs(c); best_lag = (uint16_t)lag; }
