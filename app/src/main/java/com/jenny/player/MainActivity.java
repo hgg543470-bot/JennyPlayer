@@ -49,6 +49,7 @@ public class MainActivity extends AppCompatActivity {
     private static boolean waitingForPermScreenV148 = false;
     private static long permFlowLockUntilMsV152 = 0L;
     private static long overlayGrantProtectionUntilMsV153 = 0L;
+    private static boolean subSettingsLaunchedV154 = false;
     private static int permWatchTicksV147 = 0;
     private static final android.os.Handler permWatchHandlerV147 = new android.os.Handler(android.os.Looper.getMainLooper());
     private static Runnable permWatchRunnableV147 = null;
@@ -452,11 +453,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void bringMainActivityToFrontV149() {
+        if (subSettingsLaunchedV154 || !waitingForPermScreenV148) {
+            return;
+        }
         try {
-            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(android.content.Context.ACTIVITY_SERVICE);
-            if (am != null) {
-                am.moveTaskToFront(getTaskId(), 0);
-            }
+            Intent i = new Intent(getApplicationContext(), MainActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            getApplicationContext().startActivity(i);
         } catch (Exception ignored) {}
     }
 
@@ -566,9 +569,10 @@ public class MainActivity extends AppCompatActivity {
                 if (now < permFlowLockUntilMsV152) {
                     return;
                 }
-                permFlowLockUntilMsV152 = now + 4500L;
+                permFlowLockUntilMsV152 = now + 5000L;
                 isOpeningSettingsV146 = true;
                 pendingOverlayAfterGrantV147 = true;
+                subSettingsLaunchedV154 = false;
                 evalJs("if(window.saveLiveWorkspaceSnapshotV146) window.saveLiveWorkspaceSnapshotV146(true);");
 
                 try {
@@ -581,20 +585,26 @@ public class MainActivity extends AppCompatActivity {
 
                 android.widget.Toast.makeText(
                     getApplicationContext(),
-                    "🔓 Разреши: Всплывающие окна ➔ Всегда",
+                    "🔓 Включи тумблер «Поверх других приложений»",
                     android.widget.Toast.LENGTH_SHORT
                 ).show();
 
                 if (fromHomeButton) {
                     waitingForPermScreenV148 = true;
-                    // Ровно ОДИН вызов разворота задачи через 220 мс после нажатия Домой (без повторных импульсов!)
+                    // Авто-разворот через 240 мс после нажатия Домой (и контрольный на 550 мс ТОЛЬКО если окно тумблера ещё не открылось)
                     permWatchHandlerV147.postDelayed(() -> {
-                        if (waitingForPermScreenV148 && !Settings.canDrawOverlays(MainActivity.this)) {
+                        if (waitingForPermScreenV148 && !subSettingsLaunchedV154 && !Settings.canDrawOverlays(MainActivity.this)) {
                             bringMainActivityToFrontV149();
                         }
-                    }, 220);
+                    }, 240);
+                    permWatchHandlerV147.postDelayed(() -> {
+                        if (waitingForPermScreenV148 && !subSettingsLaunchedV154 && !Settings.canDrawOverlays(MainActivity.this)) {
+                            bringMainActivityToFrontV149();
+                        }
+                    }, 550);
                 } else {
                     waitingForPermScreenV148 = false;
+                    subSettingsLaunchedV154 = true;
                     startOverlayGrantRadarV149();
                     openMiuiOrSystemOverlayWindowV148();
                 }
@@ -602,6 +612,7 @@ public class MainActivity extends AppCompatActivity {
                 isOpeningSettingsV146 = false;
                 pendingOverlayAfterGrantV147 = false;
                 waitingForPermScreenV148 = false;
+                subSettingsLaunchedV154 = false;
                 permFlowLockUntilMsV152 = 0L;
                 e.printStackTrace();
             }
@@ -982,13 +993,22 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(this);
 
-        if (waitingForPermScreenV148 && !granted && isVideoActiveV132) {
+        if (waitingForPermScreenV148 && !subSettingsLaunchedV154 && !granted && isVideoActiveV132) {
             waitingForPermScreenV148 = false;
+            subSettingsLaunchedV154 = true;
             isOpeningSettingsV146 = true;
             pendingOverlayAfterGrantV147 = true;
             permFlowLockUntilMsV152 = android.os.SystemClock.uptimeMillis() + 6000L;
             startOverlayGrantRadarV149();
             openMiuiOrSystemOverlayWindowV148();
+            try {
+                overridePendingTransition(0, 0);
+            } catch (Exception ignored) {}
+            return;
+        }
+
+        if (isDesktopOverlayActiveV132 && android.os.SystemClock.uptimeMillis() < overlayGrantProtectionUntilMsV153) {
+            moveTaskToBack(true);
             return;
         }
 
@@ -998,9 +1018,11 @@ public class MainActivity extends AppCompatActivity {
         isOpeningSettingsV146 = false;
         pendingOverlayAfterGrantV147 = false;
         waitingForPermScreenV148 = false;
+        subSettingsLaunchedV154 = false;
         permFlowLockUntilMsV152 = 0L;
 
         if (wasPermSettings && wantAutoOverlay && granted && isVideoActiveV132 && !isDesktopOverlayActiveV132) {
+            overlayGrantProtectionUntilMsV153 = android.os.SystemClock.uptimeMillis() + 3000L;
             enterDesktopOverlayInternalV133();
             evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
             moveTaskToBack(true);
