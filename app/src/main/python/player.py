@@ -318,6 +318,46 @@ def _decode_xflac_bytes_to_wav_v85(xfc_bytes: bytes) -> bytes:
 
 _XFLAC_CACHE_LOCK_V87 = threading.Lock()
 
+
+# === V162: СКРЫТЫЙ КЭШ ПОСЛЕДНЕЙ 1 СКАЧАННОЙ ПЕСНИ С ТОРРЕНТА (ДЛЯ СРАВНЕНИЯ ОРИГ / WAV / XFLAC) ===
+def _get_p2p_last1_cache_dir_v162():
+    d = os.path.join(MUSIC_DIR, ".jenny_p2p_last1_cache")
+    os.makedirs(d, exist_ok=True)
+    nm = os.path.join(d, ".nomedia")
+    if not os.path.exists(nm):
+        try:
+            open(nm, "w").close()
+        except Exception:
+            pass
+    return d
+
+def _save_p2p_last1_cache_v162(orig_src_path: str, wav_src_path: str, display_orig_name: str, out_xflac_name: str = ""):
+    """Сохраняет только последнюю 1 скачанную с торрента песню (оригинал и WAV) с переименованными расширениями .jorig_bin и .jwav_bin."""
+    try:
+        cdir = _get_p2p_last1_cache_dir_v162()
+        for old_f in os.listdir(cdir):
+            if old_f.endswith((".jorig_bin", ".jwav_bin", ".jmeta.json")):
+                try:
+                    os.remove(os.path.join(cdir, old_f))
+                except Exception:
+                    pass
+        orig_ext = os.path.splitext(display_orig_name or orig_src_path)[1].lower() or ".flac"
+        if orig_src_path and os.path.isfile(orig_src_path):
+            shutil.copy2(orig_src_path, os.path.join(cdir, "last_track.jorig_bin"))
+        if wav_src_path and os.path.isfile(wav_src_path):
+            shutil.copy2(wav_src_path, os.path.join(cdir, "last_track.jwav_bin"))
+        meta = {
+            "orig_name": os.path.basename(display_orig_name or orig_src_path or "track.flac"),
+            "orig_ext": orig_ext,
+            "xflac_name": os.path.basename(out_xflac_name or ""),
+            "orig_src_path": orig_src_path or "",
+            "ts": int(time.time())
+        }
+        with open(os.path.join(cdir, "last_track.jmeta.json"), "w", encoding="utf-8") as mf:
+            json.dump(meta, mf, ensure_ascii=False)
+    except Exception as e:
+        print("V162 cache save error:", e)
+
 def _sanitize_canonical_wav_file_v159(wav_path: str):
     """Приводит любой WAV (включая WAVE_FORMAT_EXTENSIBLE 0xFFFE от FFmpeg) к строгому 44-байтному каноническому заголовку RIFF WAVE,
     чтобы исключить заикания и ошибки чтения частоты/битности/длительности при ручной смене параметров."""
