@@ -48,6 +48,12 @@ jobs:
       with:
         gradle-version: '7.6'
 
+    - name: Штамп номера сборки и версии в APK
+      run: |
+        SHORT_MSG=$(git log -1 --pretty=%s | tr -d '"\\' | cut -c1-48)
+        sed -i "s/versionCode .*/versionCode ${GITHUB_RUN_NUMBER}/" app/build.gradle
+        sed -i "s/versionName \".*\"/versionName \"#${GITHUB_RUN_NUMBER} (${SHORT_MSG})\"/" app/build.gradle
+
     - name: Сборка APK
       run: gradle assembleDebug
 
@@ -56,3 +62,4 @@ jobs:
       with:
         name: JennyPlayer-APK
         path: app/build/outputs/apk/debug/app-debug.apk
+
