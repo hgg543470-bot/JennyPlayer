@@ -14883,7 +14883,7 @@ let vsyncTicks = 0;
         const effFps = (targetFps > 0) ? targetFps : screenHz;
 
         // Точное число тактов VSync на один исходный кадр (4 для 30->120 FPS, 5 для 24->120 FPS)
-        const totalSteps = Math.max(2, Math.min(12, Math.round((expectedSpanMs / 1000.0) * effFps)));
+        const totalSteps = Math.max(2, Math.min(60, Math.round((expectedSpanMs / 1000.0) * effFps)));
         window._jv166Metrics.actualPlusN = Math.max(0, totalSteps - 1);
 
         // Каждый тик экрана гарантированно сдвигает шаг на +1 (никаких повторов 0.250 -> 0.250!)
@@ -15821,7 +15821,14 @@ let vsyncTicks = 0;
 
         var origChanged = false;
         if (dec >= 0 && prevTrackDec >= 0) {
-            if (dec > prevTrackDec) origChanged = true;
+            if (dec < prevTrackDec || (dec - prevTrackDec) > 300) {
+                prevTrackDec = dec;
+                prevTrackVTime = vTime;
+                lastOrigChangeTs = now;
+                origHoldTicks = 1;
+            } else if (dec > prevTrackDec) {
+                origChanged = true;
+            }
         } else if (Math.abs(vTime - prevTrackVTime) > 0.002) {
             origChanged = true;
         }
@@ -16331,6 +16338,9 @@ let vsyncTicks = 0;
             var tg = touchedElement;
             if (lBtn && (tg === lBtn || lBtn.contains(tg))) {
                 logEntries = [];
+                prevTrackDec = -1;
+                lastOrigChangeTs = performance.now();
+                origHoldTicks = 0;
                 isLogging = true;
                 lBtn.textContent = '⏳ 1/3...';
             } else if (tBtn && (tg === tBtn || tBtn.contains(tg))) {
