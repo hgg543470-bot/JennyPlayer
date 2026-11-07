@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import traceback
 import bottle
-from bottle import hook, route, run, post, response, static_file, request
+from bottle import hook, route, run, get, post, response, static_file, request
 
 bottle.BaseRequest.MEMFILE_MAX = 150 * 1024 * 1024
 
@@ -5017,10 +5017,14 @@ def api_p2p_add_compare_file_v163():
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-# === 🧠🎬 JENNY V166_VCORE_ENGINE: МОДУЛЬНЫЕ .SO ЯДРА И ГЕНЕРАТОР 120Hz MV-FLOW ===
+# === 🧠🎬 JENNY V200_VCORE_ENGINE: МОДУЛЬНЫЕ .SO ЯДРА И ГЕНЕРАТОР ПРОМЕЖУТОЧНЫХ КАДРОВ 120Hz MV-FLOW ===
 _VCORE_LIB_V166 = None
 _VCORE_CONFIG_V166 = {
     "fps_mode": "120_MV_PASSTHROUGH",
+    "interp_frames": 3,      # Сколько промежуточных кадров дорисовывать между опорными (0=Авто, 3 для 30->120 FPS, 4 для 24->120 FPS)
+    "mv_scale": 1.0,         # Масштаб векторов движения (1.0 = точная 100% траектория без рывка)
+    "ghost_gate": 0.22,      # Порог подавления окклюзий без сброса фона в 30 FPS
+    "bridge_spread": 0.45,   # Сшивка поля векторов сцены (чтобы фон и стены ехали плавно вместе с камерой)
     "obmc_smooth": True,
     "scene_cut_guard": True,
     "bindings": {
@@ -5040,6 +5044,7 @@ def _get_vcore_lib_v166():
     for d in (_get_native_lib_dirs_v140() if "_get_native_lib_dirs_v140" in globals() else []):
         cands.append(os.path.join(d, "libjenny_vcore.so"))
     cands.extend([
+        os.path.join(BASE_DIR, "libjenny_vcore.so"),
         os.path.join(BASE_DIR, "..", "jniLibs", "arm64-v8a", "libjenny_vcore.so"),
         "/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/arm64-v8a/libjenny_vcore.so",
     ])
@@ -5054,6 +5059,35 @@ def _get_vcore_lib_v166():
                 lib.jv_bind_core.restype = ctypes.c_int
                 lib.jv_neon_mv_pass.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
                 lib.jv_neon_mv_pass.restype = ctypes.c_double
+
+                # Привязываем новые функции генерации промежуточных кадров V200 (если библиотеку пересобрали)
+                if hasattr(lib, "jv_set_interp_config"):
+                    lib.jv_set_interp_config.argtypes = [ctypes.c_int, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+                    lib.jv_set_interp_config.restype = None
+                    lib.jv_set_interp_config(
+                        int(_VCORE_CONFIG_V166.get("interp_frames", 3)),
+                        float(_VCORE_CONFIG_V166.get("mv_scale", 1.0)),
+                        float(_VCORE_CONFIG_V166.get("ghost_gate", 0.22)),
+                        float(_VCORE_CONFIG_V166.get("bridge_spread", 0.45)),
+                    )
+                if hasattr(lib, "jv_get_interp_frames"):
+                    lib.jv_get_interp_frames.argtypes = []
+                    lib.jv_get_interp_frames.restype = ctypes.c_int
+                if hasattr(lib, "mv_estimate_block_flow"):
+                    u8_p = ctypes.POINTER(ctypes.c_uint8)
+                    f32_p = ctypes.POINTER(ctypes.c_float)
+                    lib.mv_estimate_block_flow.argtypes = [u8_p, u8_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, f32_p]
+                    lib.mv_estimate_block_flow.restype = None
+                if hasattr(lib, "mv_generate_batch"):
+                    u8_p = ctypes.POINTER(ctypes.c_uint8)
+                    f32_p = ctypes.POINTER(ctypes.c_float)
+                    lib.mv_generate_batch.argtypes = [
+                        u8_p, u8_p, ctypes.c_int, ctypes.c_int,
+                        f32_p, ctypes.c_int, ctypes.c_int,
+                        ctypes.c_int, ctypes.c_float, ctypes.c_int, u8_p
+                    ]
+                    lib.mv_generate_batch.restype = None
+
                 _VCORE_LIB_V166 = lib
                 return _VCORE_LIB_V166
             except Exception:
@@ -5062,7 +5096,7 @@ def _get_vcore_lib_v166():
 
 def _scan_available_video_so_v166():
     found = [
-        "libjenny_vcore.so (NEON-MV-Passthrough)",
+        "libjenny_vcore.so (NEON-5Step-FrameGen-V206)",
         "AMediaCodec_HW (Snapdragon ASIC + MiniFlow)",
         "libdav1d_neon.so (AV1 Tile-ASM)",
         "libff_hevc_neon.so (HEVC CTU-MV)",
@@ -5087,19 +5121,23 @@ def api_vcore_status_v166():
     lib = _get_vcore_lib_v166()
     mv_cnt = ctypes.c_int(32400)
     neon_ms = 0.38
+    has_v200_batch = False
     if lib:
         try:
             neon_ms = round(float(lib.jv_neon_mv_pass(1920, 1080, ctypes.byref(mv_cnt))), 3)
+            has_v200_batch = hasattr(lib, "mv_generate_batch")
         except Exception:
             pass
     return json.dumps({
         "ok": True,
         "native_loaded": lib is not None,
+        "v200_batch_kernel": has_v200_batch,
         "config": _VCORE_CONFIG_V166,
         "available_so": _scan_available_video_so_v166(),
         "telemetry": {
             "mv_blocks_1080p": mv_cnt.value,
             "frame_gen_ms": neon_ms,
+            "interp_frames": _VCORE_CONFIG_V166.get("interp_frames", 3),
             "budget_120hz_ms": 8.33,
             "headroom_pct": round(max(0.0, (8.33 - neon_ms) / 8.33 * 100.0), 1)
         }
@@ -5114,10 +5152,10 @@ def api_vcore_bind_v166():
         data = {}
     fmt = str(data.get("format") or "").upper()
     so_name = str(data.get("so_name") or "").strip()
+    lib = _get_vcore_lib_v166()
     if fmt in _VCORE_CONFIG_V166["bindings"] and so_name:
         _VCORE_CONFIG_V166["bindings"][fmt] = so_name
         slot_map = {"H264": 0, "HEVC": 1, "VP9": 2, "AV1": 3}
-        lib = _get_vcore_lib_v166()
         if lib:
             try:
                 lib.jv_bind_core(slot_map[fmt], so_name.encode('utf-8'))
@@ -5125,10 +5163,29 @@ def api_vcore_bind_v166():
                 pass
     if "fps_mode" in data:
         _VCORE_CONFIG_V166["fps_mode"] = str(data["fps_mode"])
+    if "interp_frames" in data:
+        _VCORE_CONFIG_V166["interp_frames"] = max(0, min(8, int(data["interp_frames"])))
+    if "mv_scale" in data:
+        _VCORE_CONFIG_V166["mv_scale"] = float(data["mv_scale"])
+    if "ghost_gate" in data:
+        _VCORE_CONFIG_V166["ghost_gate"] = float(data["ghost_gate"])
+    if "bridge_spread" in data:
+        _VCORE_CONFIG_V166["bridge_spread"] = float(data["bridge_spread"])
     if "obmc_smooth" in data:
         _VCORE_CONFIG_V166["obmc_smooth"] = bool(data["obmc_smooth"])
     if "scene_cut_guard" in data:
         _VCORE_CONFIG_V166["scene_cut_guard"] = bool(data["scene_cut_guard"])
+
+    if lib and hasattr(lib, "jv_set_interp_config"):
+        try:
+            lib.jv_set_interp_config(
+                int(_VCORE_CONFIG_V166["interp_frames"]),
+                float(_VCORE_CONFIG_V166["mv_scale"]),
+                float(_VCORE_CONFIG_V166["ghost_gate"]),
+                float(_VCORE_CONFIG_V166["bridge_spread"]),
+            )
+        except Exception:
+            pass
     return api_vcore_status_v166()
 
 @post('/api/video/vcore_probe')
@@ -5143,11 +5200,17 @@ def api_vcore_probe_v166():
     lib = _get_vcore_lib_v166()
     cipher = "H264"
     native_fps = 0.0
+    duration_sec = 0.0
+    is_complete_local = False
     if real_path:
         try:
             ff_bin = find_ffmpeg_binary()
             pr = subprocess.run([ff_bin, '-hide_banner', '-i', real_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
             info_txt = (pr.stderr or "") + (pr.stdout or "")
+            is_complete_local = os.path.isfile(real_path) and not real_path.endswith('.part')
+            m_dur = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", info_txt)
+            if m_dur:
+                duration_sec = round(int(m_dur.group(1)) * 3600 + int(m_dur.group(2)) * 60 + float(m_dur.group(3)), 2)
             m_fps = re.search(r'(\d+(?:\.\d+)?)\s*fps', info_txt) or re.search(r'(\d+(?:\.\d+)?)\s*tbr', info_txt)
             if m_fps:
                 val_fps = float(m_fps.group(1))
@@ -5180,12 +5243,67 @@ def api_vcore_probe_v166():
         "ok": True,
         "cipher": cipher,
         "native_fps": native_fps,
+        "duration_sec": duration_sec,
+        "is_complete_local": is_complete_local,
         "bound_so": bound_so,
         "mv_vectors": mv_cnt.value,
         "synth_4frames_ms": neon_ms,
         "interp_frames": _VCORE_CONFIG_V166.get("interp_frames", 3),
         "fps_target": 120 if _VCORE_CONFIG_V166["fps_mode"] != "OFF" else 60
     }, ensure_ascii=False)
+
+# === JENNY V210 STAGE 1: ПОЛНЫЙ ПОТОК ДЛЯ СКАЧАННЫХ ФИЛЬМОВ БЕЗ ОБРЕЗКИ 0:10 ===
+@route('/api/video/full_stream_v210', method='GET')
+def api_video_full_stream_v210():
+    raw_src = (request.query.get('src') or request.query.get('path') or '').strip()
+    start_sec = 0.0
+    try:
+        start_sec = max(0.0, float(request.query.get('start') or 0.0))
+    except Exception:
+        start_sec = 0.0
+
+    real_path = _resolve_video_src_input_v131(raw_src) if ("_resolve_video_src_input_v131" in globals() and raw_src) else raw_src
+    if not real_path or not os.path.isfile(real_path):
+        response.status = 404
+        return "File not found"
+
+    ext = os.path.splitext(real_path)[1].lower()
+    if ext in ('.mp4', '.webm', '.m4v', '.mov') and start_sec <= 0.1:
+        folder, fname = os.path.split(real_path)
+        return static_file(fname, root=folder)
+
+    ff_bin = find_ffmpeg_binary()
+    response.content_type = 'video/mp4'
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Accept-Ranges'] = 'none'
+
+    vcodec_arg = ['-c:v', 'copy']
+    if ext == '.avi':
+        vcodec_arg = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p']
+
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if start_sec > 0.1:
+        cmd += ['-ss', f"{start_sec:.2f}"]
+    cmd += [
+        '-i', real_path,
+        *vcodec_arg,
+        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart',
+        '-f', 'mp4', 'pipe:1'
+    ]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
+    try:
+        while True:
+            chunk = proc.stdout.read(131072)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def start_server():

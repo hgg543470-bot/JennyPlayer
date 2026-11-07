@@ -1336,7 +1336,11 @@ public class MainActivity extends AppCompatActivity {
         if (!Python.isStarted()) {
             Python.start(new AndroidPlatform(this));
             new Thread(() -> {
-                Python.getInstance().getModule("player").callAttr("start_server");
+                try {
+                    Python.getInstance().getModule("player").callAttr("start_server");
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                }
             }).start();
             isPageLoaded = true;
             webView.postDelayed(() -> webView.loadUrl("http://127.0.0.1:8080"), 1500);

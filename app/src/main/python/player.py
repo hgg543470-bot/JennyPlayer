@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import traceback
 import bottle
-from bottle import hook, route, run, post, response, static_file, request
+from bottle import hook, route, run, get, post, response, static_file, request
 
 bottle.BaseRequest.MEMFILE_MAX = 150 * 1024 * 1024
 
@@ -5200,11 +5200,17 @@ def api_vcore_probe_v166():
     lib = _get_vcore_lib_v166()
     cipher = "H264"
     native_fps = 0.0
+    duration_sec = 0.0
+    is_complete_local = False
     if real_path:
         try:
             ff_bin = find_ffmpeg_binary()
             pr = subprocess.run([ff_bin, '-hide_banner', '-i', real_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
             info_txt = (pr.stderr or "") + (pr.stdout or "")
+            is_complete_local = os.path.isfile(real_path) and not real_path.endswith('.part')
+            m_dur = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", info_txt)
+            if m_dur:
+                duration_sec = round(int(m_dur.group(1)) * 3600 + int(m_dur.group(2)) * 60 + float(m_dur.group(3)), 2)
             m_fps = re.search(r'(\d+(?:\.\d+)?)\s*fps', info_txt) or re.search(r'(\d+(?:\.\d+)?)\s*tbr', info_txt)
             if m_fps:
                 val_fps = float(m_fps.group(1))
@@ -5237,12 +5243,67 @@ def api_vcore_probe_v166():
         "ok": True,
         "cipher": cipher,
         "native_fps": native_fps,
+        "duration_sec": duration_sec,
+        "is_complete_local": is_complete_local,
         "bound_so": bound_so,
         "mv_vectors": mv_cnt.value,
         "synth_4frames_ms": neon_ms,
         "interp_frames": _VCORE_CONFIG_V166.get("interp_frames", 3),
         "fps_target": 120 if _VCORE_CONFIG_V166["fps_mode"] != "OFF" else 60
     }, ensure_ascii=False)
+
+# === JENNY V210 STAGE 1: ПОЛНЫЙ ПОТОК ДЛЯ СКАЧАННЫХ ФИЛЬМОВ БЕЗ ОБРЕЗКИ 0:10 ===
+@route('/api/video/full_stream_v210', method='GET')
+def api_video_full_stream_v210():
+    raw_src = (request.query.get('src') or request.query.get('path') or '').strip()
+    start_sec = 0.0
+    try:
+        start_sec = max(0.0, float(request.query.get('start') or 0.0))
+    except Exception:
+        start_sec = 0.0
+
+    real_path = _resolve_video_src_input_v131(raw_src) if ("_resolve_video_src_input_v131" in globals() and raw_src) else raw_src
+    if not real_path or not os.path.isfile(real_path):
+        response.status = 404
+        return "File not found"
+
+    ext = os.path.splitext(real_path)[1].lower()
+    if ext in ('.mp4', '.webm', '.m4v', '.mov') and start_sec <= 0.1:
+        folder, fname = os.path.split(real_path)
+        return static_file(fname, root=folder)
+
+    ff_bin = find_ffmpeg_binary()
+    response.content_type = 'video/mp4'
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Accept-Ranges'] = 'none'
+
+    vcodec_arg = ['-c:v', 'copy']
+    if ext == '.avi':
+        vcodec_arg = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p']
+
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if start_sec > 0.1:
+        cmd += ['-ss', f"{start_sec:.2f}"]
+    cmd += [
+        '-i', real_path,
+        *vcodec_arg,
+        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart',
+        '-f', 'mp4', 'pipe:1'
+    ]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
+    try:
+        while True:
+            chunk = proc.stdout.read(131072)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def start_server():

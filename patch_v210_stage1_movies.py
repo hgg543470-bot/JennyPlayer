@@ -11,7 +11,7 @@ if not os.path.exists(BASE_DIR):
 
 PLAYER_FULL_VIDEO_ROUTES = r"""
 # === JENNY V210 STAGE 1: ПОЛНЫЙ ПОТОК ДЛЯ СКАЧАННЫХ ФИЛЬМОВ БЕЗ ОБРЕЗКИ 0:10 ===
-@get('/api/video/full_stream_v210')
+@route('/api/video/full_stream_v210', method='GET')
 def api_video_full_stream_v210():
     raw_src = (request.query.get('src') or request.query.get('path') or '').strip()
     start_sec = 0.0

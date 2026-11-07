@@ -14232,22 +14232,34 @@ let vsyncTicks = 0;
         let glCanvas = null;
     let splitLineEl = null;
     let gl = null;
-    let progMV = null;
-    let progWarp = null;
+    let progMVCoarse = null;
+    let progMVFine   = null;
+    let progMVSmooth = null;
+    let progWarp     = null;
     // Кольцевой буфер на 4 текстуры (T0..T3) для предчтения и перелета через дубли A -> [B] -> C
     let ringTex = [null, null, null, null];
     let slotPrev = 0;
     let slotCurr = 1;
     let slotWrite = 2;
-    let fboMV = null;
-    let texMV = null;
+    let texPrev = null;
+    let texCurr = null;
+    let texMVCoarse = null;
+    let texMVFine   = null;
+    let texMV       = null;
+    let fboMVCoarse = null;
+    let fboMVFine   = null;
+    let fboMV       = null;
     let iboMV = null;
+    const MV_COARSE_W = 120;
+    const MV_COARSE_H = 68;
     const MV_GRID_W = 240;
     const MV_GRID_H = 135;
     let frameSlot = 0;
 
-    let uMV_TexelLoc = null;
-    let uMV_RadiusLoc = null;
+    let uMVC_TexelLoc  = null;
+    let uMVC_RadiusLoc = null;
+    let uMVF_TexelLoc  = null;
+    let uMVF_RadiusLoc = null;
 
     let uAlphaLoc = null;
     let uTexelLoc = null;
@@ -14274,9 +14286,8 @@ let vsyncTicks = 0;
         gl_Position = vec4(a_pos, 0.0, 1.0);
     }`;
 
-    // ПРОХОД 1 (240x135, только на УНИКАЛЬНЫХ кадрах A -> C): ИЕРАРХИЧЕСКИЙ ПОИСК ВЕКТОРОВ ДВИЖЕНИЯ
-        // ШАГИ 1-3 (240x135): ПИРАМИДА ЯРКОСТИ (120x68 -> 240x135 -> 480x270) + ПОИСК ВЕКТОРОВ + ДЕТЕКТОР ЗАСЛОНОВ (OCCLUSION)
-    const FS_MV_PASS = `#version 300 es
+    // ПРОХОД 1 (120x68, LOD=3.0): ГРУБЫЙ ПОИСК ПО ЦВЕТУ + ЗНАКУ ПРОСТРАНСТВЕННОГО ГРАДИЕНТА (БЕЗ ИНВЕРСИИ ВЕКТОРОВ)
+    const FS_MV_COARSE = `#version 300 es
     precision highp float;
     in vec2 v_uv;
     uniform sampler2D u_prevTex;
@@ -14285,112 +14296,198 @@ let vsyncTicks = 0;
     uniform float u_searchRadius;
     out vec4 outMV;
 
-    float lumaLod(sampler2D t, vec2 uv, float lod) {
-        return dot(textureLod(t, clamp(uv, 0.001, 0.999), lod).rgb, vec3(0.299, 0.587, 0.114));
-    }
+    float patchError(vec2 uv, vec2 flow, float lod, vec2 patchStep) {
+        vec2 p0 = clamp(uv - flow * 0.5, 0.002, 0.998);
+        vec2 p1 = clamp(uv + flow * 0.5, 0.002, 0.998);
 
-    vec2 estimateLayerFlow(vec2 uv, float lod, float stepScale, vec2 priorFlow) {
-        vec2 st = u_texel * stepScale;
-        vec2 uvPrev = clamp(uv - priorFlow * 0.5, 0.001, 0.999);
-        vec2 uvCurr = clamp(uv + priorFlow * 0.5, 0.001, 0.999);
+        vec3 a0 = textureLod(u_prevTex, p0, lod).rgb;
+        vec3 b0 = textureLod(u_currTex, p1, lod).rgb;
+        vec3 d0 = abs(b0 - a0);
+        float err = (d0.r + d0.g + d0.b) * 0.5;
 
-        float pC = lumaLod(u_prevTex, uvPrev, lod);
-        float cC = lumaLod(u_currTex, uvCurr, lod);
+        const vec2 offs[4] = vec2[4](
+            vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, -1.0)
+        );
+        for (int i = 0; i < 4; i++) {
+            vec2 d = offs[i] * patchStep;
+            vec3 ap = textureLod(u_prevTex, clamp(p0 + d, 0.002, 0.998), lod).rgb;
+            vec3 am = textureLod(u_prevTex, clamp(p0 - d, 0.002, 0.998), lod).rgb;
+            vec3 bp = textureLod(u_currTex, clamp(p1 + d, 0.002, 0.998), lod).rgb;
+            vec3 bm = textureLod(u_currTex, clamp(p1 - d, 0.002, 0.998), lod).rgb;
 
-        float pR = lumaLod(u_prevTex, uvPrev + vec2(st.x, 0.0), lod);
-        float pL = lumaLod(u_prevTex, uvPrev - vec2(st.x, 0.0), lod);
-        float pD = lumaLod(u_prevTex, uvPrev + vec2(0.0, st.y), lod);
-        float pU = lumaLod(u_prevTex, uvPrev - vec2(0.0, st.y), lod);
-
-        float cR = lumaLod(u_currTex, uvCurr + vec2(st.x, 0.0), lod);
-        float cL = lumaLod(u_currTex, uvCurr - vec2(st.x, 0.0), lod);
-        float cD = lumaLod(u_currTex, uvCurr + vec2(0.0, st.y), lod);
-        float cU = lumaLod(u_currTex, uvCurr - vec2(0.0, st.y), lod);
-
-        float Ix = 0.25 * ((pR - pL) + (cR - cL));
-        float Iy = 0.25 * ((pD - pU) + (cD - cU));
-        float It = cC - pC;
-
-        float mag2 = Ix * Ix + Iy * Iy + 0.0012;
-        vec2 dFlow = clamp((-It / mag2) * vec2(Ix, Iy), -3.5, 3.5) * st;
-        return priorFlow + dFlow;
-    }
-
-    float blockResidual(vec2 uv, vec2 flow, float lod) {
-        vec2 p0 = clamp(uv - flow * 0.5, 0.001, 0.999);
-        vec2 p1 = clamp(uv + flow * 0.5, 0.001, 0.999);
-        vec3 d0 = abs(textureLod(u_currTex, p1, lod).rgb - textureLod(u_prevTex, p0, lod).rgb);
-        float eC = max(d0.r, max(d0.g, d0.b));
-        vec2 ox = vec2(u_texel.x * 2.5, 0.0);
-        vec2 oy = vec2(0.0, u_texel.y * 2.5);
-        float eX = abs(lumaLod(u_currTex, p1 + ox, lod) - lumaLod(u_prevTex, p0 + ox, lod)) +
-                   abs(lumaLod(u_currTex, p1 - ox, lod) - lumaLod(u_prevTex, p0 - ox, lod));
-        float eY = abs(lumaLod(u_currTex, p1 + oy, lod) - lumaLod(u_prevTex, p0 + oy, lod)) +
-                   abs(lumaLod(u_currTex, p1 - oy, lod) - lumaLod(u_prevTex, p0 - oy, lod));
-        return eC * 0.55 + (eX + eY) * 0.1125;
+            vec3 eCol = abs(bp - ap) + abs(bm - am);
+            vec3 eGrd = abs((bp - bm) - (ap - am)) * 1.6;
+            vec3 tot = eCol + eGrd;
+            err += (tot.r + tot.g + tot.b) * 0.3333;
+        }
+        return err;
     }
 
     void main() {
-        vec2 uv = clamp(v_uv, 0.002, 0.998);
-        float maxRad = clamp(u_searchRadius, 4.0, 48.0);
+        vec2 uv = clamp(v_uv, 0.003, 0.997);
+        float maxRad = clamp(u_searchRadius, 8.0, 48.0);
+        vec2 maxUv = u_texel * maxRad;
+        vec2 pStep = u_texel * 16.0;
 
-        float zeroErr = blockResidual(uv, vec2(0.0), 1.0);
-        float coarseWake = abs(lumaLod(u_currTex, uv, 2.5) - lumaLod(u_prevTex, uv, 2.5));
-        if (max(zeroErr, coarseWake * 1.8) < 0.0045) {
+        vec2 bestFlow = vec2(0.0);
+        float bestErr = patchError(uv, vec2(0.0), 3.0, pStep);
+        if (bestErr < 0.025) {
             outMV = vec4(0.5, 0.5, 0.0, 0.0);
             return;
         }
-
-        // ШАГ 1-2: Coarse-to-Fine по 3 уровням пирамиды яркости (120x68 -> 240x135 -> 480x270)
-        vec2 flowCoarse = estimateLayerFlow(uv, 3.0, 6.0, vec2(0.0));
-        vec2 flowMid    = estimateLayerFlow(uv, 2.0, 3.0, flowCoarse);
-        vec2 flowFine   = estimateLayerFlow(uv, 1.0, 1.5, flowMid);
-
-        vec2 bestFlow = vec2(0.0);
-        float bestErr = zeroErr * 0.96;
-
-        float errFine = blockResidual(uv, flowFine, 1.0);
-        if (errFine < bestErr) { bestErr = errFine; bestFlow = flowFine; }
-
-        float errMid = blockResidual(uv, flowMid, 1.5);
-        if (errMid < bestErr) { bestErr = errMid; bestFlow = flowMid; }
-
-        // Радиальный вектор от центра экрана (для сцен разлета звезд / зума камеры)
-        vec2 radialDir = (uv - vec2(0.5)) * u_texel * (maxRad * 0.85);
-        float errRad = blockResidual(uv, radialDir, 1.5);
-        if (errRad < bestErr) { bestErr = errRad; bestFlow = radialDir; }
 
         const vec2 dirs[8] = vec2[8](
             vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
             vec2(0.707, 0.707), vec2(-0.707, 0.707), vec2(0.707, -0.707), vec2(-0.707, -0.707)
         );
-        for (int i = 0; i < 8; i++) {
-            vec2 candWide = dirs[i] * u_texel * (maxRad * 0.65);
-            float eW = blockResidual(uv, candWide, 2.2);
-            if (eW < bestErr) { bestErr = eW; bestFlow = candWide; }
+        const float scales[3] = float[3](0.55, 0.28, 0.14);
+
+        for (int s = 0; s < 3; s++) {
+            vec2 baseFlow = bestFlow;
+            vec2 stepUv = maxUv * scales[s];
+            for (int i = 0; i < 8; i++) {
+                vec2 cand = clamp(baseFlow + dirs[i] * stepUv, -maxUv, maxUv);
+                float e = patchError(uv, cand, 3.0, pStep);
+                if (e < bestErr * 0.98) {
+                    bestErr = e;
+                    bestFlow = cand;
+                }
+            }
         }
-        vec2 baseWide = bestFlow;
-        for (int i = 0; i < 8; i++) {
-            vec2 candMid = baseWide + dirs[i] * u_texel * (maxRad * 0.25);
-            float eM = blockResidual(uv, candMid, 1.2);
-            if (eM < bestErr) { bestErr = eM; bestFlow = candMid; }
-        }
 
-        bestFlow = estimateLayerFlow(uv, 0.8, 1.2, bestFlow);
-
-        // ШАГ 3: Forward-Backward проверка заслонов (Occlusion)
-        float fwdErr = abs(lumaLod(u_currTex, uv + bestFlow, 1.0) - lumaLod(u_prevTex, uv, 1.0));
-        float bwdErr = abs(lumaLod(u_prevTex, uv - bestFlow, 1.0) - lumaLod(u_currTex, uv, 1.0));
-        float occAsym = clamp(abs(fwdErr - bwdErr) * 3.5, 0.0, 1.0);
-
-        vec2 maxUv = u_texel * maxRad;
         vec2 normFlow = clamp(bestFlow / max(maxUv, vec2(1e-5)), -1.0, 1.0);
-        float conf = clamp((zeroErr - bestErr) * 6.5 + coarseWake * 2.5, 0.0, 1.0);
-
-        outMV = vec4(normFlow * 0.5 + 0.5, conf, occAsym);
+        outMV = vec4(normFlow * 0.5 + 0.5, 1.0, 1.0);
     }`;
 
-    // ШАГ 4 (1080p, 120 Гц): ДВИЖЕНИЕ ПОЛНЫХ ОРИГИНАЛЬНЫХ КАДРОВ + ЗАСЛОНЫ + РЕЗКОСТЬ ГРАНИЦ (CAS)
+    // ПРОХОД 2 (240x135, LOD=2.0): УТОЧНЕНИЕ ВЕКТОРА С РЕГУЛЯРИЗАЦИЕЙ К ГРУБОМУ УРОВНЮ И ОЦЕНКОЙ ДОВЕРИЯ
+    const FS_MV_FINE = `#version 300 es
+    precision highp float;
+    in vec2 v_uv;
+    uniform sampler2D u_prevTex;
+    uniform sampler2D u_currTex;
+    uniform sampler2D u_coarseMV;
+    uniform vec2 u_texel;
+    uniform float u_searchRadius;
+    out vec4 outMV;
+
+    vec2 readCoarse(vec2 uv, vec2 maxUv) {
+        vec2 cStep = vec2(1.0 / 120.0, 1.0 / 68.0);
+        vec2 c0 = texture(u_coarseMV, clamp(uv, 0.003, 0.997)).rg;
+        vec2 cL = texture(u_coarseMV, clamp(uv - vec2(cStep.x, 0.0), 0.003, 0.997)).rg;
+        vec2 cR = texture(u_coarseMV, clamp(uv + vec2(cStep.x, 0.0), 0.003, 0.997)).rg;
+        vec2 cU = texture(u_coarseMV, clamp(uv - vec2(0.0, cStep.y), 0.003, 0.997)).rg;
+        vec2 cD = texture(u_coarseMV, clamp(uv + vec2(0.0, cStep.y), 0.003, 0.997)).rg;
+        vec2 avg = c0 * 0.40 + (cL + cR + cU + cD) * 0.15;
+        return (avg - 0.5) * 2.0 * maxUv;
+    }
+
+    float patchErrorFine(vec2 uv, vec2 flow, vec2 priorFlow, vec2 maxUv, vec2 patchStep) {
+        vec2 p0 = clamp(uv - flow * 0.5, 0.002, 0.998);
+        vec2 p1 = clamp(uv + flow * 0.5, 0.002, 0.998);
+
+        vec3 a0 = textureLod(u_prevTex, p0, 2.0).rgb;
+        vec3 b0 = textureLod(u_currTex, p1, 2.0).rgb;
+        vec3 d0 = abs(b0 - a0);
+        float err = (d0.r + d0.g + d0.b) * 0.5;
+
+        const vec2 offs[4] = vec2[4](
+            vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, -1.0)
+        );
+        for (int i = 0; i < 4; i++) {
+            vec2 d = offs[i] * patchStep;
+            vec3 ap = textureLod(u_prevTex, clamp(p0 + d, 0.002, 0.998), 2.0).rgb;
+            vec3 am = textureLod(u_prevTex, clamp(p0 - d, 0.002, 0.998), 2.0).rgb;
+            vec3 bp = textureLod(u_currTex, clamp(p1 + d, 0.002, 0.998), 2.0).rgb;
+            vec3 bm = textureLod(u_currTex, clamp(p1 - d, 0.002, 0.998), 2.0).rgb;
+
+            vec3 eCol = abs(bp - ap) + abs(bm - am);
+            vec3 eGrd = abs((bp - bm) - (ap - am)) * 1.6;
+            vec3 tot = eCol + eGrd;
+            err += (tot.r + tot.g + tot.b) * 0.3333;
+        }
+        vec2 dNorm = (flow - priorFlow) / max(maxUv, vec2(1e-5));
+        err += length(dNorm) * 0.08;
+        return err;
+    }
+
+    void main() {
+        vec2 uv = clamp(v_uv, 0.003, 0.997);
+        float maxRad = clamp(u_searchRadius, 8.0, 48.0);
+        vec2 maxUv = u_texel * maxRad;
+        vec2 pStep = u_texel * 7.5;
+
+        vec2 priorFlow = readCoarse(uv, maxUv);
+        float zeroErr  = patchErrorFine(uv, vec2(0.0), vec2(0.0), maxUv, pStep);
+        if (zeroErr < 0.020) {
+            outMV = vec4(0.5, 0.5, 0.0, 0.0);
+            return;
+        }
+
+        vec2 bestFlow = priorFlow;
+        float bestErr = patchErrorFine(uv, priorFlow, priorFlow, maxUv, pStep);
+        if (zeroErr < bestErr) {
+            bestErr = zeroErr;
+            bestFlow = vec2(0.0);
+        }
+
+        const vec2 dirs[8] = vec2[8](
+            vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
+            vec2(0.707, 0.707), vec2(-0.707, 0.707), vec2(0.707, -0.707), vec2(-0.707, -0.707)
+        );
+        const float scales[2] = float[2](0.18, 0.08);
+
+        for (int s = 0; s < 2; s++) {
+            vec2 baseFlow = bestFlow;
+            vec2 stepUv = maxUv * scales[s];
+            for (int i = 0; i < 8; i++) {
+                vec2 cand = clamp(baseFlow + dirs[i] * stepUv, -maxUv, maxUv);
+                float e = patchErrorFine(uv, cand, priorFlow, maxUv, pStep);
+                if (e < bestErr * 0.985) {
+                    bestErr = e;
+                    bestFlow = cand;
+                }
+            }
+        }
+
+        float relGain = clamp((zeroErr - bestErr * 0.75) / (zeroErr + 0.12), 0.0, 1.0);
+        vec2 normFlow = clamp(bestFlow / max(maxUv, vec2(1e-5)), -1.0, 1.0);
+        outMV = vec4(normFlow * 0.5 + 0.5, relGain, clamp(bestErr * 0.15, 0.0, 1.0));
+    }`;
+
+    // ПРОХОД 3 (240x135): 5x5 ПРОСТРАНСТВЕННАЯ ФИЛЬТРАЦИЯ ВЕКТОРОВ И МАСКИ ДОВЕРИЯ
+    const FS_MV_SMOOTH = `#version 300 es
+    precision highp float;
+    in vec2 v_uv;
+    uniform sampler2D u_fineMV;
+    out vec4 outMV;
+
+    void main() {
+        vec2 stepMV = vec2(1.0 / 240.0, 1.0 / 135.0);
+
+        vec2 sumFlow = vec2(0.0);
+        float sumConf = 0.0;
+        float sumErr  = 0.0;
+        float wTotal  = 0.0;
+
+        for (int dy = -2; dy <= 2; dy++) {
+            for (int dx = -2; dx <= 2; dx++) {
+                vec2 uvN = clamp(v_uv + vec2(float(dx), float(dy)) * stepMV, 0.002, 0.998);
+                vec4 s = texture(u_fineMV, uvN);
+                float dist2 = float(dx * dx + dy * dy);
+                float wSpatial = exp(-dist2 * 0.35);
+                float wConf = 0.25 + s.b * 0.75;
+                float w = wSpatial * wConf;
+                sumFlow += s.rg * w;
+                sumConf += s.b  * wSpatial;
+                sumErr  += s.a  * wSpatial;
+                wTotal  += w;
+            }
+        }
+        float wSpatialSum = 11.45;
+        outMV = vec4(sumFlow / max(wTotal, 1e-4), clamp(sumConf / wSpatialSum, 0.0, 1.0), clamp(sumErr / wSpatialSum, 0.0, 1.0));
+    }`;
+
+    // ПРОХОД 4 (1080p, 120 Гц): ЧИСТЫЙ ВАРПИНГ ПО ГЛАДКОМУ ПОЛЮ БЕЗ ЧЁРНЫХ ДЫР (min) И БЕЗ ПИКСЕЛЬНОЙ РВАНИНЫ
     const FS_WARP_PASS = `#version 300 es
     precision highp float;
     in vec2 v_uv;
@@ -14407,16 +14504,6 @@ let vsyncTicks = 0;
     uniform float u_inkGuard;
     uniform float u_splitPos;
     out vec4 outColor;
-
-    float luma(vec3 c) {
-        return dot(c, vec3(0.299, 0.587, 0.114));
-    }
-
-    vec4 readMV(vec2 uv, vec2 maxUv) {
-        vec4 m = texture(u_mvTex, clamp(uv, 0.002, 0.998));
-        vec2 fl = (m.rg - 0.5) * 2.0 * maxUv;
-        return vec4(fl, m.b, m.a);
-    }
 
     void main() {
         vec2 uv = clamp(v_uv, vec2(0.001), vec2(0.999));
@@ -14437,89 +14524,37 @@ let vsyncTicks = 0;
 
         vec4 cPrev = textureLod(u_prevTex, uv, 0.0);
         vec4 cCurr = textureLod(u_currTex, uv, 0.0);
-        vec4 smoothFallback = mix(cPrev, cCurr, smoothstep(0.12, 0.88, u_alpha));
+        vec4 smoothFallback = mix(cPrev, cCurr, u_alpha);
 
-        vec3 rawDiff = abs(cCurr.rgb - cPrev.rgb);
-        float pixelDiff = max(rawDiff.r, max(rawDiff.g, rawDiff.b));
-
-        float maxRad = clamp(u_searchRadius, 4.0, 48.0);
+        float maxRad = clamp(u_searchRadius, 8.0, 48.0);
         vec2 maxUv = u_texel * maxRad;
-        vec4 mC = readMV(uv, maxUv);
 
-        if (pixelDiff < 0.0045 && mC.z < 0.07) {
-            outColor = mix(cPrev, cCurr, u_alpha);
-            return;
-        }
+        vec4 mvData = texture(u_mvTex, clamp(uv, 0.002, 0.998));
+        vec2 rawFlow = (mvData.rg - 0.5) * 2.0 * maxUv * abs(u_flowScale);
+        float mvConf = mvData.b;
 
-        vec2 blockFlow = mC.xy;
-        float occMask = mC.w;
-        if (u_bridgeSpread > 0.01) {
-            vec2 mvStep = vec2(1.0 / 240.0, 1.0 / 135.0) * (0.5 + u_bridgeSpread);
-            vec4 mL = readMV(uv - vec2(mvStep.x, 0.0), maxUv);
-            vec4 mR = readMV(uv + vec2(mvStep.x, 0.0), maxUv);
-            vec4 mU = readMV(uv - vec2(0.0, mvStep.y), maxUv);
-            vec4 mD = readMV(uv + vec2(0.0, mvStep.y), maxUv);
+        vec2 effFlow = rawFlow * (0.35 + 0.65 * mvConf);
 
-            float wC = mC.z * 3.0 + 0.15;
-            float wL = mL.z * u_bridgeSpread;
-            float wR = mR.z * u_bridgeSpread;
-            float wU = mU.z * u_bridgeSpread;
-            float wD = mD.z * u_bridgeSpread;
-            blockFlow = (mC.xy * wC + mL.xy * wL + mR.xy * wR + mU.xy * wU + mD.xy * wD) / (wC + wL + wR + wU + wD);
+        vec2 uvPrev = clamp(uv - effFlow * u_alpha, 0.001, 0.999);
+        vec2 uvCurr = clamp(uv + effFlow * (1.0 - u_alpha), 0.001, 0.999);
 
-            if (mC.z < 0.08) {
-                vec4 mMax = mL;
-                if (mR.z > mMax.z) mMax = mR;
-                if (mU.z > mMax.z) mMax = mU;
-                if (mD.z > mMax.z) mMax = mD;
-                if (mMax.z > 0.20) {
-                    blockFlow = mix(blockFlow, mMax.xy, u_bridgeSpread * 0.65);
-                }
-            }
-        }
-        blockFlow *= abs(u_flowScale);
+        vec4 wPrev = textureLod(u_prevTex, uvPrev, 0.0);
+        vec4 wCurr = textureLod(u_currTex, uvCurr, 0.0);
+        vec4 warped = mix(wPrev, wCurr, u_alpha);
 
-        vec2 s1 = u_texel * 1.5;
-        float lR = 0.5 * (luma(textureLod(u_currTex, uv + vec2(s1.x, 0.0), 0.0).rgb) + luma(textureLod(u_prevTex, uv + vec2(s1.x, 0.0), 0.0).rgb));
-        float lL = 0.5 * (luma(textureLod(u_currTex, uv - vec2(s1.x, 0.0), 0.0).rgb) + luma(textureLod(u_prevTex, uv - vec2(s1.x, 0.0), 0.0).rgb));
-        float lD = 0.5 * (luma(textureLod(u_currTex, uv + vec2(0.0, s1.y), 0.0).rgb) + luma(textureLod(u_prevTex, uv + vec2(0.0, s1.y), 0.0).rgb));
-        float lU = 0.5 * (luma(textureLod(u_currTex, uv - vec2(0.0, s1.y), 0.0).rgb) + luma(textureLod(u_prevTex, uv - vec2(0.0, s1.y), 0.0).rgb));
-        float Ix = (lR - lL) * 0.33;
-        float Iy = (lD - lU) * 0.33;
-        float It = luma(cCurr.rgb) - luma(cPrev.rgb);
-        vec2 microFlow = clamp((-It / (Ix * Ix + Iy * Iy + 0.0018)) * vec2(Ix, Iy) * abs(u_flowScale), -3.5, 3.5) * u_texel;
+        vec3 wPrevCoarse = textureLod(u_prevTex, uvPrev, 2.0).rgb;
+        vec3 wCurrCoarse = textureLod(u_currTex, uvCurr, 2.0).rgb;
+        vec3 cPrevCoarse = textureLod(u_prevTex, uv, 2.0).rgb;
+        vec3 cCurrCoarse = textureLod(u_currTex, uv, 2.0).rgb;
 
-        vec4 bPrev = textureLod(u_prevTex, clamp(uv - blockFlow * u_alpha, 0.001, 0.999), 0.0);
-        vec4 bCurr = textureLod(u_currTex, clamp(uv + blockFlow * (1.0 - u_alpha), 0.001, 0.999), 0.0);
-        vec3 bDiff = abs(bCurr.rgb - bPrev.rgb);
-        float errBlock = max(bDiff.r, max(bDiff.g, bDiff.b));
+        vec3 dWarp = abs(wCurrCoarse - wPrevCoarse);
+        vec3 dZero = abs(cCurrCoarse - cPrevCoarse);
+        float errWarp = (dWarp.r + dWarp.g + dWarp.b) * 0.3333;
+        float errZero = (dZero.r + dZero.g + dZero.b) * 0.3333;
 
-        vec4 mPrev = textureLod(u_prevTex, clamp(uv - microFlow * u_alpha, 0.001, 0.999), 0.0);
-        vec4 mCurr = textureLod(u_currTex, clamp(uv + microFlow * (1.0 - u_alpha), 0.001, 0.999), 0.0);
-        vec3 mDiff = abs(mCurr.rgb - mPrev.rgb);
-        float errMicro = max(mDiff.r, max(mDiff.g, mDiff.b));
-
-        float preferMicro = clamp((errBlock - errMicro + 0.012) * 8.0, 0.0, 1.0) * u_detailGuard;
-        vec4 wPrev = mix(bPrev, mPrev, preferMicro);
-        vec4 wCurr = mix(bCurr, mCurr, preferMicro);
-        float resW = mix(errBlock, errMicro, preferMicro);
-
-        // В зонах заслона (Occlusion) уменьшаем смешивание двух кадров, чтобы не было двойных ореолов
-        float blendWeight = mix(u_alpha, (u_alpha < 0.5 ? 0.15 : 0.85), occMask * 0.65);
-        vec4 warped = mix(wPrev, wCurr, blendWeight);
-
-        // Фильтр сохранения четкости контуров и CAS-резкости на промежуточных фазах
-        float midWindow = 4.0 * u_alpha * (1.0 - u_alpha);
-        float lMin = min(luma(wPrev.rgb), luma(wCurr.rgb));
-        float inkKeep = (1.0 - smoothstep(0.05, 0.22, lMin)) * clamp(u_inkGuard, 0.0, 0.85) * midWindow;
-        warped = mix(warped, min(wPrev, wCurr), inkKeep);
-
-        // Contrast-Adaptive Sharpening (CAS) компенсация билинейного сглаживания
-        vec3 casDetail = (cPrev.rgb * (1.0 - u_alpha) + cCurr.rgb * u_alpha) - smoothFallback.rgb;
-        warped.rgb = clamp(warped.rgb + casDetail * (0.22 * midWindow * u_detailGuard), 0.0, 1.0);
-
-        float gate = max(0.03, u_ghostGate * 1.5);
-        float trust = 1.0 - smoothstep(gate * 0.60, gate * 1.35, resW);
+        float gateScale = clamp(u_ghostGate / 0.14, 0.4, 2.5);
+        float coarseTrust = clamp((errZero * gateScale - errWarp * 0.70) / (errZero + 0.025), 0.0, 1.0);
+        float trust = clamp(mvConf * (0.45 + 0.55 * coarseTrust), 0.0, 1.0);
 
         outColor = mix(smoothFallback, warped, trust);
     }`;
@@ -14554,9 +14589,19 @@ let vsyncTicks = 0;
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, 0);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, 3);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, 4);
         }
         return t;
+    }
+
+    function createFBOForTex(tex, w, h) {
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return fbo;
     }
 
     function ensureLucasKanadeWebGL(vid) {
@@ -14567,7 +14612,7 @@ let vsyncTicks = 0;
         if (vw < 32 || vh < 32) return false;
 
         const oldC = document.getElementById('jv166InterpCanvas');
-        if (oldC && !oldC._isV202DedupMV) {
+        if (oldC && !oldC._isV203PyramidMV) {
             oldC.remove();
             glCanvas = null;
             gl = null;
@@ -14580,6 +14625,7 @@ let vsyncTicks = 0;
             glCanvas._isV200MVEngine = true;
             glCanvas._isV201FixedMV = true;
             glCanvas._isV202DedupMV = true;
+            glCanvas._isV203PyramidMV = true;
             glCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;object-fit:contain;display:none;';
             stage.insertBefore(glCanvas, vid.nextSibling);
 
@@ -14595,9 +14641,11 @@ let vsyncTicks = 0;
             gl = glCanvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, desynchronized: true, powerPreference: 'high-performance' });
             if (!gl) return false;
 
-            progMV   = compileProgram(VS_FBO, FS_MV_PASS);
-            progWarp = compileProgram(VS_QUAD, FS_WARP_PASS);
-            if (!progMV || !progWarp) return false;
+            progMVCoarse = compileProgram(VS_FBO, FS_MV_COARSE);
+            progMVFine   = compileProgram(VS_FBO, FS_MV_FINE);
+            progMVSmooth = compileProgram(VS_FBO, FS_MV_SMOOTH);
+            progWarp     = compileProgram(VS_QUAD, FS_WARP_PASS);
+            if (!progMVCoarse || !progMVFine || !progMVSmooth || !progWarp) return false;
 
             const quad = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
             const vbo = gl.createBuffer();
@@ -14608,19 +14656,30 @@ let vsyncTicks = 0;
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboMV);
             gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2, 2, 1, 3]), gl.STATIC_DRAW);
 
-            gl.useProgram(progMV);
-            const locMV = gl.getAttribLocation(progMV, 'a_pos');
-            gl.enableVertexAttribArray(locMV);
-            gl.vertexAttribPointer(locMV, 2, gl.FLOAT, false, 0, 0);
-            gl.uniform1i(gl.getUniformLocation(progMV, 'u_prevTex'), 0);
-            gl.uniform1i(gl.getUniformLocation(progMV, 'u_currTex'), 1);
-            uMV_TexelLoc  = gl.getUniformLocation(progMV, 'u_texel');
-            uMV_RadiusLoc = gl.getUniformLocation(progMV, 'u_searchRadius');
+            [progMVCoarse, progMVFine, progMVSmooth, progWarp].forEach(function(p) {
+                gl.useProgram(p);
+                const loc = gl.getAttribLocation(p, 'a_pos');
+                gl.enableVertexAttribArray(loc);
+                gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+            });
+
+            gl.useProgram(progMVCoarse);
+            gl.uniform1i(gl.getUniformLocation(progMVCoarse, 'u_prevTex'), 0);
+            gl.uniform1i(gl.getUniformLocation(progMVCoarse, 'u_currTex'), 1);
+            uMVC_TexelLoc  = gl.getUniformLocation(progMVCoarse, 'u_texel');
+            uMVC_RadiusLoc = gl.getUniformLocation(progMVCoarse, 'u_searchRadius');
+
+            gl.useProgram(progMVFine);
+            gl.uniform1i(gl.getUniformLocation(progMVFine, 'u_prevTex'),  0);
+            gl.uniform1i(gl.getUniformLocation(progMVFine, 'u_currTex'),  1);
+            gl.uniform1i(gl.getUniformLocation(progMVFine, 'u_coarseMV'), 2);
+            uMVF_TexelLoc  = gl.getUniformLocation(progMVFine, 'u_texel');
+            uMVF_RadiusLoc = gl.getUniformLocation(progMVFine, 'u_searchRadius');
+
+            gl.useProgram(progMVSmooth);
+            gl.uniform1i(gl.getUniformLocation(progMVSmooth, 'u_fineMV'), 0);
 
             gl.useProgram(progWarp);
-            const locW = gl.getAttribLocation(progWarp, 'a_pos');
-            gl.enableVertexAttribArray(locW);
-            gl.vertexAttribPointer(locW, 2, gl.FLOAT, false, 0, 0);
             gl.uniform1i(gl.getUniformLocation(progWarp, 'u_prevTex'), 0);
             gl.uniform1i(gl.getUniformLocation(progWarp, 'u_currTex'), 1);
             gl.uniform1i(gl.getUniformLocation(progWarp, 'u_mvTex'),   2);
@@ -14634,20 +14693,20 @@ let vsyncTicks = 0;
             uInkGuardLoc     = gl.getUniformLocation(progWarp, 'u_inkGuard');
             uSplitPosLoc     = gl.getUniformLocation(progWarp, 'u_splitPos');
 
-                        ringTex[0] = createTex(false);
+            ringTex[0] = createTex(false);
             ringTex[1] = createTex(false);
             ringTex[2] = createTex(false);
             ringTex[3] = createTex(false);
             texPrev = ringTex[0];
             texCurr = ringTex[1];
-            texMV   = createTex(true);
-            gl.bindTexture(gl.TEXTURE_2D, texMV);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, MV_GRID_W, MV_GRID_H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
-            fboMV = gl.createFramebuffer();
-            gl.bindFramebuffer(gl.FRAMEBUFFER, fboMV);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texMV, 0);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            texMVCoarse = createTex(true);
+            texMVFine   = createTex(true);
+            texMV       = createTex(true);
+
+            fboMVCoarse = createFBOForTex(texMVCoarse, MV_COARSE_W, MV_COARSE_H);
+            fboMVFine   = createFBOForTex(texMVFine,   MV_GRID_W,   MV_GRID_H);
+            fboMV       = createFBOForTex(texMV,       MV_GRID_W,   MV_GRID_H);
         }
 
         const fit = vid.style.objectFit || 'contain';
@@ -14740,26 +14799,47 @@ let vsyncTicks = 0;
     }
 
     function runMotionVectorPass() {
-        if (!gl || !progMV || !fboMV || !hasValidFramePair) return;
+        if (!gl || !progMVCoarse || !progMVFine || !progMVSmooth || !fboMV || !hasValidFramePair) return;
         const tun = window._jennyTunerV190 || {};
-        const searchRad = Number.isFinite(tun.searchRadius) ? tun.searchRadius : 15.0;
+        const searchRad = Number.isFinite(tun.searchRadius) ? tun.searchRadius : 24.0;
         const tOld = ringTex[slotPrev] || texPrev;
         const tNew = ringTex[slotCurr] || texCurr;
+        const tx = 1.0 / Math.max(1, glCanvas.width);
+        const ty = 1.0 / Math.max(1, glCanvas.height);
 
-        gl.bindFramebuffer(gl.FRAMEBUFFER, fboMV);
-        gl.viewport(0, 0, MV_GRID_W, MV_GRID_H);
-        gl.useProgram(progMV);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboMV);
 
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboMVCoarse);
+        gl.viewport(0, 0, MV_COARSE_W, MV_COARSE_H);
+        gl.useProgram(progMVCoarse);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, tOld);
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, tNew);
-
-        gl.uniform2f(uMV_TexelLoc, 1.0 / Math.max(1, glCanvas.width), 1.0 / Math.max(1, glCanvas.height));
-        gl.uniform1f(uMV_RadiusLoc, searchRad);
-
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboMV);
+        gl.uniform2f(uMVC_TexelLoc, tx, ty);
+        gl.uniform1f(uMVC_RadiusLoc, searchRad);
         gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboMVFine);
+        gl.viewport(0, 0, MV_GRID_W, MV_GRID_H);
+        gl.useProgram(progMVFine);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, tOld);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, tNew);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, texMVCoarse);
+        gl.uniform2f(uMVF_TexelLoc, tx, ty);
+        gl.uniform1f(uMVF_RadiusLoc, searchRad);
+        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboMV);
+        gl.viewport(0, 0, MV_GRID_W, MV_GRID_H);
+        gl.useProgram(progMVSmooth);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texMVFine);
+        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
@@ -14805,6 +14885,7 @@ let vsyncTicks = 0;
         texPrev = ringTex[slotPrev];
         texCurr = ringTex[slotCurr];
 
+        gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texCurr);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
         gl.generateMipmap(gl.TEXTURE_2D);
@@ -15194,6 +15275,7 @@ let vsyncTicks = 0;
                 window._vcoreLastProbeV166 = d;
                 if (d && d.native_fps && d.native_fps >= 5) {
                     window._jv166Metrics.fileNativeFps = d.native_fps;
+                    if (d.duration_sec && d.duration_sec > 0) window._jennyFullMovieDurationSecV210 = d.duration_sec;
                     window._jv166Metrics.sourceFps = Math.round(d.native_fps);
                 }
                 if (typeof window.updateSplitLineUI === 'function') window.updateSplitLineUI();
@@ -15622,69 +15704,507 @@ let vsyncTicks = 0;
 
 
 
-/* ================= JENNY V209: COLLAPSED PLAYER PILLS, ZERO-TRACE OFF, & 0.1s AUTO-HIDE (MAIN + PIP) ================= */
+/* ================= JENNY V210: FIXED AUTO-HIDE (MAIN+PIP), DECK B VIDEO MASTER, FULL LOCAL MOVIES ================= */
 (function() {
-    if (window._jennyV209Installed) return;
-    window._jennyV209Installed = true;
+    if (window._jennyV210Installed) return;
+    window._jennyV210Installed = true;
 
     var savedFlags = {};
     try { savedFlags = JSON.parse(localStorage.getItem('jenny_lab_flags_v208') || '{}') || {}; } catch (e) {}
 
     window._jennyLabFlagsV208 = {
-        core120:      Boolean(savedFlags.core120),      // Генератор кадров 120Hz & Матрица .SO
-        splitTest:    Boolean(savedFlags.splitTest),    // Кнопка режима сравнения (Сплит)
-        logDots:      Boolean(savedFlags.logDots),      // Кнопка лога с точками
-        tunerSliders: Boolean(savedFlags.tunerSliders), // Кнопка крутилок декодера
-        stub1:        savedFlags.stub1 !== undefined ? Boolean(savedFlags.stub1) : true, // Автоскрытие управления (Плеер)
-        stub2:        savedFlags.stub2 !== undefined ? Boolean(savedFlags.stub2) : true, // Автоскрытие управления (PiP)
+        core120:      Boolean(savedFlags.core120),
+        splitTest:    Boolean(savedFlags.splitTest),
+        logDots:      Boolean(savedFlags.logDots),
+        tunerSliders: Boolean(savedFlags.tunerSliders),
+        stub1:        savedFlags.stub1 !== undefined ? Boolean(savedFlags.stub1) : true,
+        stub2:        savedFlags.stub2 !== undefined ? Boolean(savedFlags.stub2) : true,
         stub3:        Boolean(savedFlags.stub3),
         stub4:        Boolean(savedFlags.stub4),
         stub5:        Boolean(savedFlags.stub5)
     };
 
-    var rawMainSec = parseFloat(localStorage.getItem('jenny_autohide_main_sec_v209') || '3.0');
-    var rawPipSec  = parseFloat(localStorage.getItem('jenny_autohide_pip_sec_v209')  || '2.0');
+    var rawMainSec = parseFloat(localStorage.getItem('jenny_autohide_main_sec_v209') || '4.0');
+    var rawPipSec  = parseFloat(localStorage.getItem('jenny_autohide_pip_sec_v209')  || '2.5');
     window._jennyAutoHideSecV209 = {
-        main: Number.isFinite(rawMainSec) ? Math.max(0.5, Math.min(60.0, Math.round(rawMainSec * 10) / 10)) : 3.0,
-        pip:  Number.isFinite(rawPipSec)  ? Math.max(0.5, Math.min(60.0, Math.round(rawPipSec  * 10) / 10)) : 2.0
+        main: Number.isFinite(rawMainSec) ? Math.max(0.5, Math.min(120.0, Math.round(rawMainSec * 10) / 10)) : 4.0,
+        pip:  Number.isFinite(rawPipSec)  ? Math.max(0.5, Math.min(120.0, Math.round(rawPipSec  * 10) / 10)) : 2.5
     };
 
-    // По умолчанию играет чистый дефолт ('off'), а сплит и 120Hz включаются свернутыми кнопками в плеере
     window._jennySplitExpandedV209 = false;
     window._jenny120ExpandedV209   = false;
     var isLogCollapsed   = true;
     var isTunerCollapsed = true;
 
-    if (window._jv166Metrics) {
-        window._jv166Metrics.mode = 'off';
-    }
+    if (window._jv166Metrics) window._jv166Metrics.mode = 'off';
     window._jennyExp120HzEnabledV205 = false;
 
     window.saveJennyLabFlagsV208 = function() {
         try { localStorage.setItem('jenny_lab_flags_v208', JSON.stringify(window._jennyLabFlagsV208)); } catch (e) {}
     };
 
+    // 1. ПОЛНЫЕ ЛОКАЛЬНЫЕ ФИЛЬМЫ БЕЗ ТОРРЕНТ-НАРЕЗКИ И БЕЗ ЛИМИТА 0:10
+    window.isLocalFileFullyDownloadedV210 = function(src) {
+        if (!src) return true;
+        var s = String(src).toLowerCase();
+        if (s.indexOf('.part') !== -1 || s.indexOf('torrent_stream') !== -1 || s.indexOf('omni_stream') !== -1) return false;
+        return true;
+    };
+
+    var fullStreamFallbackAppliedSrc = '';
+    var fullStreamSeekOffsetSec = 0.0;
+    window._jennyFullMovieDurationSecV210 = 0.0;
+
+    function handleCompleteMoviesAndFullStreamV210() {
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130;
+        var vEl = document.getElementById('jennyVideoElV130');
+        if (!vEl || !st || !st.active) return;
+
+        var rawSrc = st.rawPath || st.src || vEl.currentSrc || vEl.src || '';
+        if (window.isLocalFileFullyDownloadedV210(rawSrc)) {
+            if (vd && vd.studioBuffer) {
+                if (vd.studioBuffer._pollTimerV72) {
+                    clearInterval(vd.studioBuffer._pollTimerV72);
+                    vd.studioBuffer._pollTimerV72 = null;
+                }
+                vd.studioBuffer._pieceMapV72 = [];
+                vd.studioBuffer._loadedCountV72 = 0;
+            }
+            var btnPieces = document.getElementById('v130BtnPieces') || document.querySelector('[onclick*="toggleVideoPieces"]');
+            if (btnPieces) btnPieces.style.setProperty('display', 'none', 'important');
+        }
+
+        if (!rawSrc || rawSrc.indexOf('/api/video/full_stream_v210') !== -1) return;
+
+        var probeDur = (window._vcoreLastProbeV166 && window._vcoreLastProbeV166.duration_sec) || window._jennyFullMovieDurationSecV210 || 0;
+        var vidDur = vEl.duration;
+        var curUrl = String(vEl.currentSrc || vEl.src || '');
+        var lowerSrc = rawSrc.toLowerCase();
+        var isAviOrMkv = (lowerSrc.indexOf('.avi') !== -1 || lowerSrc.indexOf('.mkv') !== -1);
+
+        if (curUrl.indexOf('blob:') === 0 && window.isLocalFileFullyDownloadedV210(rawSrc)) {
+            var directUrl = rawSrc.indexOf('/api/') === 0 ? rawSrc : ('/api/media/' + encodeURIComponent(rawSrc.replace(/^\/+/, '')));
+            if (fullStreamFallbackAppliedSrc !== directUrl) {
+                fullStreamFallbackAppliedSrc = directUrl;
+                vEl.src = directUrl;
+                vEl.play().catch(function(){});
+            }
+            return;
+        }
+
+        var isTruncated10s = (Number.isFinite(vidDur) && vidDur > 0.5 && vidDur <= 12.5 && (probeDur > 25.0 || isAviOrMkv));
+        var hasVideoError = Boolean(vEl.error);
+
+        if ((isTruncated10s || hasVideoError || (isAviOrMkv && vEl.readyState === 0 && vEl.networkState === 3)) && fullStreamFallbackAppliedSrc !== rawSrc) {
+            fullStreamFallbackAppliedSrc = rawSrc;
+            fullStreamSeekOffsetSec = 0.0;
+            var cleanPath = rawSrc;
+            try {
+                if (cleanPath.indexOf('/api/media/') !== -1) {
+                    cleanPath = decodeURIComponent(cleanPath.split('/api/media/')[1].split('?')[0]);
+                }
+            } catch (e) {}
+            vEl.src = '/api/video/full_stream_v210?src=' + encodeURIComponent(cleanPath) + '&start=0';
+            vEl.load();
+            vEl.play().catch(function(){});
+            if (typeof window.showToast === 'function') {
+                window.showToast('🎬 Включён полный поток фильма');
+            }
+        }
+    }
+
+    // 2. ДЕКА Б (ВИДЕО): АВТОЗАПУСК И ПОЛНАЯ ПРИВЯЗКА НИЖНЕЙ ПАНЕЛИ И ДУГИ СКОРОСТИ
+    var lastVideoActiveStateV210 = false;
+
+    window.isDeckBVideoControlActiveV210 = function() {
+        var st = window._vidStateV130;
+        var vEl = document.getElementById('jennyVideoElV130');
+        return Boolean(st && st.active && vEl && window._activeUiDeckV131 === 'video');
+    };
+
+    window.formatVideoTimeV210 = function(sec) {
+        if (!Number.isFinite(sec) || sec < 0) sec = 0;
+        sec = Math.floor(sec);
+        var hrs = Math.floor(sec / 3600);
+        var mins = Math.floor((sec % 3600) / 60);
+        var secs = sec % 60;
+        if (hrs > 0) return hrs + ':' + (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
+        return mins + ':' + (secs < 10 ? '0' : '') + secs;
+    };
+
+    window.getEffectiveVideoDurationV210 = function(vEl) {
+        var probeDur = (window._vcoreLastProbeV166 && window._vcoreLastProbeV166.duration_sec) || window._jennyFullMovieDurationSecV210 || 0;
+        var vd = vEl ? vEl.duration : 0;
+        if (Number.isFinite(vd) && vd > 12.5) return vd;
+        if (probeDur > 0) return probeDur;
+        return (Number.isFinite(vd) && vd > 0) ? vd : 0;
+    };
+
+    window.getEffectiveVideoCurrentTimeV210 = function(vEl) {
+        if (!vEl) return 0;
+        return fullStreamSeekOffsetSec + (vEl.currentTime || 0);
+    };
+
+    window.seekDeckBVideoToSecV210 = function(targetSec) {
+        var vEl = document.getElementById('jennyVideoElV130');
+        if (!vEl) return;
+        var dur = window.getEffectiveVideoDurationV210(vEl);
+        if (dur > 0) targetSec = Math.max(0, Math.min(dur - 0.2, targetSec));
+        else targetSec = Math.max(0, targetSec);
+
+        var curSrc = vEl.currentSrc || vEl.src || '';
+        if (curSrc.indexOf('/api/video/full_stream_v210') !== -1) {
+            fullStreamSeekOffsetSec = targetSec;
+            var baseUrl = curSrc.split('&start=')[0];
+            var wasPaused = vEl.paused;
+            vEl.src = baseUrl + '&start=' + targetSec.toFixed(1);
+            if (!wasPaused) vEl.play().catch(function(){});
+        } else {
+            fullStreamSeekOffsetSec = 0.0;
+            try { vEl.currentTime = targetSec; } catch (e) {}
+        }
+    };
+
+    window.applyDeckBVideoSpeedV210 = function(newSpeed, showMsg) {
+        var spd = parseFloat(newSpeed);
+        if (!Number.isFinite(spd) || spd < 0.1 || spd > 8.0) return;
+        spd = Math.round(spd * 100) / 100;
+
+        var vEl = document.getElementById('jennyVideoElV130');
+        if (vEl) {
+            vEl.playbackRate = spd;
+            vEl.defaultPlaybackRate = spd;
+        }
+        if (window.videoDeckV131) window.videoDeckV131.speed = spd;
+        if (window._vidStateV130) window._vidStateV130.speed = spd;
+        var btnSpd = document.getElementById('v130BtnSpeed');
+        if (btnSpd) btnSpd.textContent = '⏩ ' + spd + 'x';
+        var speedBadge = document.getElementById('speedBadge') || document.querySelector('.speed-badge');
+        if (speedBadge) speedBadge.textContent = (spd === 1 ? '🚀 Норм: x1' : ('⚡ x' + spd));
+        if (showMsg && typeof window.showToast === 'function') {
+            window.showToast('🎬 Скорость Деки Б: x' + spd);
+        }
+    };
+
+    function syncDeckBWithVideoLifecycleV210() {
+        var st = window._vidStateV130;
+        var vEl = document.getElementById('jennyVideoElV130');
+        var isNowActive = Boolean(st && st.active && vEl);
+
+        if (isNowActive && !lastVideoActiveStateV210) {
+            lastVideoActiveStateV210 = true;
+            fullStreamSeekOffsetSec = 0.0;
+            fullStreamFallbackAppliedSrc = '';
+            window._activeUiDeckV131 = 'video';
+            if (typeof window.switchActiveUiDeckV131 === 'function') {
+                try { window.switchActiveUiDeckV131('video'); } catch (e) {}
+            }
+            var dualOn = Boolean(window._dualDeckModeV131 || (window.videoDeckV131 && window.videoDeckV131.dualMode));
+            var aud = window.audio || document.querySelector('audio');
+            if (!dualOn && aud && !aud.paused) {
+                try { aud.pause(); } catch (e) {}
+            }
+            window.wakeVideoHudControlsV209();
+        } else if (!isNowActive && lastVideoActiveStateV210) {
+            lastVideoActiveStateV210 = false;
+            window._activeUiDeckV131 = 'audio';
+            if (typeof window.switchActiveUiDeckV131 === 'function') {
+                try { window.switchActiveUiDeckV131('audio'); } catch (e) {}
+            }
+        }
+
+        if (!isNowActive) return;
+
+        handleCompleteMoviesAndFullStreamV210();
+
+        if (window._activeUiDeckV131 === 'video') {
+            var dualOnNow = Boolean(window._dualDeckModeV131 || (window.videoDeckV131 && window.videoDeckV131.dualMode));
+            var audNow = window.audio || document.querySelector('audio');
+            if (!dualOnNow && audNow && !audNow.paused && !vEl.paused) {
+                try { audNow.pause(); } catch (e) {}
+            }
+
+            var curT = window.getEffectiveVideoCurrentTimeV210(vEl);
+            var durT = window.getEffectiveVideoDurationV210(vEl);
+            var remT = Math.max(0, durT - curT);
+            var pct = durT > 0 ? Math.max(0, Math.min(100, (curT / durT) * 100)) : 0;
+
+            var elCur = document.getElementById('currentTime');
+            var elDur = document.getElementById('duration');
+            var elBar = document.getElementById('progressBar') || document.getElementById('progress');
+            var elPlay = document.getElementById('playBtn');
+
+            if (elCur && !window._isScrubbingDeckBV210) elCur.textContent = window.formatVideoTimeV210(curT);
+            if (elDur) elDur.textContent = '-' + window.formatVideoTimeV210(remT);
+            if (elBar && !window._isScrubbingDeckBV210) elBar.style.width = pct.toFixed(2) + '%';
+
+            // Обновляем верхнюю мелкую цифру над названием трека на нижней панели (вместо 0:00 / 5:00)
+            var topSub = document.getElementById('scrubTimePreview') || document.getElementById('trackSubInfo') || document.querySelector('#trackInfo > div:first-child');
+            if (topSub && topSub.id !== 'trackTitle' && /^[\d:.\s\/+-]+$/.test(topSub.textContent.trim())) {
+                topSub.textContent = window.formatVideoTimeV210(curT) + ' / ' + window.formatVideoTimeV210(durT);
+            }
+
+            if (elPlay && !elPlay.querySelector('svg')) {
+                var wantIcon = vEl.paused ? '▶' : '⏸';
+                if (elPlay.textContent.trim() !== wantIcon) elPlay.textContent = wantIcon;
+            }
+
+            var vSeek = document.getElementById('v130SeekSlider');
+            var vTimeLeft = document.getElementById('v130TimeCur');
+            var vTimeRight = document.getElementById('v130TimeDur');
+            if (vSeek && durT > 0 && document.activeElement !== vSeek) {
+                vSeek.max = Math.round(durT);
+                vSeek.value = Math.round(curT);
+            }
+            if (vTimeLeft) vTimeLeft.textContent = window.formatVideoTimeV210(curT);
+            if (vTimeRight) vTimeRight.textContent = window.formatVideoTimeV210(durT);
+        }
+    }
+
+    function hookSpeedAndDeckBControlsV210() {
+        ['setPlaybackSpeed', 'applyPlaybackSpeed', 'setSpeed', 'changeSpeed'].forEach(function(fnName) {
+            if (typeof window[fnName] === 'function' && !window[fnName]._v210Hooked) {
+                var origFn = window[fnName];
+                var wrapped = function(spd) {
+                    if (window.isDeckBVideoControlActiveV210()) {
+                        window.applyDeckBVideoSpeedV210(spd, true);
+                        return;
+                    }
+                    return origFn.apply(this, arguments);
+                };
+                wrapped._v210Hooked = true;
+                window[fnName] = wrapped;
+            }
+        });
+
+        var lastAudRate = 1.0;
+        setInterval(function() {
+            var aud = window.audio || document.querySelector('audio');
+            var vEl = document.getElementById('jennyVideoElV130');
+            if (aud && vEl && window.isDeckBVideoControlActiveV210()) {
+                if (Math.abs(aud.playbackRate - lastAudRate) > 0.01) {
+                    lastAudRate = aud.playbackRate;
+                    window.applyDeckBVideoSpeedV210(aud.playbackRate, true);
+                }
+            }
+        }, 100);
+
+        document.addEventListener('click', function(e) {
+            if (!window.isDeckBVideoControlActiveV210()) return;
+            var vEl = document.getElementById('jennyVideoElV130');
+            if (!vEl) return;
+
+            var playBtn = document.getElementById('playBtn');
+            var prevBtn = document.getElementById('prevBtn');
+            var nextBtn = document.getElementById('nextBtn');
+
+            if (playBtn && (e.target === playBtn || playBtn.contains(e.target))) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                if (vEl.paused) vEl.play().catch(function(){});
+                else vEl.pause();
+                var dualOn = Boolean(window._dualDeckModeV131 || (window.videoDeckV131 && window.videoDeckV131.dualMode));
+                var aud = window.audio || document.querySelector('audio');
+                if (!dualOn && aud && !aud.paused) {
+                    try { aud.pause(); } catch (err) {}
+                }
+                return;
+            }
+            if (prevBtn && (e.target === prevBtn || prevBtn.contains(e.target))) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                window.seekDeckBVideoToSecV210(window.getEffectiveVideoCurrentTimeV210(vEl) - 10);
+                return;
+            }
+            if (nextBtn && (e.target === nextBtn || nextBtn.contains(e.target))) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                window.seekDeckBVideoToSecV210(window.getEffectiveVideoCurrentTimeV210(vEl) + 10);
+                return;
+            }
+        }, true);
+
+        var progCont = document.getElementById('progressContainer');
+        if (progCont && !progCont._v210ScrubHooked) {
+            progCont._v210ScrubHooked = true;
+            var handleBarScrub = function(clientX) {
+                var vEl = document.getElementById('jennyVideoElV130');
+                if (!vEl) return;
+                var rect = progCont.getBoundingClientRect();
+                if (rect.width <= 10) return;
+                var ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                var dur = window.getEffectiveVideoDurationV210(vEl);
+                if (dur > 0) window.seekDeckBVideoToSecV210(ratio * dur);
+            };
+            progCont.addEventListener('touchstart', function(e) {
+                if (!window.isDeckBVideoControlActiveV210()) return;
+                window._isScrubbingDeckBV210 = true;
+                e.stopImmediatePropagation();
+                if (e.touches && e.touches[0]) handleBarScrub(e.touches[0].clientX);
+            }, { capture: true, passive: false });
+            progCont.addEventListener('touchmove', function(e) {
+                if (!window.isDeckBVideoControlActiveV210() || !window._isScrubbingDeckBV210) return;
+                e.stopImmediatePropagation();
+                if (e.cancelable) e.preventDefault();
+                if (e.touches && e.touches[0]) handleBarScrub(e.touches[0].clientX);
+            }, { capture: true, passive: false });
+            progCont.addEventListener('touchend', function(e) {
+                if (!window._isScrubbingDeckBV210) return;
+                window._isScrubbingDeckBV210 = false;
+                if (window.isDeckBVideoControlActiveV210()) e.stopImmediatePropagation();
+            }, { capture: true, passive: false });
+            progCont.addEventListener('click', function(e) {
+                if (!window.isDeckBVideoControlActiveV210()) return;
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                handleBarScrub(e.clientX);
+            }, true);
+        }
+    }
+    setTimeout(hookSpeedAndDeckBControlsV210, 250);
+
+    // 3. ТОЧНЫЙ ТАЙМЕР АВТОСКРЫТИЯ UI (ОСНОВНОЙ ПЛЕЕР + МИНИ-ПЛЕЕР PiP)
+    var lastVideoInteractionTsV210 = performance.now();
+    var hudCurrentlyHiddenV210 = false;
+
+    window.isVideoInPipOrMiniModeV210 = function(ov) {
+        var st = window._vidStateV130;
+        if (st && (st.mini || st.isMini || st.pip || st.isPip || st.mode === 'mini')) return true;
+        if (!ov) ov = document.getElementById('jennyVideoOverlayV130');
+        if (!ov) return false;
+        var cls = (ov.className || '').toLowerCase();
+        if (cls.indexOf('mini') !== -1 || cls.indexOf('pip') !== -1) return true;
+        var r = ov.getBoundingClientRect();
+        if (r.width > 40 && r.width < window.innerWidth * 0.85 && r.height < window.innerHeight * 0.65) return true;
+        return false;
+    };
+
+    window.getCustomHudTimeoutMsV210 = function() {
+        var isPip = window.isVideoInPipOrMiniModeV210();
+        var fl = window._jennyLabFlagsV208 || {};
+        var enabled = isPip ? Boolean(fl.stub2) : Boolean(fl.stub1);
+        if (!enabled) return 86400000;
+        var sec = isPip ? (window._jennyAutoHideSecV209.pip || 2.5) : (window._jennyAutoHideSecV209.main || 4.0);
+        return Math.round(sec * 1000);
+    };
+
+    function enforceHudVisibilityStateV210(shouldHide, isPip) {
+        var ov = document.getElementById('jennyVideoOverlayV130');
+        if (!ov) return;
+        hudCurrentlyHiddenV210 = Boolean(shouldHide);
+
+        var st = window._vidStateV130;
+        if (st) {
+            if (st.hudTimer) { clearTimeout(st.hudTimer); st.hudTimer = null; }
+            if (st.miniHudTimer) { clearTimeout(st.miniHudTimer); st.miniHudTimer = null; }
+            st.hudVisible = !shouldHide;
+        }
+
+        if (shouldHide) {
+            ov.classList.add('jv210-controls-hidden');
+        } else {
+            ov.classList.remove('jv210-controls-hidden');
+            ov.classList.remove('hud-hidden-v130');
+        }
+
+        var stage = document.getElementById('jennyVideoStageV130');
+        var keepAlwaysVisible = {
+            'jennyVideoStageV130': true,
+            'jennyVideoElV130': true,
+            'jv166InterpCanvas': true,
+            'jv168SplitLine': true
+        };
+
+        var allNodes = Array.from(ov.children);
+        if (stage) allNodes = allNodes.concat(Array.from(stage.children));
+
+        for (var i = 0; i < allNodes.length; i++) {
+            var el = allNodes[i];
+            if (!el || el.tagName === 'VIDEO' || el.tagName === 'STYLE') continue;
+            if (el.id && keepAlwaysVisible[el.id]) continue;
+
+            // В полном плеере оставляем развёрнутый лог или крутилки, а в мини-плеере (PiP) прячем вообще все кнопки
+            if (!isPip) {
+                if (el.id === 'jennyFenceWrapV173' && !isLogCollapsed) continue;
+                if (el.id === 'jennyTunerFloatWrapV208' && !isTunerCollapsed) continue;
+            }
+
+            if (shouldHide) {
+                el.style.transition = 'opacity 0.18s ease';
+                el.style.setProperty('opacity', '0', 'important');
+                el.style.setProperty('pointer-events', 'none', 'important');
+                el.classList.add('jv210-hidden-node');
+            } else {
+                el.classList.remove('jv210-hidden-node');
+                el.style.removeProperty('opacity');
+                el.style.removeProperty('pointer-events');
+                if (!isPip && (el.id === 'v130TopBar' || el.id === 'v130BottomBar' || el.id === 'v130CenterControls')) {
+                    el.style.opacity = '1';
+                    el.style.pointerEvents = 'auto';
+                    if (el.style.display === 'none') el.style.display = 'flex';
+                }
+            }
+        }
+    }
+
+    window.wakeVideoHudControlsV209 = function() {
+        lastVideoInteractionTsV210 = performance.now();
+        var ov = document.getElementById('jennyVideoOverlayV130');
+        var isPip = window.isVideoInPipOrMiniModeV210(ov);
+        enforceHudVisibilityStateV210(false, isPip);
+    };
+
+    ['touchstart', 'touchmove', 'mousedown', 'click'].forEach(function(evName) {
+        window.addEventListener(evName, function(e) {
+            var ov = document.getElementById('jennyVideoOverlayV130');
+            if (ov && ov.style.display !== 'none' && ov.contains(e.target)) {
+                window.wakeVideoHudControlsV209();
+            }
+        }, { capture: true, passive: true });
+    });
+
+    function checkAutoHideTickV210() {
+        var ov = document.getElementById('jennyVideoOverlayV130');
+        var vEl = document.getElementById('jennyVideoElV130');
+        if (!ov || ov.style.display === 'none' || !vEl) {
+            hudCurrentlyHiddenV210 = false;
+            return;
+        }
+        var fl = window._jennyLabFlagsV208 || {};
+        var isPip = window.isVideoInPipOrMiniModeV210(ov);
+        var enabled = isPip ? Boolean(fl.stub2) : Boolean(fl.stub1);
+
+        if (!enabled || activeDragMode) {
+            enforceHudVisibilityStateV210(false, isPip);
+            return;
+        }
+
+        var delaySec = isPip ? (window._jennyAutoHideSecV209.pip || 2.5) : (window._jennyAutoHideSecV209.main || 4.0);
+        var elapsedSec = (performance.now() - lastVideoInteractionTsV210) / 1000.0;
+
+        if (elapsedSec >= delaySec) {
+            enforceHudVisibilityStateV210(true, isPip);
+        } else {
+            enforceHudVisibilityStateV210(false, isPip);
+        }
+    }
+
+    // 4. СВЕРНУТЫЕ ТАБЛЕТКИ ИНСТРУМЕНТОВ И ЛОГГЕР V210
     window.updateActiveEngineModeV209 = function() {
         var fl = window._jennyLabFlagsV208 || {};
         if (!fl.splitTest) window._jennySplitExpandedV209 = false;
         if (!fl.core120)   window._jenny120ExpandedV209   = false;
 
         var newMode = 'off';
-        if (fl.splitTest && window._jennySplitExpandedV209) {
-            newMode = 'split';
-        } else if (fl.core120 && window._jenny120ExpandedV209) {
-            newMode = '120';
-        }
+        if (fl.splitTest && window._jennySplitExpandedV209) newMode = 'split';
+        else if (fl.core120 && window._jenny120ExpandedV209) newMode = '120';
 
-        if (window._jv166Metrics) {
-            window._jv166Metrics.mode = newMode;
-        }
+        if (window._jv166Metrics) window._jv166Metrics.mode = newMode;
         window._jennyExp120HzEnabledV205 = (newMode !== 'off');
 
         var glCv = document.getElementById('jv166InterpCanvas');
-        if (glCv && newMode === 'off') {
-            glCv.style.setProperty('display', 'none', 'important');
-        }
+        if (glCv && newMode === 'off') glCv.style.setProperty('display', 'none', 'important');
         var spLine = document.getElementById('jv168SplitLine');
         if (spLine) {
             if (newMode === 'split') {
@@ -15694,9 +16214,7 @@ let vsyncTicks = 0;
                 spLine.style.setProperty('display', 'none', 'important');
             }
         }
-        if (typeof window.updateVideoHeaderTelemetryV166 === 'function') {
-            window.updateVideoHeaderTelemetryV166();
-        }
+        if (typeof window.updateVideoHeaderTelemetryV166 === 'function') window.updateVideoHeaderTelemetryV166();
     };
 
     window._jennySplitRatioV176 = parseFloat(localStorage.getItem('jenny_split_ratio') || '0.5') || 0.5;
@@ -15744,12 +16262,6 @@ let vsyncTicks = 0;
         window._jennySplitSwappedV176 = !window._jennySplitSwappedV176;
         try { localStorage.setItem('jenny_split_swap', window._jennySplitSwappedV176 ? '1' : '0'); } catch (e) {}
         window.updateSplitLineUI();
-        var origFps = window.getRealOrigFpsV208 ? window.getRealOrigFpsV208() : 30;
-        if (typeof window.showToast === 'function') {
-            window.showToast(window._jennySplitSwappedV176
-                ? ('⇄ Сплит: Слева 120Hz MV │ Справа ОРИГ ' + origFps + ' FPS')
-                : ('⇄ Сплит: Слева ОРИГ ' + origFps + ' FPS │ Справа 120Hz MV'));
-        }
     };
 
     function upgradeSplitLineV176() {
@@ -15758,11 +16270,11 @@ let vsyncTicks = 0;
         var fl = window._jennyLabFlagsV208 || {};
         var isSplit = Boolean(fl.splitTest && window._jennySplitExpandedV209 && window._jv166Metrics && window._jv166Metrics.mode === 'split');
         lineEl.style.setProperty('display', isSplit ? 'block' : 'none', 'important');
-        if (lineEl._v209Upgraded) {
+        if (lineEl._v210Upgraded) {
             if (isSplit) window.updateSplitLineUI(lineEl);
             return;
         }
-        lineEl._v209Upgraded = true;
+        lineEl._v210Upgraded = true;
         lineEl.style.zIndex = '99990';
         lineEl.innerHTML =
             '<div id="jv176SplitHeader" style="position:absolute;top:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;background:rgba(0,0,0,0.88);padding:4px 8px;border-radius:6px;border:1px solid #00e5ff;white-space:nowrap;pointer-events:auto;">' +
@@ -15805,46 +16317,30 @@ let vsyncTicks = 0;
             var q = vEl.getVideoPlaybackQuality();
             if (q) { totalDec = q.totalVideoFrames; droppedDec = q.droppedVideoFrames; }
         }
-        if (!glRendererInfo && glCtx) {
-            try {
-                var dbg = glCtx.getExtension('WEBGL_debug_renderer_info');
-                glRendererInfo = dbg
-                    ? (glCtx.getParameter(dbg.UNMASKED_VENDOR_WEBGL) + " / " + glCtx.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
-                    : glCtx.getParameter(glCtx.RENDERER);
-            } catch (e) {}
-        }
         var modeStr = (window._jv166Metrics && window._jv166Metrics.mode) || "off";
         var origFps = window.getRealOrigFpsV208 ? window.getRealOrigFpsV208() : 30;
-        var spInfo = (modeStr === 'split')
-            ? (" (поз=" + Math.round((window._jennySplitRatioV176 || 0.5) * 100) + "%, " +
-               (window._jennySplitSwappedV176 ? ("Слева 120Hz/Справа ОРИГ " + origFps + " FPS") : ("Слева ОРИГ " + origFps + " FPS/Справа 120Hz")) + ")")
-            : "";
         var tun = window._jennyTunerV190 || {};
+        var effDur = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vEl) : vEl.duration;
         return [
-            "================ ПАСПОРТ МЕДИАФАЙЛА И ДВИЖКА V209 ================",
+            "================ ПАСПОРТ МЕДИАФАЙЛА И ДВИЖКА V210 ================",
             "Файл (Имя)      : " + fName,
-            "Путь / URI      : " + decPath,
-            "Разрешение видео: " + (vEl.videoWidth || 0) + "x" + (vEl.videoHeight || 0) +
-                " | Родной FPS: " + origFps + " к/с | Буфер WebGL: " + (glCtx ? glCtx.drawingBufferWidth + "x" + glCtx.drawingBufferHeight : "N/A"),
-            "Длительность    : " + (isFinite(vEl.duration) ? vEl.duration.toFixed(2) + " сек" : "N/A") +
-                " | Позиция старта лога: " + (vEl.currentTime || 0).toFixed(3) + " сек",
-            "Скорость (Rate) : " + (vEl.playbackRate || 1) + "x | Режим: " + modeStr + spInfo,
-            "Крутилки V209   : Dup±Y=" + Number(tun.dupThresh || 0).toFixed(0) +
+            "Разрешение видео: " + (vEl.videoWidth || 0) + "x" + (vEl.videoHeight || 0) + " | Родной FPS: " + origFps + " к/с",
+            "Длительность    : " + (Number.isFinite(effDur) && effDur > 0 ? effDur.toFixed(2) + " сек" : "N/A") +
+                " | Позиция старта лога: " + (window.getEffectiveVideoCurrentTimeV210 ? window.getEffectiveVideoCurrentTimeV210(vEl) : (vEl.currentTime || 0)).toFixed(3) + " сек",
+            "Скорость (Rate) : " + (vEl.playbackRate || 1) + "x | Режим: " + modeStr,
+            "Крутилки V210   : Dup±Y=" + Number(tun.dupThresh || 0).toFixed(0) +
                 " | TargetFPS=" + Number(tun.targetFps || 120).toFixed(0) +
                 " | Scale=" + Number(tun.flowScale || 0).toFixed(2) +
                 " | Gate=" + Number(tun.ghostGate || 0).toFixed(2) +
                 " | Guard=" + Number(tun.detailGuard || 0).toFixed(2) +
                 " | Bridge=" + Number(tun.bridgeSpread || 0).toFixed(2) +
-                " | Rad=" + Number(tun.searchRadius || 0).toFixed(1) +
-                " | Ink=" + Number(tun.inkGuard || 0).toFixed(2) +
-                " | PLL=" + Number(tun.pllSmooth || 0).toFixed(2),
+                " | Rad=" + Number(tun.searchRadius || 0).toFixed(1),
             "Декодер (кадры) : всего=" + totalDec + ", пропущено(drop)=" + droppedDec + ", отсечено дублей (B==A)=" + (window._jennySkippedDupsTotal || 0),
-            "GPU / Рендерер  : " + (glRendererInfo || "N/A"),
             "=================================================================="
         ].join("\n") + "\n";
     }
 
-    function recordComparativeTickV209(glCtx, fromOffMode) {
+    function recordComparativeTickV210(glCtx, fromOffMode) {
         var now = performance.now();
         var dt = now - lastTickTime;
         lastTickTime = now;
@@ -15860,7 +16356,7 @@ let vsyncTicks = 0;
             var q = vEl.getVideoPlaybackQuality();
             if (q) dec = q.totalVideoFrames;
         }
-        var vTime = vEl ? (vEl.currentTime || 0) : 0;
+        var vTime = vEl ? window.getEffectiveVideoCurrentTimeV210(vEl) : 0;
         var spd = (vEl && vEl.playbackRate > 0.01) ? vEl.playbackRate : 1.0;
 
         var origChanged = false;
@@ -15906,56 +16402,27 @@ let vsyncTicks = 0;
         var stepNum = diag.step || Math.max(1, Math.round(curAlpha * totSteps));
         var expMs = diag.expectedSpanMs || (33.33 / spd);
 
-        if (up) {
-            lastGeneratorStallTicks = 0;
-        } else if (curAlpha >= 0.995) {
-            lastGeneratorStallTicks++;
-        } else {
-            lastGeneratorStallTicks = 0;
-        }
+        if (up) lastGeneratorStallTicks = 0;
+        else if (curAlpha >= 0.995) lastGeneratorStallTicks++;
+        else lastGeneratorStallTicks = 0;
 
         var modeNow = (window._jv166Metrics && window._jv166Metrics.mode) || 'off';
         var origCol = origChanged
             ? ("dec:" + String(dec).padEnd(6, ' ') + " НОВЫЙ(" + origSpanMs.toFixed(1).padStart(5, ' ') + "ms)")
             : ("dec:" + String(dec).padEnd(6, ' ') + " ждёт " + origSpanMs.toFixed(1).padStart(5, ' ') + "ms #" + String(origHoldTicks).padEnd(2, ' '));
-        var genCol = "";
-        var verdict = "";
-
-        if (modeNow === 'off' || fromOffMode) {
-            genCol = "OFF (дефолтный плеер)";
-            verdict = origChanged
-                ? ((origSpanMs > expMs * 1.65) ? ("⚠️ РЫВОК В САМОМ ВИДЕО (пауза " + origSpanMs.toFixed(0) + "ms)") : "📸 Кадр оригинала")
-                : ((origSpanMs > expMs * 1.65) ? ("⚠️ ЗАТУП ИСХОДНИКА (нет кадра " + origSpanMs.toFixed(0) + "ms)") : "⏳ Показ оригинала");
-        } else {
-            var texTag = up ? "tex:1" : (origChanged ? "tex:DUP" : "tex:0");
-            var stepTag = String(stepNum).padStart(2, '0') + "/" + String(totSteps).padStart(2, '0');
-            genCol = texTag.padEnd(7, ' ') + " | " + stepTag + " | a:" + curAlpha.toFixed(3);
-
-            if (origChanged && up) {
-                verdict = (origSpanMs > expMs * 1.65)
-                    ? ("⚠️ ОРИГ опоздал (" + origSpanMs.toFixed(0) + "ms) -> 📸 ГЕН принял")
-                    : "📸 НОВЫЙ КАДР (ОРИГ -> ГЕН синхронно)";
-            } else if (origChanged && !up) {
-                verdict = "⏭️ ГЕН ВЫКИНУЛ КАДР (дубль B==A)";
-            } else if (curAlpha >= 0.995 && lastGeneratorStallTicks >= 2) {
-                verdict = (origSpanMs > expMs * 1.45)
-                    ? ("⚠️ ЗАТУП ВИДЕО (" + origSpanMs.toFixed(0) + "ms) -> ГЕН ждёт на a=1.0")
-                    : ("🛑 СТОПОР ГЕНЕРАТОРА (рано дошёл до a=1.0, стоит #" + lastGeneratorStallTicks + "т)");
-            } else {
-                verdict = "🟢 ГЕН плавно двигает (шаг " + stepTag + ")";
-            }
-        }
+        var genCol = (modeNow === 'off' || fromOffMode)
+            ? "OFF (дефолтный плеер)"
+            : ((up ? "tex:1" : (origChanged ? "tex:DUP" : "tex:0")).padEnd(7, ' ') + " | " + String(stepNum).padStart(2, '0') + "/" + String(totSteps).padStart(2, '0') + " | a:" + curAlpha.toFixed(3));
+        var verdict = (origChanged && up) ? "📸 НОВЫЙ КАДР (ОРИГ -> ГЕН синхронно)" : ((curAlpha >= 0.995 && lastGeneratorStallTicks >= 2) ? "⚠️ Ожидание кадра декодера" : "🟢 ГЕН плавно двигает");
 
         logEntries.push({
             idx: logEntries.length + 1,
             dt: dt,
             vTime: vTime,
-            dec: dec,
             origChanged: origChanged,
             origSpanMs: origSpanMs,
             texUp: up,
             stalled: (lastGeneratorStallTicks >= 2) ? 1 : 0,
-            dupDropped: (origChanged && !up && modeNow !== 'off') ? 1 : 0,
             origCol: origCol,
             genCol: genCol,
             verdict: verdict
@@ -15968,58 +16435,20 @@ let vsyncTicks = 0;
 
         if (logEntries.length >= TOTAL_LOG_FRAMES) {
             isLogging = false;
-            var blocks = [];
-            for (var r = 0; r < 3; r++) {
-                var sl = logEntries.slice(r * 120, (r + 1) * 120);
-                var sum = 0, tUps = 0, oNews = 0, oSpans = [], stallCnt = 0, dupDropCnt = 0, lines = [];
-                for (var k = 0; k < sl.length; k++) {
-                    var e = sl[k];
-                    sum += e.dt;
-                    if (e.texUp) tUps++;
-                    if (e.origChanged) {
-                        oNews++;
-                        if (e.origSpanMs > 5 && e.origSpanMs < 2000) oSpans.push(e.origSpanMs);
-                    }
-                    if (e.stalled) stallCnt++;
-                    if (e.dupDropped) dupDropCnt++;
-                    lines.push(
-                        String(e.idx).padStart(3, ' ') + " | " +
-                        e.dt.toFixed(2).padStart(6, ' ') + "ms | " +
-                        e.vTime.toFixed(4) + "s | " +
-                        e.origCol + " | " +
-                        e.genCol + " | " +
-                        e.verdict
-                    );
-                }
-                var avgD = sum / Math.max(1, sl.length);
-                var avgOrigSpan = oSpans.length ? (oSpans.reduce(function(a,b){return a+b;}, 0) / oSpans.length) : 0;
-                var maxOrigSpan = oSpans.length ? Math.max.apply(null, oSpans) : 0;
-                var minOrigSpan = oSpans.length ? Math.min.apply(null, oSpans) : 0;
-
-                blocks.push(
-                    "\n--- КРУГ " + (r + 1) + "/3 | Экран: " + (1000 / Math.max(0.1, avgD)).toFixed(1) + " FPS (avg " + avgD.toFixed(2) + "ms) ---\n" +
-                    "📊 ОРИГИНАЛ (Декодер): отдал " + oNews + " кадр. | шаг исходника: avg " + avgOrigSpan.toFixed(1) + "ms (min " + minOrigSpan.toFixed(1) + "ms, max пауза " + maxOrigSpan.toFixed(1) + "ms)\n" +
-                    "⚡ ГЕНЕРАТОР (120Hz) : принял texUp=" + tUps + " | выкинул дублей=" + dupDropCnt + " | тиков простоя на a=1.0: " + stallCnt + " из 120\n" +
-                    "Idx | VSync_dt |   vTime  | ОРИГИНАЛ (Декодер видео)  | ГЕНЕРАТОР (WebGL 120Hz) | Кто виноват / Статус тика\n" +
-                    lines.join("\n")
-                );
-            }
-            var out = "=== JENNY V209 СРАВНИТЕЛЬНЫЙ ЛОГ: ОРИГИНАЛ vs ГЕНЕРАТОР (3x120 = 360 ТИКОВ) ===\n" +
-                      getMediaPassport(vEl, glCtx) + blocks.join("\n");
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(out).catch(function(){});
-            }
+            var lines = logEntries.map(function(e) {
+                return String(e.idx).padStart(3, ' ') + " | " + e.dt.toFixed(2).padStart(6, ' ') + "ms | " + e.vTime.toFixed(4) + "s | " + e.origCol + " | " + e.genCol + " | " + e.verdict;
+            });
+            var out = "=== JENNY V210 СРАВНИТЕЛЬНЫЙ ЛОГ (360 ТИКОВ) ===\n" + getMediaPassport(vEl, glCtx) + lines.join("\n");
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(out).catch(function(){});
             window._lastJenny120Log = out;
-            if (typeof window.showToast === 'function') {
-                window.showToast('✅ Сравнительный лог V209 (ОРИГ vs ГЕН) скопирован!');
-            }
+            if (typeof window.showToast === 'function') window.showToast('✅ Лог V210 скопирован!');
             if (btn) btn.textContent = '📋 360 ОК';
         }
     }
 
     function attachProbe(Proto) {
-        if (!Proto || Proto._v209Probe) return;
-        Proto._v209Probe = true;
+        if (!Proto || Proto._v210Probe) return;
+        Proto._v210Probe = true;
         var origLoc = Proto.getUniformLocation;
         Proto.getUniformLocation = function(p, n) {
             var l = origLoc.call(this, p, n);
@@ -16040,7 +16469,7 @@ let vsyncTicks = 0;
         var origDraw = Proto.drawArrays;
         Proto.drawArrays = function(m, f, c) {
             if (window._jennyExp120HzEnabledV205 || (window._jennyLabFlagsV208 && window._jennyLabFlagsV208.logDots)) {
-                recordComparativeTickV209(this, false);
+                recordComparativeTickV210(this, false);
             }
             return origDraw.call(this, m, f, c);
         };
@@ -16063,81 +16492,49 @@ let vsyncTicks = 0;
         }
     }
 
-    // 1. СВЕРНУТАЯ КНОПКА ЛОГА С ТОЧКАМИ (#jennyFenceWrapV173) — ПРИ СНЯТИИ ГАЛОЧКИ УДАЛЯЕТСЯ БЕЗ СЛЕДА
     function ensureLogDotsWidget(stage) {
         var fl = window._jennyLabFlagsV208 || {};
         var oldW = document.getElementById('jennyFenceWrapV173');
-        if (!fl.logDots || (stage.clientWidth > 0 && stage.clientWidth < 210)) {
-            if (oldW) oldW.remove();
-            return;
-        }
-        if (oldW && oldW._isV209LogPill) {
-            return;
-        }
+        if (!fl.logDots) { if (oldW) oldW.remove(); return; }
+        if (oldW && oldW._isV210LogPill) return;
         if (oldW) oldW.remove();
 
         var sx = parseFloat(localStorage.getItem('jenny_diag_x') || '10');
         var sy = parseFloat(localStorage.getItem('jenny_diag_y') || '52');
-
         var wrap = document.createElement('div');
         wrap.id = 'jennyFenceWrapV173';
-        wrap._isV209LogPill = true;
-        wrap.className = 'jv209-collapsible-tool';
+        wrap._isV210LogPill = true;
         wrap.style.cssText = 'position:absolute;top:' + sy + 'px;left:' + sx + 'px;z-index:99998;display:flex;flex-direction:column;align-items:stretch;gap:3px;background:rgba(4,10,16,0.92);border:1px solid #00e5ff;border-radius:14px;padding:3px 7px;pointer-events:auto;touch-action:none;user-select:none;box-shadow:0 4px 12px rgba(0,0,0,0.75);box-sizing:border-box;width:' + (isLogCollapsed ? 'auto' : '214px') + ';';
 
         var cv = document.createElement('canvas');
         cv.id = 'jennyFenceCanvasV173';
-        cv.width = 200;
-        cv.height = 28;
+        cv.width = 200; cv.height = 28;
         cv.style.cssText = 'width:200px;height:28px;display:' + (isLogCollapsed ? 'none' : 'block') + ';border-bottom:1px solid rgba(0,229,255,0.25);padding-bottom:1px;';
 
         var row2 = document.createElement('div');
-        row2.id = 'jennyFenceRow2V177';
         row2.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:5px;';
+        row2.innerHTML =
+            '<button id="jennyFenceToggleBtn" style="background:#11222b;color:#00e5ff;font-size:10px;font-weight:900;border:1px solid rgba(0,229,255,0.45);border-radius:10px;padding:2px 8px;white-space:nowrap;">' + (isLogCollapsed ? '📊 Лог' : '➖') + '</button>' +
+            '<button id="jennyLog120Btn" style="display:' + (isLogCollapsed ? 'none' : 'inline-block') + ';background:#00e5ff;color:#000;font-weight:900;font-size:9.5px;border:none;border-radius:6px;padding:3px 6px;white-space:nowrap;flex:1;">📋 ЛОГ 360</button>' +
+            '<span style="color:rgba(0,229,255,0.75);font-size:12px;padding:0 2px;">✥</span>';
 
-        var tBtn = document.createElement('button');
-        tBtn.id = 'jennyFenceToggleBtn';
-        tBtn.textContent = isLogCollapsed ? '📊 Лог' : '➖';
-        tBtn.style.cssText = 'background:#11222b;color:#00e5ff;font-size:10px;font-weight:900;border:1px solid rgba(0,229,255,0.45);border-radius:10px;padding:2px 8px;white-space:nowrap;';
-
-        var lBtn = document.createElement('button');
-        lBtn.id = 'jennyLog120Btn';
-        lBtn.textContent = '📋 ЛОГ 360';
-        lBtn.style.cssText = 'display:' + (isLogCollapsed ? 'none' : 'inline-block') + ';background:#00e5ff;color:#000;font-weight:900;font-size:9.5px;border:none;border-radius:6px;padding:3px 6px;white-space:nowrap;flex:1;';
-
-        var dragHint = document.createElement('span');
-        dragHint.textContent = '✥';
-        dragHint.style.cssText = 'color:rgba(0,229,255,0.75);font-size:12px;padding:0 2px;';
-
-        row2.appendChild(tBtn);
-        row2.appendChild(lBtn);
-        row2.appendChild(dragHint);
         wrap.appendChild(cv);
         wrap.appendChild(row2);
         stage.appendChild(wrap);
     }
 
-    // 2. СВЕРНУТАЯ КНОПКА КРУТИЛОК ДЕКОДЕРА (#jennyTunerFloatWrapV208) — ПРИ СНЯТИИ ГАЛОЧКИ УДАЛЯЕТСЯ БЕЗ СЛЕДА
     function ensureTunerSlidersWidget(stage) {
         var fl = window._jennyLabFlagsV208 || {};
         var oldT = document.getElementById('jennyTunerFloatWrapV208');
-        if (!fl.tunerSliders || (stage.clientWidth > 0 && stage.clientWidth < 210)) {
-            if (oldT) oldT.remove();
-            return;
-        }
-        if (oldT && oldT._isV209TunerPill) {
-            syncTunerSlidersDOM();
-            return;
-        }
+        if (!fl.tunerSliders) { if (oldT) oldT.remove(); return; }
+        if (oldT && oldT._isV210TunerPill) { syncTunerSlidersDOM(); return; }
         if (oldT) oldT.remove();
 
         var tx = parseFloat(localStorage.getItem('jenny_tuner_x') || '102');
         var ty = parseFloat(localStorage.getItem('jenny_tuner_y') || '52');
-
         var wrap = document.createElement('div');
         wrap.id = 'jennyTunerFloatWrapV208';
-        wrap._isV209TunerPill = true;
-        wrap.className = 'jv209-collapsible-tool';
+        wrap._isV210TunerPill = true;
         wrap.style.cssText = 'position:absolute;top:' + ty + 'px;left:' + tx + 'px;z-index:99999;display:flex;flex-direction:column;align-items:stretch;gap:2px;background:rgba(6,12,20,0.92);border:1px solid #d2a8ff;border-radius:14px;padding:3px 7px;pointer-events:auto;touch-action:none;user-select:none;box-shadow:0 4px 12px rgba(0,0,0,0.8);box-sizing:border-box;width:' + (isTunerCollapsed ? 'auto' : '222px') + ';';
 
         var hdr = document.createElement('div');
@@ -16150,22 +16547,17 @@ let vsyncTicks = 0;
         var tBox = document.createElement('div');
         tBox.id = 'jennyTunerBoxV190';
         tBox.style.cssText = 'display:' + (isTunerCollapsed ? 'none' : 'flex') + ';flex-direction:column;gap:1px;padding-top:3px;border-top:1px solid rgba(210,168,255,0.25);margin-top:2px;';
-
-        var slidersHtml = '';
-        for (var i = 0; i < TUNER_SPECS.length; i++) {
-            var sp = TUNER_SPECS[i];
-            slidersHtml +=
-                '<div class="jt190-slider-row" data-jtkey="' + sp.key + '" style="display:flex;flex-direction:column;gap:1px;padding:1px 0;cursor:pointer;">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center;font-family:monospace;font-size:9px;line-height:1.0;">' +
-                        '<span style="color:#e6edf3;font-weight:bold;">' + sp.label + ' <span style="color:#6e7681;font-size:8px;">[' + sp.min + '..' + sp.max + ']</span></span>' +
-                        '<span id="jt190Val_' + sp.key + '" style="color:' + sp.color + ';font-weight:900;font-size:9.5px;">' + sp.def.toFixed(sp.fmt) + '</span>' +
-                    '</div>' +
-                    '<div id="jt190Track_' + sp.key + '" style="width:100%;height:5px;background:#111922;border:1px solid rgba(255,255,255,0.18);border-radius:3px;overflow:hidden;position:relative;">' +
-                        '<div id="jt190Fill_' + sp.key + '" style="width:50%;height:100%;background:' + sp.color + ';border-radius:3px;pointer-events:none;"></div>' +
-                    '</div>' +
-                '</div>';
-        }
-        tBox.innerHTML = slidersHtml;
+        tBox.innerHTML = TUNER_SPECS.map(function(sp) {
+            return '<div class="jt190-slider-row" data-jtkey="' + sp.key + '" style="display:flex;flex-direction:column;gap:1px;padding:1px 0;cursor:pointer;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;font-family:monospace;font-size:9px;line-height:1.0;">' +
+                    '<span style="color:#e6edf3;font-weight:bold;">' + sp.label + ' <span style="color:#6e7681;font-size:8px;">[' + sp.min + '..' + sp.max + ']</span></span>' +
+                    '<span id="jt190Val_' + sp.key + '" style="color:' + sp.color + ';font-weight:900;font-size:9.5px;">' + sp.def.toFixed(sp.fmt) + '</span>' +
+                '</div>' +
+                '<div id="jt190Track_' + sp.key + '" style="width:100%;height:5px;background:#111922;border:1px solid rgba(255,255,255,0.18);border-radius:3px;overflow:hidden;position:relative;">' +
+                    '<div id="jt190Fill_' + sp.key + '" style="width:50%;height:100%;background:' + sp.color + ';border-radius:3px;pointer-events:none;"></div>' +
+                '</div>' +
+            '</div>';
+        }).join('');
 
         wrap.appendChild(hdr);
         wrap.appendChild(tBox);
@@ -16173,25 +16565,19 @@ let vsyncTicks = 0;
         syncTunerSlidersDOM();
     }
 
-    // 3. СВЕРНУТАЯ КНОПКА РЕЖИМА СРАВНЕНИЯ / СПЛИТА (#jennySplitPillWrapV209) И 120Hz (#jenny120PillWrapV209)
     function ensureSplitAnd120Pills(stage) {
         var fl = window._jennyLabFlagsV208 || {};
 
-        // Кнопка Сплита
         var oldSp = document.getElementById('jennySplitPillWrapV209');
-        if (!fl.splitTest || (stage.clientWidth > 0 && stage.clientWidth < 210)) {
-            if (oldSp) oldSp.remove();
-        } else {
+        if (!fl.splitTest) { if (oldSp) oldSp.remove(); }
+        else {
             if (!oldSp) {
                 var spx = parseFloat(localStorage.getItem('jenny_split_pill_x') || '10');
                 var spy = parseFloat(localStorage.getItem('jenny_split_pill_y') || '86');
                 oldSp = document.createElement('div');
                 oldSp.id = 'jennySplitPillWrapV209';
-                oldSp.className = 'jv209-collapsible-tool';
                 oldSp.style.cssText = 'position:absolute;top:' + spy + 'px;left:' + spx + 'px;z-index:99997;display:flex;align-items:center;gap:4px;background:rgba(4,12,20,0.92);border:1px solid #00e5ff;border-radius:14px;padding:3px 7px;pointer-events:auto;touch-action:none;user-select:none;box-shadow:0 4px 12px rgba(0,0,0,0.75);';
-                oldSp.innerHTML =
-                    '<button id="jennySplitPillBtnV209" style="background:#0d212c;color:#00e5ff;font-size:10px;font-weight:900;border:1px solid rgba(0,229,255,0.45);border-radius:10px;padding:2px 8px;white-space:nowrap;">🌓 Сплит</button>' +
-                    '<span style="color:rgba(0,229,255,0.75);font-size:12px;padding:0 2px;">✥</span>';
+                oldSp.innerHTML = '<button id="jennySplitPillBtnV209" style="background:#0d212c;color:#00e5ff;font-size:10px;font-weight:900;border:1px solid rgba(0,229,255,0.45);border-radius:10px;padding:2px 8px;white-space:nowrap;">🌓 Сплит</button><span style="color:rgba(0,229,255,0.75);font-size:12px;padding:0 2px;">✥</span>';
                 stage.appendChild(oldSp);
             }
             var spBtn = document.getElementById('jennySplitPillBtnV209');
@@ -16203,21 +16589,16 @@ let vsyncTicks = 0;
             }
         }
 
-        // Кнопка 120Hz (если включена галочка Генератора 120Hz)
         var old120 = document.getElementById('jenny120PillWrapV209');
-        if (!fl.core120 || (stage.clientWidth > 0 && stage.clientWidth < 210)) {
-            if (old120) old120.remove();
-        } else {
+        if (!fl.core120) { if (old120) old120.remove(); }
+        else {
             if (!old120) {
                 var c120x = parseFloat(localStorage.getItem('jenny_120_pill_x') || '106');
                 var c120y = parseFloat(localStorage.getItem('jenny_120_pill_y') || '86');
                 old120 = document.createElement('div');
                 old120.id = 'jenny120PillWrapV209';
-                old120.className = 'jv209-collapsible-tool';
                 old120.style.cssText = 'position:absolute;top:' + c120y + 'px;left:' + c120x + 'px;z-index:99997;display:flex;align-items:center;gap:4px;background:rgba(4,16,12,0.92);border:1px solid #00ff9d;border-radius:14px;padding:3px 7px;pointer-events:auto;touch-action:none;user-select:none;box-shadow:0 4px 12px rgba(0,0,0,0.75);';
-                old120.innerHTML =
-                    '<button id="jenny120PillBtnV209" style="background:#0d281d;color:#00ff9d;font-size:10px;font-weight:900;border:1px solid rgba(0,255,157,0.45);border-radius:10px;padding:2px 8px;white-space:nowrap;">⚡ 120Hz</button>' +
-                    '<span style="color:rgba(0,255,157,0.75);font-size:12px;padding:0 2px;">✥</span>';
+                old120.innerHTML = '<button id="jenny120PillBtnV209" style="background:#0d281d;color:#00ff9d;font-size:10px;font-weight:900;border:1px solid rgba(0,255,157,0.45);border-radius:10px;padding:2px 8px;white-space:nowrap;">⚡ 120Hz</button><span style="color:rgba(0,255,157,0.75);font-size:12px;padding:0 2px;">✥</span>';
                 stage.appendChild(old120);
             }
             var b120 = document.getElementById('jenny120PillBtnV209');
@@ -16254,12 +16635,7 @@ let vsyncTicks = 0;
         var wrap = document.getElementById('jennyTunerFloatWrapV208');
         var rot90 = isStageRot90(wrap ? wrap.parentElement : null);
 
-        var ratio = 0.5;
-        if (!rot90 && r.width > 10) {
-            ratio = (tx - r.left) / r.width;
-        } else if (rot90 && r.height > 10) {
-            ratio = (ty - r.top) / r.height;
-        }
+        var ratio = (!rot90 && r.width > 10) ? ((tx - r.left) / r.width) : ((rot90 && r.height > 10) ? ((ty - r.top) / r.height) : 0.5);
         ratio = Math.max(0.0, Math.min(1.0, ratio));
         var newVal = sp.min + ratio * (sp.max - sp.min);
         var factor = Math.pow(10, sp.fmt);
@@ -16286,14 +16662,12 @@ let vsyncTicks = 0;
         for (var p = 0; p < pillTargets.length; p++) {
             var pt = pillTargets[p];
             var wEl = document.getElementById(pt.id);
-            if (wEl && wEl.style.display !== 'none' && wEl.offsetParent !== null && !wEl.classList.contains('jv209-hud-hidden-item')) {
+            if (wEl && wEl.style.display !== 'none' && wEl.offsetParent !== null && !wEl.classList.contains('jv210-hidden-node')) {
                 var rect = wEl.getBoundingClientRect();
                 if (tx >= rect.left - 4 && tx <= rect.right + 4 && ty >= rect.top - 4 && ty <= rect.bottom + 4) {
                     var el = document.elementFromPoint(tx, ty) || e.target;
                     touchedElement = el;
-                    startTouchX = tx;
-                    startTouchY = ty;
-                    maxTouchDelta = 0;
+                    startTouchX = tx; startTouchY = ty; maxTouchDelta = 0;
 
                     if (pt.mode === 'tuner_widget') {
                         var sRow = el && el.closest ? el.closest('.jt190-slider-row') : null;
@@ -16326,29 +16700,14 @@ let vsyncTicks = 0;
             var rot90 = isStageRot90(stageEl);
 
             var onHdr = false, onGrip = false;
-            if (hdr) {
-                var hr = hdr.getBoundingClientRect();
-                onHdr = (tx >= hr.left - 8 && tx <= hr.right + 8 && ty >= hr.top - 8 && ty <= hr.bottom + 8);
-            }
-            if (grip) {
-                var gr = grip.getBoundingClientRect();
-                onGrip = (tx >= gr.left - 16 && tx <= gr.right + 16 && ty >= gr.top - 16 && ty <= gr.bottom + 16);
-            }
-
-            var nearLine = false;
-            if (!rot90) {
-                var lineX = sRect.left + sRect.width * 0.5;
-                nearLine = (Math.abs(tx - lineX) <= 26 && ty >= stageRect.top && ty <= (stageRect.bottom - 95));
-            } else {
-                var lineY = sRect.top + sRect.height * 0.5;
-                nearLine = (Math.abs(ty - lineY) <= 26 && tx >= (stageRect.left + 95) && tx <= stageRect.right);
-            }
+            if (hdr) { var hr = hdr.getBoundingClientRect(); onHdr = (tx >= hr.left - 8 && tx <= hr.right + 8 && ty >= hr.top - 8 && ty <= hr.bottom + 8); }
+            if (grip) { var gr = grip.getBoundingClientRect(); onGrip = (tx >= gr.left - 16 && tx <= gr.right + 16 && ty >= gr.top - 16 && ty <= gr.bottom + 16); }
+            var nearLine = (!rot90) ? (Math.abs(tx - (sRect.left + sRect.width * 0.5)) <= 26 && ty >= stageRect.top && ty <= (stageRect.bottom - 95))
+                                    : (Math.abs(ty - (sRect.top + sRect.height * 0.5)) <= 26 && tx >= (stageRect.left + 95) && tx <= stageRect.right);
 
             if (onHdr || onGrip || nearLine) {
                 activeDragMode = 'split';
-                startTouchX = tx;
-                startTouchY = ty;
-                maxTouchDelta = 0;
+                startTouchX = tx; startTouchY = ty; maxTouchDelta = 0;
                 touchedElement = onHdr ? hdr : (onGrip ? grip : lineEl);
                 e.stopImmediatePropagation();
                 if (e.cancelable) e.preventDefault();
@@ -16387,15 +16746,10 @@ let vsyncTicks = 0;
                 var rot90 = isStageRot90(stageEl);
                 var localDx = rot90 ? dy : dx;
                 var localDy = rot90 ? (-dx) : dy;
-
-                var pw = stageEl.clientWidth;
-                var ph = stageEl.clientHeight;
-                var maxL = Math.max(4, pw - wrap.offsetWidth - 4);
-                var maxT = Math.max(4, ph - wrap.offsetHeight - 4);
-                var newL = Math.max(4, Math.min(maxL, startWidgetLeft + localDx));
-                var newT = Math.max(4, Math.min(maxT, startWidgetTop + localDy));
-                wrap.style.left = Math.round(newL) + 'px';
-                wrap.style.top = Math.round(newT) + 'px';
+                var maxL = Math.max(4, stageEl.clientWidth - wrap.offsetWidth - 4);
+                var maxT = Math.max(4, stageEl.clientHeight - wrap.offsetHeight - 4);
+                wrap.style.left = Math.round(Math.max(4, Math.min(maxL, startWidgetLeft + localDx))) + 'px';
+                wrap.style.top = Math.round(Math.max(4, Math.min(maxT, startWidgetTop + localDy))) + 'px';
                 wrap.style.bottom = 'auto';
             }
         } else if (activeDragMode === 'split' && maxTouchDelta > 4) {
@@ -16404,13 +16758,9 @@ let vsyncTicks = 0;
                 var stageEl = lineEl.parentElement;
                 var sr = stageEl.getBoundingClientRect();
                 var rot90 = isStageRot90(stageEl);
-                if (!rot90 && sr.width > 20) {
-                    window._jennySplitRatioV176 = Math.max(0.05, Math.min(0.95, (tx - sr.left) / sr.width));
-                    window.updateSplitLineUI(lineEl);
-                } else if (rot90 && sr.height > 20) {
-                    window._jennySplitRatioV176 = Math.max(0.05, Math.min(0.95, (ty - sr.top) / sr.height));
-                    window.updateSplitLineUI(lineEl);
-                }
+                if (!rot90 && sr.width > 20) window._jennySplitRatioV176 = Math.max(0.05, Math.min(0.95, (tx - sr.left) / sr.width));
+                else if (rot90 && sr.height > 20) window._jennySplitRatioV176 = Math.max(0.05, Math.min(0.95, (ty - sr.top) / sr.height));
+                window.updateSplitLineUI(lineEl);
             }
         }
     }, { capture: true, passive: false });
@@ -16440,11 +16790,7 @@ let vsyncTicks = 0;
             var cv = document.getElementById('jennyFenceCanvasV173');
             var tg = touchedElement;
             if (lBtn && !isLogCollapsed && (tg === lBtn || lBtn.contains(tg))) {
-                logEntries = [];
-                prevTrackDec = -1;
-                lastOrigChangeTs = performance.now();
-                origHoldTicks = 0;
-                isLogging = true;
+                logEntries = []; prevTrackDec = -1; lastOrigChangeTs = performance.now(); origHoldTicks = 0; isLogging = true;
                 lBtn.textContent = '⏳ 1/3...';
             } else if (tBtn && (tg === tBtn || tBtn.contains(tg) || isLogCollapsed)) {
                 isLogCollapsed = !isLogCollapsed;
@@ -16476,9 +16822,7 @@ let vsyncTicks = 0;
                     try { localStorage.setItem('jt190_' + sp.key, String(sp.def)); } catch (err) {}
                 }
                 syncTunerSlidersDOM();
-                if (typeof window.showToast === 'function') {
-                    window.showToast('🔄 Крутилки декодера сброшены!');
-                }
+                if (typeof window.showToast === 'function') window.showToast('🔄 Крутилки сброшены!');
             } else if (cBtn && (tg === cBtn || cBtn.contains(tg) || isTunerCollapsed)) {
                 isTunerCollapsed = !isTunerCollapsed;
                 if (tBox) tBox.style.display = isTunerCollapsed ? 'none' : 'flex';
@@ -16521,105 +16865,6 @@ let vsyncTicks = 0;
         }
     }, { capture: true, passive: false });
 
-    // ==============================================================================
-    // 4. ТАЙМЕР АВТОСКРЫТИЯ УПРАВЛЕНИЯ С ТОЧНОСТЬЮ 0.1 СЕК (ОСНОВНОЙ ПЛЕЕР + РЕЖИМ PiP)
-    // ==============================================================================
-    var lastVideoInteractionTsV209 = performance.now();
-    var hudCurrentlyHiddenV209 = false;
-
-    function isVideoInPipOrMiniModeV209(ov) {
-        var st = window._vidStateV130;
-        if (st && (st.mini || st.isMini || st.pip || st.isPip || st.mode === 'mini')) return true;
-        if (!ov) return false;
-        var cls = (ov.className || '').toLowerCase();
-        if (cls.indexOf('mini') !== -1 || cls.indexOf('pip') !== -1) return true;
-        if (ov.clientWidth > 40 && ov.clientWidth < window.innerWidth * 0.82) return true;
-        return false;
-    }
-
-    function applyHudControlsVisibilityV209(hide) {
-        var ov = document.getElementById('jennyVideoOverlayV130');
-        if (!ov) return;
-        hudCurrentlyHiddenV209 = Boolean(hide);
-
-        var stage = document.getElementById('jennyVideoStageV130');
-        var keepIds = {
-            'jennyVideoStageV130': true,
-            'jennyVideoElV130': true,
-            'jv166InterpCanvas': true,
-            'jv168SplitLine': true
-        };
-
-        // Все элементы управления внутри оверлея плеера
-        var children = Array.from(ov.children);
-        if (stage) {
-            children = children.concat(Array.from(stage.children));
-        }
-
-        for (var i = 0; i < children.length; i++) {
-            var el = children[i];
-            if (!el || !el.id && el.tagName === 'VIDEO') continue;
-            if (el.id && keepIds[el.id]) continue;
-            if (el.tagName === 'VIDEO' || el.tagName === 'STYLE') continue;
-
-            // В свернутом виде прячем и таблетки модулей вместе с управлением плеера; если окно лога/крутилок развернуто — оставляем видимым
-            if (el.id === 'jennyFenceWrapV173' && !isLogCollapsed) continue;
-            if (el.id === 'jennyTunerFloatWrapV208' && !isTunerCollapsed) continue;
-
-            if (hide) {
-                el.style.transition = 'opacity 0.2s ease';
-                el.style.opacity = '0';
-                el.style.pointerEvents = 'none';
-                el.classList.add('jv209-hud-hidden-item');
-            } else {
-                if (el.classList.contains('jv209-hud-hidden-item')) {
-                    el.style.opacity = '';
-                    el.style.pointerEvents = '';
-                    el.classList.remove('jv209-hud-hidden-item');
-                }
-            }
-        }
-    }
-
-    window.wakeVideoHudControlsV209 = function() {
-        lastVideoInteractionTsV209 = performance.now();
-        if (hudCurrentlyHiddenV209) {
-            applyHudControlsVisibilityV209(false);
-        }
-    };
-
-    ['touchstart', 'touchmove', 'mousedown', 'click'].forEach(function(evName) {
-        window.addEventListener(evName, function(e) {
-            var ov = document.getElementById('jennyVideoOverlayV130');
-            if (ov && ov.style.display !== 'none' && ov.contains(e.target)) {
-                window.wakeVideoHudControlsV209();
-            }
-        }, { capture: true, passive: true });
-    });
-
-    function checkAutoHideTickV209() {
-        var ov = document.getElementById('jennyVideoOverlayV130');
-        var vEl = document.getElementById('jennyVideoElV130');
-        if (!ov || ov.style.display === 'none' || !vEl) {
-            hudCurrentlyHiddenV209 = false;
-            return;
-        }
-        var fl = window._jennyLabFlagsV208 || {};
-        var isPip = isVideoInPipOrMiniModeV209(ov);
-        var enabled = isPip ? Boolean(fl.stub2) : Boolean(fl.stub1);
-
-        if (!enabled || activeDragMode) {
-            if (hudCurrentlyHiddenV209) applyHudControlsVisibilityV209(false);
-            return;
-        }
-
-        var delaySec = isPip ? (window._jennyAutoHideSecV209.pip || 2.0) : (window._jennyAutoHideSecV209.main || 3.0);
-        var elapsedSec = (performance.now() - lastVideoInteractionTsV209) / 1000.0;
-        if (elapsedSec >= delaySec) {
-            if (!hudCurrentlyHiddenV209) applyHudControlsVisibilityV209(true);
-        }
-    }
-
     function loopFence() {
         var fl = window._jennyLabFlagsV208 || {};
         var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
@@ -16631,11 +16876,12 @@ let vsyncTicks = 0;
             ensureSplitAnd120Pills(stage);
 
             if (fl.logDots && window._jv166Metrics && window._jv166Metrics.mode === 'off' && !vEl.paused) {
-                recordComparativeTickV209(null, true);
+                recordComparativeTickV210(null, true);
             }
         }
 
-        checkAutoHideTickV209();
+        syncDeckBWithVideoLifecycleV210();
+        checkAutoHideTickV210();
 
         if (fl.logDots && !isLogCollapsed) {
             var cv = document.getElementById('jennyFenceCanvasV173');
@@ -16661,16 +16907,22 @@ let vsyncTicks = 0;
     }
     requestAnimationFrame(loopFence);
 
-    window.updateAutoHideSecV209 = function(which, rawVal) {
+    window.updateAutoHideSecV209 = function(which, rawVal, showToastFlag) {
         var num = parseFloat(String(rawVal).replace(',', '.'));
-        if (!Number.isFinite(num)) return;
-        num = Math.max(0.5, Math.min(60.0, Math.round(num * 10) / 10));
+        if (!Number.isFinite(num) || num <= 0) return;
+        num = Math.max(0.5, Math.min(120.0, Math.round(num * 10) / 10));
         if (which === 'pip') {
             window._jennyAutoHideSecV209.pip = num;
             try { localStorage.setItem('jenny_autohide_pip_sec_v209', num.toFixed(1)); } catch (e) {}
+            if (showToastFlag && typeof window.showToast === 'function') {
+                window.showToast('❐ Скрытие UI в мини-плеере: ' + num.toFixed(1) + ' сек');
+            }
         } else {
             window._jennyAutoHideSecV209.main = num;
             try { localStorage.setItem('jenny_autohide_main_sec_v209', num.toFixed(1)); } catch (e) {}
+            if (showToastFlag && typeof window.showToast === 'function') {
+                window.showToast('⏱️ Скрытие UI в плеере: ' + num.toFixed(1) + ' сек');
+            }
         }
         window.wakeVideoHudControlsV209();
     };
@@ -16679,43 +16931,15 @@ let vsyncTicks = 0;
         var fl = window._jennyLabFlagsV208;
         fl[flagKey] = Boolean(checked);
 
-        // При включении галочки в настройках инструмент появляется в плеере СВЕРНУТЫМ (по умолчанию играет дефолт!)
-        if (flagKey === 'splitTest') {
-            window._jennySplitExpandedV209 = false;
-        }
-        if (flagKey === 'core120') {
-            window._jenny120ExpandedV209 = false;
-        }
-        if (flagKey === 'logDots') {
-            isLogCollapsed = true;
-            var lw = document.getElementById('jennyFenceWrapV173');
-            if (lw) lw.remove();
-        }
-        if (flagKey === 'tunerSliders') {
-            isTunerCollapsed = true;
-            var tw = document.getElementById('jennyTunerFloatWrapV208');
-            if (tw) tw.remove();
-        }
+        if (flagKey === 'splitTest') window._jennySplitExpandedV209 = false;
+        if (flagKey === 'core120')   window._jenny120ExpandedV209   = false;
+        if (flagKey === 'logDots')      { isLogCollapsed = true;   var lw = document.getElementById('jennyFenceWrapV173');      if (lw) lw.remove(); }
+        if (flagKey === 'tunerSliders') { isTunerCollapsed = true; var tw = document.getElementById('jennyTunerFloatWrapV208'); if (tw) tw.remove(); }
 
         window.saveJennyLabFlagsV208();
         window.updateActiveEngineModeV209();
         window.syncModularLabDOMV208();
         window.wakeVideoHudControlsV209();
-
-        if (showMsg && typeof window.showToast === 'function') {
-            var names = {
-                core120:      '⚡ Кнопка 120Hz & Матрица .SO',
-                splitTest:    '🌓 Кнопка режима сравнения (Сплит)',
-                logDots:      '📊 Кнопка лога с точками',
-                tunerSliders: '🎛️ Кнопка крутилок декодера',
-                stub1:        '⏱️ Автоскрытие управления (Плеер)',
-                stub2:        '❐ Автоскрытие управления (PiP)',
-                stub3:        '🧩 Заглушка 3',
-                stub4:        '🧩 Заглушка 4',
-                stub5:        '🧩 Заглушка 5'
-            };
-            window.showToast((names[flagKey] || flagKey) + ': ' + (fl[flagKey] ? 'ВКЛ' : 'ВЫКЛ'));
-        }
     };
 
     window.syncModularLabDOMV208 = function() {
@@ -16731,22 +16955,10 @@ let vsyncTicks = 0;
             vcorePanel.style.setProperty('display', showPanel ? 'block' : 'none', 'important');
         }
 
-        if (!fl.logDots) {
-            var logW = document.getElementById('jennyFenceWrapV173');
-            if (logW) logW.remove();
-        }
-        if (!fl.tunerSliders) {
-            var tunW = document.getElementById('jennyTunerFloatWrapV208');
-            if (tunW) tunW.remove();
-        }
-        if (!fl.splitTest) {
-            var spW = document.getElementById('jennySplitPillWrapV209');
-            if (spW) spW.remove();
-        }
-        if (!fl.core120) {
-            var c120W = document.getElementById('jenny120PillWrapV209');
-            if (c120W) c120W.remove();
-        }
+        if (!fl.logDots)      { var lw = document.getElementById('jennyFenceWrapV173');      if (lw) lw.remove(); }
+        if (!fl.tunerSliders) { var tw = document.getElementById('jennyTunerFloatWrapV208'); if (tw) tw.remove(); }
+        if (!fl.splitTest)    { var sw = document.getElementById('jennySplitPillWrapV209');  if (sw) sw.remove(); }
+        if (!fl.core120)      { var cw = document.getElementById('jenny120PillWrapV209');    if (cw) cw.remove(); }
 
         Object.keys(fl).forEach(function(k) {
             var chk = document.getElementById('chkLabV208_' + k);
@@ -16768,26 +16980,23 @@ let vsyncTicks = 0;
             box.id = 'jennyModularLabBoxV208';
             box.className = 'setting-group';
             box.style.cssText = 'margin-bottom:10px;border:1.5px solid #30363d;border-radius:10px;background:#090d14;padding:6px 10px;';
-            if (deckBar && deckBar.parentNode) {
-                deckBar.insertAdjacentElement('afterend', box);
-            } else {
-                container.insertBefore(box, container.firstChild);
-            }
+            if (deckBar && deckBar.parentNode) deckBar.insertAdjacentElement('afterend', box);
+            else container.insertBefore(box, container.firstChild);
         }
 
-        if (box._v209Rendered) {
+        if (box._v210Rendered) {
             window.syncModularLabDOMV208();
             return;
         }
-        box._v209Rendered = true;
+        box._v210Rendered = true;
 
         var items = [
-            { key: 'core120',      icon: '⚡', title: 'Генератор кадров 120Hz & Матрица .SO ядер', desc: 'Добавляет свёрнутую кнопку ⚡ 120Hz в плеер и матрицу .SO в Деке Б', color: '#00ff9d' },
-            { key: 'splitTest',    icon: '🌓', title: 'Режим сравнения (Кнопка Сплит в плеере)', desc: 'Добавляет свёрнутую кнопку 🌓 Сплит (по умолчанию играет дефолт)', color: '#00e5ff' },
-            { key: 'logDots',      icon: '📊', title: 'Лог с точками (Свёрнутая кнопка 📊 Лог)', desc: 'Добавляет свёрнутую кнопку осциллографа VSync и Лога 360', color: '#58a6ff' },
-            { key: 'tunerSliders', icon: '🎛️', title: 'Настройки декодера (Свёрнутая кнопка 🎛️ Крутилки)', desc: 'Добавляет свёрнутую кнопку 9 ползунков шейдера в плеер', color: '#d2a8ff' },
+            { key: 'core120',      icon: '⚡', title: 'Генератор кадров 120Hz & Матрица .SO ядер', desc: 'Свёрнутая кнопка ⚡ 120Hz в плеере и матрица .SO в Деке Б', color: '#00ff9d' },
+            { key: 'splitTest',    icon: '🌓', title: 'Режим сравнения (Кнопка Сплит в плеере)', desc: 'Свёрнутая кнопка 🌓 Сплит (по умолчанию играет дефолт)', color: '#00e5ff' },
+            { key: 'logDots',      icon: '📊', title: 'Лог с точками (Свёрнутая кнопка 📊 Лог)', desc: 'Свёрнутая кнопка осциллографа VSync и Лога 360', color: '#58a6ff' },
+            { key: 'tunerSliders', icon: '🎛️', title: 'Настройки декодера (Свёрнутая кнопка 🎛️ Крутилки)', desc: 'Свёрнутая кнопка 9 ползунков шейдера в плеере', color: '#d2a8ff' },
             { key: 'stub1',        icon: '⏱️', title: 'Скрывать управление (Основной плеер)', desc: 'Через сколько секунд без касания прятать кнопки плеера', color: '#ffea00', secKey: 'main' },
-            { key: 'stub2',        icon: '❐',  title: 'Скрывать управление (Режим PiP / Мини)', desc: 'Через сколько секунд без касания прятать кнопки в PiP', color: '#ff9100', secKey: 'pip' },
+            { key: 'stub2',        icon: '❐',  title: 'Скрывать управление (Режим PiP / Мини)', desc: 'Через сколько секунд без касания прятать кнопки в мини-плеере', color: '#ff9100', secKey: 'pip' },
             { key: 'stub3',        icon: '🧩', title: 'Заглушка 3 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #3', color: '#8b949e' },
             { key: 'stub4',        icon: '🧩', title: 'Заглушка 4 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #4', color: '#8b949e' },
             { key: 'stub5',        icon: '🧩', title: 'Заглушка 5 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #5', color: '#8b949e' }
@@ -16801,10 +17010,10 @@ let vsyncTicks = 0;
                 var secVal = (it.secKey === 'pip') ? window._jennyAutoHideSecV209.pip : window._jennyAutoHideSecV209.main;
                 secInputHtml =
                     '<div style="display:flex;align-items:center;gap:4px;margin-right:4px;" onclick="event.stopPropagation();">' +
-                        '<input type="number" step="0.1" min="0.5" max="60.0" id="inpAutoHideSecV209_' + it.secKey + '" value="' + Number(secVal).toFixed(1) + '" ' +
-                        'onchange="window.updateAutoHideSecV209(\'' + it.secKey + '\', this.value); this.value = Number(window._jennyAutoHideSecV209[\'' + it.secKey + '\']).toFixed(1);" ' +
-                        'oninput="window.updateAutoHideSecV209(\'' + it.secKey + '\', this.value);" ' +
-                        'style="width:52px;padding:3px 5px;background:#161b22;color:' + it.color + ';border:1px solid ' + it.color + ';border-radius:6px;font-family:monospace;font-size:11px;font-weight:900;text-align:center;">' +
+                        '<input type="number" step="0.1" min="0.5" max="120.0" id="inpAutoHideSecV209_' + it.secKey + '" value="' + Number(secVal).toFixed(1) + '" ' +
+                        'onchange="window.updateAutoHideSecV209(\'' + it.secKey + '\', this.value, true); this.value = Number(window._jennyAutoHideSecV209[\'' + it.secKey + '\']).toFixed(1);" ' +
+                        'oninput="window.updateAutoHideSecV209(\'' + it.secKey + '\', this.value, false);" ' +
+                        'style="width:56px;padding:3px 5px;background:#161b22;color:' + it.color + ';border:1px solid ' + it.color + ';border-radius:6px;font-family:monospace;font-size:11px;font-weight:900;text-align:center;">' +
                         '<span style="font-size:10px;color:#8b949e;font-family:monospace;">с</span>' +
                     '</div>';
             }
@@ -16835,4 +17044,4 @@ let vsyncTicks = 0;
         window.syncModularLabDOMV208();
     }, 150);
 })();
-/* ================= END JENNY V209 ================= */
+/* ================= END JENNY V210 ================= */
