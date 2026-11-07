@@ -152,7 +152,7 @@ public class MainActivity extends AppCompatActivity {
                 boolean hideBars = isVideoFullscreenV132 || isVideoLockedV132;
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    android.view.WindowManager.LayoutParams lp = win.getAttributes();
+                    android.view.android.view.WindowManager.LayoutParams lp = win.getAttributes();
                     lp.layoutInDisplayCutoutMode = hideBars
                         ? android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
                         : android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
@@ -229,7 +229,7 @@ public class MainActivity extends AppCompatActivity {
     private void enterDesktopOverlayInternalV133() {
         runOnUiThread(() -> {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
                     return;
                 }
                 if (isDesktopOverlayActiveV132 || webView == null) return;
@@ -686,7 +686,7 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception ignored) {}
 
             // Шаг 2: Фоллбэк на стандартный список, если SubSettings недоступен
-            if (!launched && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!launched && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                 try {
                     Intent stdList = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri);
                     attachAutoScrollAndSelfCloseFlagsV151(stdList, pkg);
@@ -768,7 +768,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         if (isVideoActiveV132 && !isDesktopOverlayActiveV132) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
                 launchOverlayPermissionWithAutoWatchV147(true);
             } else {
                 enterDesktopOverlayInternalV133();
@@ -840,6 +840,27 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // V166_120HZ_UNLOCK: Разблокировка 120 Гц для видеодеки
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 23) {
+                android.view.Display display = getWindowManager().getDefaultDisplay();
+                android.view.Display.Mode[] modes = display.getSupportedModes();
+                android.view.Display.Mode bestMode = null;
+                float maxHz = 60.0f;
+                for (android.view.Display.Mode m : modes) {
+                    if (m.getRefreshRate() > maxHz) {
+                        maxHz = m.getRefreshRate();
+                        bestMode = m;
+                    }
+                }
+                android.view.android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+                if (bestMode != null) {
+                    lp.preferredDisplayModeId = bestMode.getModeId();
+                }
+                lp.preferredRefreshRate = 120.0f;
+                getWindow().setAttributes(lp);
+            }
+        } catch (Throwable ignored) {}
         instance = this;
 
         handleIncomingTorrentIntent(getIntent());
@@ -978,7 +999,7 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public boolean canDrawOverlays() {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                 return Settings.canDrawOverlays(MainActivity.this);
             }
             return true;
@@ -989,10 +1010,42 @@ public class MainActivity extends AppCompatActivity {
             launchOverlayPermissionWithAutoWatchV147(false);
         }
 
+        
+        private void lockDisplay120HzModeV206(final boolean want120Hz) {
+            runOnUiThread(() -> {
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        android.view.Display display = getWindowManager().getDefaultDisplay();
+                        android.view.Display.Mode[] modes = display.getSupportedModes();
+                        android.view.Display.Mode curMode = display.getMode();
+                        android.view.Display.Mode bestMode = curMode;
+                        float bestRate = want120Hz ? 0.0f : 999.0f;
+                        for (android.view.Display.Mode m : modes) {
+                            if (m.getPhysicalWidth() == curMode.getPhysicalWidth() &&
+                                m.getPhysicalHeight() == curMode.getPhysicalHeight()) {
+                                if (want120Hz && m.getRefreshRate() > bestRate) {
+                                    bestRate = m.getRefreshRate();
+                                    bestMode = m;
+                                }
+                            }
+                        }
+                        if (want120Hz && bestMode != null) {
+                            android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+                            if (lp.preferredDisplayModeId != bestMode.getModeId()) {
+                                lp.preferredDisplayModeId = bestMode.getModeId();
+                                getWindow().setAttributes(lp);
+                            }
+                        }
+                    }
+                } catch (Throwable ignored) {}
+            });
+        }
+
         @JavascriptInterface
         public void setVideoActiveState(boolean active) {
+            lockDisplay120HzModeV206(active);
             isVideoActiveV132 = active;
-            if (active && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
+            if (active && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
                 // Открываем одиночное окно разрешения СРАЗУ при старте видео, пока MainActivity в фокусе на переднем плане!
                 // Тогда не нужно свайпать Домой и лишний раз перезаходить в плеер: включил тумблер -> окно само закрылось -> видео играет!
                 launchOverlayPermissionWithAutoWatchV147(false);
