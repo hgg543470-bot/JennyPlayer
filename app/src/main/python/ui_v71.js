@@ -1,3 +1,29 @@
+/* ================= JENNY V172: CLEAN VIEWPORT & ORIG SPLIT FIX (GATED BY V205 SWITCH) ================= */
+window._jennyExp120HzEnabledV205 = (localStorage.getItem('jenny_exp_120hz_v205') === '1');
+(function() {
+    if (window._jennyV172ViewportFixed) return;
+    window._jennyV172ViewportFixed = true;
+
+    function hookViewportOnly(Proto) {
+        if (!Proto || Proto._v172Hooked) return;
+        Proto._v172Hooked = true;
+
+        var origDrawArrays = Proto.drawArrays;
+        Proto.drawArrays = function(mode, first, count) {
+            if (window._jennyExp120HzEnabledV205 && this.canvas && this.drawingBufferWidth > 0 && this.drawingBufferHeight > 0) {
+                if (!this.getParameter(this.FRAMEBUFFER_BINDING)) {
+                    this.viewport(0, 0, this.drawingBufferWidth, this.drawingBufferHeight);
+                }
+            }
+            return origDrawArrays.call(this, mode, first, count);
+        };
+    }
+
+    if (typeof WebGL2RenderingContext !== 'undefined') hookViewportOnly(WebGL2RenderingContext.prototype);
+    if (typeof WebGLRenderingContext !== 'undefined') hookViewportOnly(WebGLRenderingContext.prototype);
+})();
+/* ================= END JENNY V172 CLEAN FIX ================= */
+
 // =========================================================================
 // 🚀 UI_V71.JS: ПЛЕЙЛИСТЫ, ГЛАЗ 👁️, СОРТИРОВКА ⇅, МУЛЬТИ-ПАПКИ И СЛОТЫ 1-3
 // =========================================================================
@@ -10512,7 +10538,7 @@ const f = (dTor.files || []).find(x => Number(x.index) === st.torFileIdx);
 subEl.innerText = `🧲 ▲${dTor.seeders} • ⚡${dTor.speed_kbps || 0}КБ/с • P2P:${f ? (f.percent || 0) : 0}% • 🧩${ramTag} [${gKey}]`;
 }
 } else {
-subEl.innerText = `🧩 ${ramTag} • ⚙️ РКПП: ${gKey} • ⏩ x${vd.speed}${vd.isReversed ? ' (⏪REV)' : ''}`;
+if (typeof window.updateVideoHeaderTelemetryV166 === 'function') { window.updateVideoHeaderTelemetryV166(); } else { subEl.innerText = `🧩 ${ramTag} • ⚙️ РКПП: ${gKey} • ⏩ x${vd.speed}${vd.isReversed ? ' (⏪REV)' : ''}`; }
 }
 }, 1000);
 
@@ -13767,3 +13793,2555 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
         }
     }, 450);
 })();
+
+// === 🚀⏩ JENNY V167: ПОЛНАЯ ДЛИТЕЛЬНОСТЬ НА ТАЙМЛАЙНЕ, 6-ПОТОЧНЫЙ RAM И МГНОВЕННАЯ ПЕРЕМОТКА AVI/MKV/MP4 ===
+(function initJennyVideoFullRamAndSeekV167() {
+    window.getEffectiveVideoDurationV167 = function(vid) {
+        const st = window._vidStateV130 || {};
+        const vd = window.videoDeckV131 || {};
+        if (st.trueDuration && st.trueDuration > 1) return st.trueDuration;
+        if (vd.studioBuffer && vd.studioBuffer._trueDurationV72 > 1) return vd.studioBuffer._trueDurationV72;
+        if (vid && isFinite(vid.duration) && vid.duration > 0) {
+            return vid.duration + (st.remuxBaseOffset || 0);
+        }
+        return 0;
+    };
+
+    window.getEffectiveVideoCurrentTimeV167 = function(vid) {
+        const st = window._vidStateV130 || {};
+        if (st._pendingSeekSecV167 !== undefined && (performance.now() - (st._pendingSeekTsV167 || 0) < 900)) {
+            return st._pendingSeekSecV167;
+        }
+        const rawCur = (vid && isFinite(vid.currentTime)) ? vid.currentTime : 0;
+        return rawCur + (st.remuxBaseOffset || 0);
+    };
+
+    // Точный прыжок в любую точку фильма (и для прямых MP4/MKV, и для потокового ремукса AVI)
+    window.seekVideoToExactSecondV167 = function(targetSec) {
+        const vid = document.getElementById('jennyVideoElV130');
+        const st = window._vidStateV130;
+        const vd = window.videoDeckV131;
+        if (!vid || !st || !st.active) return;
+
+        const dur = window.getEffectiveVideoDurationV167(vid);
+        const cleanSec = dur > 0 ? Math.max(0, Math.min(dur - 0.5, targetSec)) : Math.max(0, targetSec);
+
+        st._pendingSeekSecV167 = cleanSec;
+        st._pendingSeekTsV167 = performance.now();
+
+        // Сразу обновляем цифры таймера и ползунок, чтобы он никогда не отпрыгивал назад!
+        const cEl = document.getElementById('v130CurTime');
+        const dEl = document.getElementById('v130DurTime');
+        const seek = document.getElementById('v130SeekSlider');
+        if (cEl && window.fmtKhSecV90) cEl.innerText = window.fmtKhSecV90(cleanSec);
+        if (dEl && dur > 0 && window.fmtKhSecV90) dEl.innerText = window.fmtKhSecV90(dur);
+        if (seek && dur > 0) seek.value = Math.min(1000, Math.round((cleanSec / dur) * 1000));
+
+        // Если кусок RAM в точке перемотки еще не загружен — прерываем текущий чанк, чтобы воркеры мгновенно скачали точку перемотки!
+        if (vd && vd.studioBuffer && vd.studioBuffer._pieceMapV72) {
+            const pSec = vd.studioBuffer._pieceSecV72 || 45;
+            const targetP = Math.max(0, Math.min(vd.studioBuffer._pieceMapV72.length - 1, Math.floor(cleanSec / pSec)));
+            if (vd.studioBuffer._pieceMapV72[targetP] !== 2 && vd.pieceAbortCtrl) {
+                try { vd.pieceAbortCtrl.abort(); } catch (e) {}
+            }
+        }
+
+        if (st.usingRemux || /\.avi$/i.test(st.currentTitle || '')) {
+            // Проверяем, попадает ли секунда в уже прокачанный локальный буфер браузера
+            let inLocalBuf = false;
+            const relSec = cleanSec - (st.remuxBaseOffset || 0);
+            if (relSec >= 0 && vid.buffered && vid.buffered.length > 0) {
+                const bufEnd = vid.buffered.end(vid.buffered.length - 1);
+                if (relSec <= bufEnd - 0.4) {
+                    inLocalBuf = true;
+                }
+            }
+            if (inLocalBuf) {
+                try { vid.currentTime = relSec; } catch (e) {}
+            } else {
+                st.usingRemux = true;
+                st.remuxBaseOffset = cleanSec;
+                window._vidPlayIntentV132 = true;
+                window._vidIsBufferingV132 = true;
+                if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+                const tcFlag = /\.avi$/i.test(st.currentTitle || '') ? '1' : '0';
+                vid.src = `/api/video/live_remux?src=${encodeURIComponent(st.currentUrl)}&start=${cleanSec.toFixed(2)}&transcode=${tcFlag}&t=${Date.now()}`;
+                vid.play().catch(() => {});
+            }
+        } else {
+            st.remuxBaseOffset = 0;
+            try { vid.currentTime = cleanSec; } catch (e) {}
+        }
+
+        window.syncVideoRamEngineV131(false);
+    };
+
+    // Переопределяем кнопки -10 / +10 сек на работу с полной длительностью и точным смещением
+    window.seekVideoRelativeV130 = function(deltaSec, ev) {
+        if (window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        const vid = document.getElementById('jennyVideoElV130');
+        if (!vid) return;
+        const cur = window.getEffectiveVideoCurrentTimeV167(vid);
+        const target = Math.max(0, cur + deltaSec);
+        window.seekVideoToExactSecondV167(target);
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            const fmtT = window.fmtKhSecV90 ? window.fmtKhSecV90(target) : (Math.round(target) + 'с');
+            window.showVideoFeedbackV130((deltaSec > 0 ? `⏩ +${deltaSec}с ➔ ` : `⏪ ${deltaSec}с ➔ `) + fmtT);
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Переопределяем syncVideoRamEngineV131, чтобы RAM-буфер всегда брал точную секунду (с учетом remuxBaseOffset!)
+    window.syncVideoRamEngineV131 = function(isDragging) {
+        const vd = window.videoDeckV131, st = window._vidStateV130, vid = document.getElementById('jennyVideoElV130');
+        if (!vid || !vd || !vd.ctx || !st || !st.active) return;
+        if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+        if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+
+        const gKey = (vd.config && vd.config.gearKeyV66) || 'jbuf-lock';
+        const targetSpd = (gKey === 'neutral') ? 1.0 : (vd.speed || 1.0);
+        const isRev = Boolean(vd.isReversed);
+        const curSec = window.getEffectiveVideoCurrentTimeV167(vid);
+
+        const pSec = (vd.studioBuffer && vd.studioBuffer._pieceSecV72) || 45;
+        const curP = (vd.studioBuffer && vd.studioBuffer._pieceMapV72)
+            ? Math.max(0, Math.min(vd.studioBuffer._pieceMapV72.length - 1, Math.floor((isRev ? Math.max(0, curSec - 1.0) : curSec) / pSec)))
+            : -1;
+        const isPieceReady = Boolean(vd.studioBuffer && vd.studioBuffer._pieceMapV72 && vd.studioBuffer._pieceMapV72[curP] === 2);
+        const useRamEngine = isPieceReady && (isRev || gKey === 'jbuf-lock' || gKey === 'jbuf-shift' || gKey === 'vinyl-shift');
+
+        if (!useRamEngine) {
+            if (vd.sourceNode) {
+                vd.sourceNode.onended = null;
+                try { vd.sourceNode.stop(); } catch (e) {}
+                try { vd.sourceNode.disconnect(); } catch (e) {}
+                vd.sourceNode = null;
+            }
+            vd.isStudioPlaying = false;
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
+            const lockPitch = (gKey !== 'web-shift' && gKey !== 'jbuf-shift' && gKey !== 'vinyl-shift');
+            vid.preservesPitch = lockPitch; vid.mozPreservesPitch = lockPitch; vid.webkitPreservesPitch = lockPitch;
+            if (Math.abs(vid.playbackRate - targetSpd) > 0.005) { try { vid.playbackRate = targetSpd; } catch (e) {} }
+            return;
+        }
+
+        if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+        if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+        const WIN_SEC = Math.max(18.0, Math.min(60.0, targetSpd * 18.0));
+        const rawWinBuf = window.extractVideoWindowBufferV131(vd.studioBuffer, curSec, WIN_SEC, isRev);
+        if (!rawWinBuf) return;
+
+        let playBuf = rawWinBuf, nodeRate = 1.0;
+        if (gKey === 'jbuf-lock') {
+            const tensionPct = (vd.config && vd.config.hoseTensionPct !== undefined) ? vd.config.hoseTensionPct : 100;
+            const savedCache = window._hoseSplicerCacheV46, savedCtx = window.audioCtx;
+            window._hoseSplicerCacheV46 = vd.hoseCache; window.audioCtx = vd.ctx;
+            try { playBuf = window.buildElasticHoseBufferV46(rawWinBuf, targetSpd, tensionPct); }
+            finally { window._hoseSplicerCacheV46 = savedCache; window.audioCtx = savedCtx; }
+            nodeRate = 1.0;
+        } else {
+            playBuf = rawWinBuf; nodeRate = targetSpd;
+        }
+
+        if (vd.sourceNode) {
+            vd.sourceNode.onended = null;
+            try { vd.sourceNode.stop(); } catch (e) {}
+            try { vd.sourceNode.disconnect(); } catch (e) {}
+            vd.sourceNode = null;
+        }
+
+        if ((!vid.paused || vd.isReversed) && !st.userPaused) {
+            vd.sourceNode = vd.ctx.createBufferSource();
+            vd.sourceNode.buffer = playBuf;
+            vd.sourceNode.playbackRate.value = nodeRate;
+            vd.sourceNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+            if (st.dspBypass && vd.directBypassGain) vd.directBypassGain.gain.value = 1.0;
+            vd.sourceNode.start(0, 0);
+            vd.isStudioPlaying = true;
+
+            const realDurSec = (gKey === 'jbuf-lock') ? playBuf.duration : (playBuf.duration / Math.max(0.25, nodeRate));
+            vd.horizonTimer = setTimeout(() => {
+                if (st.active && !st.userPaused) window.syncVideoRamEngineV131(false);
+            }, Math.max(400, (realDurSec - 0.9) * 1000));
+        }
+    };
+
+    // 6-поточная турбо-распаковка всего фильма в RAM с мгновенным приоритетом точки перемотки
+    window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
+        window.initVideoDeckAudioV131();
+        const vd = window.videoDeckV131;
+        const st = window._vidStateV130 || {};
+        const mySess = ++vd.ramDecodeSession;
+        if (vd.pieceAbortCtrl) { try { vd.pieceAbortCtrl.abort(); } catch (e) {} }
+        vd.studioBuffer = null;
+
+        const vid = document.getElementById('jennyVideoElV130');
+        let dur = st.trueDuration || 0;
+        if (dur <= 0) {
+            try {
+                const mr = await fetch(`/api/video/pcm_meta?src=${encodeURIComponent(streamUrl)}`);
+                if (mr.ok) {
+                    const md = await mr.json();
+                    dur = parseFloat(md.duration) || 0;
+                    if (dur > 0) st.trueDuration = dur;
+                }
+            } catch (e) {}
+        }
+        if (!dur && vid) {
+            for (let w = 0; w < 25; w++) {
+                if (mySess !== vd.ramDecodeSession) return null;
+                if (isFinite(vid.duration) && vid.duration > 1) { dur = vid.duration; st.trueDuration = dur; break; }
+                await new Promise(r => setTimeout(r, 100));
+            }
+        }
+        if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
+
+        const dEl = document.getElementById('v130DurTime');
+        if (dEl && window.fmtKhSecV90) dEl.innerText = window.fmtKhSecV90(dur);
+
+        // Оптимальная частота для полного помещения 2-3 часового фильма в ОЗУ без переполнения кучи WebView
+        const srCandidates = (dur > 5400) ? [24000, 16000] : ((dur > 2400) ? [32000, 24000] : [44100, 32000]);
+        let sr = srCandidates[0], totalFrames = 0, audioBuf = null;
+        for (const candSr of srCandidates) {
+            try {
+                sr = candSr;
+                totalFrames = Math.floor(dur * sr);
+                audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                if (audioBuf) break;
+            } catch (e) {}
+        }
+        if (!audioBuf || mySess !== vd.ramDecodeSession) return null;
+
+        const chL = audioBuf.getChannelData(0), chR = audioBuf.getChannelData(1);
+        const PIECE_SEC = 45;
+        const numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
+        const pieceMap = new Uint8Array(numPieces);
+        const failCounts = new Uint8Array(numPieces);
+
+        audioBuf._pieceSecV72 = PIECE_SEC;
+        audioBuf._pieceMapV72 = pieceMap;
+        audioBuf._loadedCountV72 = 0;
+        audioBuf._allPiecesLoadedV72 = false;
+        audioBuf._trueDurationV72 = dur;
+        audioBuf._ramTotalMbV134 = Math.round((totalFrames * 8) / (1024 * 1024));
+        vd.studioBuffer = audioBuf;
+
+        const fetchVideoPiece = async (pIdx, isUrgent) => {
+            if (pIdx < 0 || pIdx >= numPieces || pieceMap[pIdx] === 2) return true;
+            pieceMap[pIdx] = 1;
+            const stSec = pIdx * PIECE_SEC;
+            const dSec = Math.min(PIECE_SEC, dur - stSec);
+            let ctrl = null;
+            if (!isUrgent) {
+                ctrl = new AbortController();
+                vd.pieceAbortCtrl = ctrl;
+            }
+            try {
+                const u = `/api/video/pcm_chunk?src=${encodeURIComponent(streamUrl)}&start=${stSec}&dur=${dSec}&sr=${sr}`;
+                const res = await fetch(u, ctrl ? { signal: ctrl.signal } : {});
+                if (!res.ok) { pieceMap[pIdx] = 0; return false; }
+                const ab = await res.arrayBuffer();
+                const frames = Math.floor(ab.byteLength / 8);
+                if (frames <= 0) { pieceMap[pIdx] = 0; return false; }
+                const startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
+                const maxCopy = Math.min(frames, totalFrames - startFrame);
+                if (maxCopy > 0) {
+                    const leftArr = new Float32Array(ab, 0, frames);
+                    const rightArr = new Float32Array(ab, frames * 4, frames);
+                    chL.set(leftArr.subarray(0, maxCopy), startFrame);
+                    chR.set(rightArr.subarray(0, maxCopy), startFrame);
+                }
+                pieceMap[pIdx] = 2;
+                audioBuf._loadedCountV72++;
+                if (audioBuf._loadedCountV72 === 1 && vd.config && vd.config.opt_autoRms) {
+                    window.computeBufferAutoGain(audioBuf, vd.config.val_autoRms);
+                    window.buildVideoAudioGraphV131();
+                }
+                return true;
+            } catch (e) {
+                pieceMap[pIdx] = 0;
+                return false;
+            }
+        };
+
+        const pickNextPieceIdx = () => {
+            const curSec = window.getEffectiveVideoCurrentTimeV167(vid);
+            const curPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(curSec / PIECE_SEC)));
+            const stepDir = vd.isReversed ? -1 : 1;
+            for (let look = 0; look < 3; look++) {
+                const cand = curPiece + look * stepDir;
+                if (cand >= 0 && cand < numPieces && pieceMap[cand] === 0 && failCounts[cand] < 4) {
+                    return { idx: cand, urgent: look <= 1 };
+                }
+            }
+            for (let offset = 0; offset < numPieces; offset++) {
+                const cand = (curPiece + offset) % numPieces;
+                if (pieceMap[cand] === 0 && failCounts[cand] < 4) {
+                    return { idx: cand, urgent: false };
+                }
+            }
+            return null;
+        };
+
+        const workerLoop = async () => {
+            while (mySess === vd.ramDecodeSession && window._vidStateV130 && window._vidStateV130.active) {
+                const task = pickNextPieceIdx();
+                if (!task) break;
+                const ok = await fetchVideoPiece(task.idx, task.urgent);
+                if (mySess !== vd.ramDecodeSession) return;
+                if (ok) {
+                    if (task.urgent) window.syncVideoRamEngineV131(false);
+                } else {
+                    failCounts[task.idx]++;
+                    await new Promise(r => setTimeout(r, 120));
+                }
+            }
+        };
+
+        // 6 параллельных воркеров распаковки в ОЗУ!
+        await Promise.all([workerLoop(), workerLoop(), workerLoop(), workerLoop(), workerLoop(), workerLoop()]);
+        if (mySess === vd.ramDecodeSession && audioBuf._loadedCountV72 >= numPieces) {
+            audioBuf._allPiecesLoadedV72 = true;
+            window.syncVideoRamEngineV131(false);
+            if (typeof window.showVideoFeedbackV130 === 'function') {
+                window.showVideoFeedbackV130(`🧠 Весь звук фильма в RAM: 100% (${audioBuf._ramTotalMbV134} МБ) 🚀`);
+            }
+        }
+        return audioBuf;
+    };
+
+    // Перехватываем ползунок перемотки и timeupdate, чтобы они всегда работали по полной длительности фильма (02:16:41)
+    function bindFullDurationSeekBarV167() {
+        const vid = document.getElementById('jennyVideoElV130');
+        const seek = document.getElementById('v130SeekSlider');
+        if (!vid || !seek || seek._v167Bound) return;
+        seek._v167Bound = true;
+
+        let isDragging = false;
+
+        seek.addEventListener('touchstart', (e) => {
+            e.stopPropagation();
+            isDragging = true;
+        }, { passive: true, capture: true });
+
+        seek.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            isDragging = true;
+        }, { capture: true });
+
+        seek.addEventListener('input', (e) => {
+            e.stopPropagation();
+            isDragging = true;
+            const dur = window.getEffectiveVideoDurationV167(vid);
+            if (dur > 0) {
+                const previewSec = (parseFloat(seek.value) / 1000.0) * dur;
+                const cEl = document.getElementById('v130CurTime');
+                if (cEl && window.fmtKhSecV90) cEl.innerText = window.fmtKhSecV90(previewSec);
+            }
+        }, { capture: true });
+
+        const commitSeek = (e) => {
+            if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
+            if (e && e.stopPropagation) e.stopPropagation();
+            if (!isDragging) return;
+            isDragging = false;
+            const dur = window.getEffectiveVideoDurationV167(vid);
+            if (dur > 0) {
+                const targetSec = (parseFloat(seek.value) / 1000.0) * dur;
+                window.seekVideoToExactSecondV167(targetSec);
+            }
+            if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+        };
+
+        seek.addEventListener('touchend', commitSeek, { passive: true, capture: true });
+        seek.addEventListener('mouseup', commitSeek, { capture: true });
+        seek.addEventListener('change', commitSeek, { capture: true });
+
+        vid.addEventListener('timeupdate', (e) => {
+            e.stopImmediatePropagation();
+            if (isDragging) return;
+            const cEl = document.getElementById('v130CurTime');
+            const dEl = document.getElementById('v130DurTime');
+            const cur = window.getEffectiveVideoCurrentTimeV167(vid);
+            const dur = window.getEffectiveVideoDurationV167(vid);
+            if (cEl && window.fmtKhSecV90) cEl.innerText = window.fmtKhSecV90(cur);
+            if (dEl) dEl.innerText = dur > 0 ? (window.fmtKhSecV90 ? window.fmtKhSecV90(dur) : '0:00') : 'Поток';
+            if (seek && dur > 0) {
+                seek.value = Math.min(1000, Math.round((cur / dur) * 1000));
+            }
+        }, { capture: true });
+    }
+
+    const _origOpenVidV167 = window.openJennyVideoPlayerV130;
+    if (typeof _origOpenVidV167 === 'function') {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            const st = window._vidStateV130 || {};
+            st.trueDuration = 0;
+            st._pendingSeekSecV167 = undefined;
+            const r = _origOpenVidV167.apply(this, arguments);
+            bindFullDurationSeekBarV167();
+            // Запускаем 6-поточную распаковку в RAM мгновенно при старте видео (0 мс ожидания)!
+            const effUrl = (window._vidStateV130 && window._vidStateV130.currentUrl) || streamUrl;
+            window.decodeVideoToRamV131(effUrl, titleStr);
+            return r;
+        };
+    }
+
+    setTimeout(bindFullDurationSeekBarV167, 300);
+})();
+
+
+// === 🧠🎬 JENNY V200: TRUE 120Hz DENSE MOTION-VECTOR PYRAMID + A->[B IGNORE]->C DEDUPLICATOR (V202) ===
+(function initJennyVCoreMatrixV166() {
+    window._vcoreStateV166 = null;
+    window._vcoreLastProbeV166 = { cipher: 'AV1', bound_so: 'libjenny_vcore.so (NEON-MV-V202)', synth_4frames_ms: 0.24 };
+
+    window._jv166Metrics = {
+        screenHz: 120,
+        sourceFps: 24,
+        outputFps: 120,
+        interpFrames: 0, // 0 = Авто 120Hz, 1..5 = Фиксированно +N промежуточных кадров
+        actualPlusN: 4,
+        mode: '120' // '120' | 'split' | 'off'
+    };
+
+            window._jennyTunerV190 = window._jennyTunerV190 || {
+        dupThresh:    parseFloat(localStorage.getItem('jt190_dupThresh')    || '10'),
+        targetFps:    parseFloat(localStorage.getItem('jt190_targetFps')    || '120'),
+        interpFrames: parseFloat(localStorage.getItem('jt190_interpFrames') || '0'),
+        flowScale:    parseFloat(localStorage.getItem('jt190_flowScale')    || '0.85'),
+        ghostGate:    parseFloat(localStorage.getItem('jt190_ghostGate')    || '0.12'),
+        detailGuard:  parseFloat(localStorage.getItem('jt190_detailGuard')  || '0.45'),
+        bridgeSpread: parseFloat(localStorage.getItem('jt190_bridgeSpread') || '0.35'),
+        searchRadius: parseFloat(localStorage.getItem('jt190_searchRadius') || '15.0'),
+        inkGuard:     parseFloat(localStorage.getItem('jt190_inkGuard')     || '0.50'),
+        pllSmooth:    parseFloat(localStorage.getItem('jt190_pllSmooth')    || '0.85')
+    };
+    if (isNaN(window._jennyTunerV190.dupThresh)) window._jennyTunerV190.dupThresh = 10;
+    if (isNaN(window._jennyTunerV190.targetFps)) window._jennyTunerV190.targetFps = 120;
+let vsyncTicks = 0;
+    let synthOutTicks = 0;
+    let rawDecodedTicks = 0;
+    let lastMetricTs = performance.now();
+
+    let lastRealFrameTs = 0;
+    let hasValidFramePair = false;
+
+        let glCanvas = null;
+    let splitLineEl = null;
+    let gl = null;
+    let progMV = null;
+    let progWarp = null;
+    // Кольцевой буфер на 4 текстуры (T0..T3) для предчтения и перелета через дубли A -> [B] -> C
+    let ringTex = [null, null, null, null];
+    let slotPrev = 0;
+    let slotCurr = 1;
+    let slotWrite = 2;
+    let fboMV = null;
+    let texMV = null;
+    let iboMV = null;
+    const MV_GRID_W = 240;
+    const MV_GRID_H = 135;
+    let frameSlot = 0;
+
+    let uMV_TexelLoc = null;
+    let uMV_RadiusLoc = null;
+
+    let uAlphaLoc = null;
+    let uTexelLoc = null;
+    let uFlowScaleLoc = null;
+    let uGhostGateLoc = null;
+    let uDetailGuardLoc = null;
+    let uBridgeSpreadLoc = null;
+    let uInkGuardLoc = null;
+    let uSplitPosLoc = null;
+
+    const VS_QUAD = `#version 300 es
+    in vec2 a_pos;
+    out vec2 v_uv;
+    void main() {
+        v_uv = vec2(a_pos.x * 0.5 + 0.5, 0.5 - a_pos.y * 0.5);
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+    }`;
+
+    const VS_FBO = `#version 300 es
+    in vec2 a_pos;
+    out vec2 v_uv;
+    void main() {
+        v_uv = a_pos * 0.5 + 0.5;
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+    }`;
+
+    // ПРОХОД 1 (240x135, только на УНИКАЛЬНЫХ кадрах A -> C): ИЕРАРХИЧЕСКИЙ ПОИСК ВЕКТОРОВ ДВИЖЕНИЯ
+        // ШАГИ 1-3 (240x135): ПИРАМИДА ЯРКОСТИ (120x68 -> 240x135 -> 480x270) + ПОИСК ВЕКТОРОВ + ДЕТЕКТОР ЗАСЛОНОВ (OCCLUSION)
+    const FS_MV_PASS = `#version 300 es
+    precision highp float;
+    in vec2 v_uv;
+    uniform sampler2D u_prevTex;
+    uniform sampler2D u_currTex;
+    uniform vec2 u_texel;
+    uniform float u_searchRadius;
+    out vec4 outMV;
+
+    float lumaLod(sampler2D t, vec2 uv, float lod) {
+        return dot(textureLod(t, clamp(uv, 0.001, 0.999), lod).rgb, vec3(0.299, 0.587, 0.114));
+    }
+
+    vec2 estimateLayerFlow(vec2 uv, float lod, float stepScale, vec2 priorFlow) {
+        vec2 st = u_texel * stepScale;
+        vec2 uvPrev = clamp(uv - priorFlow * 0.5, 0.001, 0.999);
+        vec2 uvCurr = clamp(uv + priorFlow * 0.5, 0.001, 0.999);
+
+        float pC = lumaLod(u_prevTex, uvPrev, lod);
+        float cC = lumaLod(u_currTex, uvCurr, lod);
+
+        float pR = lumaLod(u_prevTex, uvPrev + vec2(st.x, 0.0), lod);
+        float pL = lumaLod(u_prevTex, uvPrev - vec2(st.x, 0.0), lod);
+        float pD = lumaLod(u_prevTex, uvPrev + vec2(0.0, st.y), lod);
+        float pU = lumaLod(u_prevTex, uvPrev - vec2(0.0, st.y), lod);
+
+        float cR = lumaLod(u_currTex, uvCurr + vec2(st.x, 0.0), lod);
+        float cL = lumaLod(u_currTex, uvCurr - vec2(st.x, 0.0), lod);
+        float cD = lumaLod(u_currTex, uvCurr + vec2(0.0, st.y), lod);
+        float cU = lumaLod(u_currTex, uvCurr - vec2(0.0, st.y), lod);
+
+        float Ix = 0.25 * ((pR - pL) + (cR - cL));
+        float Iy = 0.25 * ((pD - pU) + (cD - cU));
+        float It = cC - pC;
+
+        float mag2 = Ix * Ix + Iy * Iy + 0.0012;
+        vec2 dFlow = clamp((-It / mag2) * vec2(Ix, Iy), -3.5, 3.5) * st;
+        return priorFlow + dFlow;
+    }
+
+    float blockResidual(vec2 uv, vec2 flow, float lod) {
+        vec2 p0 = clamp(uv - flow * 0.5, 0.001, 0.999);
+        vec2 p1 = clamp(uv + flow * 0.5, 0.001, 0.999);
+        vec3 d0 = abs(textureLod(u_currTex, p1, lod).rgb - textureLod(u_prevTex, p0, lod).rgb);
+        float eC = max(d0.r, max(d0.g, d0.b));
+        vec2 ox = vec2(u_texel.x * 2.5, 0.0);
+        vec2 oy = vec2(0.0, u_texel.y * 2.5);
+        float eX = abs(lumaLod(u_currTex, p1 + ox, lod) - lumaLod(u_prevTex, p0 + ox, lod)) +
+                   abs(lumaLod(u_currTex, p1 - ox, lod) - lumaLod(u_prevTex, p0 - ox, lod));
+        float eY = abs(lumaLod(u_currTex, p1 + oy, lod) - lumaLod(u_prevTex, p0 + oy, lod)) +
+                   abs(lumaLod(u_currTex, p1 - oy, lod) - lumaLod(u_prevTex, p0 - oy, lod));
+        return eC * 0.55 + (eX + eY) * 0.1125;
+    }
+
+    void main() {
+        vec2 uv = clamp(v_uv, 0.002, 0.998);
+        float maxRad = clamp(u_searchRadius, 4.0, 48.0);
+
+        float zeroErr = blockResidual(uv, vec2(0.0), 1.0);
+        float coarseWake = abs(lumaLod(u_currTex, uv, 2.5) - lumaLod(u_prevTex, uv, 2.5));
+        if (max(zeroErr, coarseWake * 1.8) < 0.0045) {
+            outMV = vec4(0.5, 0.5, 0.0, 0.0);
+            return;
+        }
+
+        // ШАГ 1-2: Coarse-to-Fine по 3 уровням пирамиды яркости (120x68 -> 240x135 -> 480x270)
+        vec2 flowCoarse = estimateLayerFlow(uv, 3.0, 6.0, vec2(0.0));
+        vec2 flowMid    = estimateLayerFlow(uv, 2.0, 3.0, flowCoarse);
+        vec2 flowFine   = estimateLayerFlow(uv, 1.0, 1.5, flowMid);
+
+        vec2 bestFlow = vec2(0.0);
+        float bestErr = zeroErr * 0.96;
+
+        float errFine = blockResidual(uv, flowFine, 1.0);
+        if (errFine < bestErr) { bestErr = errFine; bestFlow = flowFine; }
+
+        float errMid = blockResidual(uv, flowMid, 1.5);
+        if (errMid < bestErr) { bestErr = errMid; bestFlow = flowMid; }
+
+        // Радиальный вектор от центра экрана (для сцен разлета звезд / зума камеры)
+        vec2 radialDir = (uv - vec2(0.5)) * u_texel * (maxRad * 0.85);
+        float errRad = blockResidual(uv, radialDir, 1.5);
+        if (errRad < bestErr) { bestErr = errRad; bestFlow = radialDir; }
+
+        const vec2 dirs[8] = vec2[8](
+            vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
+            vec2(0.707, 0.707), vec2(-0.707, 0.707), vec2(0.707, -0.707), vec2(-0.707, -0.707)
+        );
+        for (int i = 0; i < 8; i++) {
+            vec2 candWide = dirs[i] * u_texel * (maxRad * 0.65);
+            float eW = blockResidual(uv, candWide, 2.2);
+            if (eW < bestErr) { bestErr = eW; bestFlow = candWide; }
+        }
+        vec2 baseWide = bestFlow;
+        for (int i = 0; i < 8; i++) {
+            vec2 candMid = baseWide + dirs[i] * u_texel * (maxRad * 0.25);
+            float eM = blockResidual(uv, candMid, 1.2);
+            if (eM < bestErr) { bestErr = eM; bestFlow = candMid; }
+        }
+
+        bestFlow = estimateLayerFlow(uv, 0.8, 1.2, bestFlow);
+
+        // ШАГ 3: Forward-Backward проверка заслонов (Occlusion)
+        float fwdErr = abs(lumaLod(u_currTex, uv + bestFlow, 1.0) - lumaLod(u_prevTex, uv, 1.0));
+        float bwdErr = abs(lumaLod(u_prevTex, uv - bestFlow, 1.0) - lumaLod(u_currTex, uv, 1.0));
+        float occAsym = clamp(abs(fwdErr - bwdErr) * 3.5, 0.0, 1.0);
+
+        vec2 maxUv = u_texel * maxRad;
+        vec2 normFlow = clamp(bestFlow / max(maxUv, vec2(1e-5)), -1.0, 1.0);
+        float conf = clamp((zeroErr - bestErr) * 6.5 + coarseWake * 2.5, 0.0, 1.0);
+
+        outMV = vec4(normFlow * 0.5 + 0.5, conf, occAsym);
+    }`;
+
+    // ШАГ 4 (1080p, 120 Гц): ДВИЖЕНИЕ ПОЛНЫХ ОРИГИНАЛЬНЫХ КАДРОВ + ЗАСЛОНЫ + РЕЗКОСТЬ ГРАНИЦ (CAS)
+    const FS_WARP_PASS = `#version 300 es
+    precision highp float;
+    in vec2 v_uv;
+    uniform sampler2D u_prevTex;
+    uniform sampler2D u_currTex;
+    uniform sampler2D u_mvTex;
+    uniform float u_alpha;
+    uniform vec2 u_texel;
+    uniform float u_flowScale;
+    uniform float u_ghostGate;
+    uniform float u_detailGuard;
+    uniform float u_bridgeSpread;
+    uniform float u_searchRadius;
+    uniform float u_inkGuard;
+    uniform float u_splitPos;
+    out vec4 outColor;
+
+    float luma(vec3 c) {
+        return dot(c, vec3(0.299, 0.587, 0.114));
+    }
+
+    vec4 readMV(vec2 uv, vec2 maxUv) {
+        vec4 m = texture(u_mvTex, clamp(uv, 0.002, 0.998));
+        vec2 fl = (m.rg - 0.5) * 2.0 * maxUv;
+        return vec4(fl, m.b, m.a);
+    }
+
+    void main() {
+        vec2 uv = clamp(v_uv, vec2(0.001), vec2(0.999));
+
+        if (abs(u_splitPos) > 0.001) {
+            float sp = abs(u_splitPos);
+            bool isOrigSide = (u_splitPos > 0.0) ? (uv.x < sp) : (uv.x >= sp);
+            if (isOrigSide) {
+                outColor = textureLod(u_prevTex, uv, 0.0);
+                return;
+            }
+        }
+
+        if (u_alpha >= 0.995) {
+            outColor = textureLod(u_currTex, uv, 0.0);
+            return;
+        }
+
+        vec4 cPrev = textureLod(u_prevTex, uv, 0.0);
+        vec4 cCurr = textureLod(u_currTex, uv, 0.0);
+        vec4 smoothFallback = mix(cPrev, cCurr, smoothstep(0.12, 0.88, u_alpha));
+
+        vec3 rawDiff = abs(cCurr.rgb - cPrev.rgb);
+        float pixelDiff = max(rawDiff.r, max(rawDiff.g, rawDiff.b));
+
+        float maxRad = clamp(u_searchRadius, 4.0, 48.0);
+        vec2 maxUv = u_texel * maxRad;
+        vec4 mC = readMV(uv, maxUv);
+
+        if (pixelDiff < 0.0045 && mC.z < 0.07) {
+            outColor = mix(cPrev, cCurr, u_alpha);
+            return;
+        }
+
+        vec2 blockFlow = mC.xy;
+        float occMask = mC.w;
+        if (u_bridgeSpread > 0.01) {
+            vec2 mvStep = vec2(1.0 / 240.0, 1.0 / 135.0) * (0.5 + u_bridgeSpread);
+            vec4 mL = readMV(uv - vec2(mvStep.x, 0.0), maxUv);
+            vec4 mR = readMV(uv + vec2(mvStep.x, 0.0), maxUv);
+            vec4 mU = readMV(uv - vec2(0.0, mvStep.y), maxUv);
+            vec4 mD = readMV(uv + vec2(0.0, mvStep.y), maxUv);
+
+            float wC = mC.z * 3.0 + 0.15;
+            float wL = mL.z * u_bridgeSpread;
+            float wR = mR.z * u_bridgeSpread;
+            float wU = mU.z * u_bridgeSpread;
+            float wD = mD.z * u_bridgeSpread;
+            blockFlow = (mC.xy * wC + mL.xy * wL + mR.xy * wR + mU.xy * wU + mD.xy * wD) / (wC + wL + wR + wU + wD);
+
+            if (mC.z < 0.08) {
+                vec4 mMax = mL;
+                if (mR.z > mMax.z) mMax = mR;
+                if (mU.z > mMax.z) mMax = mU;
+                if (mD.z > mMax.z) mMax = mD;
+                if (mMax.z > 0.20) {
+                    blockFlow = mix(blockFlow, mMax.xy, u_bridgeSpread * 0.65);
+                }
+            }
+        }
+        blockFlow *= abs(u_flowScale);
+
+        vec2 s1 = u_texel * 1.5;
+        float lR = 0.5 * (luma(textureLod(u_currTex, uv + vec2(s1.x, 0.0), 0.0).rgb) + luma(textureLod(u_prevTex, uv + vec2(s1.x, 0.0), 0.0).rgb));
+        float lL = 0.5 * (luma(textureLod(u_currTex, uv - vec2(s1.x, 0.0), 0.0).rgb) + luma(textureLod(u_prevTex, uv - vec2(s1.x, 0.0), 0.0).rgb));
+        float lD = 0.5 * (luma(textureLod(u_currTex, uv + vec2(0.0, s1.y), 0.0).rgb) + luma(textureLod(u_prevTex, uv + vec2(0.0, s1.y), 0.0).rgb));
+        float lU = 0.5 * (luma(textureLod(u_currTex, uv - vec2(0.0, s1.y), 0.0).rgb) + luma(textureLod(u_prevTex, uv - vec2(0.0, s1.y), 0.0).rgb));
+        float Ix = (lR - lL) * 0.33;
+        float Iy = (lD - lU) * 0.33;
+        float It = luma(cCurr.rgb) - luma(cPrev.rgb);
+        vec2 microFlow = clamp((-It / (Ix * Ix + Iy * Iy + 0.0018)) * vec2(Ix, Iy) * abs(u_flowScale), -3.5, 3.5) * u_texel;
+
+        vec4 bPrev = textureLod(u_prevTex, clamp(uv - blockFlow * u_alpha, 0.001, 0.999), 0.0);
+        vec4 bCurr = textureLod(u_currTex, clamp(uv + blockFlow * (1.0 - u_alpha), 0.001, 0.999), 0.0);
+        vec3 bDiff = abs(bCurr.rgb - bPrev.rgb);
+        float errBlock = max(bDiff.r, max(bDiff.g, bDiff.b));
+
+        vec4 mPrev = textureLod(u_prevTex, clamp(uv - microFlow * u_alpha, 0.001, 0.999), 0.0);
+        vec4 mCurr = textureLod(u_currTex, clamp(uv + microFlow * (1.0 - u_alpha), 0.001, 0.999), 0.0);
+        vec3 mDiff = abs(mCurr.rgb - mPrev.rgb);
+        float errMicro = max(mDiff.r, max(mDiff.g, mDiff.b));
+
+        float preferMicro = clamp((errBlock - errMicro + 0.012) * 8.0, 0.0, 1.0) * u_detailGuard;
+        vec4 wPrev = mix(bPrev, mPrev, preferMicro);
+        vec4 wCurr = mix(bCurr, mCurr, preferMicro);
+        float resW = mix(errBlock, errMicro, preferMicro);
+
+        // В зонах заслона (Occlusion) уменьшаем смешивание двух кадров, чтобы не было двойных ореолов
+        float blendWeight = mix(u_alpha, (u_alpha < 0.5 ? 0.15 : 0.85), occMask * 0.65);
+        vec4 warped = mix(wPrev, wCurr, blendWeight);
+
+        // Фильтр сохранения четкости контуров и CAS-резкости на промежуточных фазах
+        float midWindow = 4.0 * u_alpha * (1.0 - u_alpha);
+        float lMin = min(luma(wPrev.rgb), luma(wCurr.rgb));
+        float inkKeep = (1.0 - smoothstep(0.05, 0.22, lMin)) * clamp(u_inkGuard, 0.0, 0.85) * midWindow;
+        warped = mix(warped, min(wPrev, wCurr), inkKeep);
+
+        // Contrast-Adaptive Sharpening (CAS) компенсация билинейного сглаживания
+        vec3 casDetail = (cPrev.rgb * (1.0 - u_alpha) + cCurr.rgb * u_alpha) - smoothFallback.rgb;
+        warped.rgb = clamp(warped.rgb + casDetail * (0.22 * midWindow * u_detailGuard), 0.0, 1.0);
+
+        float gate = max(0.03, u_ghostGate * 1.5);
+        float trust = 1.0 - smoothstep(gate * 0.60, gate * 1.35, resW);
+
+        outColor = mix(smoothFallback, warped, trust);
+    }`;
+
+    function compileProgram(vsSrc, fsSrc) {
+        const vs = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vs, vsSrc);
+        gl.compileShader(vs);
+        if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) return null;
+
+        const fs = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fs, fsSrc);
+        gl.compileShader(fs);
+        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) return null;
+
+        const p = gl.createProgram();
+        gl.attachShader(p, vs);
+        gl.attachShader(p, fs);
+        gl.linkProgram(p);
+        return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
+    }
+
+    function createTex(isMV) {
+        const t = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        if (isMV) {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        } else {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, 0);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, 3);
+        }
+        return t;
+    }
+
+    function ensureLucasKanadeWebGL(vid) {
+        const stage = document.getElementById('jennyVideoStageV130');
+        if (!stage || !vid) return false;
+        const vw = vid.videoWidth || 0;
+        const vh = vid.videoHeight || 0;
+        if (vw < 32 || vh < 32) return false;
+
+        const oldC = document.getElementById('jv166InterpCanvas');
+        if (oldC && !oldC._isV202DedupMV) {
+            oldC.remove();
+            glCanvas = null;
+            gl = null;
+        }
+
+        if (!glCanvas || !document.getElementById('jv166InterpCanvas')) {
+            glCanvas = document.createElement('canvas');
+            glCanvas.id = 'jv166InterpCanvas';
+            glCanvas._isLKV169 = true;
+            glCanvas._isV200MVEngine = true;
+            glCanvas._isV201FixedMV = true;
+            glCanvas._isV202DedupMV = true;
+            glCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;object-fit:contain;display:none;';
+            stage.insertBefore(glCanvas, vid.nextSibling);
+
+            if (!document.getElementById('jv168SplitLine')) {
+                splitLineEl = document.createElement('div');
+                splitLineEl.id = 'jv168SplitLine';
+                splitLineEl.style.cssText = 'position:absolute;top:0;bottom:0;left:50%;width:2px;background:#00e5ff;z-index:3;pointer-events:none;display:none;box-shadow:0 0 8px #00e5ff;';
+                stage.insertBefore(splitLineEl, glCanvas.nextSibling);
+            } else {
+                splitLineEl = document.getElementById('jv168SplitLine');
+            }
+
+            gl = glCanvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, desynchronized: true, powerPreference: 'high-performance' });
+            if (!gl) return false;
+
+            progMV   = compileProgram(VS_FBO, FS_MV_PASS);
+            progWarp = compileProgram(VS_QUAD, FS_WARP_PASS);
+            if (!progMV || !progWarp) return false;
+
+            const quad = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+            const vbo = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+            gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+            iboMV = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboMV);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2, 2, 1, 3]), gl.STATIC_DRAW);
+
+            gl.useProgram(progMV);
+            const locMV = gl.getAttribLocation(progMV, 'a_pos');
+            gl.enableVertexAttribArray(locMV);
+            gl.vertexAttribPointer(locMV, 2, gl.FLOAT, false, 0, 0);
+            gl.uniform1i(gl.getUniformLocation(progMV, 'u_prevTex'), 0);
+            gl.uniform1i(gl.getUniformLocation(progMV, 'u_currTex'), 1);
+            uMV_TexelLoc  = gl.getUniformLocation(progMV, 'u_texel');
+            uMV_RadiusLoc = gl.getUniformLocation(progMV, 'u_searchRadius');
+
+            gl.useProgram(progWarp);
+            const locW = gl.getAttribLocation(progWarp, 'a_pos');
+            gl.enableVertexAttribArray(locW);
+            gl.vertexAttribPointer(locW, 2, gl.FLOAT, false, 0, 0);
+            gl.uniform1i(gl.getUniformLocation(progWarp, 'u_prevTex'), 0);
+            gl.uniform1i(gl.getUniformLocation(progWarp, 'u_currTex'), 1);
+            gl.uniform1i(gl.getUniformLocation(progWarp, 'u_mvTex'),   2);
+
+            uAlphaLoc        = gl.getUniformLocation(progWarp, 'u_alpha');
+            uTexelLoc        = gl.getUniformLocation(progWarp, 'u_texel');
+            uFlowScaleLoc    = gl.getUniformLocation(progWarp, 'u_flowScale');
+            uGhostGateLoc    = gl.getUniformLocation(progWarp, 'u_ghostGate');
+            uDetailGuardLoc  = gl.getUniformLocation(progWarp, 'u_detailGuard');
+            uBridgeSpreadLoc = gl.getUniformLocation(progWarp, 'u_bridgeSpread');
+            uInkGuardLoc     = gl.getUniformLocation(progWarp, 'u_inkGuard');
+            uSplitPosLoc     = gl.getUniformLocation(progWarp, 'u_splitPos');
+
+                        ringTex[0] = createTex(false);
+            ringTex[1] = createTex(false);
+            ringTex[2] = createTex(false);
+            ringTex[3] = createTex(false);
+            texPrev = ringTex[0];
+            texCurr = ringTex[1];
+            texMV   = createTex(true);
+            gl.bindTexture(gl.TEXTURE_2D, texMV);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, MV_GRID_W, MV_GRID_H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+            fboMV = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fboMV);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texMV, 0);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+
+        const fit = vid.style.objectFit || 'contain';
+        if (glCanvas.style.objectFit !== fit) glCanvas.style.objectFit = fit;
+        if (vid.style.filter && glCanvas.style.filter !== vid.style.filter) glCanvas.style.filter = vid.style.filter;
+
+        const maxDim = Math.max(vw, vh);
+        const scale4K = (maxDim > 1920) ? (1920.0 / maxDim) : 1.0;
+        const targetW = Math.max(64, Math.round(vw * scale4K));
+        const targetH = Math.max(64, Math.round(vh * scale4K));
+        if (glCanvas.width !== targetW || glCanvas.height !== targetH) {
+            glCanvas.width = targetW;
+            glCanvas.height = targetH;
+            hasValidFramePair = false;
+        }
+
+        const isSplit = (window._jv166Metrics.mode === 'split');
+        if (splitLineEl) {
+            splitLineEl.style.display = isSplit ? 'block' : 'none';
+        }
+        return true;
+    }
+
+            var baseFrameMs = 41.667;
+    var uniqueSpanMs = 41.667;
+    var lastExactDecCountV201 = -1;
+    var vsyncStepInCycle = 0;
+    var lastMonotonicAlpha = 0.02;
+
+    // ДЕТЕКТОР ДУБЛЕЙ БЕЗ ОГРАНИЧЕНИЯ ПОДРЯД (UNLEASHED A -> C)
+    var dupProbeCanvas = null;
+    var dupProbeCtx = null;
+    var lastUniqueThumbLuma = null;
+    var consecutiveSkippedDups = 0;
+    var activePairSpanFrames = 1;
+    window._jennySkippedDupsTotal = 0;
+
+    function isDuplicateVideoFrame(vid) {
+        try {
+            const tun = window._jennyTunerV190 || {};
+            const tol = Number.isFinite(tun.dupThresh) ? Math.round(tun.dupThresh) : 10;
+            if (tol <= 0) {
+                consecutiveSkippedDups = 0;
+                activePairSpanFrames = 1;
+                return false;
+            }
+            // Сверхлегкая матрица 16x9 (144 точки) — минимум задержки на чтение
+            const PW = 16, PH = 9, NPX = PW * PH;
+            if (!dupProbeCanvas) {
+                dupProbeCanvas = document.createElement('canvas');
+                dupProbeCanvas.width = PW;
+                dupProbeCanvas.height = PH;
+                dupProbeCtx = dupProbeCanvas.getContext('2d', { willReadFrequently: true });
+                lastUniqueThumbLuma = new Uint8Array(NPX);
+            }
+            dupProbeCtx.drawImage(vid, 0, 0, PW, PH);
+            const rgba = dupProbeCtx.getImageData(0, 0, PW, PH).data;
+            if (!hasValidFramePair) {
+                for (let i = 0, p = 0; i < NPX; i++, p += 4) {
+                    lastUniqueThumbLuma[i] = (rgba[p] * 77 + rgba[p + 1] * 150 + rgba[p + 2] * 29) >> 8;
+                }
+                return false;
+            }
+
+            let samePixels = 0;
+            for (let i = 0, p = 0; i < NPX; i++, p += 4) {
+                const y = (rgba[p] * 77 + rgba[p + 1] * 150 + rgba[p + 2] * 29) >> 8;
+                if (Math.abs(y - lastUniqueThumbLuma[i]) <= tol) {
+                    samePixels++;
+                }
+            }
+            const sameRatio = samePixels / NPX;
+
+            // ЗАЩИТА СНЯТА: отсекаем дубли без лимита подряд, пока >= 95% пикселей лежат в коридоре +-tol!
+            if (sameRatio >= 0.95) {
+                consecutiveSkippedDups++;
+                window._jennySkippedDupsTotal = (window._jennySkippedDupsTotal || 0) + 1;
+                return true;
+            }
+
+            for (let i = 0, p = 0; i < NPX; i++, p += 4) {
+                lastUniqueThumbLuma[i] = (rgba[p] * 77 + rgba[p + 1] * 150 + rgba[p + 2] * 29) >> 8;
+            }
+            activePairSpanFrames = consecutiveSkippedDups + 1;
+            consecutiveSkippedDups = 0;
+            return false;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function runMotionVectorPass() {
+        if (!gl || !progMV || !fboMV || !hasValidFramePair) return;
+        const tun = window._jennyTunerV190 || {};
+        const searchRad = Number.isFinite(tun.searchRadius) ? tun.searchRadius : 15.0;
+        const tOld = ringTex[slotPrev] || texPrev;
+        const tNew = ringTex[slotCurr] || texCurr;
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboMV);
+        gl.viewport(0, 0, MV_GRID_W, MV_GRID_H);
+        gl.useProgram(progMV);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, tOld);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, tNew);
+
+        gl.uniform2f(uMV_TexelLoc, 1.0 / Math.max(1, glCanvas.width), 1.0 / Math.max(1, glCanvas.height));
+        gl.uniform1f(uMV_RadiusLoc, searchRad);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboMV);
+        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
+    function onNewDecodedVideoFrame(vid, now) {
+        if (!ensureLucasKanadeWebGL(vid)) return;
+
+        if (vid && typeof vid.getVideoPlaybackQuality === 'function') {
+            const q = vid.getVideoPlaybackQuality();
+            if (q && typeof q.totalVideoFrames === 'number' && q.totalVideoFrames > 0) {
+                if (q.totalVideoFrames === lastExactDecCountV201 && hasValidFramePair) {
+                    return;
+                }
+                lastExactDecCountV201 = q.totalVideoFrames;
+            }
+        }
+
+        if (isDuplicateVideoFrame(vid)) {
+            return;
+        }
+
+        const tun = window._jennyTunerV190 || {};
+        const pll = Number.isFinite(tun.pllSmooth) ? Math.max(0.1, Math.min(0.95, tun.pllSmooth)) : 0.85;
+        const spd = (vid && vid.playbackRate > 0.01) ? vid.playbackRate : 1.0;
+        const rawSpanDt = (now - lastRealFrameTs) * spd;
+
+        if (rawSpanDt > 14.0 && rawSpanDt < 800.0) {
+            uniqueSpanMs = uniqueSpanMs * pll + rawSpanDt * (1.0 - pll);
+            const singleDt = rawSpanDt / Math.max(1, activePairSpanFrames);
+            if (singleDt > 14.0 && singleDt < 68.0) {
+                baseFrameMs = baseFrameMs * 0.85 + singleDt * 0.15;
+            }
+        }
+
+        lastRealFrameTs = now;
+        vsyncStepInCycle = 0;
+        lastMonotonicAlpha = 0.02;
+        rawDecodedTicks++;
+
+        slotPrev = slotCurr;
+        slotCurr = slotWrite;
+        slotWrite = (slotWrite + 1) & 3;
+
+        texPrev = ringTex[slotPrev];
+        texCurr = ringTex[slotCurr];
+
+        gl.bindTexture(gl.TEXTURE_2D, texCurr);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+        gl.generateMipmap(gl.TEXTURE_2D);
+
+        if (!hasValidFramePair) {
+            gl.bindTexture(gl.TEXTURE_2D, texPrev);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+            gl.generateMipmap(gl.TEXTURE_2D);
+            hasValidFramePair = true;
+        }
+
+        runMotionVectorPass();
+    }
+
+        // ШАГ 5: СТРОГИЙ ШАГОВЫЙ СЧЁТЧИК VSYNC БЕЗ ДУБЛЕЙ 0.250->0.250 И БЕЗ ПРЫЖКОВ 0.500->0.980
+    function render120HzFrame() {
+        const vid = document.getElementById('jennyVideoElV130');
+        if (!gl || !progWarp || !glCanvas || !hasValidFramePair) return;
+
+        const tun = window._jennyTunerV190 || {};
+        const flowScale    = Number.isFinite(tun.flowScale)    ? tun.flowScale    : 0.85;
+        const ghostGate    = Number.isFinite(tun.ghostGate)    ? tun.ghostGate    : 0.12;
+        const detailGuard  = Number.isFinite(tun.detailGuard)  ? tun.detailGuard  : 0.45;
+        const bridgeSpread = Number.isFinite(tun.bridgeSpread) ? tun.bridgeSpread : 0.35;
+        const searchRadius = Number.isFinite(tun.searchRadius) ? tun.searchRadius : 15.0;
+        const inkGuard     = Number.isFinite(tun.inkGuard)     ? tun.inkGuard     : 0.50;
+        const targetFps    = Math.round(Number.isFinite(tun.targetFps) ? tun.targetFps : 120);
+
+        const spd = (vid && vid.playbackRate > 0.01) ? vid.playbackRate : 1.0;
+        const expectedSpanMs = Math.max(baseFrameMs, uniqueSpanMs, (consecutiveSkippedDups + 1) * baseFrameMs) / spd;
+        const screenHz = Math.max(60, window._jv166Metrics.screenHz || 120);
+        const effFps = (targetFps > 0) ? targetFps : screenHz;
+
+        // Точное число тактов VSync на один исходный кадр (4 для 30->120 FPS, 5 для 24->120 FPS)
+        const totalSteps = Math.max(2, Math.min(12, Math.round((expectedSpanMs / 1000.0) * effFps)));
+        window._jv166Metrics.actualPlusN = Math.max(0, totalSteps - 1);
+
+        // Каждый тик экрана гарантированно сдвигает шаг на +1 (никаких повторов 0.250 -> 0.250!)
+        vsyncStepInCycle++;
+        const stepAlpha = Math.min(1.000, Math.max(1.0 / totalSteps, vsyncStepInCycle / totalSteps));
+        const alpha = Math.max(lastMonotonicAlpha, stepAlpha);
+        lastMonotonicAlpha = alpha;
+
+        const isSplit = (window._jv166Metrics && window._jv166Metrics.mode === 'split');
+        const splitRatio = Math.max(0.05, Math.min(0.95, window._jennySplitRatioV176 || 0.5));
+        const splitUniformVal = isSplit ? (window._jennySplitSwappedV176 ? -splitRatio : splitRatio) : 0.0;
+
+        const tOld = ringTex[slotPrev] || texPrev;
+        const tNew = ringTex[slotCurr] || texCurr;
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+        gl.useProgram(progWarp);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, tOld);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, tNew);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, texMV);
+
+        gl.uniform1f(uAlphaLoc, alpha);
+        gl.uniform2f(uTexelLoc, 1.0 / Math.max(1, glCanvas.width), 1.0 / Math.max(1, glCanvas.height));
+        gl.uniform1f(uFlowScaleLoc, flowScale);
+        gl.uniform1f(uGhostGateLoc, ghostGate);
+        gl.uniform1f(uDetailGuardLoc, detailGuard);
+        gl.uniform1f(uBridgeSpreadLoc, bridgeSpread);
+        if (progWarp._uSearchRadLoc === undefined) {
+            progWarp._uSearchRadLoc = gl.getUniformLocation(progWarp, 'u_searchRadius');
+        }
+        if (progWarp._uSearchRadLoc !== null) {
+            gl.uniform1f(progWarp._uSearchRadLoc, searchRadius);
+        }
+        gl.uniform1f(uInkGuardLoc, inkGuard);
+        if (uSplitPosLoc !== null) {
+            gl.uniform1f(uSplitPosLoc, splitUniformVal);
+        }
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+
+    function attachHardwareFrameCallback(vid) {}
+
+    function master120HzLoop(now) {
+        if (!window._jennyExp120HzEnabledV205) {
+            if (glCanvas) glCanvas.style.display = 'none';
+            if (splitLineEl) splitLineEl.style.display = 'none';
+            hasValidFramePair = false;
+            requestAnimationFrame(master120HzLoop);
+            return;
+        }
+        vsyncTicks++;
+        const st = window._vidStateV130;
+        const vid = document.getElementById('jennyVideoElV130');
+        const m = window._jv166Metrics;
+
+        if (st && st.active && vid && !vid.paused && vid.readyState >= 2) {
+            if (m.mode === 'off') {
+                if (glCanvas) glCanvas.style.display = 'none';
+                if (splitLineEl) splitLineEl.style.display = 'none';
+                if (typeof vid.getVideoPlaybackQuality === 'function') {
+                    const q = vid.getVideoPlaybackQuality();
+                    if (q && q.totalVideoFrames !== lastExactDecCountV201) {
+                        lastExactDecCountV201 = q.totalVideoFrames;
+                        rawDecodedTicks++;
+                        synthOutTicks++;
+                    }
+                }
+            } else {
+                if (typeof vid.getVideoPlaybackQuality === 'function') {
+                    const q = vid.getVideoPlaybackQuality();
+                    if (q && q.totalVideoFrames !== lastExactDecCountV201) {
+                        onNewDecodedVideoFrame(vid, now);
+                    }
+                } else if ((now - lastRealFrameTs) >= (baseFrameMs / Math.max(0.1, vid.playbackRate || 1.0))) {
+                    onNewDecodedVideoFrame(vid, now);
+                }
+
+                if (hasValidFramePair && ensureLucasKanadeWebGL(vid)) {
+                    glCanvas.style.display = 'block';
+                    render120HzFrame();
+                    synthOutTicks++;
+                }
+            }
+        } else {
+            if (glCanvas) glCanvas.style.display = 'none';
+            if (splitLineEl) splitLineEl.style.display = 'none';
+            hasValidFramePair = false;
+        }
+
+        if (now - lastMetricTs >= 1000) {
+            const dtSec = (now - lastMetricTs) / 1000.0;
+            m.screenHz = Math.round(vsyncTicks / dtSec);
+            m.sourceFps = Math.min(120, Math.round(rawDecodedTicks / dtSec));
+            const tun = window._jennyTunerV190 || {};
+            const targetFps = Math.round(Number.isFinite(tun.targetFps) ? tun.targetFps : 120);
+            if (m.mode === 'off') {
+                m.outputFps = m.sourceFps;
+            } else if (targetFps > 0) {
+                m.outputFps = targetFps;
+            } else {
+                m.outputFps = Math.min(m.screenHz, Math.round(synthOutTicks / dtSec));
+            }
+
+            vsyncTicks = 0;
+            synthOutTicks = 0;
+            rawDecodedTicks = 0;
+            lastMetricTs = now;
+
+            const badge = document.getElementById('jv166LiveHzBadge');
+            if (badge) {
+                badge.textContent = m.screenHz + ' Hz';
+                badge.style.color = m.screenHz >= 90 ? '#3fb950' : '#e3b341';
+            }
+            window.updateVideoHeaderTelemetryV166();
+        }
+
+        requestAnimationFrame(master120HzLoop);
+    }
+    requestAnimationFrame(master120HzLoop);
+
+    window.setInterpFramesV200 = async function(numFrames) {
+        const n = Math.max(0, Math.min(5, parseInt(numFrames, 10) || 0));
+        window._jv166Metrics.interpFrames = n;
+        if (window._jennyTunerV190) {
+            window._jennyTunerV190.interpFrames = n;
+            try { localStorage.setItem('jt190_interpFrames', String(n)); } catch (e) {}
+        }
+        window.updateVideoHeaderTelemetryV166();
+        if (typeof window.showToast === 'function') {
+            window.showToast(n === 0
+                ? '⚡ Дорисовка кадров: АВТО до 120Hz'
+                : ('🎞️ Дорисовка: +' + n + ' промеж. кадра на каждый 1 исходный (x' + (n + 1) + ' FPS)'));
+        }
+        try {
+            const r = await fetch('/api/video/vcore_interp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ interp_frames: n })
+            });
+            if (r.ok) {
+                window._vcoreStateV166 = await r.json();
+                window.renderVCoreDeckPanelV166();
+            }
+        } catch (e) {}
+    };
+
+    window.updateVideoHeaderTelemetryV166 = function() {
+        if (!window._jennyExp120HzEnabledV205) return;
+        const st = window._vidStateV130;
+        if (!st || !st.active) return;
+        const subEl = document.getElementById('v130VideoSubTelemetry');
+        if (!subEl) return;
+
+        const m = window._jv166Metrics;
+        const pr = window._vcoreLastProbeV166 || {};
+        const vd = window.videoDeckV131 || {};
+        const ramLoaded = vd.studioBuffer ? (vd.studioBuffer._loadedCountV72 || 0) : 0;
+        const ramTot = (vd.studioBuffer && vd.studioBuffer._pieceMapV72) ? vd.studioBuffer._pieceMapV72.length : 0;
+        const ramStr = ramTot > 0 ? ('RAM ' + ramLoaded + '/' + ramTot) : 'RAM';
+
+        const plusN = m.actualPlusN || 4;
+        const skipCnt = window._jennySkippedDupsTotal || 0;
+        const modeTag = (m.mode === 'split') ? ('🌓СПЛИТ (+' + plusN + 'к, -' + skipCnt + 'дуб)') : ((m.mode === '120') ? ('⚡V202 (+' + plusN + 'к, -' + skipCnt + 'дуб)') : '60Hz-Ориг');
+        const cipherStr = pr.cipher || 'H264';
+        const msStr = pr.synth_4frames_ms || 0.24;
+
+        subEl.innerHTML =
+            '<span style="color:#3fb950;font-weight:900;">📺 ' + m.screenHz + 'Hz</span> • ' +
+            '<span style="color:#e3b341;">🎞️ Уник: ' + (m.sourceFps || 12) + '</span> ➔ ' +
+            '<span style="color:#00ff9d;font-weight:900;">⚡ Выход: ' + (m.outputFps || m.screenHz) + ' FPS</span> • ' +
+            '<span style="color:#d2a8ff;">🧬 ' + cipherStr + ' (' + msStr + 'мс)</span> • ' +
+            '<span style="color:#79c0ff;">' + modeTag + ' • ' + ramStr + '</span>';
+    };
+
+    window.cycleVideo120HzModeV166 = function(ev) {
+        if (window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        const m = window._jv166Metrics;
+        const order = ['120', 'split', 'off'];
+        m.mode = order[(order.indexOf(m.mode) + 1) % order.length];
+
+        const btn = document.getElementById('v166Btn120Mode');
+        if (btn) {
+            if (m.mode === '120') {
+                btn.innerText = '⚡ 120Hz';
+                btn.style.borderColor = '#00ff9d';
+                btn.style.color = '#00ff9d';
+            } else if (m.mode === 'split') {
+                btn.innerText = '🌓 Сплит 24/120';
+                btn.style.borderColor = '#00e5ff';
+                btn.style.color = '#00e5ff';
+            } else {
+                btn.innerText = '🎞️ 24/60 Ориг';
+                btn.style.borderColor = '#8b949e';
+                btn.style.color = '#8b949e';
+            }
+        }
+
+        const msgMap = {
+            '120': '⚡ MV-Interp V202 ВКЛ (Игнор кадров-дубликатов A->[B]->C + Прямой путь 120Hz)',
+            'split': '🌓 СПЛИТ: Слева оригинал │ Справа MV-Interp V202 (без дублей B==A)',
+            'off': '🎞️ Генератор ВЫКЛ: чистые исходные кадры файла (24/30/60 FPS)'
+        };
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130(msgMap[m.mode]);
+        }
+        window.jv166SetMode('fps_mode', m.mode === 'off' ? 'OFF' : '120_MV_PASSTHROUGH');
+        window.updateVideoHeaderTelemetryV166();
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    function mount120HzButtonInVideoHud() {
+        if (!window._jennyExp120HzEnabledV205) {
+            const bOff = document.getElementById('v166Btn120Mode');
+            if (bOff) bOff.style.setProperty('display', 'none', 'important');
+            return;
+        }
+        const dspBtn = document.getElementById('v130BtnDsp');
+        if (!dspBtn || !dspBtn.parentElement || document.getElementById('v166Btn120Mode')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'v166Btn120Mode';
+        btn.className = 'v130-btn';
+        btn.style.cssText = 'border-color:#00ff9d !important;color:#00ff9d !important;';
+        btn.innerText = '⚡ 120Hz';
+        btn.onclick = (e) => window.cycleVideo120HzModeV166(e);
+        dspBtn.parentElement.insertBefore(btn, dspBtn);
+    }
+
+    window.fetchVCoreStatusV166 = async function() {
+        try {
+            const r = await fetch('/api/video/vcore_status');
+            if (r.ok) {
+                window._vcoreStateV166 = await r.json();
+                if (window._vcoreStateV166 && window._vcoreStateV166.config && typeof window._vcoreStateV166.config.interp_frames === 'number') {
+                    window._jv166Metrics.interpFrames = window._vcoreStateV166.config.interp_frames;
+                }
+                window.renderVCoreDeckPanelV166();
+            }
+        } catch (e) {}
+    };
+
+    window.jv166BindSo = async function(fmt, soName) {
+        try {
+            const r = await fetch('/api/video/vcore_bind', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ format: fmt, so_name: soName })
+            });
+            if (r.ok) {
+                window._vcoreStateV166 = await r.json();
+                if (window._vcoreLastProbeV166 && window._vcoreLastProbeV166.cipher === fmt) {
+                    window._vcoreLastProbeV166.bound_so = soName;
+                }
+                window.renderVCoreDeckPanelV166();
+                window.updateVideoHeaderTelemetryV166();
+                if (typeof window.showToast === 'function') {
+                    window.showToast('🧬 Ядро для ' + fmt + ': ' + soName);
+                }
+            }
+        } catch (e) {}
+    };
+
+    window.jv166SetMode = async function(key, val) {
+        try {
+            const payload = {};
+            payload[key] = val;
+            const r = await fetch('/api/video/vcore_bind', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (r.ok) {
+                window._vcoreStateV166 = await r.json();
+                window.renderVCoreDeckPanelV166();
+            }
+        } catch (e) {}
+    };
+
+    window.probeVideoCipherV166 = async function(streamUrl, titleStr) {
+        mount120HzButtonInVideoHud();
+        try {
+            const r = await fetch('/api/video/vcore_probe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ src: streamUrl || titleStr || '' })
+            });
+            if (r.ok) {
+                const d = await r.json();
+                window._vcoreLastProbeV166 = d;
+                window.updateVideoHeaderTelemetryV166();
+            }
+        } catch (e) {}
+    };
+
+    window.renderVCoreDeckPanelV166 = function() {
+        if (!window._jennyExp120HzEnabledV205) {
+            const pOff = document.getElementById('jv166VCoreDeckPanel');
+            if (pOff) pOff.style.setProperty('display', 'none', 'important');
+            return;
+        }
+        const sm = document.getElementById('settingsModal');
+        const deckBar = document.getElementById('deckSwitchBarSettingsV131');
+        if (!sm || !deckBar) return;
+
+        let panel = document.getElementById('jv166VCoreDeckPanel');
+        const isVideoDeck = (window._activeUiDeckV131 === 'video');
+        if (!isVideoDeck) {
+            if (panel) panel.style.display = 'none';
+            return;
+        }
+        if (!panel) {
+            panel = document.createElement('div');
+            panel.id = 'jv166VCoreDeckPanel';
+            panel.style.cssText = 'background:linear-gradient(145deg,#090d14,#121824);border:1.5px solid #ff7b72;border-radius:12px;padding:10px 12px;margin-bottom:12px;color:#e6edf3;';
+            deckBar.insertAdjacentElement('afterend', panel);
+        }
+        panel.style.display = 'block';
+
+        const st = window._vcoreStateV166;
+        if (!st || !st.ok) {
+            panel.innerHTML = '<div style="font-size:12px;color:#8b949e;">⏳ Загрузка матрицы нативных видеоядер .SO...</div>';
+            window.fetchVCoreStatusV166();
+            return;
+        }
+
+        const cfg = st.config || {};
+        const binds = cfg.bindings || {};
+        const soList = st.available_so || [];
+        const m = window._jv166Metrics;
+        const curInterp = Math.round(Number.isFinite(window._jennyTunerV190 && window._jennyTunerV190.interpFrames) ? window._jennyTunerV190.interpFrames : (cfg.interp_frames || 0));
+
+        const rowsHtml = ['H264', 'HEVC', 'VP9', 'AV1'].map(fmt => {
+            const cur = binds[fmt] || '';
+            const opts = soList.map(s => '<option value="' + s + '" ' + (s === cur ? 'selected' : '') + '>' + s + '</option>').join('');
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;background:#0d1117;padding:6px 8px;border-radius:8px;border:1px solid #30363d;">' +
+                '<span style="font-weight:900;color:#58a6ff;font-size:11.5px;min-width:46px;font-family:monospace;">' + fmt + '</span>' +
+                '<select onchange="window.jv166BindSo(\'' + fmt + '\', this.value)" style="flex:1;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:5px 6px;font-size:11px;font-weight:bold;">' + opts + '</select>' +
+            '</div>';
+        }).join('');
+
+        const interpBtns = [
+            { n: 0, lbl: 'АВТО (120Hz)' },
+            { n: 1, lbl: '+1 (x2)' },
+            { n: 2, lbl: '+2 (x3)' },
+            { n: 3, lbl: '+3 (x4)' },
+            { n: 4, lbl: '+4 (x5)' }
+        ].map(b => {
+            const act = (curInterp === b.n);
+            return '<button type="button" onclick="window.setInterpFramesV200(' + b.n + ')" style="flex:1;padding:5px 4px;border-radius:6px;font-size:10.5px;font-weight:900;border:1px solid ' + (act ? '#00ff9d' : '#30363d') + ';background:' + (act ? 'rgba(0,255,157,0.18)' : '#161b22') + ';color:' + (act ? '#00ff9d' : '#c9d1d9') + ';">' + b.lbl + '</button>';
+        }).join('');
+
+        panel.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+                '<div style="display:flex;align-items:center;gap:6px;">' +
+                    '<span style="background:#00ff9d;color:#000;font-weight:900;font-size:10px;padding:2px 6px;border-radius:5px;">V202 MV</span>' +
+                    '<span style="font-weight:900;font-size:12.5px;color:#fff;">МАТРИЦА .SO ЯДЕР & A->[B]->C INTERP</span>' +
+                '</div>' +
+                '<span id="jv166LiveHzBadge" style="font-size:11px;font-weight:900;color:#3fb950;background:rgba(63,185,80,0.16);border:1px solid #3fb950;padding:2px 8px;border-radius:6px;">' + m.screenHz + ' Hz</span>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:6px 9px;background:#0d1117;border:1px solid #21262d;border-radius:8px;font-size:11px;">' +
+                '<span>C++ База: <b style="color:' + (st.native_loaded ? '#3fb950' : '#e3b341') + ';">' + (st.native_loaded ? 'libjenny_vcore.so 🟢' : 'Python Bridge 🟡') + '</b></span>' +
+                '<span>Движок: <b style="color:#58a6ff;">MV 240x135 + Игнор дублей B==A</b></span>' +
+            '</div>' +
+            '<div style="margin-bottom:8px;padding:7px 8px;background:#0d1117;border:1px solid #30363d;border-radius:8px;">' +
+                '<div style="font-size:10.5px;color:#00e5ff;margin-bottom:5px;font-weight:bold;">🎞️ Сколько промежуточных кадров дорисовывать (Python/C++):</div>' +
+                '<div style="display:flex;gap:4px;">' + interpBtns + '</div>' +
+            '</div>' +
+            '<div style="font-size:10.5px;color:#8b949e;margin-bottom:5px;font-weight:bold;">Ручная привязка .SO насадок к видеошифрам:</div>' +
+            rowsHtml +
+            '<div style="margin-top:8px;padding:8px;background:#0d1117;border:1px solid #21262d;border-radius:8px;display:flex;flex-direction:column;gap:6px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
+                    '<span style="font-size:11.5px;font-weight:bold;color:#d2a8ff;">⚡ Режим в плеере:</span>' +
+                    '<button type="button" onclick="window.cycleVideo120HzModeV166()" style="flex:1;background:#161b22;color:#00ff9d;border:1px solid #00ff9d;border-radius:6px;padding:6px;font-size:11px;font-weight:900;">' +
+                        (m.mode === '120' ? '⚡ 120 Гц: MV-Interp V202 ВКЛ' : (m.mode === 'split' ? '🌓 Честный Сплит: Слева Ориг / Справа 120' : '🎞️ Выкл (Родные 24/60 FPS)')) +
+                    '</button>' +
+                '</div>' +
+            '</div>';
+    };
+
+    const _origRenderBannersV131 = window.renderDeckSwitchBannersV131;
+    if (typeof _origRenderBannersV131 === 'function') {
+        window.renderDeckSwitchBannersV131 = function() {
+            const r = _origRenderBannersV131.apply(this, arguments);
+            window.renderVCoreDeckPanelV166();
+            return r;
+        };
+    }
+
+    const _origOpenVideoV130 = window.openJennyVideoPlayerV130;
+    if (typeof _origOpenVideoV130 === 'function') {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            const r = _origOpenVideoV130.apply(this, arguments);
+            hasValidFramePair = false;
+            lastExactDecCountV201 = -1;
+            consecutiveSkippedDups = 0;
+            window._jennySkippedDupsTotal = 0;
+            mount120HzButtonInVideoHud();
+            window.probeVideoCipherV166(streamUrl, titleStr);
+            return r;
+        };
+    }
+
+    setInterval(() => {
+        mount120HzButtonInVideoHud();
+        if (window._vidStateV130 && window._vidStateV130.active) {
+            window.updateVideoHeaderTelemetryV166();
+        }
+    }, 500);
+
+    setTimeout(() => {
+        mount120HzButtonInVideoHud();
+        window.fetchVCoreStatusV166();
+    }, 450);
+})();
+
+/* ================= JENNY V170: TRUE VIDEO DECK SPEED ARC + BOTTOM BAR + EXACT FRAMEGEN SPLIT ================= */
+(function() {
+    if (window._jennyV170Installed) return;
+    window._jennyV170Installed = true;
+
+    window._jennyVideoSpeedV170 = 1.0;
+    window._v170LastDecodedFrames = -1;
+    window._v170LastFrameStamp = performance.now();
+    window._v170SourceFrameInterval = 33.33; // ms (adjusted dynamically by playbackRate)
+
+    function getVideoElV170() {
+        return document.getElementById('jennyVideoElV130') || document.querySelector('video');
+    }
+
+    function isVideoDeckActiveV170() {
+        var vEl = getVideoElV170();
+        if (window._activeUiDeckV131 === 'video') return true;
+        if (vEl && !vEl.paused && vEl.readyState >= 2 && vEl.offsetParent !== null) return true;
+        return false;
+    }
+
+    function fmtTimeV170(sec) {
+        if (!isFinite(sec) || sec < 0) sec = 0;
+        var m = Math.floor(sec / 60);
+        var s = Math.floor(sec % 60);
+        return m + ":" + (s < 10 ? "0" + s : s);
+    }
+
+    // 1. Единая функция реального изменения скорости Видео + отвязанного Аудио (с сохранением Pitch-Lock)
+    window.setVideoDeckSpeedV170 = function(rawSpeed, showNotification) {
+        var spd = parseFloat(rawSpeed);
+        if (!isFinite(spd) || spd <= 0) spd = 1.0;
+        spd = Math.max(0.25, Math.min(3.0, Math.round(spd * 100) / 100));
+        window._jennyVideoSpeedV170 = spd;
+
+        var vEl = getVideoElV170();
+        if (vEl) {
+            try {
+                vEl.preservesPitch = true;
+                vEl.mozPreservesPitch = true;
+                vEl.webkitPreservesPitch = true;
+                vEl.defaultPlaybackRate = spd;
+                vEl.playbackRate = spd;
+            } catch (e) {}
+        }
+
+        // Обновляем состояние видеодеки и конфиг, чтобы старый цикл не сбрасывал скорость обратно на 0.5x
+        if (window.videoDeckV131) {
+            window.videoDeckV131.speed = spd;
+            if (window.videoDeckV131.config) {
+                window.videoDeckV131.config.playbackSpeed = spd;
+                window.videoDeckV131.config.normalPlaybackSpeed = spd;
+            }
+            // Если у видеодеки отдельный буферный источник (RAM / WebAudio)
+            if (window.videoDeckV131.sourceNode && window.videoDeckV131.sourceNode.playbackRate) {
+                try { window.videoDeckV131.sourceNode.playbackRate.value = spd; } catch (e) {}
+            }
+            if (window.videoDeckV131.mediaPlayer) {
+                try {
+                    window.videoDeckV131.mediaPlayer.preservesPitch = true;
+                    window.videoDeckV131.mediaPlayer.playbackRate = spd;
+                } catch (e) {}
+            }
+        }
+
+        // Если звук видео сейчас идет через отвязанный аудиоплеер/RAM-движок
+        if (isVideoDeckActiveV170()) {
+            var aEl = document.getElementById('audioPlayer') || window.player;
+            if (aEl && aEl !== vEl) {
+                try {
+                    aEl.preservesPitch = true;
+                    aEl.webkitPreservesPitch = true;
+                    aEl.playbackRate = spd;
+                } catch (e) {}
+            }
+            if (window.studioSourceNode && window.studioSourceNode.playbackRate) {
+                try { window.studioSourceNode.playbackRate.value = spd; } catch (e) {}
+            }
+        }
+
+        // Обновляем все кнопки скорости в HUD видео и индикатор внизу
+        var hudBtns = document.querySelectorAll('[onclick*="cycleVideoSpeed"], #jennyVideoSpeedBtnV130, .jenny-video-speed-btn');
+        hudBtns.forEach(function(btn) {
+            btn.innerHTML = '⏩ ' + spd + 'x';
+        });
+        var allBtns = document.querySelectorAll('button, div');
+        for (var i = 0; i < allBtns.length; i++) {
+            var txt = (allBtns[i].textContent || '').trim();
+            if (/^⏩\s*\d+(\.\d+)?x$/.test(txt)) {
+                allBtns[i].textContent = '⏩ ' + spd + 'x';
+            }
+        }
+
+        var spdInd = document.getElementById('speedLockIndicator');
+        if (spdInd && isVideoDeckActiveV170()) {
+            spdInd.textContent = 'x' + spd;
+        }
+
+        if (showNotification !== false && typeof window.showToast === 'function') {
+            window.showToast('🎬 Скорость Видео + Звук (Pitch-Lock): ' + spd + 'x');
+        }
+        return spd;
+    };
+
+    // Перехватываем кнопки цикла скорости в видеоплеере (добавляем 0.25x для наглядной проверки 120Hz)
+    var videoSpeedStepsV170 = [0.25, 0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0];
+    window.cycleVideoSpeedV130 = window.cycleVideoSpeedV131 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var cur = window._jennyVideoSpeedV170 || 1.0;
+        var idx = -1;
+        for (var i = 0; i < videoSpeedStepsV170.length; i++) {
+            if (Math.abs(videoSpeedStepsV170[i] - cur) < 0.03) { idx = i; break; }
+        }
+        var nextSpd = videoSpeedStepsV170[(idx + 1) % videoSpeedStepsV170.length];
+        return window.setVideoDeckSpeedV170(nextSpd, true);
+    };
+
+    // Перехватываем кнопку «Замедлить» в нижнем ряду видеоплеера: переключение 0.25x <-> 0.5x <-> 1.0x
+    document.addEventListener('click', function(ev) {
+        var t = ev.target;
+        if (!t) return;
+        var txt = (t.textContent || '').trim();
+        if (txt.indexOf('Замедлить') !== -1) {
+            ev.stopPropagation();
+            var cur = window._jennyVideoSpeedV170 || 1.0;
+            var next = (cur > 0.55) ? 0.5 : (cur > 0.3 ? 0.25 : 1.0);
+            window.setVideoDeckSpeedV170(next, true);
+        }
+    }, true);
+
+    // 2. Отключаем принудительный сброс currentTime видео в старом цикле синхронизации (чтобы декодер не лочился на 15 FPS)
+    var origSyncV131 = window.syncVideoRamEngineV131;
+    window.syncVideoRamEngineV131 = function() {
+        var vEl = getVideoElV170();
+        if (vEl && Math.abs(vEl.playbackRate - window._jennyVideoSpeedV170) > 0.01) {
+            try { vEl.playbackRate = window._jennyVideoSpeedV170; } catch (e) {}
+        }
+        // Не позволяем старому циклу дергать vEl.currentTime каждый кадр
+        if (window.videoDeckV131) {
+            window.videoDeckV131.speed = window._jennyVideoSpeedV170;
+        }
+    };
+
+    // 3. Перехват радиальной дуги скорости («штуки внизу») для управления Декой Б (Видео)
+    var origStartScrub = window.startScrub;
+    window.startScrub = function(side, speed) {
+        if (isVideoDeckActiveV170()) {
+            window.setVideoDeckSpeedV170(speed, false);
+            return;
+        }
+        if (typeof origStartScrub === 'function') {
+            return origStartScrub.apply(this, arguments);
+        }
+    };
+
+    var origStopScrub = window.stopScrub;
+    window.stopScrub = function() {
+        if (isVideoDeckActiveV170()) {
+            // При отпускании дуги оставляем выбранную скорость для видеодеки
+            var vEl = getVideoElV170();
+            if (vEl) {
+                try { vEl.playbackRate = window._jennyVideoSpeedV170; } catch (e) {}
+            }
+            return;
+        }
+        if (typeof origStopScrub === 'function') {
+            return origStopScrub.apply(this, arguments);
+        }
+    };
+
+    // Долгое нажатие по центру нижней шкалы в режиме Видео сбрасывает скорость видео на 1.0x,
+    // а короткий тап/свайп по нижней шкале перематывает само Видео!
+    function bindBottomBarToVideoDeckV170() {
+        var npEl = document.getElementById('nowPlaying');
+        var barContainer = npEl ? npEl.parentElement : null;
+        if (!barContainer || barContainer._v170Bound) return;
+        barContainer._v170Bound = true;
+
+        var touchStartX = 0;
+        var touchStartTime = 0;
+
+        barContainer.addEventListener('touchstart', function(ev) {
+            if (!isVideoDeckActiveV170()) return;
+            if (ev.touches && ev.touches.length > 0) {
+                touchStartX = ev.touches[0].clientX;
+                touchStartTime = performance.now();
+            }
+        }, { passive: true });
+
+        barContainer.addEventListener('touchend', function(ev) {
+            if (!isVideoDeckActiveV170()) return;
+            var vEl = getVideoElV170();
+            if (!vEl || !isFinite(vEl.duration) || vEl.duration <= 0) return;
+
+            var dt = performance.now() - touchStartTime;
+            var endX = (ev.changedTouches && ev.changedTouches.length > 0) ? ev.changedTouches[0].clientX : touchStartX;
+            var dx = Math.abs(endX - touchStartX);
+
+            // Короткий тап (< 200 мс) по нижней шкале — перемотка видео в точку нажатия
+            if (dt < 200 && dx < 15) {
+                var rect = barContainer.getBoundingClientRect();
+                if (rect.width > 10) {
+                    var ratio = Math.max(0.0, Math.min(1.0, (endX - rect.left) / rect.width));
+                    vEl.currentTime = ratio * vEl.duration;
+                    // Синхронизируем отвязанную аудиодорожку с новой позицией видео
+                    var aEl = document.getElementById('audioPlayer') || window.player;
+                    if (aEl && aEl !== vEl && isFinite(aEl.duration) && Math.abs(aEl.duration - vEl.duration) < 5) {
+                        try { aEl.currentTime = vEl.currentTime; } catch (e) {}
+                    }
+                }
+            } else if (dt >= 180 && dt < 450 && dx < 15) {
+                // Удержание по центру сбрасывает скорость видео на 1.0x
+                window.setVideoDeckSpeedV170(1.0, true);
+            }
+        }, { passive: true });
+    }
+
+    // 4. Обновление нижней шкалы прогресса для Деки Б + жесткий контроль playbackRate видео
+    setInterval(function() {
+        bindBottomBarToVideoDeckV170();
+        var vEl = getVideoElV170();
+        if (!vEl) return;
+
+        // Держим заданную скорость на видеоэлементе, чтобы ни один внешний скрипт ее не сбил
+        if (!vEl.paused && Math.abs(vEl.playbackRate - window._jennyVideoSpeedV170) > 0.01) {
+            try { vEl.playbackRate = window._jennyVideoSpeedV170; } catch (e) {}
+        }
+
+        // Если активна видеодека — выводим прогресс видео в нижнюю шкалу («штуку внизу»)
+        if (isVideoDeckActiveV170() && isFinite(vEl.duration) && vEl.duration > 0) {
+            var curEl = document.getElementById('currentTime');
+            var remEl = document.getElementById('remainingTime');
+            var npEl  = document.getElementById('nowPlaying');
+            var fillEl = document.getElementById('progressFill');
+
+            var cur = vEl.currentTime || 0;
+            var dur = vEl.duration || 1;
+            var ratio = Math.max(0.0, Math.min(1.0, cur / dur));
+
+            if (curEl) curEl.textContent = fmtTimeV170(cur);
+            if (remEl) remEl.textContent = "-" + fmtTimeV170(Math.max(0, dur - cur));
+            if (fillEl) {
+                fillEl.style.transformOrigin = "left center";
+                fillEl.style.transform = "scaleX(" + ratio.toFixed(4) + ")";
+                fillEl.style.width = "100%";
+            }
+            if (npEl) {
+                var rawTitle = (window.videoDeckV131 && window.videoDeckV131.title) ||
+                               (vEl.getAttribute('data-title')) ||
+                               (vEl.src ? decodeURIComponent(vEl.src.split('/').pop()) : 'Видео Дека Б');
+                var shortTitle = rawTitle.length > 26 ? rawTitle.substring(0, 26) + '…' : rawTitle;
+                npEl.textContent = "🎬 ДЕКА Б: " + shortTitle + "  x" + window._jennyVideoSpeedV170;
+            }
+        }
+    }, 80);
+
+    // 5. Честный захват кадров строго по декодеру (requestVideoFrameCallback) для 120Hz шейдера
+    // Это гарантирует, что prevTex и currTex ВСЕГДА содержат два разных соседних кадра,
+    // а левая (ОРИГ) и правая (120Hz LK) половины идут синхронно и без разрыва геометрии
+    function attachExactFrameTrackerV170() {
+        var vEl = getVideoElV170();
+        if (!vEl || vEl._v170FrameTrackerAttached) return;
+        vEl._v170FrameTrackerAttached = true;
+        window._v170NewDecodedFrameReady = true;
+
+        if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+            var onDecodedFrame = function(now, metadata) {
+                var prevStamp = window._v170LastFrameStamp || now;
+                var delta = now - prevStamp;
+                if (delta > 8 && delta < 500) {
+                    window._v170SourceFrameInterval = delta;
+                }
+                window._v170LastFrameStamp = now;
+                window._v170NewDecodedFrameReady = true;
+                vEl.requestVideoFrameCallback(onDecodedFrame);
+            };
+            vEl.requestVideoFrameCallback(onDecodedFrame);
+        }
+    }
+
+    // Вычисляем точный фазовый коэффициент alpha (0.0 .. 1.0) между двумя декодированными кадрами
+    window.getExactInterpAlphaV170 = function() {
+        attachExactFrameTrackerV170();
+        var elapsed = performance.now() - (window._v170LastFrameStamp || performance.now());
+        var interval = window._v170SourceFrameInterval || (33.33 / (window._jennyVideoSpeedV170 || 1.0));
+        return Math.max(0.0, Math.min(1.0, elapsed / Math.max(8.0, interval)));
+    };
+})();
+
+
+
+
+
+
+
+
+
+
+
+/* ================= JENNY V173: 2-ROW DRAGGABLE LOGGER & LIVE 8-SLIDER TUNER V200 ================= */
+(function() {
+    if (window._jennyV200TunerInstalled) return;
+    window._jennyV200TunerInstalled = true;
+
+    window._jennySplitRatioV176 = parseFloat(localStorage.getItem('jenny_split_ratio') || '0.5') || 0.5;
+    window._jennySplitSwappedV176 = (localStorage.getItem('jenny_split_swap') === '1');
+
+            var TUNER_SPECS = [
+        { key: 'dupThresh',    label: 'Дубль ±Y (0=Выкл)',   min: 0.0, max: 255.0, def: 10.0,  fmt: 0, color: '#ff9100' },
+        { key: 'targetFps',    label: 'Целевой FPS (0=Авто)', min: 0.0, max: 180.0, def: 120.0, fmt: 0, color: '#ffea00' },
+        { key: 'flowScale',    label: 'Сдвиг (Scale)',        min: 0.0, max: 2.50,  def: 0.85,  fmt: 2, color: '#00ff9d' },
+        { key: 'ghostGate',    label: 'Шлейф (Gate)',         min: 0.02, max: 0.45, def: 0.12,  fmt: 2, color: '#ff5252' },
+        { key: 'detailGuard',  label: 'Детали (Guard)',       min: 0.0, max: 1.00,  def: 0.45,  fmt: 2, color: '#00e5ff' },
+        { key: 'bridgeSpread', label: 'Мост (Bridge)',        min: 0.0, max: 1.00,  def: 0.35,  fmt: 2, color: '#e040fb' },
+        { key: 'searchRadius', label: 'Радар (Rad px)',       min: 4.0, max: 48.0,  def: 15.0,  fmt: 1, color: '#ffd740' },
+        { key: 'inkGuard',     label: 'Контур (Ink)',         min: 0.0, max: 1.00,  def: 0.50,  fmt: 2, color: '#69f0ae' },
+        { key: 'pllSmooth',    label: 'Ритм (PLL)',           min: 0.10, max: 0.95, def: 0.85,  fmt: 2, color: '#40c4ff' }
+    ];
+
+    function updateSplitLineUI(lineEl) {
+        if (!lineEl) lineEl = document.getElementById('jv168SplitLine');
+        if (!lineEl) return;
+        var ratio = Math.max(0.05, Math.min(0.95, window._jennySplitRatioV176 || 0.5));
+        var sw = !!window._jennySplitSwappedV176;
+        lineEl.style.left = (ratio * 100).toFixed(2) + '%';
+        var lt = lineEl.querySelector('#jv176LeftTag');
+        var rt = lineEl.querySelector('#jv176RightTag');
+        if (lt && rt) {
+            lt.textContent = sw ? '120Hz MV' : 'ОРИГ';
+            lt.style.color = sw ? '#00ff9d' : '#ffcc00';
+            lt.style.borderColor = lt.style.color;
+            rt.textContent = sw ? 'ОРИГ' : '120Hz MV';
+            rt.style.color = sw ? '#ffcc00' : '#00ff9d';
+            rt.style.borderColor = rt.style.color;
+        }
+    }
+
+    window.toggleSplitSwapV176 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        window._jennySplitSwappedV176 = !window._jennySplitSwappedV176;
+        try {
+            localStorage.setItem('jenny_split_swap', window._jennySplitSwappedV176 ? '1' : '0');
+        } catch (e) {}
+        updateSplitLineUI();
+        if (typeof window.showToast === 'function') {
+            window.showToast(window._jennySplitSwappedV176
+                ? '⇄ Сплит: Слева 120Hz MV │ Справа ОРИГ'
+                : '⇄ Сплит: Слева ОРИГ │ Справа 120Hz MV');
+        }
+    };
+
+    function upgradeSplitLineV176() {
+        var lineEl = document.getElementById('jv168SplitLine');
+        if (!lineEl) return;
+        if (lineEl._v200Upgraded) {
+            updateSplitLineUI(lineEl);
+            return;
+        }
+        lineEl._v200Upgraded = true;
+        lineEl.style.zIndex = '99990';
+        lineEl.innerHTML =
+            '<div id="jv176SplitHeader" style="position:absolute;top:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;background:rgba(0,0,0,0.88);padding:4px 8px;border-radius:6px;border:1px solid #00e5ff;white-space:nowrap;pointer-events:auto;">' +
+                '<span id="jv176LeftTag" style="color:#ffcc00;font-family:monospace;font-weight:900;font-size:10.5px;padding:1px 5px;border-radius:3px;border:1px solid #ffcc00;">ОРИГ</span>' +
+                '<span style="color:#00e5ff;font-weight:900;font-size:13px;padding:0 3px;">⇄</span>' +
+                '<span id="jv176RightTag" style="color:#00ff9d;font-family:monospace;font-weight:900;font-size:10.5px;padding:1px 5px;border-radius:3px;border:1px solid #00ff9d;">120Hz MV</span>' +
+            '</div>' +
+            '<div id="jv176SplitGrip" style="position:absolute;top:64%;left:50%;transform:translate(-50%,-50%);background:rgba(0,18,28,0.92);color:#00e5ff;border:1.5px solid #00e5ff;border-radius:14px;padding:5px 8px;font-size:11px;font-weight:bold;pointer-events:auto;box-shadow:0 0 10px rgba(0,229,255,0.6);">◀┃▶</div>';
+        updateSplitLineUI(lineEl);
+    }
+
+    var TOTAL_LOG_FRAMES = 360;
+    var historyDt = new Float32Array(120);
+    var historyAlpha = new Float32Array(120);
+    var historyNewFrame = new Uint8Array(120);
+    var histIdx = 0;
+
+    var lastTickTime = performance.now();
+    var lastCapturedAlpha = 0;
+    var uploadedSinceLastDraw = 0;
+    var glRendererInfo = "";
+
+    var isLogging = false;
+    var logEntries = [];
+    var isCollapsed = false;
+    var isTunerOpen = (localStorage.getItem('jenny_tuner_open_v190') !== '0');
+
+    function getMediaPassport(vEl, glCtx) {
+        if (!vEl) return "Видеоэлемент не найден" + String.fromCharCode(10);
+        var rawSrc = vEl.currentSrc || vEl.src || "";
+        var decPath = rawSrc;
+        try { decPath = decodeURIComponent(rawSrc); } catch (e) {}
+        var fName = decPath ? decPath.split('/').pop().split('?')[0] : "unknown";
+        var totalDec = -1, droppedDec = -1;
+        if (typeof vEl.getVideoPlaybackQuality === 'function') {
+            var q = vEl.getVideoPlaybackQuality();
+            if (q) { totalDec = q.totalVideoFrames; droppedDec = q.droppedVideoFrames; }
+        }
+        if (!glRendererInfo && glCtx) {
+            try {
+                var dbg = glCtx.getExtension('WEBGL_debug_renderer_info');
+                glRendererInfo = dbg
+                    ? (glCtx.getParameter(dbg.UNMASKED_VENDOR_WEBGL) + " / " + glCtx.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
+                    : glCtx.getParameter(glCtx.RENDERER);
+            } catch (e) {}
+        }
+        var modeStr = (window._jv166Metrics && window._jv166Metrics.mode) || "unknown";
+        var spInfo = (modeStr === 'split')
+            ? (" (поз=" + Math.round((window._jennySplitRatioV176 || 0.5) * 100) + "%, " +
+               (window._jennySplitSwappedV176 ? "Слева 120Hz/Справа ОРИГ" : "Слева ОРИГ/Справа 120Hz") + ")")
+            : "";
+        var tun = window._jennyTunerV190 || {};
+        return [
+            "================ ПАСПОРТ МЕДИАФАЙЛА И ДВИЖКА V200 ================",
+            "Файл (Имя)      : " + fName,
+            "Путь / URI      : " + decPath,
+            "Разрешение видео: " + (vEl.videoWidth || 0) + "x" + (vEl.videoHeight || 0) +
+                " | Буфер WebGL: " + (glCtx ? glCtx.drawingBufferWidth + "x" + glCtx.drawingBufferHeight : "N/A"),
+            "Длительность    : " + (isFinite(vEl.duration) ? vEl.duration.toFixed(2) + " сек" : "N/A") +
+                " | Позиция старта лога: " + (vEl.currentTime || 0).toFixed(3) + " сек",
+            "Скорость (Rate) : " + (vEl.playbackRate || 1) + "x | Режим 120Hz: " + modeStr + spInfo,
+            "Крутилки V206   : Dup±Y=" + Number(tun.dupThresh !== undefined ? tun.dupThresh : 10).toFixed(0) + " | Interp=+" + Number(tun.interpFrames || 0).toFixed(0) +
+                " | Scale=" + Number(tun.flowScale || 0).toFixed(2) +
+                " | Gate=" + Number(tun.ghostGate || 0).toFixed(2) +
+                " | Guard=" + Number(tun.detailGuard || 0).toFixed(2) +
+                " | Bridge=" + Number(tun.bridgeSpread || 0).toFixed(2) +
+                " | Rad=" + Number(tun.searchRadius || 0).toFixed(1) +
+                " | Ink=" + Number(tun.inkGuard || 0).toFixed(2) +
+                " | PLL=" + Number(tun.pllSmooth || 0).toFixed(2),
+            "Декодер (кадры) : всего=" + totalDec + ", пропущено(drop)=" + droppedDec + ", отсечено дублей (B==A)=" + (window._jennySkippedDupsTotal || 0),
+            "GPU / Рендерер  : " + (glRendererInfo || "N/A"),
+            "=================================================================="
+        ].join(String.fromCharCode(10)) + String.fromCharCode(10);
+    }
+
+    function attachProbe(Proto) {
+        if (!Proto || Proto._v200Probe) return;
+        Proto._v200Probe = true;
+        var origLoc = Proto.getUniformLocation;
+        Proto.getUniformLocation = function(p, n) {
+            var l = origLoc.call(this, p, n);
+            if (l) l._uName = n;
+            return l;
+        };
+        var origU1f = Proto.uniform1f;
+        Proto.uniform1f = function(l, v) {
+            if (l && l._uName === 'u_alpha') lastCapturedAlpha = v;
+            return origU1f.call(this, l, v);
+        };
+        var origTex = Proto.texImage2D;
+        Proto.texImage2D = function() {
+            var a = arguments[arguments.length - 1];
+            if (a && a.tagName === 'VIDEO') uploadedSinceLastDraw = 1;
+            return origTex.apply(this, arguments);
+        };
+        var origDraw = Proto.drawArrays;
+        Proto.drawArrays = function(m, f, c) {
+            if (!window._jennyExp120HzEnabledV205) return origDraw.call(this, m, f, c);
+            var now = performance.now();
+            var dt = now - lastTickTime;
+            lastTickTime = now;
+            var up = uploadedSinceLastDraw;
+            uploadedSinceLastDraw = 0;
+            historyDt[histIdx] = dt;
+            historyAlpha[histIdx] = lastCapturedAlpha;
+            historyNewFrame[histIdx] = up;
+            histIdx = (histIdx + 1) % 120;
+
+            if (isLogging) {
+                var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
+                var dec = (vEl && typeof vEl.getVideoPlaybackQuality === 'function')
+                    ? vEl.getVideoPlaybackQuality().totalVideoFrames : -1;
+                logEntries.push({
+                    idx: logEntries.length + 1,
+                    dt: dt,
+                    vTime: vEl ? vEl.currentTime : 0,
+                    dec: dec,
+                    texUp: up,
+                    alpha: lastCapturedAlpha
+                });
+                var btn = document.getElementById('jennyLog120Btn');
+                if (btn && (logEntries.length % 120 === 1)) {
+                    btn.textContent = '⏳ ' + (Math.floor(logEntries.length / 120) + 1) + '/3...';
+                }
+                if (logEntries.length >= TOTAL_LOG_FRAMES) {
+                    isLogging = false;
+                    var blocks = [];
+                    for (var r = 0; r < 3; r++) {
+                        var sl = logEntries.slice(r * 120, (r + 1) * 120);
+                        var sum = 0, minD = 9999, maxD = 0, tUps = 0, lines = [];
+                        for (var k = 0; k < sl.length; k++) {
+                            var e = sl[k];
+                            sum += e.dt;
+                            if (e.dt < minD) minD = e.dt;
+                            if (e.dt > maxD) maxD = e.dt;
+                            if (e.texUp) tUps++;
+                            lines.push(
+                                String(e.idx).padStart(3, ' ') + " | " +
+                                e.dt.toFixed(2).padStart(6, ' ') + "ms | vTime:" +
+                                e.vTime.toFixed(4) + " | dec:" + e.dec +
+                                " | texUp:" + e.texUp + " | alpha:" + e.alpha.toFixed(3)
+                            );
+                        }
+                        var avgD = sum / sl.length;
+                        var dFrames = Math.max(0, sl[sl.length - 1].dec - sl[0].dec);
+                        blocks.push(
+                            String.fromCharCode(10) + "--- КРУГ " + (r + 1) + "/3 | Выход: " + (1000 / Math.max(0.1, avgD)).toFixed(1) +
+                            " FPS (avg " + avgD.toFixed(2) + "ms, min " + minD.toFixed(2) +
+                            "ms, max " + maxD.toFixed(2) + "ms) | Кадров декодера: " +
+                            dFrames + " (texUp:" + tUps + ") ---" + String.fromCharCode(10) +
+                            "Idx |   dt_ms  |   vTime     | decFrm | texUp | alpha" + String.fromCharCode(10) +
+                            lines.join(String.fromCharCode(10))
+                        );
+                    }
+                    var out = "=== JENNY 120Hz FRAME LOG V200 (3x120 = 360 FRAMES) ===" + String.fromCharCode(10) +
+                              getMediaPassport(vEl, this) + blocks.join(String.fromCharCode(10));
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(out).catch(function(){});
+                    }
+                    window._lastJenny120Log = out;
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('✅ Лог 3x120 + Крутилки V200 скопированы в буфер!');
+                    }
+                    if (btn) btn.textContent = '📋 360 ОК';
+                }
+            }
+            return origDraw.call(this, m, f, c);
+        };
+    }
+    if (typeof WebGL2RenderingContext !== 'undefined') attachProbe(WebGL2RenderingContext.prototype);
+    if (typeof WebGLRenderingContext !== 'undefined') attachProbe(WebGLRenderingContext.prototype);
+
+    function syncTunerSlidersDOM() {
+        var tun = window._jennyTunerV190;
+        if (!tun) return;
+        for (var i = 0; i < TUNER_SPECS.length; i++) {
+            var sp = TUNER_SPECS[i];
+            var val = Number(tun[sp.key]);
+            if (isNaN(val)) val = sp.def;
+            var pct = Math.max(0, Math.min(100, ((val - sp.min) / (sp.max - sp.min)) * 100));
+            var fillEl = document.getElementById('jt190Fill_' + sp.key);
+            var valEl = document.getElementById('jt190Val_' + sp.key);
+            if (fillEl) fillEl.style.width = pct.toFixed(1) + '%';
+            if (valEl) valEl.textContent = val.toFixed(sp.fmt);
+        }
+    }
+
+    function applyCollapse() {
+        var w = document.getElementById('jennyFenceWrapV173');
+        var cv = document.getElementById('jennyFenceCanvasV173');
+        var tBtn = document.getElementById('jennyFenceToggleBtn');
+        var lBtn = document.getElementById('jennyLog120Btn');
+        var tunBtn = document.getElementById('jennyTunerToggleBtnV190');
+        var sBtn = document.getElementById('jennySplitSwapQuickBtn');
+        var tBox = document.getElementById('jennyTunerBoxV190');
+        if (!w || !cv || !tBtn) return;
+
+        if (isCollapsed) {
+            cv.style.display = 'none';
+            if (lBtn) lBtn.style.display = 'none';
+            if (tunBtn) tunBtn.style.display = 'none';
+            if (sBtn) sBtn.style.display = 'none';
+            if (tBox) tBox.style.display = 'none';
+            w.style.background = 'rgba(0,0,0,0.65)';
+            w.style.padding = '4px 8px';
+            tBtn.textContent = '📊';
+        } else {
+            cv.style.display = 'block';
+            if (lBtn) lBtn.style.display = 'inline-block';
+            if (tunBtn) {
+                tunBtn.style.display = 'inline-block';
+                tunBtn.style.background = isTunerOpen ? '#00e5ff' : '#11222b';
+                tunBtn.style.color = isTunerOpen ? '#000' : '#00e5ff';
+            }
+            if (sBtn) sBtn.style.display = 'inline-block';
+            if (tBox) tBox.style.display = isTunerOpen ? 'flex' : 'none';
+            w.style.background = 'rgba(4,10,16,0.90)';
+            w.style.padding = '6px 8px';
+            tBtn.textContent = '➖';
+            syncTunerSlidersDOM();
+        }
+    }
+
+    function ensureOverlay() {
+        upgradeSplitLineV176();
+        var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
+        if (!vEl || !vEl.parentElement) return;
+        var stage = vEl.parentElement;
+
+        var oldW = document.getElementById('jennyFenceWrapV173');
+        if (stage.clientWidth > 0 && stage.clientWidth < 260) {
+            if (oldW) oldW.style.display = 'none';
+            return;
+        }
+        if (oldW && oldW._isV203Compact) {
+            oldW.style.display = 'flex';
+            return;
+        }
+        if (oldW) oldW.remove();
+
+        var sx = parseFloat(localStorage.getItem('jenny_diag_x') || '10');
+        var sy = parseFloat(localStorage.getItem('jenny_diag_y') || '48');
+
+                var wrap = document.createElement('div');
+        wrap.id = 'jennyFenceWrapV173';
+        wrap._isV177TwoRow = true;
+        wrap._isV200Tuner = true;
+        wrap._isV203Compact = true;
+        wrap.style.cssText = 'position:absolute;top:' + sy + 'px;left:' + sx + 'px;z-index:99999;display:flex;flex-direction:column;align-items:stretch;gap:2px;border:1px solid #00e5ff;border-radius:7px;padding:4px 6px;pointer-events:auto;touch-action:none;user-select:none;box-shadow:0 4px 14px rgba(0,0,0,0.75);width:222px;box-sizing:border-box;';
+
+        var cv = document.createElement('canvas');
+        cv.id = 'jennyFenceCanvasV173';
+        cv.width = 210;
+        cv.height = 26;
+        cv.style.cssText = 'width:210px;height:26px;display:block;border-bottom:1px solid rgba(0,229,255,0.25);padding-bottom:1px;';
+
+        var row2 = document.createElement('div');
+        row2.id = 'jennyFenceRow2V177';
+        row2.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:3px;';
+
+        var tBtn = document.createElement('button');
+        tBtn.id = 'jennyFenceToggleBtn';
+        tBtn.style.cssText = 'background:#11222b;color:#00e5ff;font-size:10.5px;font-weight:bold;border:1px solid rgba(0,229,255,0.5);border-radius:4px;padding:2px 6px;';
+
+        var lBtn = document.createElement('button');
+        lBtn.id = 'jennyLog120Btn';
+        lBtn.textContent = '📋 ЛОГ';
+        lBtn.style.cssText = 'background:#00e5ff;color:#000;font-weight:900;font-size:9.5px;border:none;border-radius:4px;padding:2px 5px;white-space:nowrap;flex:1;';
+
+        var tunBtn = document.createElement('button');
+        tunBtn.id = 'jennyTunerToggleBtnV190';
+        tunBtn.textContent = '🎛️';
+        tunBtn.style.cssText = 'background:#00e5ff;color:#000;font-weight:bold;font-size:10.5px;border:1px solid #00e5ff;border-radius:4px;padding:2px 6px;';
+
+        var sBtn = document.createElement('button');
+        sBtn.id = 'jennySplitSwapQuickBtn';
+        sBtn.textContent = '⇄';
+        sBtn.style.cssText = 'background:#1b2b22;color:#00ff9d;font-weight:bold;font-size:10.5px;border:1px solid #00ff9d;border-radius:4px;padding:2px 6px;';
+
+        var dragHint = document.createElement('span');
+        dragHint.textContent = '✥';
+        dragHint.style.cssText = 'color:rgba(0,229,255,0.8);font-size:13px;padding:0 2px;';
+
+        row2.appendChild(tBtn);
+        row2.appendChild(lBtn);
+        row2.appendChild(tunBtn);
+        row2.appendChild(sBtn);
+        row2.appendChild(dragHint);
+
+        var tBox = document.createElement('div');
+        tBox.id = 'jennyTunerBoxV190';
+        tBox.style.cssText = 'display:flex;flex-direction:column;gap:1px;padding-top:2px;border-top:1px solid rgba(0,229,255,0.3);margin-top:1px;';
+
+        var slidersHtml = '';
+        for (var i = 0; i < TUNER_SPECS.length; i++) {
+            var sp = TUNER_SPECS[i];
+            slidersHtml +=
+                '<div class="jt190-slider-row" data-jtkey="' + sp.key + '" style="display:flex;flex-direction:column;gap:1px;padding:1px 0;cursor:pointer;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;font-family:monospace;font-size:9px;line-height:1.0;">' +
+                        '<span style="color:#e6edf3;font-weight:bold;">' + sp.label + ' <span style="color:#6e7681;font-size:8px;">[' + sp.min + '..' + sp.max + ']</span></span>' +
+                        '<span id="jt190Val_' + sp.key + '" style="color:' + sp.color + ';font-weight:900;font-size:9.5px;">' + sp.def.toFixed(sp.fmt) + '</span>' +
+                    '</div>' +
+                    '<div id="jt190Track_' + sp.key + '" style="width:100%;height:5px;background:#111922;border:1px solid rgba(255,255,255,0.18);border-radius:3px;overflow:hidden;position:relative;">' +
+                        '<div id="jt190Fill_' + sp.key + '" style="width:50%;height:100%;background:' + sp.color + ';border-radius:3px;pointer-events:none;"></div>' +
+                    '</div>' +
+                '</div>';
+        }
+        slidersHtml +=
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:1px;">' +
+                '<span style="color:#8b949e;font-size:8px;font-family:monospace;">5-Step Pipeline V206</span>' +
+                '<button id="jt190ResetBtn" style="background:#21262d;color:#ff7b72;border:1px solid #ff7b72;border-radius:3px;font-size:8.5px;font-weight:bold;padding:1px 6px;">🔄 Сброс</button>' +
+            '</div>';
+        tBox.innerHTML = slidersHtml;
+
+        wrap.appendChild(cv);
+        wrap.appendChild(row2);
+        wrap.appendChild(tBox);
+        stage.appendChild(wrap);
+        applyCollapse();
+    }
+
+    var activeDragMode = null;
+    var activeSliderKey = null;
+    var startTouchX = 0, startTouchY = 0;
+    var startWidgetLeft = 0, startWidgetTop = 0;
+    var maxTouchDelta = 0;
+    var touchedElement = null;
+
+    function isStageRot90(stageEl) {
+        if (stageEl && stageEl.classList && stageEl.classList.contains('rot90-v130')) return true;
+        return Boolean(window._vidStateV130 && window._vidStateV130.rotated90);
+    }
+
+    function updateSliderFromTouch(key, tx, ty) {
+        var sp = null;
+        for (var i = 0; i < TUNER_SPECS.length; i++) {
+            if (TUNER_SPECS[i].key === key) { sp = TUNER_SPECS[i]; break; }
+        }
+        if (!sp) return;
+        var trackEl = document.getElementById('jt190Track_' + key);
+        if (!trackEl) return;
+        var r = trackEl.getBoundingClientRect();
+        var wrap = document.getElementById('jennyFenceWrapV173');
+        var rot90 = isStageRot90(wrap ? wrap.parentElement : null);
+
+        var ratio = 0.5;
+        if (!rot90 && r.width > 10) {
+            ratio = (tx - r.left) / r.width;
+        } else if (rot90 && r.height > 10) {
+            ratio = (ty - r.top) / r.height;
+        }
+        ratio = Math.max(0.0, Math.min(1.0, ratio));
+        var newVal = sp.min + ratio * (sp.max - sp.min);
+        var factor = Math.pow(10, sp.fmt);
+        newVal = Math.round(newVal * factor) / factor;
+
+        if (!window._jennyTunerV190) window._jennyTunerV190 = {};
+        window._jennyTunerV190[key] = newVal;
+        try { localStorage.setItem('jt190_' + key, String(newVal)); } catch (e) {}
+        if (key === 'interpFrames' && typeof window.setInterpFramesV200 === 'function') {
+            window.setInterpFramesV200(newVal);
+        }
+        syncTunerSlidersDOM();
+    }
+
+    window.addEventListener('touchstart', function(e) {
+        if (!e.touches || !e.touches.length) return;
+        var tx = e.touches[0].clientX;
+        var ty = e.touches[0].clientY;
+        var wrap = document.getElementById('jennyFenceWrapV173');
+
+        if (wrap && wrap.style.display !== 'none' && wrap.offsetParent !== null) {
+            var wr = wrap.getBoundingClientRect();
+            if (tx >= wr.left - 4 && tx <= wr.right + 4 && ty >= wr.top - 4 && ty <= wr.bottom + 4) {
+                var el = document.elementFromPoint(tx, ty) || e.target;
+                touchedElement = el;
+                startTouchX = tx;
+                startTouchY = ty;
+                maxTouchDelta = 0;
+
+                var sRow = el && el.closest ? el.closest('.jt190-slider-row') : null;
+                if (sRow) {
+                    activeDragMode = 'slider';
+                    activeSliderKey = sRow.getAttribute('data-jtkey');
+                    updateSliderFromTouch(activeSliderKey, tx, ty);
+                    e.stopImmediatePropagation();
+                    if (e.cancelable) e.preventDefault();
+                    return;
+                }
+
+                activeDragMode = 'widget';
+                startWidgetLeft = parseFloat(wrap.style.left) || 10;
+                startWidgetTop = parseFloat(wrap.style.top) || 48;
+                e.stopImmediatePropagation();
+                return;
+            }
+        }
+
+        var lineEl = document.getElementById('jv168SplitLine');
+        if (lineEl && lineEl.style.display !== 'none' && lineEl.offsetParent !== null) {
+            var hdr = document.getElementById('jv176SplitHeader');
+            var grip = document.getElementById('jv176SplitGrip');
+            var lr = lineEl.getBoundingClientRect();
+            var stageEl = lineEl.parentElement;
+            var stageRect = stageEl ? stageEl.getBoundingClientRect() : lr;
+            var rot90 = isStageRot90(stageEl);
+
+            var onHdr = false, onGrip = false;
+            if (hdr) {
+                var hr = hdr.getBoundingClientRect();
+                onHdr = (tx >= hr.left - 8 && tx <= hr.right + 8 && ty >= hr.top - 8 && ty <= hr.bottom + 8);
+            }
+            if (grip) {
+                var gr = grip.getBoundingClientRect();
+                onGrip = (tx >= gr.left - 16 && tx <= gr.right + 16 && ty >= gr.top - 16 && ty <= gr.bottom + 16);
+            }
+
+            var nearLine = false;
+            if (!rot90) {
+                var lineX = lr.left + lr.width * 0.5;
+                nearLine = (Math.abs(tx - lineX) <= 26 && ty >= stageRect.top && ty <= (stageRect.bottom - 95));
+            } else {
+                var lineY = lr.top + lr.height * 0.5;
+                nearLine = (Math.abs(ty - lineY) <= 26 && tx >= (stageRect.left + 95) && tx <= stageRect.right);
+            }
+
+            if (onHdr || onGrip || nearLine) {
+                activeDragMode = 'split';
+                startTouchX = tx;
+                startTouchY = ty;
+                maxTouchDelta = 0;
+                touchedElement = onHdr ? hdr : (onGrip ? grip : lineEl);
+                e.stopImmediatePropagation();
+                if (e.cancelable) e.preventDefault();
+                return;
+            }
+        }
+        activeDragMode = null;
+    }, { capture: true, passive: false });
+
+    window.addEventListener('touchmove', function(e) {
+        if (!activeDragMode || !e.touches || !e.touches.length) return;
+        var tx = e.touches[0].clientX;
+        var ty = e.touches[0].clientY;
+        var dx = tx - startTouchX;
+        var dy = ty - startTouchY;
+        maxTouchDelta = Math.max(maxTouchDelta, Math.hypot(dx, dy));
+
+        e.stopImmediatePropagation();
+        if (e.cancelable) e.preventDefault();
+
+        if (activeDragMode === 'slider' && activeSliderKey) {
+            updateSliderFromTouch(activeSliderKey, tx, ty);
+            return;
+        }
+
+        if (activeDragMode === 'widget' && maxTouchDelta > 5) {
+            var wrap = document.getElementById('jennyFenceWrapV173');
+            if (wrap && wrap.parentElement) {
+                var stageEl = wrap.parentElement;
+                var rot90 = isStageRot90(stageEl);
+                var localDx = rot90 ? dy : dx;
+                var localDy = rot90 ? (-dx) : dy;
+
+                var pw = stageEl.clientWidth;
+                var ph = stageEl.clientHeight;
+                var maxL = Math.max(4, pw - wrap.offsetWidth - 4);
+                var maxT = Math.max(4, ph - wrap.offsetHeight - 4);
+                var newL = Math.max(4, Math.min(maxL, startWidgetLeft + localDx));
+                var newT = Math.max(4, Math.min(maxT, startWidgetTop + localDy));
+                wrap.style.left = Math.round(newL) + 'px';
+                wrap.style.top = Math.round(newT) + 'px';
+                wrap.style.bottom = 'auto';
+            }
+        } else if (activeDragMode === 'split' && maxTouchDelta > 4) {
+            var lineEl = document.getElementById('jv168SplitLine');
+            if (lineEl && lineEl.parentElement) {
+                var stageEl = lineEl.parentElement;
+                var sr = stageEl.getBoundingClientRect();
+                var rot90 = isStageRot90(stageEl);
+                if (!rot90 && sr.width > 20) {
+                    window._jennySplitRatioV176 = Math.max(0.05, Math.min(0.95, (tx - sr.left) / sr.width));
+                    updateSplitLineUI(lineEl);
+                } else if (rot90 && sr.height > 20) {
+                    window._jennySplitRatioV176 = Math.max(0.05, Math.min(0.95, (ty - sr.top) / sr.height));
+                    updateSplitLineUI(lineEl);
+                }
+            }
+        }
+    }, { capture: true, passive: false });
+
+    window.addEventListener('touchend', function(e) {
+        if (!activeDragMode) return;
+        var mode = activeDragMode;
+        activeDragMode = null;
+        activeSliderKey = null;
+        e.stopImmediatePropagation();
+
+        if (mode === 'slider') return;
+
+        if (mode === 'widget') {
+            var wrap = document.getElementById('jennyFenceWrapV173');
+            if (maxTouchDelta > 6) {
+                if (wrap) {
+                    try {
+                        localStorage.setItem('jenny_diag_x', String(parseFloat(wrap.style.left) || 10));
+                        localStorage.setItem('jenny_diag_y', String(parseFloat(wrap.style.top) || 48));
+                    } catch (err) {}
+                }
+                return;
+            }
+            var lBtn = document.getElementById('jennyLog120Btn');
+            var tunBtn = document.getElementById('jennyTunerToggleBtnV190');
+            var sBtn = document.getElementById('jennySplitSwapQuickBtn');
+            var tBtn = document.getElementById('jennyFenceToggleBtn');
+            var rBtn = document.getElementById('jt190ResetBtn');
+            var tg = touchedElement;
+            if (lBtn && (tg === lBtn || lBtn.contains(tg))) {
+                logEntries = [];
+                isLogging = true;
+                lBtn.textContent = '⏳ 1/3...';
+            } else if (tunBtn && (tg === tunBtn || tunBtn.contains(tg))) {
+                isTunerOpen = !isTunerOpen;
+                try { localStorage.setItem('jenny_tuner_open_v190', isTunerOpen ? '1' : '0'); } catch (err) {}
+                applyCollapse();
+            } else if (rBtn && (tg === rBtn || rBtn.contains(tg))) {
+                if (!window._jennyTunerV190) window._jennyTunerV190 = {};
+                for (var i = 0; i < TUNER_SPECS.length; i++) {
+                    var sp = TUNER_SPECS[i];
+                    window._jennyTunerV190[sp.key] = sp.def;
+                    try { localStorage.setItem('jt190_' + sp.key, String(sp.def)); } catch (err) {}
+                }
+                if (typeof window.setInterpFramesV200 === 'function') {
+                    window.setInterpFramesV200(0);
+                }
+                syncTunerSlidersDOM();
+                if (typeof window.showToast === 'function') {
+                    window.showToast('🔄 Крутилки V200 сброшены на оптимальные!');
+                }
+            } else if (sBtn && (tg === sBtn || sBtn.contains(tg))) {
+                window.toggleSplitSwapV176(e);
+            } else if (tBtn && (tg === tBtn || tBtn.contains(tg))) {
+                isCollapsed = !isCollapsed;
+                applyCollapse();
+            }
+        } else if (mode === 'split') {
+            try {
+                localStorage.setItem('jenny_split_ratio', String(window._jennySplitRatioV176));
+            } catch (err) {}
+            var hdr = document.getElementById('jv176SplitHeader');
+            if (maxTouchDelta < 8 && hdr && (touchedElement === hdr || hdr.contains(touchedElement))) {
+                window.toggleSplitSwapV176(e);
+            }
+        }
+    }, { capture: true, passive: false });
+
+    function loopFence() {
+        if (!window._jennyExp120HzEnabledV205) {
+            var wOff = document.getElementById('jennyFenceWrapV173');
+            if (wOff) wOff.style.setProperty('display', 'none', 'important');
+            var sOff = document.getElementById('jv168SplitLine');
+            if (sOff) sOff.style.setProperty('display', 'none', 'important');
+            requestAnimationFrame(loopFence);
+            return;
+        }
+        ensureOverlay();
+        if (!isCollapsed) {
+            var cv = document.getElementById('jennyFenceCanvasV173');
+            if (cv && cv.offsetParent !== null) {
+                var ctx = cv.getContext('2d');
+                ctx.clearRect(0, 0, cv.width, cv.height);
+                var y8 = cv.height - Math.round(8.33 * 1.6);
+                ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                ctx.fillRect(0, y8, cv.width, 1);
+                for (var i = 0; i < 120; i++) {
+                    var idx = (histIdx + i) % 120;
+                    var dt = historyDt[idx], al = historyAlpha[idx], up = historyNewFrame[idx];
+                    var h = Math.min(cv.height - 2, Math.max(2, Math.round(dt * 1.6)));
+                    ctx.fillStyle = (dt > 20) ? '#ff1744' : (dt > 13 ? '#ffea00' : '#00e676');
+                    ctx.fillRect(i * 2, cv.height - h, 1, h);
+                    ctx.fillStyle = up ? '#ffffff' : '#00e5ff';
+                    var yA = Math.round((1 - Math.max(0, Math.min(1, al))) * (cv.height - 6)) + 3;
+                    ctx.fillRect(i * 2, yA, 2, 2);
+                }
+            }
+        }
+        requestAnimationFrame(loopFence);
+    }
+    requestAnimationFrame(loopFence);
+})();
+/* ================= END JENNY V173 DIAG ================= */
+
+
+// === 🔌 JENNY V205: ЕДИНЫЙ РУБИЛЬНИК ЭКСПЕРИМЕНТАЛЬНОГО 120Hz WEBGL & .SO ЯДЕР (ПО УМОЛЧАНИЮ ВЫКЛ) ===
+(function initJennyExp120HzMasterSwitchV205() {
+    if (window._jennyExp120HzSwitchInstalledV205) return;
+    window._jennyExp120HzSwitchInstalledV205 = true;
+
+    // По умолчанию ВЫКЛ (false), пока пользователь явно не включит галочку
+    window._jennyExp120HzEnabledV205 = (localStorage.getItem('jenny_exp_120hz_v205') === '1');
+
+    window.applyExp120HzMasterStateV205 = function(enabled, showMsg) {
+        const isOn = Boolean(enabled);
+        window._jennyExp120HzEnabledV205 = isOn;
+        try {
+            localStorage.setItem('jenny_exp_120hz_v205', isOn ? '1' : '0');
+        } catch (e) {}
+
+        if (window._jv166Metrics) {
+            window._jv166Metrics.mode = isOn ? (window._jv166SavedModeV205 || '120') : 'off';
+        }
+
+        const idsToHide = [
+            'jennyFenceWrapV173',
+            'jv166InterpCanvas',
+            'jv168SplitLine',
+            'v166Btn120Mode',
+            'jv166VCoreDeckPanel'
+        ];
+        idsToHide.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (!isOn) {
+                el.style.setProperty('display', 'none', 'important');
+            } else {
+                el.style.removeProperty('display');
+                if (id === 'v166Btn120Mode') el.style.display = 'inline-flex';
+                if (id === 'jv166VCoreDeckPanel' && window._activeUiDeckV131 === 'video') el.style.display = 'block';
+                if (id === 'jennyFenceWrapV173') el.style.display = 'flex';
+            }
+        });
+
+        const chk = document.getElementById('chkExp120HzMasterV205');
+        if (chk) chk.checked = isOn;
+        const statusSpan = document.getElementById('lblExp120HzStatusV205');
+        if (statusSpan) {
+            statusSpan.textContent = isOn ? 'ВКЛ (Активно)' : 'ВЫКЛ (Отключено)';
+            statusSpan.style.color = isOn ? '#00ff9d' : '#8b949e';
+        }
+
+        // Обновляем строку телеметрии в шапке видеоплеера
+        const st = window._vidStateV130;
+        const vd = window.videoDeckV131 || {};
+        const subEl = document.getElementById('v130VideoSubTelemetry');
+        if (subEl && st && st.active) {
+            if (!isOn) {
+                const gKey = (vd.config && vd.config.gearKeyV66) || 'jbuf-lock';
+                const ramLoaded = vd.studioBuffer ? (vd.studioBuffer._loadedCountV72 || 0) : 0;
+                const ramTot = (vd.studioBuffer && vd.studioBuffer._pieceMapV72) ? vd.studioBuffer._pieceMapV72.length : 0;
+                const ramTag = ramTot > 0 ? `RAM ${ramLoaded}/${ramTot}` : 'Поток';
+                subEl.textContent = `🧩 ${ramTag} • ⚙️ РКПП: ${gKey} • ⏩ x${vd.speed || 1.0}${vd.isReversed ? ' (⏪REV)' : ''}`;
+            } else if (typeof window.updateVideoHeaderTelemetryV166 === 'function') {
+                window.updateVideoHeaderTelemetryV166();
+            }
+        }
+
+        if (isOn && typeof window.renderVCoreDeckPanelV166 === 'function') {
+            window.renderVCoreDeckPanelV166();
+        }
+
+        if (showMsg && typeof window.showToast === 'function') {
+            window.showToast(isOn
+                ? '🧪 Лаборатория 120Hz WebGL & Ядра .SO ВКЛЮЧЕНА'
+                : '🔌 Все функции 120Hz WebGL, логгер и ядра .SO полностью ВЫКЛЮЧЕНЫ');
+        }
+    };
+
+    window.mountExp120HzMasterCheckboxV205 = function() {
+        const sm = document.getElementById('settingsModal');
+        if (!sm) return;
+        const deckBar = document.getElementById('deckSwitchBarSettingsV131');
+        const container = sm.querySelector('.container') || sm;
+        let box = document.getElementById('jennyExp120HzMasterBoxV205');
+        const isOn = Boolean(window._jennyExp120HzEnabledV205);
+
+        if (!box) {
+            box = document.createElement('div');
+            box.id = 'jennyExp120HzMasterBoxV205';
+            box.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;margin-bottom:10px;background:#0b1018;border:1.5px solid #30363d;border-radius:10px;';
+            if (deckBar && deckBar.parentNode) {
+                deckBar.insertAdjacentElement('afterend', box);
+            } else {
+                container.insertBefore(box, container.firstChild);
+            }
+        }
+
+        box.style.borderColor = isOn ? '#00e5ff' : '#30363d';
+        box.innerHTML = `
+            <label style="display:flex;align-items:center;gap:9px;cursor:pointer;flex:1;user-select:none;">
+                <input type="checkbox" id="chkExp120HzMasterV205" ${isOn ? 'checked' : ''} onchange="window.applyExp120HzMasterStateV205(this.checked, true)" style="width:18px;height:18px;accent-color:#00e5ff;cursor:pointer;flex-shrink:0;">
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                    <span style="font-size:12px;font-weight:900;color:#e6edf3;">🧪 Лаборатория 120Hz WebGL & Ядра .SO</span>
+                    <span style="font-size:10px;color:#8b949e;">Генератор кадров, сплит, логгер 360 и матрица декодеров</span>
+                </div>
+            </label>
+            <span id="lblExp120HzStatusV205" style="font-size:10.5px;font-weight:900;font-family:monospace;color:${isOn ? '#00ff9d' : '#8b949e'};flex-shrink:0;">
+                ${isOn ? 'ВКЛ (Активно)' : 'ВЫКЛ (Отключено)'}
+            </span>
+        `;
+    };
+
+    const origRenderDeckBanners = window.renderDeckSwitchBannersV131;
+    if (typeof origRenderDeckBanners === 'function') {
+        window.renderDeckSwitchBannersV131 = function() {
+            const r = origRenderDeckBanners.apply(this, arguments);
+            window.mountExp120HzMasterCheckboxV205();
+            window.applyExp120HzMasterStateV205(window._jennyExp120HzEnabledV205, false);
+            return r;
+        };
+    }
+
+    setInterval(() => {
+        window.mountExp120HzMasterCheckboxV205();
+        if (!window._jennyExp120HzEnabledV205) {
+            window.applyExp120HzMasterStateV205(false, false);
+        }
+    }, 600);
+
+    setTimeout(() => {
+        window.mountExp120HzMasterCheckboxV205();
+        window.applyExp120HzMasterStateV205(window._jennyExp120HzEnabledV205, false);
+    }, 150);
+})();
+

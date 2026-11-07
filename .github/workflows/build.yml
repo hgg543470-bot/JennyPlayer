@@ -38,6 +38,15 @@ jobs:
         unzip -p ffmpeg-android.zip ffmpeg > app/src/main/jniLibs/arm64-v8a/libffmpeg.so
         rm -f ffmpeg-android.zip
 
+    - name: Сборка нативного C++/NEON ядра libjenny_vcore.so (ARM64)
+      run: |
+        mkdir -p app/src/main/jniLibs/arm64-v8a
+        NDK_CLANG=$(find $ANDROID_HOME/ndk $ANDROID_NDK_LATEST_HOME -name "aarch64-linux-android24-clang++" 2>/dev/null | head -n 1)
+        if [ -n "$NDK_CLANG" ]; then
+          echo "Compiling libjenny_vcore.so with $NDK_CLANG"
+          "$NDK_CLANG" -O3 -march=armv8-a+simd -ffast-math -fPIC -shared app/src/main/python/jenny_vcore.cpp -o app/src/main/jniLibs/arm64-v8a/libjenny_vcore.so -lm -ldl
+        fi
+
     - name: Права на нативные библиотеки (.so)
       run: |
         chmod 755 app/src/main/jniLibs/arm64-v8a/*.so
@@ -50,9 +59,16 @@ jobs:
 
     - name: Штамп номера сборки и версии в APK
       run: |
-        SHORT_MSG=$(git log -1 --pretty=%s | tr -d '"\\' | cut -c1-48)
-        sed -i "s/versionCode .*/versionCode ${GITHUB_RUN_NUMBER}/" app/build.gradle
-        sed -i "s/versionName \".*\"/versionName \"#${GITHUB_RUN_NUMBER} (${SHORT_MSG})\"/" app/build.gradle
+        python3 - << 'STAMP_EOF'
+        import os, re, subprocess
+        bnum = os.environ.get("GITHUB_RUN_NUMBER", "1")
+        msg = subprocess.check_output(["git", "log", "-1", "--pretty=%s"], text=True).strip()
+        msg = "".join(c for c in msg if ord(c) >= 32 and c not in (chr(34), chr(39), chr(92), "$"))[:48]
+        s = open("app/build.gradle", "r", encoding="utf-8").read()
+        s = re.sub("versionCode\s+\d+", lambda _: f"versionCode {bnum}", s)
+        s = re.sub("versionName\s+\"[^\"]*\"", lambda _: f"versionName \"#{bnum} ({msg})\"", s)
+        open("app/build.gradle", "w", encoding="utf-8").write(s)
+        STAMP_EOF
 
     - name: Сборка APK
       run: gradle assembleDebug

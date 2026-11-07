@@ -1,4 +1,5 @@
 package com.jenny.player;
+import android.view.WindowManager;
 
 import android.Manifest;
 import android.app.Activity;
@@ -152,7 +153,7 @@ public class MainActivity extends AppCompatActivity {
                 boolean hideBars = isVideoFullscreenV132 || isVideoLockedV132;
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    android.view.android.view.WindowManager.LayoutParams lp = win.getAttributes();
+                    android.view.WindowManager.LayoutParams lp = win.getAttributes();
                     lp.layoutInDisplayCutoutMode = hideBars
                         ? android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
                         : android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
@@ -853,7 +854,7 @@ public class MainActivity extends AppCompatActivity {
                         bestMode = m;
                     }
                 }
-                android.view.android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+                android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
                 if (bestMode != null) {
                     lp.preferredDisplayModeId = bestMode.getModeId();
                 }
