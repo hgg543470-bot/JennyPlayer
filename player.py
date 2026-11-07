@@ -5228,6 +5228,15 @@ def api_video_full_stream_v210():
         folder, fname = os.path.split(real_path)
         return static_file(fname, root=folder)
 
+    # Убиваем предыдущий активный поток этого видео, чтобы не плодить процессы в RAM
+    prev_proc = globals().get('_ACTIVE_FULL_STREAM_PROC_V211')
+    if prev_proc is not None:
+        try:
+            prev_proc.kill()
+            prev_proc.wait(timeout=0.3)
+        except Exception:
+            pass
+
     ff_bin = find_ffmpeg_binary()
     response.content_type = 'video/mp4'
     response.headers['Cache-Control'] = 'no-store'
@@ -5235,7 +5244,7 @@ def api_video_full_stream_v210():
 
     vcodec_arg = ['-c:v', 'copy']
     if ext == '.avi':
-        vcodec_arg = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p']
+        vcodec_arg = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p', '-threads', '2']
 
     cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
     if start_sec > 0.1:
@@ -5243,21 +5252,29 @@ def api_video_full_stream_v210():
     cmd += [
         '-i', real_path,
         *vcodec_arg,
-        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof+faststart',
         '-f', 'mp4', 'pipe:1'
     ]
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
+    globals()['_ACTIVE_FULL_STREAM_PROC_V211'] = proc
     try:
         while True:
             chunk = proc.stdout.read(131072)
             if not chunk:
                 break
             yield chunk
+    except Exception:
+        pass
     finally:
         try:
-            proc.kill()
+            if proc.stdout:
+                proc.stdout.close()
         except Exception:
             pass
-
+        try:
+            proc.kill()
+            proc.wait(timeout=0.5)
+        except Exception:
+            pass

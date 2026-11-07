@@ -14764,6 +14764,7 @@ let vsyncTicks = 0;
     }
 
     function onNewDecodedVideoFrame(vid, now) {
+        if (!vid || vid.readyState < 2 || !vid.videoWidth || !vid.videoHeight) return;
         if (!ensureLucasKanadeWebGL(vid)) return;
 
         if (vid && typeof vid.getVideoPlaybackQuality === 'function') {
@@ -15765,7 +15766,18 @@ let vsyncTicks = 0;
         return fullStreamSeekOffsetSec + (vEl.currentTime || 0);
     };
 
-    window.seekDeckBVideoToSecV210 = function(targetSec) {
+    var lastSeekCallTsV211 = 0;
+    var pendingSeekTimerV211 = null;
+    window.seekDeckBVideoToSecV210 = function(targetSec, immediate) {
+        var now = performance.now();
+        if (!immediate && (now - lastSeekCallTsV211) < 180) {
+            if (pendingSeekTimerV211) clearTimeout(pendingSeekTimerV211);
+            pendingSeekTimerV211 = setTimeout(function() {
+                window.seekDeckBVideoToSecV210(targetSec, true);
+            }, 180);
+            return;
+        }
+        lastSeekCallTsV211 = now;
         var vEl = document.getElementById('jennyVideoElV130');
         if (!vEl) return;
         var dur = window.getEffectiveVideoDurationV210(vEl);
@@ -16008,10 +16020,26 @@ let vsyncTicks = 0;
         return Math.round(sec * 1000);
     };
 
-    function enforceHudVisibilityStateV210(shouldHide, isPip) {
+    var lastAppliedHideV211 = null;
+    var lastAppliedPipV211 = null;
+    function enforceHudVisibilityStateV210(shouldHide, isPip, forceApply) {
         var ov = document.getElementById('jennyVideoOverlayV130');
         if (!ov) return;
-        hudCurrentlyHiddenV210 = Boolean(shouldHide);
+        shouldHide = Boolean(shouldHide);
+        isPip = Boolean(isPip);
+        var st = window._vidStateV130;
+        if (st) {
+            if (st.hudTimer) { clearTimeout(st.hudTimer); st.hudTimer = null; }
+            if (st.miniHudTimer) { clearTimeout(st.miniHudTimer); st.miniHudTimer = null; }
+            st.hudVisible = !shouldHide;
+        }
+        // Не трогаем DOM 120 раз в секунду, если состояние видимости не менялось!
+        if (!forceApply && shouldHide === lastAppliedHideV211 && isPip === lastAppliedPipV211) {
+            return;
+        }
+        lastAppliedHideV211 = shouldHide;
+        lastAppliedPipV211 = isPip;
+        hudCurrentlyHiddenV210 = shouldHide;
 
         var st = window._vidStateV130;
         if (st) {
@@ -16071,7 +16099,7 @@ let vsyncTicks = 0;
         lastVideoInteractionTsV210 = performance.now();
         var ov = document.getElementById('jennyVideoOverlayV130');
         var isPip = window.isVideoInPipOrMiniModeV210(ov);
-        enforceHudVisibilityStateV210(false, isPip);
+        enforceHudVisibilityStateV210(false, isPip, true);
     };
 
     ['touchstart', 'touchmove', 'mousedown', 'click'].forEach(function(evName) {
@@ -16786,21 +16814,23 @@ let vsyncTicks = 0;
 
     function loopFence() {
         var fl = window._jennyLabFlagsV208 || {};
-        var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
-        if (vEl && vEl.parentElement) {
-            var stage = vEl.parentElement;
-            upgradeSplitLineV176();
-            ensureLogDotsWidget(stage);
-            ensureTunerSlidersWidget(stage);
-            ensureSplitAnd120Pills(stage);
-
-            if (fl.logDots && window._jv166Metrics && window._jv166Metrics.mode === 'off' && !vEl.paused) {
-                recordComparativeTickV210(null, true);
-            }
+        window._fenceSlowTickV211 = ((window._fenceSlowTickV211 || 0) + 1) % 15;
+        var vEl = document.getElementById('jennyVideoElV130');
+        if (vEl && fl.logDots && window._jv166Metrics && window._jv166Metrics.mode === 'off' && !vEl.paused) {
+            recordComparativeTickV210(null, true);
         }
-
-        syncDeckBWithVideoLifecycleV210();
-        checkAutoHideTickV210();
+        // Проверку DOM-таблеток, Деки Б и таймера скрытия делаем 8 раз в секунду вместо 120 раз в секунду!
+        if (window._fenceSlowTickV211 === 0) {
+            if (vEl && vEl.parentElement) {
+                var stage = vEl.parentElement;
+                upgradeSplitLineV176();
+                ensureLogDotsWidget(stage);
+                ensureTunerSlidersWidget(stage);
+                ensureSplitAnd120Pills(stage);
+            }
+            syncDeckBWithVideoLifecycleV210();
+            checkAutoHideTickV210();
+        }
 
         if (fl.logDots && !isLogCollapsed) {
             var cv = document.getElementById('jennyFenceCanvasV173');
