@@ -5142,23 +5142,34 @@ def api_vcore_probe_v166():
     real_path = _resolve_video_src_input_v131(raw_src) if ("_resolve_video_src_input_v131" in globals() and raw_src) else raw_src
     lib = _get_vcore_lib_v166()
     cipher = "H264"
-    if lib and real_path and os.path.isfile(real_path):
+    native_fps = 0.0
+    if real_path:
+        try:
+            ff_bin = find_ffmpeg_binary()
+            pr = subprocess.run([ff_bin, '-hide_banner', '-i', real_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+            info_txt = (pr.stderr or "") + (pr.stdout or "")
+            m_fps = re.search(r'(\d+(?:\.\d+)?)\s*fps', info_txt) or re.search(r'(\d+(?:\.\d+)?)\s*tbr', info_txt)
+            if m_fps:
+                val_fps = float(m_fps.group(1))
+                if 5.0 <= val_fps <= 240.0:
+                    native_fps = round(val_fps, 2)
+            if "av1" in info_txt.lower():
+                cipher = "AV1"
+            elif "hevc" in info_txt.lower() or "h265" in info_txt.lower():
+                cipher = "HEVC"
+            elif "vp9" in info_txt.lower():
+                cipher = "VP9"
+        except Exception:
+            pass
+    if lib and real_path and os.path.isfile(real_path) and cipher == "H264":
         try:
             res = lib.jv_detect_cipher(real_path.encode('utf-8'))
             if res:
                 cipher = res.decode('utf-8', errors='ignore')
         except Exception:
             pass
-    else:
-        low = (real_path or raw_src).lower()
-        if "av1" in low:
-            cipher = "AV1"
-        elif "hevc" in low or "265" in low or low.endswith(".mkv"):
-            cipher = "HEVC"
-        elif "vp9" in low or low.endswith(".webm"):
-            cipher = "VP9"
     mv_cnt = ctypes.c_int(32400)
-    neon_ms = 0.38
+    neon_ms = 0.24
     if lib:
         try:
             neon_ms = round(float(lib.jv_neon_mv_pass(1920, 1080, ctypes.byref(mv_cnt))), 3)
@@ -5168,9 +5179,11 @@ def api_vcore_probe_v166():
     return json.dumps({
         "ok": True,
         "cipher": cipher,
+        "native_fps": native_fps,
         "bound_so": bound_so,
         "mv_vectors": mv_cnt.value,
         "synth_4frames_ms": neon_ms,
+        "interp_frames": _VCORE_CONFIG_V166.get("interp_frames", 3),
         "fps_target": 120 if _VCORE_CONFIG_V166["fps_mode"] != "OFF" else 60
     }, ensure_ascii=False)
 

@@ -14664,7 +14664,7 @@ let vsyncTicks = 0;
             hasValidFramePair = false;
         }
 
-        const isSplit = (window._jv166Metrics.mode === 'split');
+        const isSplit = Boolean(window._jv166Metrics.mode === 'split' && window._jennyLabFlagsV208 && window._jennyLabFlagsV208.splitTest);
         if (splitLineEl) {
             splitLineEl.style.display = isSplit ? 'block' : 'none';
         }
@@ -14820,6 +14820,50 @@ let vsyncTicks = 0;
     }
 
         // ШАГ 5: СТРОГИЙ ШАГОВЫЙ СЧЁТЧИК VSYNC БЕЗ ДУБЛЕЙ 0.250->0.250 И БЕЗ ПРЫЖКОВ 0.500->0.980
+        window.computeExactVideoSplitUvV208 = function(vid, stageRatio) {
+        const r = Math.max(0.02, Math.min(0.98, Number(stageRatio) || 0.5));
+        if (!vid || !glCanvas) return r;
+        const stage = document.getElementById('jennyVideoStageV130') || vid.parentElement;
+        if (!stage) return r;
+
+        const stageW = stage.clientWidth || glCanvas.clientWidth || 1;
+        const stageH = stage.clientHeight || glCanvas.clientHeight || 1;
+        const vw = vid.videoWidth || glCanvas.width || 1;
+        const vh = vid.videoHeight || glCanvas.height || 1;
+        if (stageW < 16 || stageH < 16 || vw < 16 || vh < 16) return r;
+
+        const fit = (vid.style && vid.style.objectFit) || (window._vidStateV130 && window._vidStateV130.fitMode) || 'contain';
+        if (fit === 'fill') return r;
+
+        const stageAspect = stageW / stageH;
+        const vidAspect = vw / vh;
+        let renderW = stageW;
+        let padX = 0.0;
+
+        if (fit === 'contain') {
+            if (stageAspect > vidAspect) {
+                renderW = stageH * vidAspect;
+                padX = (stageW - renderW) * 0.5;
+            }
+        } else if (fit === 'cover') {
+            if (stageAspect < vidAspect) {
+                renderW = stageH * vidAspect;
+                padX = (stageW - renderW) * 0.5;
+            }
+        }
+
+        const lineStageX = r * stageW;
+        const uvX = (lineStageX - padX) / Math.max(1.0, renderW);
+        return Math.max(0.001, Math.min(0.999, uvX));
+    };
+
+    window.getRealOrigFpsV208 = function() {
+        const m = window._jv166Metrics || {};
+        if (m.fileNativeFps && m.fileNativeFps >= 5 && m.fileNativeFps <= 240) return Math.round(m.fileNativeFps);
+        if (m.sourceFps && m.sourceFps >= 5 && m.sourceFps <= 240) return Math.round(m.sourceFps);
+        return 24;
+    };
+
     function render120HzFrame() {
         const vid = document.getElementById('jennyVideoElV130');
         if (!gl || !progWarp || !glCanvas || !hasValidFramePair) return;
@@ -14848,9 +14892,10 @@ let vsyncTicks = 0;
         const alpha = Math.max(lastMonotonicAlpha, stepAlpha);
         lastMonotonicAlpha = alpha;
 
-        const isSplit = (window._jv166Metrics && window._jv166Metrics.mode === 'split');
-        const splitRatio = Math.max(0.05, Math.min(0.95, window._jennySplitRatioV176 || 0.5));
-        const splitUniformVal = isSplit ? (window._jennySplitSwappedV176 ? -splitRatio : splitRatio) : 0.0;
+        const isSplit = Boolean(window._jv166Metrics && window._jv166Metrics.mode === 'split' && window._jennyLabFlagsV208 && window._jennyLabFlagsV208.splitTest);
+        const rawStageRatio = Math.max(0.05, Math.min(0.95, window._jennySplitRatioV176 || 0.5));
+        const exactVideoUvX = window.computeExactVideoSplitUvV208 ? window.computeExactVideoSplitUvV208(vid, rawStageRatio) : rawStageRatio;
+        const splitUniformVal = isSplit ? (window._jennySplitSwappedV176 ? -exactVideoUvX : exactVideoUvX) : 0.0;
 
         const tOld = ringTex[slotPrev] || texPrev;
         const tNew = ringTex[slotCurr] || texCurr;
@@ -15136,6 +15181,11 @@ let vsyncTicks = 0;
             if (r.ok) {
                 const d = await r.json();
                 window._vcoreLastProbeV166 = d;
+                if (d && d.native_fps && d.native_fps >= 5) {
+                    window._jv166Metrics.fileNativeFps = d.native_fps;
+                    window._jv166Metrics.sourceFps = Math.round(d.native_fps);
+                }
+                if (typeof window.updateSplitLineUI === 'function') window.updateSplitLineUI();
                 window.updateVideoHeaderTelemetryV166();
             }
         } catch (e) {}
@@ -15561,16 +15611,42 @@ let vsyncTicks = 0;
 
 
 
-/* ================= JENNY V173: 2-ROW DRAGGABLE LOGGER & LIVE 8-SLIDER TUNER V200 ================= */
+/* ================= JENNY V208: SEPARATED LOGGER, DECODER SLIDERS, EXACT SPLIT & 5 FUTURE STUBS ================= */
 (function() {
-    if (window._jennyV200TunerInstalled) return;
-    window._jennyV200TunerInstalled = true;
+    if (window._jennyV208ModularInstalled) return;
+    window._jennyV208ModularInstalled = true;
+
+    var savedFlags = {};
+    try { savedFlags = JSON.parse(localStorage.getItem('jenny_lab_flags_v208') || '{}') || {}; } catch (e) {}
+
+    window._jennyLabFlagsV208 = {
+        core120:      Boolean(savedFlags.core120),
+        splitTest:    Boolean(savedFlags.splitTest),
+        logDots:      Boolean(savedFlags.logDots),
+        tunerSliders: Boolean(savedFlags.tunerSliders),
+        stub1:        Boolean(savedFlags.stub1),
+        stub2:        Boolean(savedFlags.stub2),
+        stub3:        Boolean(savedFlags.stub3),
+        stub4:        Boolean(savedFlags.stub4),
+        stub5:        Boolean(savedFlags.stub5)
+    };
+
+    window._jennyExp120HzEnabledV205 = Boolean(
+        window._jennyLabFlagsV208.core120 ||
+        window._jennyLabFlagsV208.splitTest ||
+        window._jennyLabFlagsV208.logDots ||
+        window._jennyLabFlagsV208.tunerSliders
+    );
+
+    window.saveJennyLabFlagsV208 = function() {
+        try { localStorage.setItem('jenny_lab_flags_v208', JSON.stringify(window._jennyLabFlagsV208)); } catch (e) {}
+    };
 
     window._jennySplitRatioV176 = parseFloat(localStorage.getItem('jenny_split_ratio') || '0.5') || 0.5;
     window._jennySplitSwappedV176 = (localStorage.getItem('jenny_split_swap') === '1');
 
-            var TUNER_SPECS = [
-        { key: 'dupThresh',    label: 'Дубль ±Y (0=Выкл)',   min: 0.0, max: 255.0, def: 10.0,  fmt: 0, color: '#ff9100' },
+    var TUNER_SPECS = [
+        { key: 'dupThresh',    label: 'Дубль ±Y (0=Выкл)',    min: 0.0, max: 255.0, def: 0.0,   fmt: 0, color: '#ff9100' },
         { key: 'targetFps',    label: 'Целевой FPS (0=Авто)', min: 0.0, max: 180.0, def: 120.0, fmt: 0, color: '#ffea00' },
         { key: 'flowScale',    label: 'Сдвиг (Scale)',        min: 0.0, max: 2.50,  def: 0.85,  fmt: 2, color: '#00ff9d' },
         { key: 'ghostGate',    label: 'Шлейф (Gate)',         min: 0.02, max: 0.45, def: 0.12,  fmt: 2, color: '#ff5252' },
@@ -15581,55 +15657,64 @@ let vsyncTicks = 0;
         { key: 'pllSmooth',    label: 'Ритм (PLL)',           min: 0.10, max: 0.95, def: 0.85,  fmt: 2, color: '#40c4ff' }
     ];
 
-    function updateSplitLineUI(lineEl) {
+    window.updateSplitLineUI = function(lineEl) {
         if (!lineEl) lineEl = document.getElementById('jv168SplitLine');
         if (!lineEl) return;
         var ratio = Math.max(0.05, Math.min(0.95, window._jennySplitRatioV176 || 0.5));
         var sw = !!window._jennySplitSwappedV176;
         lineEl.style.left = (ratio * 100).toFixed(2) + '%';
+
+        var origFps = window.getRealOrigFpsV208 ? window.getRealOrigFpsV208() : 24;
+        var m = window._jv166Metrics || {};
+        var genFps = m.outputFps || m.screenHz || 120;
+        var origTxt = 'ОРИГ ' + origFps + ' FPS';
+        var genTxt  = genFps + 'Hz MV';
+
         var lt = lineEl.querySelector('#jv176LeftTag');
         var rt = lineEl.querySelector('#jv176RightTag');
         if (lt && rt) {
-            lt.textContent = sw ? '120Hz MV' : 'ОРИГ';
+            lt.textContent = sw ? genTxt : origTxt;
             lt.style.color = sw ? '#00ff9d' : '#ffcc00';
             lt.style.borderColor = lt.style.color;
-            rt.textContent = sw ? 'ОРИГ' : '120Hz MV';
+            rt.textContent = sw ? origTxt : genTxt;
             rt.style.color = sw ? '#ffcc00' : '#00ff9d';
             rt.style.borderColor = rt.style.color;
         }
-    }
+    };
 
     window.toggleSplitSwapV176 = function(ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
         window._jennySplitSwappedV176 = !window._jennySplitSwappedV176;
-        try {
-            localStorage.setItem('jenny_split_swap', window._jennySplitSwappedV176 ? '1' : '0');
-        } catch (e) {}
-        updateSplitLineUI();
+        try { localStorage.setItem('jenny_split_swap', window._jennySplitSwappedV176 ? '1' : '0'); } catch (e) {}
+        window.updateSplitLineUI();
+        var origFps = window.getRealOrigFpsV208 ? window.getRealOrigFpsV208() : 24;
         if (typeof window.showToast === 'function') {
             window.showToast(window._jennySplitSwappedV176
-                ? '⇄ Сплит: Слева 120Hz MV │ Справа ОРИГ'
-                : '⇄ Сплит: Слева ОРИГ │ Справа 120Hz MV');
+                ? ('⇄ Сплит: Слева 120Hz MV │ Справа ОРИГ ' + origFps + ' FPS')
+                : ('⇄ Сплит: Слева ОРИГ ' + origFps + ' FPS │ Справа 120Hz MV'));
         }
     };
 
     function upgradeSplitLineV176() {
         var lineEl = document.getElementById('jv168SplitLine');
         if (!lineEl) return;
-        if (lineEl._v200Upgraded) {
-            updateSplitLineUI(lineEl);
+        var fl = window._jennyLabFlagsV208 || {};
+        var isSplit = (window._jv166Metrics && window._jv166Metrics.mode === 'split') && Boolean(fl.splitTest);
+        lineEl.style.display = isSplit ? 'block' : 'none';
+        if (lineEl._v208Upgraded) {
+            window.updateSplitLineUI(lineEl);
             return;
         }
-        lineEl._v200Upgraded = true;
+        lineEl._v208Upgraded = true;
         lineEl.style.zIndex = '99990';
         lineEl.innerHTML =
             '<div id="jv176SplitHeader" style="position:absolute;top:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;background:rgba(0,0,0,0.88);padding:4px 8px;border-radius:6px;border:1px solid #00e5ff;white-space:nowrap;pointer-events:auto;">' +
-                '<span id="jv176LeftTag" style="color:#ffcc00;font-family:monospace;font-weight:900;font-size:10.5px;padding:1px 5px;border-radius:3px;border:1px solid #ffcc00;">ОРИГ</span>' +
+                '<span id="jv176LeftTag" style="color:#ffcc00;font-family:monospace;font-weight:900;font-size:10px;padding:1px 5px;border-radius:3px;border:1px solid #ffcc00;">ОРИГ 24 FPS</span>' +
                 '<span style="color:#00e5ff;font-weight:900;font-size:13px;padding:0 3px;">⇄</span>' +
-                '<span id="jv176RightTag" style="color:#00ff9d;font-family:monospace;font-weight:900;font-size:10.5px;padding:1px 5px;border-radius:3px;border:1px solid #00ff9d;">120Hz MV</span>' +
+                '<span id="jv176RightTag" style="color:#00ff9d;font-family:monospace;font-weight:900;font-size:10px;padding:1px 5px;border-radius:3px;border:1px solid #00ff9d;">120Hz MV</span>' +
             '</div>' +
             '<div id="jv176SplitGrip" style="position:absolute;top:64%;left:50%;transform:translate(-50%,-50%);background:rgba(0,18,28,0.92);color:#00e5ff;border:1.5px solid #00e5ff;border-radius:14px;padding:5px 8px;font-size:11px;font-weight:bold;pointer-events:auto;box-shadow:0 0 10px rgba(0,229,255,0.6);">◀┃▶</div>';
-        updateSplitLineUI(lineEl);
+        window.updateSplitLineUI(lineEl);
     }
 
     var TOTAL_LOG_FRAMES = 360;
@@ -15645,11 +15730,17 @@ let vsyncTicks = 0;
 
     var isLogging = false;
     var logEntries = [];
-    var isCollapsed = false;
-    var isTunerOpen = (localStorage.getItem('jenny_tuner_open_v190') !== '0');
+    var isLogCollapsed = false;
+    var isTunerCollapsed = false;
+
+    var prevTrackDec = -1;
+    var prevTrackVTime = -1;
+    var lastOrigChangeTs = performance.now();
+    var origHoldTicks = 0;
+    var lastGeneratorStallTicks = 0;
 
     function getMediaPassport(vEl, glCtx) {
-        if (!vEl) return "Видеоэлемент не найден" + String.fromCharCode(10);
+        if (!vEl) return "Видеоэлемент не найден\n";
         var rawSrc = vEl.currentSrc || vEl.src || "";
         var decPath = rawSrc;
         try { decPath = decodeURIComponent(rawSrc); } catch (e) {}
@@ -15668,21 +15759,23 @@ let vsyncTicks = 0;
             } catch (e) {}
         }
         var modeStr = (window._jv166Metrics && window._jv166Metrics.mode) || "unknown";
+        var origFps = window.getRealOrigFpsV208 ? window.getRealOrigFpsV208() : 24;
         var spInfo = (modeStr === 'split')
             ? (" (поз=" + Math.round((window._jennySplitRatioV176 || 0.5) * 100) + "%, " +
-               (window._jennySplitSwappedV176 ? "Слева 120Hz/Справа ОРИГ" : "Слева ОРИГ/Справа 120Hz") + ")")
+               (window._jennySplitSwappedV176 ? ("Слева 120Hz/Справа ОРИГ " + origFps + " FPS") : ("Слева ОРИГ " + origFps + " FPS/Справа 120Hz")) + ")")
             : "";
         var tun = window._jennyTunerV190 || {};
         return [
-            "================ ПАСПОРТ МЕДИАФАЙЛА И ДВИЖКА V200 ================",
+            "================ ПАСПОРТ МЕДИАФАЙЛА И ДВИЖКА V208 ================",
             "Файл (Имя)      : " + fName,
             "Путь / URI      : " + decPath,
             "Разрешение видео: " + (vEl.videoWidth || 0) + "x" + (vEl.videoHeight || 0) +
-                " | Буфер WebGL: " + (glCtx ? glCtx.drawingBufferWidth + "x" + glCtx.drawingBufferHeight : "N/A"),
+                " | Родной FPS: " + origFps + " к/с | Буфер WebGL: " + (glCtx ? glCtx.drawingBufferWidth + "x" + glCtx.drawingBufferHeight : "N/A"),
             "Длительность    : " + (isFinite(vEl.duration) ? vEl.duration.toFixed(2) + " сек" : "N/A") +
                 " | Позиция старта лога: " + (vEl.currentTime || 0).toFixed(3) + " сек",
-            "Скорость (Rate) : " + (vEl.playbackRate || 1) + "x | Режим 120Hz: " + modeStr + spInfo,
-            "Крутилки V206   : Dup±Y=" + Number(tun.dupThresh !== undefined ? tun.dupThresh : 10).toFixed(0) + " | Interp=+" + Number(tun.interpFrames || 0).toFixed(0) +
+            "Скорость (Rate) : " + (vEl.playbackRate || 1) + "x | Режим: " + modeStr + spInfo,
+            "Крутилки V208   : Dup±Y=" + Number(tun.dupThresh || 0).toFixed(0) +
+                " | TargetFPS=" + Number(tun.targetFps || 120).toFixed(0) +
                 " | Scale=" + Number(tun.flowScale || 0).toFixed(2) +
                 " | Gate=" + Number(tun.ghostGate || 0).toFixed(2) +
                 " | Guard=" + Number(tun.detailGuard || 0).toFixed(2) +
@@ -15693,12 +15786,176 @@ let vsyncTicks = 0;
             "Декодер (кадры) : всего=" + totalDec + ", пропущено(drop)=" + droppedDec + ", отсечено дублей (B==A)=" + (window._jennySkippedDupsTotal || 0),
             "GPU / Рендерер  : " + (glRendererInfo || "N/A"),
             "=================================================================="
-        ].join(String.fromCharCode(10)) + String.fromCharCode(10);
+        ].join("\n") + "\n";
+    }
+
+    function recordComparativeTickV208(glCtx, fromOffMode) {
+        var now = performance.now();
+        var dt = now - lastTickTime;
+        lastTickTime = now;
+
+        var up = fromOffMode ? 0 : uploadedSinceLastDraw;
+        if (!fromOffMode) uploadedSinceLastDraw = 0;
+
+        var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
+        var dec = -1;
+        if (vEl && typeof vEl.getVideoPlaybackQuality === 'function') {
+            var q = vEl.getVideoPlaybackQuality();
+            if (q) dec = q.totalVideoFrames;
+        }
+        var vTime = vEl ? (vEl.currentTime || 0) : 0;
+        var spd = (vEl && vEl.playbackRate > 0.01) ? vEl.playbackRate : 1.0;
+
+        var origChanged = false;
+        if (dec >= 0 && prevTrackDec >= 0) {
+            if (dec > prevTrackDec) origChanged = true;
+        } else if (Math.abs(vTime - prevTrackVTime) > 0.002) {
+            origChanged = true;
+        }
+        if (prevTrackDec < 0 && dec >= 0) {
+            prevTrackDec = dec;
+            prevTrackVTime = vTime;
+            lastOrigChangeTs = now;
+        }
+
+        var origSpanMs = now - lastOrigChangeTs;
+        if (origChanged) {
+            prevTrackDec = dec;
+            prevTrackVTime = vTime;
+            lastOrigChangeTs = now;
+            origHoldTicks = 1;
+        } else {
+            origHoldTicks++;
+        }
+
+        var diag = window._jv207Diag || { step: 1, totalSteps: 4, alpha: lastCapturedAlpha, expectedSpanMs: 41.67 };
+        var curAlpha = fromOffMode ? 0.0 : lastCapturedAlpha;
+
+        historyDt[histIdx] = dt;
+        historyAlpha[histIdx] = curAlpha;
+        historyNewFrame[histIdx] = origChanged ? 1 : up;
+        histIdx = (histIdx + 1) % 120;
+
+        if (!isLogging) return;
+
+        var stepNum = diag.step || 1;
+        var totSteps = diag.totalSteps || 4;
+        var expMs = diag.expectedSpanMs || (41.67 / spd);
+
+        if (up) {
+            lastGeneratorStallTicks = 0;
+        } else if (curAlpha >= 0.995) {
+            lastGeneratorStallTicks++;
+        } else {
+            lastGeneratorStallTicks = 0;
+        }
+
+        var modeNow = (window._jv166Metrics && window._jv166Metrics.mode) || '120';
+        var origCol = origChanged
+            ? ("dec:" + String(dec).padEnd(6, ' ') + " НОВЫЙ(" + origSpanMs.toFixed(1).padStart(5, ' ') + "ms)")
+            : ("dec:" + String(dec).padEnd(6, ' ') + " ждёт " + origSpanMs.toFixed(1).padStart(5, ' ') + "ms #" + String(origHoldTicks).padEnd(2, ' '));
+        var genCol = "";
+        var verdict = "";
+
+        if (modeNow === 'off' || fromOffMode) {
+            genCol = "OFF (прямой вывод видео)";
+            verdict = origChanged
+                ? ((origSpanMs > expMs * 1.65) ? ("⚠️ РЫВОК В САМОМ ВИДЕО (пауза " + origSpanMs.toFixed(0) + "ms)") : "📸 Кадр оригинала")
+                : ((origSpanMs > expMs * 1.65) ? ("⚠️ ЗАТУП ИСХОДНИКА (нет кадра " + origSpanMs.toFixed(0) + "ms)") : "⏳ Показ оригинала");
+        } else {
+            var texTag = up ? "tex:1" : (origChanged ? "tex:DUP" : "tex:0");
+            var stepTag = String(stepNum).padStart(2, '0') + "/" + String(totSteps).padStart(2, '0');
+            genCol = texTag.padEnd(7, ' ') + " | " + stepTag + " | a:" + curAlpha.toFixed(3);
+
+            if (origChanged && up) {
+                verdict = (origSpanMs > expMs * 1.65)
+                    ? ("⚠️ ОРИГ опоздал (" + origSpanMs.toFixed(0) + "ms) -> 📸 ГЕН принял")
+                    : "📸 НОВЫЙ КАДР (ОРИГ -> ГЕН синхронно)";
+            } else if (origChanged && !up) {
+                verdict = "⏭️ ГЕН ВЫКИНУЛ КАДР (дубль B==A)";
+            } else if (curAlpha >= 0.995 && lastGeneratorStallTicks >= 2) {
+                verdict = (origSpanMs > expMs * 1.45)
+                    ? ("⚠️ ЗАТУП ВИДЕО (" + origSpanMs.toFixed(0) + "ms) -> ГЕН ждёт на a=1.0")
+                    : ("🛑 СТОПОР ГЕНЕРАТОРА (рано дошёл до a=1.0, стоит #" + lastGeneratorStallTicks + "т)");
+            } else {
+                verdict = "🟢 ГЕН плавно двигает (шаг " + stepTag + ")";
+            }
+        }
+
+        logEntries.push({
+            idx: logEntries.length + 1,
+            dt: dt,
+            vTime: vTime,
+            dec: dec,
+            origChanged: origChanged,
+            origSpanMs: origSpanMs,
+            texUp: up,
+            stalled: (lastGeneratorStallTicks >= 2) ? 1 : 0,
+            dupDropped: (origChanged && !up && modeNow !== 'off') ? 1 : 0,
+            origCol: origCol,
+            genCol: genCol,
+            verdict: verdict
+        });
+
+        var btn = document.getElementById('jennyLog120Btn');
+        if (btn && (logEntries.length % 120 === 1)) {
+            btn.textContent = '⏳ ' + (Math.floor(logEntries.length / 120) + 1) + '/3...';
+        }
+
+        if (logEntries.length >= TOTAL_LOG_FRAMES) {
+            isLogging = false;
+            var blocks = [];
+            for (var r = 0; r < 3; r++) {
+                var sl = logEntries.slice(r * 120, (r + 1) * 120);
+                var sum = 0, tUps = 0, oNews = 0, oSpans = [], stallCnt = 0, dupDropCnt = 0, lines = [];
+                for (var k = 0; k < sl.length; k++) {
+                    var e = sl[k];
+                    sum += e.dt;
+                    if (e.texUp) tUps++;
+                    if (e.origChanged) {
+                        oNews++;
+                        if (e.origSpanMs > 5 && e.origSpanMs < 2000) oSpans.push(e.origSpanMs);
+                    }
+                    if (e.stalled) stallCnt++;
+                    if (e.dupDropped) dupDropCnt++;
+                    lines.push(
+                        String(e.idx).padStart(3, ' ') + " | " +
+                        e.dt.toFixed(2).padStart(6, ' ') + "ms | " +
+                        e.vTime.toFixed(4) + "s | " +
+                        e.origCol + " | " +
+                        e.genCol + " | " +
+                        e.verdict
+                    );
+                }
+                var avgD = sum / Math.max(1, sl.length);
+                var avgOrigSpan = oSpans.length ? (oSpans.reduce(function(a,b){return a+b;}, 0) / oSpans.length) : 0;
+                var maxOrigSpan = oSpans.length ? Math.max.apply(null, oSpans) : 0;
+                var minOrigSpan = oSpans.length ? Math.min.apply(null, oSpans) : 0;
+
+                blocks.push(
+                    "\n--- КРУГ " + (r + 1) + "/3 | Экран: " + (1000 / Math.max(0.1, avgD)).toFixed(1) + " FPS (avg " + avgD.toFixed(2) + "ms) ---\n" +
+                    "📊 ОРИГИНАЛ (Декодер): отдал " + oNews + " кадр. | шаг исходника: avg " + avgOrigSpan.toFixed(1) + "ms (min " + minOrigSpan.toFixed(1) + "ms, max пауза " + maxOrigSpan.toFixed(1) + "ms)\n" +
+                    "⚡ ГЕНЕРАТОР (120Hz) : принял texUp=" + tUps + " | выкинул дублей=" + dupDropCnt + " | тиков простоя на a=1.0: " + stallCnt + " из 120\n" +
+                    "Idx | VSync_dt |   vTime  | ОРИГИНАЛ (Декодер видео)  | ГЕНЕРАТОР (WebGL 120Hz) | Кто виноват / Статус тика\n" +
+                    lines.join("\n")
+                );
+            }
+            var out = "=== JENNY V208 СРАВНИТЕЛЬНЫЙ ЛОГ: ОРИГИНАЛ vs ГЕНЕРАТОР (3x120 = 360 ТИКОВ) ===\n" +
+                      getMediaPassport(vEl, glCtx) + blocks.join("\n");
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(out).catch(function(){});
+            }
+            window._lastJenny120Log = out;
+            if (typeof window.showToast === 'function') {
+                window.showToast('✅ Сравнительный лог V208 (ОРИГ vs ГЕН) скопирован!');
+            }
+            if (btn) btn.textContent = '📋 360 ОК';
+        }
     }
 
     function attachProbe(Proto) {
-        if (!Proto || Proto._v200Probe) return;
-        Proto._v200Probe = true;
+        if (!Proto || Proto._v208Probe) return;
+        Proto._v208Probe = true;
         var origLoc = Proto.getUniformLocation;
         Proto.getUniformLocation = function(p, n) {
             var l = origLoc.call(this, p, n);
@@ -15718,74 +15975,8 @@ let vsyncTicks = 0;
         };
         var origDraw = Proto.drawArrays;
         Proto.drawArrays = function(m, f, c) {
-            if (!window._jennyExp120HzEnabledV205) return origDraw.call(this, m, f, c);
-            var now = performance.now();
-            var dt = now - lastTickTime;
-            lastTickTime = now;
-            var up = uploadedSinceLastDraw;
-            uploadedSinceLastDraw = 0;
-            historyDt[histIdx] = dt;
-            historyAlpha[histIdx] = lastCapturedAlpha;
-            historyNewFrame[histIdx] = up;
-            histIdx = (histIdx + 1) % 120;
-
-            if (isLogging) {
-                var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
-                var dec = (vEl && typeof vEl.getVideoPlaybackQuality === 'function')
-                    ? vEl.getVideoPlaybackQuality().totalVideoFrames : -1;
-                logEntries.push({
-                    idx: logEntries.length + 1,
-                    dt: dt,
-                    vTime: vEl ? vEl.currentTime : 0,
-                    dec: dec,
-                    texUp: up,
-                    alpha: lastCapturedAlpha
-                });
-                var btn = document.getElementById('jennyLog120Btn');
-                if (btn && (logEntries.length % 120 === 1)) {
-                    btn.textContent = '⏳ ' + (Math.floor(logEntries.length / 120) + 1) + '/3...';
-                }
-                if (logEntries.length >= TOTAL_LOG_FRAMES) {
-                    isLogging = false;
-                    var blocks = [];
-                    for (var r = 0; r < 3; r++) {
-                        var sl = logEntries.slice(r * 120, (r + 1) * 120);
-                        var sum = 0, minD = 9999, maxD = 0, tUps = 0, lines = [];
-                        for (var k = 0; k < sl.length; k++) {
-                            var e = sl[k];
-                            sum += e.dt;
-                            if (e.dt < minD) minD = e.dt;
-                            if (e.dt > maxD) maxD = e.dt;
-                            if (e.texUp) tUps++;
-                            lines.push(
-                                String(e.idx).padStart(3, ' ') + " | " +
-                                e.dt.toFixed(2).padStart(6, ' ') + "ms | vTime:" +
-                                e.vTime.toFixed(4) + " | dec:" + e.dec +
-                                " | texUp:" + e.texUp + " | alpha:" + e.alpha.toFixed(3)
-                            );
-                        }
-                        var avgD = sum / sl.length;
-                        var dFrames = Math.max(0, sl[sl.length - 1].dec - sl[0].dec);
-                        blocks.push(
-                            String.fromCharCode(10) + "--- КРУГ " + (r + 1) + "/3 | Выход: " + (1000 / Math.max(0.1, avgD)).toFixed(1) +
-                            " FPS (avg " + avgD.toFixed(2) + "ms, min " + minD.toFixed(2) +
-                            "ms, max " + maxD.toFixed(2) + "ms) | Кадров декодера: " +
-                            dFrames + " (texUp:" + tUps + ") ---" + String.fromCharCode(10) +
-                            "Idx |   dt_ms  |   vTime     | decFrm | texUp | alpha" + String.fromCharCode(10) +
-                            lines.join(String.fromCharCode(10))
-                        );
-                    }
-                    var out = "=== JENNY 120Hz FRAME LOG V200 (3x120 = 360 FRAMES) ===" + String.fromCharCode(10) +
-                              getMediaPassport(vEl, this) + blocks.join(String.fromCharCode(10));
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(out).catch(function(){});
-                    }
-                    window._lastJenny120Log = out;
-                    if (typeof window.showToast === 'function') {
-                        window.showToast('✅ Лог 3x120 + Крутилки V200 скопированы в буфер!');
-                    }
-                    if (btn) btn.textContent = '📋 360 ОК';
-                }
+            if (window._jennyExp120HzEnabledV205 || (window._jennyLabFlagsV208 && window._jennyLabFlagsV208.logDots)) {
+                recordComparativeTickV208(this, false);
             }
             return origDraw.call(this, m, f, c);
         };
@@ -15808,55 +15999,15 @@ let vsyncTicks = 0;
         }
     }
 
-    function applyCollapse() {
-        var w = document.getElementById('jennyFenceWrapV173');
-        var cv = document.getElementById('jennyFenceCanvasV173');
-        var tBtn = document.getElementById('jennyFenceToggleBtn');
-        var lBtn = document.getElementById('jennyLog120Btn');
-        var tunBtn = document.getElementById('jennyTunerToggleBtnV190');
-        var sBtn = document.getElementById('jennySplitSwapQuickBtn');
-        var tBox = document.getElementById('jennyTunerBoxV190');
-        if (!w || !cv || !tBtn) return;
-
-        if (isCollapsed) {
-            cv.style.display = 'none';
-            if (lBtn) lBtn.style.display = 'none';
-            if (tunBtn) tunBtn.style.display = 'none';
-            if (sBtn) sBtn.style.display = 'none';
-            if (tBox) tBox.style.display = 'none';
-            w.style.background = 'rgba(0,0,0,0.65)';
-            w.style.padding = '4px 8px';
-            tBtn.textContent = '📊';
-        } else {
-            cv.style.display = 'block';
-            if (lBtn) lBtn.style.display = 'inline-block';
-            if (tunBtn) {
-                tunBtn.style.display = 'inline-block';
-                tunBtn.style.background = isTunerOpen ? '#00e5ff' : '#11222b';
-                tunBtn.style.color = isTunerOpen ? '#000' : '#00e5ff';
-            }
-            if (sBtn) sBtn.style.display = 'inline-block';
-            if (tBox) tBox.style.display = isTunerOpen ? 'flex' : 'none';
-            w.style.background = 'rgba(4,10,16,0.90)';
-            w.style.padding = '6px 8px';
-            tBtn.textContent = '➖';
-            syncTunerSlidersDOM();
-        }
-    }
-
-    function ensureOverlay() {
-        upgradeSplitLineV176();
-        var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
-        if (!vEl || !vEl.parentElement) return;
-        var stage = vEl.parentElement;
-
+    function ensureLogDotsWidget(stage) {
+        var fl = window._jennyLabFlagsV208 || {};
         var oldW = document.getElementById('jennyFenceWrapV173');
-        if (stage.clientWidth > 0 && stage.clientWidth < 260) {
-            if (oldW) oldW.style.display = 'none';
+        if (!fl.logDots || (stage.clientWidth > 0 && stage.clientWidth < 220)) {
+            if (oldW) oldW.style.setProperty('display', 'none', 'important');
             return;
         }
-        if (oldW && oldW._isV203Compact) {
-            oldW.style.display = 'flex';
+        if (oldW && oldW._isV208LogOnly) {
+            oldW.style.setProperty('display', 'flex', 'important');
             return;
         }
         if (oldW) oldW.remove();
@@ -15864,55 +16015,76 @@ let vsyncTicks = 0;
         var sx = parseFloat(localStorage.getItem('jenny_diag_x') || '10');
         var sy = parseFloat(localStorage.getItem('jenny_diag_y') || '48');
 
-                var wrap = document.createElement('div');
+        var wrap = document.createElement('div');
         wrap.id = 'jennyFenceWrapV173';
-        wrap._isV177TwoRow = true;
-        wrap._isV200Tuner = true;
-        wrap._isV203Compact = true;
-        wrap.style.cssText = 'position:absolute;top:' + sy + 'px;left:' + sx + 'px;z-index:99999;display:flex;flex-direction:column;align-items:stretch;gap:2px;border:1px solid #00e5ff;border-radius:7px;padding:4px 6px;pointer-events:auto;touch-action:none;user-select:none;box-shadow:0 4px 14px rgba(0,0,0,0.75);width:222px;box-sizing:border-box;';
+        wrap._isV208LogOnly = true;
+        wrap.style.cssText = 'position:absolute;top:' + sy + 'px;left:' + sx + 'px;z-index:99998;display:flex;flex-direction:column;align-items:stretch;gap:3px;background:rgba(4,10,16,0.90);border:1px solid #00e5ff;border-radius:7px;padding:4px 6px;pointer-events:auto;touch-action:none;user-select:none;box-shadow:0 4px 14px rgba(0,0,0,0.75);width:214px;box-sizing:border-box;';
 
         var cv = document.createElement('canvas');
         cv.id = 'jennyFenceCanvasV173';
-        cv.width = 210;
-        cv.height = 26;
-        cv.style.cssText = 'width:210px;height:26px;display:block;border-bottom:1px solid rgba(0,229,255,0.25);padding-bottom:1px;';
+        cv.width = 200;
+        cv.height = 28;
+        cv.style.cssText = 'width:200px;height:28px;display:block;border-bottom:1px solid rgba(0,229,255,0.25);padding-bottom:1px;';
 
         var row2 = document.createElement('div');
         row2.id = 'jennyFenceRow2V177';
-        row2.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:3px;';
+        row2.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:4px;';
 
         var tBtn = document.createElement('button');
         tBtn.id = 'jennyFenceToggleBtn';
-        tBtn.style.cssText = 'background:#11222b;color:#00e5ff;font-size:10.5px;font-weight:bold;border:1px solid rgba(0,229,255,0.5);border-radius:4px;padding:2px 6px;';
+        tBtn.textContent = '➖';
+        tBtn.style.cssText = 'background:#11222b;color:#00e5ff;font-size:10px;font-weight:bold;border:1px solid rgba(0,229,255,0.5);border-radius:4px;padding:2px 6px;';
 
         var lBtn = document.createElement('button');
         lBtn.id = 'jennyLog120Btn';
-        lBtn.textContent = '📋 ЛОГ';
-        lBtn.style.cssText = 'background:#00e5ff;color:#000;font-weight:900;font-size:9.5px;border:none;border-radius:4px;padding:2px 5px;white-space:nowrap;flex:1;';
-
-        var tunBtn = document.createElement('button');
-        tunBtn.id = 'jennyTunerToggleBtnV190';
-        tunBtn.textContent = '🎛️';
-        tunBtn.style.cssText = 'background:#00e5ff;color:#000;font-weight:bold;font-size:10.5px;border:1px solid #00e5ff;border-radius:4px;padding:2px 6px;';
-
-        var sBtn = document.createElement('button');
-        sBtn.id = 'jennySplitSwapQuickBtn';
-        sBtn.textContent = '⇄';
-        sBtn.style.cssText = 'background:#1b2b22;color:#00ff9d;font-weight:bold;font-size:10.5px;border:1px solid #00ff9d;border-radius:4px;padding:2px 6px;';
+        lBtn.textContent = '📋 ЛОГ 360';
+        lBtn.style.cssText = 'background:#00e5ff;color:#000;font-weight:900;font-size:9.5px;border:none;border-radius:4px;padding:3px 6px;white-space:nowrap;flex:1;';
 
         var dragHint = document.createElement('span');
         dragHint.textContent = '✥';
-        dragHint.style.cssText = 'color:rgba(0,229,255,0.8);font-size:13px;padding:0 2px;';
+        dragHint.style.cssText = 'color:rgba(0,229,255,0.8);font-size:13px;padding:0 3px;';
 
         row2.appendChild(tBtn);
         row2.appendChild(lBtn);
-        row2.appendChild(tunBtn);
-        row2.appendChild(sBtn);
         row2.appendChild(dragHint);
+        wrap.appendChild(cv);
+        wrap.appendChild(row2);
+        stage.appendChild(wrap);
+    }
+
+    function ensureTunerSlidersWidget(stage) {
+        var fl = window._jennyLabFlagsV208 || {};
+        var oldT = document.getElementById('jennyTunerFloatWrapV208');
+        if (!fl.tunerSliders || (stage.clientWidth > 0 && stage.clientWidth < 220)) {
+            if (oldT) oldT.style.setProperty('display', 'none', 'important');
+            return;
+        }
+        if (oldT && oldT._isV208TunerOnly) {
+            oldT.style.setProperty('display', 'flex', 'important');
+            syncTunerSlidersDOM();
+            return;
+        }
+        if (oldT) oldT.remove();
+
+        var tx = parseFloat(localStorage.getItem('jenny_tuner_x') || '10');
+        var ty = parseFloat(localStorage.getItem('jenny_tuner_y') || '112');
+
+        var wrap = document.createElement('div');
+        wrap.id = 'jennyTunerFloatWrapV208';
+        wrap._isV208TunerOnly = true;
+        wrap.style.cssText = 'position:absolute;top:' + ty + 'px;left:' + tx + 'px;z-index:99999;display:flex;flex-direction:column;align-items:stretch;gap:2px;background:rgba(6,12,20,0.92);border:1px solid #d2a8ff;border-radius:7px;padding:4px 6px;pointer-events:auto;touch-action:none;user-select:none;box-shadow:0 4px 14px rgba(0,0,0,0.8);width:222px;box-sizing:border-box;';
+
+        var hdr = document.createElement('div');
+        hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:4px;border-bottom:1px solid rgba(210,168,255,0.28);padding-bottom:2px;';
+        hdr.innerHTML =
+            '<button id="jennyTunerCollapseBtnV208" style="background:#1c162b;color:#d2a8ff;font-size:10px;font-weight:bold;border:1px solid rgba(210,168,255,0.5);border-radius:4px;padding:1px 6px;">➖</button>' +
+            '<span style="color:#d2a8ff;font-family:monospace;font-size:9.5px;font-weight:900;flex:1;text-align:center;">🎛️ НАСТРОЙКИ ДЕКОДЕРА</span>' +
+            '<button id="jt190ResetBtn" style="background:#21262d;color:#ff7b72;border:1px solid #ff7b72;border-radius:3px;font-size:8.5px;font-weight:bold;padding:1px 5px;">🔄</button>' +
+            '<span style="color:rgba(210,168,255,0.85);font-size:13px;padding:0 2px;">✥</span>';
 
         var tBox = document.createElement('div');
         tBox.id = 'jennyTunerBoxV190';
-        tBox.style.cssText = 'display:flex;flex-direction:column;gap:1px;padding-top:2px;border-top:1px solid rgba(0,229,255,0.3);margin-top:1px;';
+        tBox.style.cssText = 'display:flex;flex-direction:column;gap:1px;padding-top:2px;';
 
         var slidersHtml = '';
         for (var i = 0; i < TUNER_SPECS.length; i++) {
@@ -15928,18 +16100,12 @@ let vsyncTicks = 0;
                     '</div>' +
                 '</div>';
         }
-        slidersHtml +=
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:1px;">' +
-                '<span style="color:#8b949e;font-size:8px;font-family:monospace;">5-Step Pipeline V206</span>' +
-                '<button id="jt190ResetBtn" style="background:#21262d;color:#ff7b72;border:1px solid #ff7b72;border-radius:3px;font-size:8.5px;font-weight:bold;padding:1px 6px;">🔄 Сброс</button>' +
-            '</div>';
         tBox.innerHTML = slidersHtml;
 
-        wrap.appendChild(cv);
-        wrap.appendChild(row2);
+        wrap.appendChild(hdr);
         wrap.appendChild(tBox);
         stage.appendChild(wrap);
-        applyCollapse();
+        syncTunerSlidersDOM();
     }
 
     var activeDragMode = null;
@@ -15963,7 +16129,7 @@ let vsyncTicks = 0;
         var trackEl = document.getElementById('jt190Track_' + key);
         if (!trackEl) return;
         var r = trackEl.getBoundingClientRect();
-        var wrap = document.getElementById('jennyFenceWrapV173');
+        var wrap = document.getElementById('jennyTunerFloatWrapV208');
         var rot90 = isStageRot90(wrap ? wrap.parentElement : null);
 
         var ratio = 0.5;
@@ -15980,9 +16146,6 @@ let vsyncTicks = 0;
         if (!window._jennyTunerV190) window._jennyTunerV190 = {};
         window._jennyTunerV190[key] = newVal;
         try { localStorage.setItem('jt190_' + key, String(newVal)); } catch (e) {}
-        if (key === 'interpFrames' && typeof window.setInterpFramesV200 === 'function') {
-            window.setInterpFramesV200(newVal);
-        }
         syncTunerSlidersDOM();
     }
 
@@ -15990,11 +16153,11 @@ let vsyncTicks = 0;
         if (!e.touches || !e.touches.length) return;
         var tx = e.touches[0].clientX;
         var ty = e.touches[0].clientY;
-        var wrap = document.getElementById('jennyFenceWrapV173');
 
-        if (wrap && wrap.style.display !== 'none' && wrap.offsetParent !== null) {
-            var wr = wrap.getBoundingClientRect();
-            if (tx >= wr.left - 4 && tx <= wr.right + 4 && ty >= wr.top - 4 && ty <= wr.bottom + 4) {
+        var tWrap = document.getElementById('jennyTunerFloatWrapV208');
+        if (tWrap && tWrap.style.display !== 'none' && tWrap.offsetParent !== null) {
+            var tr = tWrap.getBoundingClientRect();
+            if (tx >= tr.left - 4 && tx <= tr.right + 4 && ty >= tr.top - 4 && ty <= tr.bottom + 4) {
                 var el = document.elementFromPoint(tx, ty) || e.target;
                 touchedElement = el;
                 startTouchX = tx;
@@ -16011,9 +16174,25 @@ let vsyncTicks = 0;
                     return;
                 }
 
-                activeDragMode = 'widget';
-                startWidgetLeft = parseFloat(wrap.style.left) || 10;
-                startWidgetTop = parseFloat(wrap.style.top) || 48;
+                activeDragMode = 'tuner_widget';
+                startWidgetLeft = parseFloat(tWrap.style.left) || 10;
+                startWidgetTop = parseFloat(tWrap.style.top) || 112;
+                e.stopImmediatePropagation();
+                return;
+            }
+        }
+
+        var lWrap = document.getElementById('jennyFenceWrapV173');
+        if (lWrap && lWrap.style.display !== 'none' && lWrap.offsetParent !== null) {
+            var lr = lWrap.getBoundingClientRect();
+            if (tx >= lr.left - 4 && tx <= lr.right + 4 && ty >= lr.top - 4 && ty <= lr.bottom + 4) {
+                touchedElement = document.elementFromPoint(tx, ty) || e.target;
+                startTouchX = tx;
+                startTouchY = ty;
+                maxTouchDelta = 0;
+                activeDragMode = 'log_widget';
+                startWidgetLeft = parseFloat(lWrap.style.left) || 10;
+                startWidgetTop = parseFloat(lWrap.style.top) || 48;
                 e.stopImmediatePropagation();
                 return;
             }
@@ -16023,9 +16202,9 @@ let vsyncTicks = 0;
         if (lineEl && lineEl.style.display !== 'none' && lineEl.offsetParent !== null) {
             var hdr = document.getElementById('jv176SplitHeader');
             var grip = document.getElementById('jv176SplitGrip');
-            var lr = lineEl.getBoundingClientRect();
+            var sRect = lineEl.getBoundingClientRect();
             var stageEl = lineEl.parentElement;
-            var stageRect = stageEl ? stageEl.getBoundingClientRect() : lr;
+            var stageRect = stageEl ? stageEl.getBoundingClientRect() : sRect;
             var rot90 = isStageRot90(stageEl);
 
             var onHdr = false, onGrip = false;
@@ -16040,10 +16219,10 @@ let vsyncTicks = 0;
 
             var nearLine = false;
             if (!rot90) {
-                var lineX = lr.left + lr.width * 0.5;
+                var lineX = sRect.left + sRect.width * 0.5;
                 nearLine = (Math.abs(tx - lineX) <= 26 && ty >= stageRect.top && ty <= (stageRect.bottom - 95));
             } else {
-                var lineY = lr.top + lr.height * 0.5;
+                var lineY = sRect.top + sRect.height * 0.5;
                 nearLine = (Math.abs(ty - lineY) <= 26 && tx >= (stageRect.left + 95) && tx <= stageRect.right);
             }
 
@@ -16077,8 +16256,9 @@ let vsyncTicks = 0;
             return;
         }
 
-        if (activeDragMode === 'widget' && maxTouchDelta > 5) {
-            var wrap = document.getElementById('jennyFenceWrapV173');
+        if ((activeDragMode === 'log_widget' || activeDragMode === 'tuner_widget') && maxTouchDelta > 5) {
+            var targetId = (activeDragMode === 'log_widget') ? 'jennyFenceWrapV173' : 'jennyTunerFloatWrapV208';
+            var wrap = document.getElementById(targetId);
             if (wrap && wrap.parentElement) {
                 var stageEl = wrap.parentElement;
                 var rot90 = isStageRot90(stageEl);
@@ -16103,10 +16283,10 @@ let vsyncTicks = 0;
                 var rot90 = isStageRot90(stageEl);
                 if (!rot90 && sr.width > 20) {
                     window._jennySplitRatioV176 = Math.max(0.05, Math.min(0.95, (tx - sr.left) / sr.width));
-                    updateSplitLineUI(lineEl);
+                    window.updateSplitLineUI(lineEl);
                 } else if (rot90 && sr.height > 20) {
                     window._jennySplitRatioV176 = Math.max(0.05, Math.min(0.95, (ty - sr.top) / sr.height));
-                    updateSplitLineUI(lineEl);
+                    window.updateSplitLineUI(lineEl);
                 }
             }
         }
@@ -16121,55 +16301,63 @@ let vsyncTicks = 0;
 
         if (mode === 'slider') return;
 
-        if (mode === 'widget') {
-            var wrap = document.getElementById('jennyFenceWrapV173');
+        if (mode === 'log_widget') {
+            var lWrap = document.getElementById('jennyFenceWrapV173');
             if (maxTouchDelta > 6) {
-                if (wrap) {
+                if (lWrap) {
                     try {
-                        localStorage.setItem('jenny_diag_x', String(parseFloat(wrap.style.left) || 10));
-                        localStorage.setItem('jenny_diag_y', String(parseFloat(wrap.style.top) || 48));
+                        localStorage.setItem('jenny_diag_x', String(parseFloat(lWrap.style.left) || 10));
+                        localStorage.setItem('jenny_diag_y', String(parseFloat(lWrap.style.top) || 48));
                     } catch (err) {}
                 }
                 return;
             }
             var lBtn = document.getElementById('jennyLog120Btn');
-            var tunBtn = document.getElementById('jennyTunerToggleBtnV190');
-            var sBtn = document.getElementById('jennySplitSwapQuickBtn');
             var tBtn = document.getElementById('jennyFenceToggleBtn');
-            var rBtn = document.getElementById('jt190ResetBtn');
+            var cv = document.getElementById('jennyFenceCanvasV173');
             var tg = touchedElement;
             if (lBtn && (tg === lBtn || lBtn.contains(tg))) {
                 logEntries = [];
                 isLogging = true;
                 lBtn.textContent = '⏳ 1/3...';
-            } else if (tunBtn && (tg === tunBtn || tunBtn.contains(tg))) {
-                isTunerOpen = !isTunerOpen;
-                try { localStorage.setItem('jenny_tuner_open_v190', isTunerOpen ? '1' : '0'); } catch (err) {}
-                applyCollapse();
-            } else if (rBtn && (tg === rBtn || rBtn.contains(tg))) {
+            } else if (tBtn && (tg === tBtn || tBtn.contains(tg))) {
+                isLogCollapsed = !isLogCollapsed;
+                if (cv) cv.style.display = isLogCollapsed ? 'none' : 'block';
+                tBtn.textContent = isLogCollapsed ? '📊' : '➖';
+            }
+        } else if (mode === 'tuner_widget') {
+            var tWrap = document.getElementById('jennyTunerFloatWrapV208');
+            if (maxTouchDelta > 6) {
+                if (tWrap) {
+                    try {
+                        localStorage.setItem('jenny_tuner_x', String(parseFloat(tWrap.style.left) || 10));
+                        localStorage.setItem('jenny_tuner_y', String(parseFloat(tWrap.style.top) || 112));
+                    } catch (err) {}
+                }
+                return;
+            }
+            var rBtn = document.getElementById('jt190ResetBtn');
+            var cBtn = document.getElementById('jennyTunerCollapseBtnV208');
+            var tBox = document.getElementById('jennyTunerBoxV190');
+            var tg = touchedElement;
+            if (rBtn && (tg === rBtn || rBtn.contains(tg))) {
                 if (!window._jennyTunerV190) window._jennyTunerV190 = {};
                 for (var i = 0; i < TUNER_SPECS.length; i++) {
                     var sp = TUNER_SPECS[i];
                     window._jennyTunerV190[sp.key] = sp.def;
                     try { localStorage.setItem('jt190_' + sp.key, String(sp.def)); } catch (err) {}
                 }
-                if (typeof window.setInterpFramesV200 === 'function') {
-                    window.setInterpFramesV200(0);
-                }
                 syncTunerSlidersDOM();
                 if (typeof window.showToast === 'function') {
-                    window.showToast('🔄 Крутилки V200 сброшены на оптимальные!');
+                    window.showToast('🔄 Крутилки декодера сброшены на оптимальные!');
                 }
-            } else if (sBtn && (tg === sBtn || sBtn.contains(tg))) {
-                window.toggleSplitSwapV176(e);
-            } else if (tBtn && (tg === tBtn || tBtn.contains(tg))) {
-                isCollapsed = !isCollapsed;
-                applyCollapse();
+            } else if (cBtn && (tg === cBtn || cBtn.contains(tg))) {
+                isTunerCollapsed = !isTunerCollapsed;
+                if (tBox) tBox.style.display = isTunerCollapsed ? 'none' : 'flex';
+                cBtn.textContent = isTunerCollapsed ? '🎛️' : '➖';
             }
         } else if (mode === 'split') {
-            try {
-                localStorage.setItem('jenny_split_ratio', String(window._jennySplitRatioV176));
-            } catch (err) {}
+            try { localStorage.setItem('jenny_split_ratio', String(window._jennySplitRatioV176)); } catch (err) {}
             var hdr = document.getElementById('jv176SplitHeader');
             if (maxTouchDelta < 8 && hdr && (touchedElement === hdr || hdr.contains(touchedElement))) {
                 window.toggleSplitSwapV176(e);
@@ -16178,128 +16366,136 @@ let vsyncTicks = 0;
     }, { capture: true, passive: false });
 
     function loopFence() {
-        if (!window._jennyExp120HzEnabledV205) {
-            var wOff = document.getElementById('jennyFenceWrapV173');
-            if (wOff) wOff.style.setProperty('display', 'none', 'important');
-            var sOff = document.getElementById('jv168SplitLine');
-            if (sOff) sOff.style.setProperty('display', 'none', 'important');
-            requestAnimationFrame(loopFence);
-            return;
+        var fl = window._jennyLabFlagsV208 || {};
+        var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
+        if (vEl && vEl.parentElement) {
+            var stage = vEl.parentElement;
+            upgradeSplitLineV176();
+            ensureLogDotsWidget(stage);
+            ensureTunerSlidersWidget(stage);
+
+            if (fl.logDots && window._jv166Metrics && window._jv166Metrics.mode === 'off' && !vEl.paused) {
+                recordComparativeTickV208(null, true);
+            }
         }
-        ensureOverlay();
-        if (!isCollapsed) {
+
+        if (fl.logDots && !isLogCollapsed) {
             var cv = document.getElementById('jennyFenceCanvasV173');
             if (cv && cv.offsetParent !== null) {
                 var ctx = cv.getContext('2d');
                 ctx.clearRect(0, 0, cv.width, cv.height);
-                var y8 = cv.height - Math.round(8.33 * 1.6);
+                var y8 = cv.height - Math.round(8.33 * 1.1);
                 ctx.fillStyle = 'rgba(255,255,255,0.25)';
                 ctx.fillRect(0, y8, cv.width, 1);
                 for (var i = 0; i < 120; i++) {
                     var idx = (histIdx + i) % 120;
                     var dt = historyDt[idx], al = historyAlpha[idx], up = historyNewFrame[idx];
-                    var h = Math.min(cv.height - 2, Math.max(2, Math.round(dt * 1.6)));
+                    var h = Math.min(cv.height - 2, Math.max(2, Math.round(dt * 1.1)));
                     ctx.fillStyle = (dt > 20) ? '#ff1744' : (dt > 13 ? '#ffea00' : '#00e676');
-                    ctx.fillRect(i * 2, cv.height - h, 1, h);
+                    ctx.fillRect(Math.round(i * 1.65), cv.height - h, 1, h);
                     ctx.fillStyle = up ? '#ffffff' : '#00e5ff';
-                    var yA = Math.round((1 - Math.max(0, Math.min(1, al))) * (cv.height - 6)) + 3;
-                    ctx.fillRect(i * 2, yA, 2, 2);
+                    var yA = Math.round((1 - Math.max(0, Math.min(1, al))) * (cv.height - 5)) + 2;
+                    ctx.fillRect(Math.round(i * 1.65), yA, 2, 2);
                 }
             }
         }
         requestAnimationFrame(loopFence);
     }
     requestAnimationFrame(loopFence);
-})();
-/* ================= END JENNY V173 DIAG ================= */
 
+    window.toggleLabModuleFlagV208 = function(flagKey, checked, showMsg) {
+        var fl = window._jennyLabFlagsV208;
+        fl[flagKey] = Boolean(checked);
 
-// === 🔌 JENNY V205: ЕДИНЫЙ РУБИЛЬНИК ЭКСПЕРИМЕНТАЛЬНОГО 120Hz WEBGL & .SO ЯДЕР (ПО УМОЛЧАНИЮ ВЫКЛ) ===
-(function initJennyExp120HzMasterSwitchV205() {
-    if (window._jennyExp120HzSwitchInstalledV205) return;
-    window._jennyExp120HzSwitchInstalledV205 = true;
-
-    // По умолчанию ВЫКЛ (false), пока пользователь явно не включит галочку
-    window._jennyExp120HzEnabledV205 = (localStorage.getItem('jenny_exp_120hz_v205') === '1');
-
-    window.applyExp120HzMasterStateV205 = function(enabled, showMsg) {
-        const isOn = Boolean(enabled);
-        window._jennyExp120HzEnabledV205 = isOn;
-        try {
-            localStorage.setItem('jenny_exp_120hz_v205', isOn ? '1' : '0');
-        } catch (e) {}
-
-        if (window._jv166Metrics) {
-            window._jv166Metrics.mode = isOn ? (window._jv166SavedModeV205 || '120') : 'off';
-        }
-
-        const idsToHide = [
-            'jennyFenceWrapV173',
-            'jv166InterpCanvas',
-            'jv168SplitLine',
-            'v166Btn120Mode',
-            'jv166VCoreDeckPanel'
-        ];
-        idsToHide.forEach(id => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            if (!isOn) {
-                el.style.setProperty('display', 'none', 'important');
-            } else {
-                el.style.removeProperty('display');
-                if (id === 'v166Btn120Mode') el.style.display = 'inline-flex';
-                if (id === 'jv166VCoreDeckPanel' && window._activeUiDeckV131 === 'video') el.style.display = 'block';
-                if (id === 'jennyFenceWrapV173') el.style.display = 'flex';
+        if (flagKey === 'splitTest') {
+            if (fl.splitTest) {
+                fl.core120 = true;
+                if (window._jv166Metrics) window._jv166Metrics.mode = 'split';
+            } else if (window._jv166Metrics && window._jv166Metrics.mode === 'split') {
+                window._jv166Metrics.mode = fl.core120 ? '120' : 'off';
             }
-        });
-
-        const chk = document.getElementById('chkExp120HzMasterV205');
-        if (chk) chk.checked = isOn;
-        const statusSpan = document.getElementById('lblExp120HzStatusV205');
-        if (statusSpan) {
-            statusSpan.textContent = isOn ? 'ВКЛ (Активно)' : 'ВЫКЛ (Отключено)';
-            statusSpan.style.color = isOn ? '#00ff9d' : '#8b949e';
         }
-
-        // Обновляем строку телеметрии в шапке видеоплеера
-        const st = window._vidStateV130;
-        const vd = window.videoDeckV131 || {};
-        const subEl = document.getElementById('v130VideoSubTelemetry');
-        if (subEl && st && st.active) {
-            if (!isOn) {
-                const gKey = (vd.config && vd.config.gearKeyV66) || 'jbuf-lock';
-                const ramLoaded = vd.studioBuffer ? (vd.studioBuffer._loadedCountV72 || 0) : 0;
-                const ramTot = (vd.studioBuffer && vd.studioBuffer._pieceMapV72) ? vd.studioBuffer._pieceMapV72.length : 0;
-                const ramTag = ramTot > 0 ? `RAM ${ramLoaded}/${ramTot}` : 'Поток';
-                subEl.textContent = `🧩 ${ramTag} • ⚙️ РКПП: ${gKey} • ⏩ x${vd.speed || 1.0}${vd.isReversed ? ' (⏪REV)' : ''}`;
-            } else if (typeof window.updateVideoHeaderTelemetryV166 === 'function') {
-                window.updateVideoHeaderTelemetryV166();
+        if (flagKey === 'core120') {
+            if (!fl.core120) {
+                fl.splitTest = false;
+                if (window._jv166Metrics) window._jv166Metrics.mode = 'off';
+            } else if (window._jv166Metrics && window._jv166Metrics.mode === 'off') {
+                window._jv166Metrics.mode = fl.splitTest ? 'split' : '120';
             }
         }
 
-        if (isOn && typeof window.renderVCoreDeckPanelV166 === 'function') {
-            window.renderVCoreDeckPanelV166();
-        }
+        window._jennyExp120HzEnabledV205 = Boolean(fl.core120 || fl.splitTest);
+        window.saveJennyLabFlagsV208();
+        window.syncModularLabDOMV208();
 
         if (showMsg && typeof window.showToast === 'function') {
-            window.showToast(isOn
-                ? '🧪 Лаборатория 120Hz WebGL & Ядра .SO ВКЛЮЧЕНА'
-                : '🔌 Все функции 120Hz WebGL, логгер и ядра .SO полностью ВЫКЛЮЧЕНЫ');
+            var names = {
+                core120: '⚡ Генератор 120Hz & Матрица .SO',
+                splitTest: '🌓 Сравнительный тест (Сплит ОРИГ / 120Hz)',
+                logDots: '📊 Лог с точками (График VSync + Лог 360)',
+                tunerSliders: '🎛️ Настройки декодера (Крутилки 120Hz)',
+                stub1: '🧩 Заглушка 1',
+                stub2: '🧩 Заглушка 2',
+                stub3: '🧩 Заглушка 3',
+                stub4: '🧩 Заглушка 4',
+                stub5: '🧩 Заглушка 5'
+            };
+            window.showToast((names[flagKey] || flagKey) + ': ' + (fl[flagKey] ? 'ВКЛ' : 'ВЫКЛ'));
         }
     };
 
-    window.mountExp120HzMasterCheckboxV205 = function() {
-        const sm = document.getElementById('settingsModal');
-        if (!sm) return;
-        const deckBar = document.getElementById('deckSwitchBarSettingsV131');
-        const container = sm.querySelector('.container') || sm;
-        let box = document.getElementById('jennyExp120HzMasterBoxV205');
-        const isOn = Boolean(window._jennyExp120HzEnabledV205);
+    window.syncModularLabDOMV208 = function() {
+        var fl = window._jennyLabFlagsV208 || {};
+        window._jennyExp120HzEnabledV205 = Boolean(fl.core120 || fl.splitTest);
 
+        var btn120 = document.getElementById('v166Btn120Mode');
+        if (btn120) {
+            btn120.style.setProperty('display', (fl.core120 || fl.splitTest) ? 'inline-flex' : 'none', 'important');
+        }
+        var vcorePanel = document.getElementById('jv166VCoreDeckPanel');
+        if (vcorePanel) {
+            var showPanel = Boolean(fl.core120 && window._activeUiDeckV131 === 'video');
+            vcorePanel.style.setProperty('display', showPanel ? 'block' : 'none', 'important');
+        }
+        var glCv = document.getElementById('jv166InterpCanvas');
+        if (glCv && !window._jennyExp120HzEnabledV205) {
+            glCv.style.setProperty('display', 'none', 'important');
+        }
+        var spLine = document.getElementById('jv168SplitLine');
+        if (spLine) {
+            var showSp = Boolean(fl.splitTest && window._jv166Metrics && window._jv166Metrics.mode === 'split');
+            spLine.style.setProperty('display', showSp ? 'block' : 'none', 'important');
+            if (showSp) window.updateSplitLineUI(spLine);
+        }
+        var logW = document.getElementById('jennyFenceWrapV173');
+        if (logW && !fl.logDots) {
+            logW.style.setProperty('display', 'none', 'important');
+        }
+        var tunW = document.getElementById('jennyTunerFloatWrapV208');
+        if (tunW && !fl.tunerSliders) {
+            tunW.style.setProperty('display', 'none', 'important');
+        }
+
+        Object.keys(fl).forEach(function(k) {
+            var chk = document.getElementById('chkLabV208_' + k);
+            if (chk) chk.checked = Boolean(fl[k]);
+        });
+    };
+
+    window.mountModularLabSettingsV208 = function() {
+        var sm = document.getElementById('settingsModal');
+        if (!sm) return;
+        var oldBox205 = document.getElementById('jennyExp120HzMasterBoxV205');
+        if (oldBox205) oldBox205.remove();
+
+        var deckBar = document.getElementById('deckSwitchBarSettingsV131');
+        var container = sm.querySelector('.container') || sm;
+        var box = document.getElementById('jennyModularLabBoxV208');
         if (!box) {
-            box = document.createElement('div');
-            box.id = 'jennyExp120HzMasterBoxV205';
-            box.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;margin-bottom:10px;background:#0b1018;border:1.5px solid #30363d;border-radius:10px;';
+            box = document.createElement('details');
+            box.id = 'jennyModularLabBoxV208';
+            box.className = 'setting-group';
+            box.style.cssText = 'margin-bottom:10px;border:1.5px solid #30363d;border-radius:10px;background:#090d14;padding:6px 10px;';
             if (deckBar && deckBar.parentNode) {
                 deckBar.insertAdjacentElement('afterend', box);
             } else {
@@ -16307,41 +16503,51 @@ let vsyncTicks = 0;
             }
         }
 
-        box.style.borderColor = isOn ? '#00e5ff' : '#30363d';
-        box.innerHTML = `
-            <label style="display:flex;align-items:center;gap:9px;cursor:pointer;flex:1;user-select:none;">
-                <input type="checkbox" id="chkExp120HzMasterV205" ${isOn ? 'checked' : ''} onchange="window.applyExp120HzMasterStateV205(this.checked, true)" style="width:18px;height:18px;accent-color:#00e5ff;cursor:pointer;flex-shrink:0;">
-                <div style="display:flex;flex-direction:column;gap:2px;">
-                    <span style="font-size:12px;font-weight:900;color:#e6edf3;">🧪 Лаборатория 120Hz WebGL & Ядра .SO</span>
-                    <span style="font-size:10px;color:#8b949e;">Генератор кадров, сплит, логгер 360 и матрица декодеров</span>
-                </div>
-            </label>
-            <span id="lblExp120HzStatusV205" style="font-size:10.5px;font-weight:900;font-family:monospace;color:${isOn ? '#00ff9d' : '#8b949e'};flex-shrink:0;">
-                ${isOn ? 'ВКЛ (Активно)' : 'ВЫКЛ (Отключено)'}
-            </span>
-        `;
+        if (box._v208Rendered) {
+            window.syncModularLabDOMV208();
+            return;
+        }
+        box._v208Rendered = true;
+
+        var items = [
+            { key: 'core120',      icon: '⚡', title: 'Генератор кадров 120Hz & Матрица .SO ядер', desc: 'Включает WebGL/NEON 120Hz и панель .SO в Деке Б', color: '#00ff9d' },
+            { key: 'splitTest',    icon: '🌓', title: 'Сравнительный тест генератора (Сплит ОРИГ / 120Hz)', desc: 'Разделительная полоска ◀┃▶ с реальным FPS файла', color: '#00e5ff' },
+            { key: 'logDots',      icon: '📊', title: 'Лог с точками (График VSync + Лог 360)', desc: 'Отдельное окно осциллографа кадров без крутилок', color: '#58a6ff' },
+            { key: 'tunerSliders', icon: '🎛️', title: 'Настройки декодера (Крутилки 120Hz)', desc: 'Отдельное плавающее окно из 9 ползунков шейдера', color: '#d2a8ff' },
+            { key: 'stub1',        icon: '🧩', title: 'Заглушка 1 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #1', color: '#8b949e' },
+            { key: 'stub2',        icon: '🧩', title: 'Заглушка 2 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #2', color: '#8b949e' },
+            { key: 'stub3',        icon: '🧩', title: 'Заглушка 3 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #3', color: '#8b949e' },
+            { key: 'stub4',        icon: '🧩', title: 'Заглушка 4 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #4', color: '#8b949e' },
+            { key: 'stub5',        icon: '🧩', title: 'Заглушка 5 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #5', color: '#8b949e' }
+        ];
+
+        var fl = window._jennyLabFlagsV208 || {};
+        var rowsHtml = items.map(function(it) {
+            var isChk = fl[it.key] ? 'checked' : '';
+            return '<label style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 4px;border-bottom:1px solid #161b22;cursor:pointer;user-select:none;">' +
+                '<div style="display:flex;flex-direction:column;gap:1px;flex:1;">' +
+                    '<span style="font-size:11.5px;font-weight:800;color:' + it.color + ';">' + it.icon + ' ' + it.title + '</span>' +
+                    '<span style="font-size:9.5px;color:#8b949e;">' + it.desc + '</span>' +
+                '</div>' +
+                '<input type="checkbox" id="chkLabV208_' + it.key + '" ' + isChk + ' onchange="window.toggleLabModuleFlagV208(\'' + it.key + '\', this.checked, true)" style="width:17px;height:17px;accent-color:' + it.color + ';cursor:pointer;flex-shrink:0;">' +
+            '</label>';
+        }).join('');
+
+        box.innerHTML =
+            '<summary style="font-size:12px;font-weight:900;color:#00e5ff;cursor:pointer;padding:4px 2px;outline:none;">🧪 Экспериментальные модули 120Hz, Логгер & Сплит (4 модуля + 5 слотов)</summary>' +
+            '<div style="display:flex;flex-direction:column;gap:2px;margin-top:6px;">' + rowsHtml + '</div>';
+
+        window.syncModularLabDOMV208();
     };
 
-    const origRenderDeckBanners = window.renderDeckSwitchBannersV131;
-    if (typeof origRenderDeckBanners === 'function') {
-        window.renderDeckSwitchBannersV131 = function() {
-            const r = origRenderDeckBanners.apply(this, arguments);
-            window.mountExp120HzMasterCheckboxV205();
-            window.applyExp120HzMasterStateV205(window._jennyExp120HzEnabledV205, false);
-            return r;
-        };
-    }
-
-    setInterval(() => {
-        window.mountExp120HzMasterCheckboxV205();
-        if (!window._jennyExp120HzEnabledV205) {
-            window.applyExp120HzMasterStateV205(false, false);
-        }
+    setInterval(function() {
+        window.mountModularLabSettingsV208();
+        window.syncModularLabDOMV208();
     }, 600);
 
-    setTimeout(() => {
-        window.mountExp120HzMasterCheckboxV205();
-        window.applyExp120HzMasterStateV205(window._jennyExp120HzEnabledV205, false);
+    setTimeout(function() {
+        window.mountModularLabSettingsV208();
+        window.syncModularLabDOMV208();
     }, 150);
 })();
-
+/* ================= END JENNY V208 MODULAR LAB ================= */
