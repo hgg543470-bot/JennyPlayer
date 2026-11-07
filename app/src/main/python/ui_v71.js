@@ -14891,6 +14891,13 @@ let vsyncTicks = 0;
         const stepAlpha = Math.min(1.000, Math.max(1.0 / totalSteps, vsyncStepInCycle / totalSteps));
         const alpha = Math.max(lastMonotonicAlpha, stepAlpha);
         lastMonotonicAlpha = alpha;
+        window._jv207Diag = {
+            step: vsyncStepInCycle,
+            totalSteps: totalSteps,
+            alpha: alpha,
+            expectedSpanMs: expectedSpanMs,
+            engineDecCount: lastExactDecCountV201
+        };
 
         const isSplit = Boolean(window._jv166Metrics && window._jv166Metrics.mode === 'split' && window._jennyLabFlagsV208 && window._jennyLabFlagsV208.splitTest);
         const rawStageRatio = Math.max(0.05, Math.min(0.95, window._jennySplitRatioV176 || 0.5));
@@ -15053,13 +15060,14 @@ let vsyncTicks = 0;
 
         const plusN = m.actualPlusN || 4;
         const skipCnt = window._jennySkippedDupsTotal || 0;
-        const modeTag = (m.mode === 'split') ? ('🌓СПЛИТ (+' + plusN + 'к, -' + skipCnt + 'дуб)') : ((m.mode === '120') ? ('⚡V202 (+' + plusN + 'к, -' + skipCnt + 'дуб)') : '60Hz-Ориг');
+        const realFps = (window.getRealOrigFpsV208 ? window.getRealOrigFpsV208() : (m.sourceFps || 30));
+        const modeTag = (m.mode === 'split') ? ('🌓СПЛИТ ' + realFps + '->120 (+' + plusN + 'к)') : ((m.mode === '120') ? ('⚡120Hz (+' + plusN + 'к)') : (realFps + 'FPS-Ориг'));
         const cipherStr = pr.cipher || 'H264';
         const msStr = pr.synth_4frames_ms || 0.24;
 
         subEl.innerHTML =
             '<span style="color:#3fb950;font-weight:900;">📺 ' + m.screenHz + 'Hz</span> • ' +
-            '<span style="color:#e3b341;">🎞️ Уник: ' + (m.sourceFps || 12) + '</span> ➔ ' +
+            '<span style="color:#e3b341;">🎞️ Ориг: ' + (window.getRealOrigFpsV208 ? window.getRealOrigFpsV208() : (m.sourceFps || 30)) + ' FPS</span> ➔ ' +
             '<span style="color:#00ff9d;font-weight:900;">⚡ Выход: ' + (m.outputFps || m.screenHz) + ' FPS</span> • ' +
             '<span style="color:#d2a8ff;">🧬 ' + cipherStr + ' (' + msStr + 'мс)</span> • ' +
             '<span style="color:#79c0ff;">' + modeTag + ' • ' + ramStr + '</span>';
@@ -15103,6 +15111,9 @@ let vsyncTicks = 0;
     };
 
     function mount120HzButtonInVideoHud() {
+        const oldBtn = document.getElementById('v166Btn120Mode');
+        if (oldBtn) oldBtn.remove();
+        return;
         if (!window._jennyExp120HzEnabledV205) {
             const bOff = document.getElementById('v166Btn120Mode');
             if (bOff) bOff.style.setProperty('display', 'none', 'important');
@@ -15798,8 +15809,10 @@ let vsyncTicks = 0;
         if (!fromOffMode) uploadedSinceLastDraw = 0;
 
         var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
-        var dec = -1;
-        if (vEl && typeof vEl.getVideoPlaybackQuality === 'function') {
+        var dec = (window._jv207Diag && window._jv207Diag.engineDecCount > 0 && !fromOffMode)
+            ? window._jv207Diag.engineDecCount
+            : -1;
+        if (dec < 0 && vEl && typeof vEl.getVideoPlaybackQuality === 'function') {
             var q = vEl.getVideoPlaybackQuality();
             if (q) dec = q.totalVideoFrames;
         }
@@ -15838,8 +15851,8 @@ let vsyncTicks = 0;
 
         if (!isLogging) return;
 
-        var stepNum = diag.step || 1;
         var totSteps = diag.totalSteps || 4;
+        var stepNum = diag.step || Math.max(1, Math.round(curAlpha * totSteps));
         var expMs = diag.expectedSpanMs || (41.67 / spd);
 
         if (up) {
@@ -16450,7 +16463,7 @@ let vsyncTicks = 0;
 
         var btn120 = document.getElementById('v166Btn120Mode');
         if (btn120) {
-            btn120.style.setProperty('display', (fl.core120 || fl.splitTest) ? 'inline-flex' : 'none', 'important');
+            btn120.remove();
         }
         var vcorePanel = document.getElementById('jv166VCoreDeckPanel');
         if (vcorePanel) {

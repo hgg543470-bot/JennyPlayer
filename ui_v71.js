@@ -14785,6 +14785,13 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
         const stepAlpha = Math.min(1.000, Math.max(1.0 / totalSteps, vsyncStepInCycle / totalSteps));
         const alpha = Math.max(lastMonotonicAlpha, stepAlpha);
         lastMonotonicAlpha = alpha;
+        window._jv207Diag = {
+            step: vsyncStepInCycle,
+            totalSteps: totalSteps,
+            alpha: alpha,
+            expectedSpanMs: expectedSpanMs,
+            engineDecCount: lastExactDecCountV201
+        };
 
         const isSplit = Boolean(window._jv166Metrics && window._jv166Metrics.mode === 'split' && window._jennyLabFlagsV208 && window._jennyLabFlagsV208.splitTest);
         const rawStageRatio = Math.max(0.05, Math.min(0.95, window._jennySplitRatioV176 || 0.5));
@@ -14966,6 +14973,9 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
     };
 
     function mount120HzButtonInVideoHud() {
+        const oldBtn = document.getElementById('v166Btn120Mode');
+        if (oldBtn) oldBtn.remove();
+        return;
         if (!window._jennyExp120HzEnabledV205) {
             const bOff = document.getElementById('v166Btn120Mode');
             if (bOff) bOff.style.setProperty('display', 'none', 'important');
@@ -15651,8 +15661,10 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
         if (!fromOffMode) uploadedSinceLastDraw = 0;
 
         var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
-        var dec = -1;
-        if (vEl && typeof vEl.getVideoPlaybackQuality === 'function') {
+        var dec = (window._jv207Diag && window._jv207Diag.engineDecCount > 0 && !fromOffMode)
+            ? window._jv207Diag.engineDecCount
+            : -1;
+        if (dec < 0 && vEl && typeof vEl.getVideoPlaybackQuality === 'function') {
             var q = vEl.getVideoPlaybackQuality();
             if (q) dec = q.totalVideoFrames;
         }
@@ -15691,8 +15703,8 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
 
         if (!isLogging) return;
 
-        var stepNum = diag.step || 1;
         var totSteps = diag.totalSteps || 4;
+        var stepNum = diag.step || Math.max(1, Math.round(curAlpha * totSteps));
         var expMs = diag.expectedSpanMs || (41.67 / spd);
 
         if (up) {
@@ -16303,7 +16315,7 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
 
         var btn120 = document.getElementById('v166Btn120Mode');
         if (btn120) {
-            btn120.style.setProperty('display', (fl.core120 || fl.splitTest) ? 'inline-flex' : 'none', 'important');
+            btn120.remove();
         }
         var vcorePanel = document.getElementById('jv166VCoreDeckPanel');
         if (vcorePanel) {
