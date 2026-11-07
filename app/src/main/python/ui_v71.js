@@ -15551,7 +15551,7 @@ let vsyncTicks = 0;
     // 3. Перехват радиальной дуги скорости («штуки внизу») для управления Декой Б (Видео)
     var origStartScrub = window.startScrub;
     window.startScrub = function(side, speed) {
-        if (isVideoDeckActiveV170()) {
+        if (false && isVideoDeckActiveV170()) {
             window.setVideoDeckSpeedV170(speed, false);
             return;
         }
@@ -15562,7 +15562,7 @@ let vsyncTicks = 0;
 
     var origStopScrub = window.stopScrub;
     window.stopScrub = function() {
-        if (isVideoDeckActiveV170()) {
+        if (false && isVideoDeckActiveV170()) {
             // При отпускании дуги оставляем выбранную скорость для видеодеки
             var vEl = getVideoElV170();
             if (vEl) {
@@ -15634,7 +15634,7 @@ let vsyncTicks = 0;
         }
 
         // Если активна видеодека — выводим прогресс видео в нижнюю шкалу («штуку внизу»)
-        if (isVideoDeckActiveV170() && isFinite(vEl.duration) && vEl.duration > 0) {
+        if (false && isVideoDeckActiveV170() && isFinite(vEl.duration) && vEl.duration > 0) {
             var curEl = document.getElementById('currentTime');
             var remEl = document.getElementById('remainingTime');
             var npEl  = document.getElementById('nowPlaying');
@@ -15768,8 +15768,7 @@ let vsyncTicks = 0;
                     clearInterval(vd.studioBuffer._pollTimerV72);
                     vd.studioBuffer._pollTimerV72 = null;
                 }
-                vd.studioBuffer._pieceMapV72 = [];
-                vd.studioBuffer._loadedCountV72 = 0;
+                /* V211: keep vd.studioBuffer._pieceMapV72 intact for 4-buffer RAM audio! */
             }
             var btnPieces = document.getElementById('v130BtnPieces') || document.querySelector('[onclick*="toggleVideoPieces"]');
             if (btnPieces) btnPieces.style.setProperty('display', 'none', 'important');
@@ -15902,9 +15901,7 @@ let vsyncTicks = 0;
             }
             var dualOn = Boolean(window._dualDeckModeV131 || (window.videoDeckV131 && window.videoDeckV131.dualMode));
             var aud = window.audio || document.querySelector('audio');
-            if (!dualOn && aud && !aud.paused) {
-                try { aud.pause(); } catch (e) {}
-            }
+            /* V211: never pause Deck A audio when Deck B video starts */
             window.wakeVideoHudControlsV209();
         } else if (!isNowActive && lastVideoActiveStateV210) {
             lastVideoActiveStateV210 = false;
@@ -15921,9 +15918,7 @@ let vsyncTicks = 0;
         if (window._activeUiDeckV131 === 'video') {
             var dualOnNow = Boolean(window._dualDeckModeV131 || (window.videoDeckV131 && window.videoDeckV131.dualMode));
             var audNow = window.audio || document.querySelector('audio');
-            if (!dualOnNow && audNow && !audNow.paused && !vEl.paused) {
-                try { audNow.pause(); } catch (e) {}
-            }
+            /* V211: allow Deck A and Deck B to play simultaneously */
 
             var curT = window.getEffectiveVideoCurrentTimeV210(vEl);
             var durT = window.getEffectiveVideoDurationV210(vEl);
@@ -17045,3 +17040,1349 @@ let vsyncTicks = 0;
     }, 150);
 })();
 /* ================= END JENNY V210 ================= */
+
+
+/* ================= JENNY V211: ВЗАИМОДОПОЛНЯЕМЫЕ ДЕКИ А+Б, ДВЕ НЕЗАВИСИМЫЕ ШКАЛЫ ПРОГРЕССА И 4 БУФЕРА ЗВУКА В RAM ================= */
+(function() {
+    if (window._jennyV211Installed) return;
+    window._jennyV211Installed = true;
+
+    // 1. СТИЛЬ КНОПОК ДЕК В НАСТРОЙКАХ (ПОД УПРАВЛЯЮЩИЕ КНОПКИ ПЛЕЕРА) И АДАПТИВНАЯ ВЫСОТА ДОКА ДЛЯ 2 ШКАЛ
+    function injectV211Styles() {
+        if (document.getElementById('jennyV211Style')) return;
+        var st = document.createElement('style');
+        st.id = 'jennyV211Style';
+        st.textContent = `
+            .sticky-bottom {
+                height: auto !important;
+                min-height: 156px !important;
+                transition: height 0.18s ease !important;
+            }
+            body.dual-progress-bars-v211 .middle-list-container,
+            body.dual-progress-bars-v211 .modal-overlay {
+                bottom: 210px !important;
+            }
+            .jenny-deck-ctrl-btn-v211 {
+                flex: 1;
+                min-height: 42px;
+                padding: 7px 12px !important;
+                border-radius: 50px !important;
+                background: linear-gradient(145deg, #160d2e, #090514) !important;
+                color: var(--transport-accent, #a371f7) !important;
+                border: 1.5px solid var(--border-uniform, rgba(115, 65, 190, 0.48)) !important;
+                box-shadow: 0px 4px 0px #000000, inset 0px 2px 2px rgba(163, 113, 247, 0.22), 0px 6px 12px rgba(0,0,0,0.85) !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 6px !important;
+                font-size: 11.5px !important;
+                font-weight: 900 !important;
+                cursor: pointer;
+                transition: all 0.12s ease-in-out !important;
+                user-select: none;
+            }
+            .jenny-deck-ctrl-btn-v211:active {
+                transform: translateY(2px) scale(0.98) !important;
+            }
+            .jenny-deck-ctrl-btn-v211.deck-on-v211 {
+                background: linear-gradient(145deg, #211246, #0d0720) !important;
+                color: #ffffff !important;
+                border-color: #a371f7 !important;
+                box-shadow: 0px 3px 0px #000000, inset 0px 2px 4px rgba(163, 113, 247, 0.42), 0px 0px 14px rgba(163, 113, 247, 0.45) !important;
+            }
+            .jenny-deck-ctrl-btn-v211.deck-on-v211.deck-focused-v211 {
+                border-color: var(--accent-cyan, #58a6ff) !important;
+                box-shadow: 0px 3px 0px #000000, inset 0px 2px 4px rgba(88, 166, 255, 0.35), 0px 0px 16px rgba(88, 166, 255, 0.55) !important;
+            }
+            .jenny-deck-ctrl-btn-v211.deck-off-v211 {
+                opacity: 0.62;
+                color: #8b949e !important;
+                border-color: rgba(115, 65, 190, 0.25) !important;
+            }
+            .jenny-deck-pill-badge-v211 {
+                font-size: 9.5px;
+                padding: 2px 6px;
+                border-radius: 20px;
+                font-family: monospace;
+                font-weight: 900;
+                background: rgba(0, 0, 0, 0.55);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+            }
+            .jenny-deck-ctrl-btn-v211.deck-on-v211 .jenny-deck-pill-badge-v211 {
+                color: #00ff9d;
+                border-color: #00ff9d;
+                background: rgba(0, 255, 157, 0.14);
+            }
+        `;
+        document.head.appendChild(st);
+    }
+    injectV211Styles();
+
+    // 2. СОСТОЯНИЕ ДВУХ НЕЗАВИСИМЫХ ДЕК (МОЖЕТ РАБОТАТЬ ОДНА, ВТОРАЯ ИЛИ ОБЕ ВМЕСТЕ)
+    var savedDecks = {};
+    try { savedDecks = JSON.parse(localStorage.getItem('jenny_dual_decks_v211') || '{}') || {}; } catch (e) {}
+
+    window._jennyDualDeckV211 = {
+        deckA: savedDecks.deckA !== undefined ? Boolean(savedDecks.deckA) : true,
+        deckB: savedDecks.deckB !== undefined ? Boolean(savedDecks.deckB) : false,
+        uiFocus: (savedDecks.uiFocus === 'video') ? 'video' : 'music'
+    };
+    window._dualDeckModeV131 = true;
+    if (window.videoDeckV131) window.videoDeckV131.dualMode = true;
+
+    window.saveDualDeckStateV211 = function() {
+        try { localStorage.setItem('jenny_dual_decks_v211', JSON.stringify(window._jennyDualDeckV211)); } catch (e) {}
+    };
+
+    // Гарантируем наличие разметки двух отдельных шкал в нижнем доке
+    function ensureDualProgressBarsDOMV211() {
+        var rowA = document.getElementById('deckAProgressRow');
+        if (!rowA) {
+            var leftA = document.getElementById('leftTimeBlock');
+            if (leftA && leftA.parentElement) {
+                rowA = leftA.parentElement;
+                rowA.id = 'deckAProgressRow';
+            }
+        }
+        if (!rowA) return false;
+
+        var rowB = document.getElementById('deckBProgressRow');
+        if (!rowB) {
+            rowB = document.createElement('div');
+            rowB.id = 'deckBProgressRow';
+            rowB.style.cssText = 'display:none;gap:4px;height:48px;margin-bottom:6px;width:100%;';
+            rowB.innerHTML =
+                '<div id="leftTimeBlockDeckB" style="width:15%;min-width:54px;background:#000;border:1px solid var(--border-uniform);border-radius:50px 6px 6px 50px;display:flex;justify-content:center;align-items:center;cursor:pointer;touch-action:none;">' +
+                    '<span id="currentTimeDeckB" class="time-display" style="color:#58a6ff;font-size:12.5px;">0:00</span>' +
+                '</div>' +
+                '<div id="seekZoneDeckB" style="flex-grow:1;background:#000;border:1px solid var(--border-uniform);border-radius:6px;display:flex;flex-direction:column;justify-content:center;position:relative;overflow:hidden;cursor:pointer;touch-action:none;">' +
+                    '<div id="progressFillDeckB" style="position:absolute;left:0;top:0;height:100%;width:0%;background:rgba(115,65,190,0.45);pointer-events:none;transition:width 0.1s linear;"></div>' +
+                    '<div style="position:relative;z-index:2;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 12px;">' +
+                        '<span id="durationTimeDeckB" class="time-display" style="color:#8b949e;margin-bottom:1px;">0:00</span>' +
+                        '<div class="track-title" id="nowPlayingDeckB" style="font-weight:normal;color:#e6edf3;width:100%;font-size:12.5px;">🎬 Дека Б: Выбери видео</div>' +
+                        '<div id="speedLockIndicatorDeckB" style="display:none;color:#e3b341;font-size:10.5px;font-weight:bold;margin-top:1px;">🔒 ⏩ x2.0</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div id="rightTimeBlockDeckB" style="width:15%;min-width:54px;background:#000;border:1px solid var(--border-uniform);border-radius:6px 50px 50px 6px;display:flex;justify-content:center;align-items:center;cursor:pointer;touch-action:none;">' +
+                    '<span id="remainingTimeDeckB" class="time-display" style="color:#e3b341;font-size:12.5px;">-0:00</span>' +
+                '</div>';
+            rowA.parentElement.insertBefore(rowB, rowA);
+        }
+        return true;
+    }
+
+    // Синхронизация видимости шкал прогресса Деки А и Деки Б и звуковых выходов
+    window.syncDualDeckVisibilityAndAudioV211 = function() {
+        ensureDualProgressBarsDOMV211();
+        var st = window._jennyDualDeckV211;
+        var rowA = document.getElementById('deckAProgressRow');
+        var rowB = document.getElementById('deckBProgressRow');
+
+        var showA = Boolean(st.deckA);
+        var showB = Boolean(st.deckB);
+
+        if (rowA) rowA.style.display = showA ? 'flex' : 'none';
+        if (rowB) rowB.style.display = showB ? 'flex' : 'none';
+
+        if (showA && showB) {
+            document.body.classList.add('dual-progress-bars-v211');
+        } else {
+            document.body.classList.remove('dual-progress-bars-v211');
+        }
+
+        // Разрешаем одновременный звук обеих дек, если обе включены!
+        var vd = window.videoDeckV131;
+        if (vd && vd.masterAntiClickGain && vd.masterAntiClickGain.gain) {
+            vd.masterAntiClickGain.gain.value = showB ? 1.0 : 0.0;
+        }
+        if (window.masterAntiClickGain && window.masterAntiClickGain.gain) {
+            window.masterAntiClickGain.gain.value = showA ? 1.0 : 0.0;
+        }
+    };
+
+    // Переключение состояния Деки А / Деки Б (взаимодополняемые тумблеры в стиле кнопок плеера)
+    window.toggleComplementDeckV211 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var d = window._jennyDualDeckV211;
+        var isVideoBtn = (whichDeck === 'video' || whichDeck === 'B');
+
+        if (isVideoBtn) {
+            if (!d.deckB) {
+                d.deckB = true;
+                d.uiFocus = 'video';
+            } else if (d.uiFocus !== 'video' && d.deckA) {
+                // Если обе деки включены, но фокус настроек был на Музыке — переводим фокус настроек на Видео без выключения
+                d.uiFocus = 'video';
+            } else {
+                d.deckB = false;
+                var vEl = document.getElementById('jennyVideoElV130');
+                if (vEl && !vEl.paused) { try { vEl.pause(); } catch (e) {} }
+                if (window.videoDeckV131 && window.videoDeckV131.sourceNode) {
+                    try { window.videoDeckV131.sourceNode.stop(); } catch (e) {}
+                }
+                if (d.deckA) d.uiFocus = 'music';
+            }
+        } else {
+            if (!d.deckA) {
+                d.deckA = true;
+                d.uiFocus = 'music';
+            } else if (d.uiFocus !== 'music' && d.deckB) {
+                d.uiFocus = 'music';
+            } else {
+                d.deckA = false;
+                var aEl = document.getElementById('audioPlayer');
+                if (aEl && !aEl.paused) { try { aEl.pause(); } catch (e) {} }
+                if (window.studioSourceNode) {
+                    try { window.studioSourceNode.stop(); } catch (e) {}
+                }
+                if (d.deckB) d.uiFocus = 'video';
+            }
+        }
+
+        // Применяем выбранный фокус для настроек эквалайзера/DSP
+        if (window._activeUiDeckV131 === 'music') window._musicConfigRefV131 = window.appConfig;
+        window._activeUiDeckV131 = d.uiFocus;
+        if (d.uiFocus === 'video') {
+            if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+            if (window.videoDeckV131 && window.videoDeckV131.config) window.appConfig = window.videoDeckV131.config;
+        } else if (window._musicConfigRefV131) {
+            window.appConfig = window._musicConfigRefV131;
+        }
+
+        window.saveDualDeckStateV211();
+        window.syncDualDeckVisibilityAndAudioV211();
+        if (typeof window.syncAllControlsToActiveDeckV131 === 'function') window.syncAllControlsToActiveDeckV131();
+        window.renderDeckSwitchBannersV131();
+
+        if (typeof window.showToast === 'function' && ev) {
+            var modeStr = (d.deckA && d.deckB)
+                ? '🔥 Дека А (Музыка) + Дека Б (Видео) работают ВМЕСТЕ!'
+                : (d.deckB ? '🎬 Активна Дека Б: Видео' : (d.deckA ? '🎵 Активна Дека А: Музыка' : '⏸ Обе деки выключены'));
+            window.showToast(modeStr);
+        }
+    };
+
+    // Переопределяем рендер плашки дек в Настройках, Эквалайзере и Спектре (стиль управляющих кнопок плеера)
+    window.renderDeckSwitchBannersV131 = function() {
+        injectV211Styles();
+        var d = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music' };
+        var clsA = 'jenny-deck-ctrl-btn-v211 ' + (d.deckA ? 'deck-on-v211' : 'deck-off-v211') + (d.uiFocus === 'music' ? ' deck-focused-v211' : '');
+        var clsB = 'jenny-deck-ctrl-btn-v211 ' + (d.deckB ? 'deck-on-v211' : 'deck-off-v211') + (d.uiFocus === 'video' ? ' deck-focused-v211' : '');
+
+        var statusA = d.deckA ? 'ВКЛ' : 'ВЫКЛ';
+        var statusB = d.deckB ? 'ВКЛ' : 'ВЫКЛ';
+
+        var barHtml = function(barId) {
+            return '<div id="' + barId + '" style="display:flex;flex-direction:column;gap:6px;padding:8px;background:#05070b;border:1px solid var(--border-uniform, #30363d);border-radius:16px;margin-bottom:10px;box-shadow:inset 0 1px 4px rgba(0,0,0,0.9);">' +
+                '<div style="display:flex;align-items:center;gap:8px;width:100%;">' +
+                    '<button type="button" class="' + clsA + '" onclick="window.toggleComplementDeckV211(\'music\', event)">' +
+                        '<span>🎵 Дека А: Музыка</span>' +
+                        '<span class="jenny-deck-pill-badge-v211">' + statusA + '</span>' +
+                    '</button>' +
+                    '<button type="button" class="' + clsB + '" onclick="window.toggleComplementDeckV211(\'video\', event)">' +
+                        '<span>🎬 Дека Б: Видео</span>' +
+                        '<span class="jenny-deck-pill-badge-v211">' + statusB + '</span>' +
+                    '</button>' +
+                '</div>' +
+                (d.uiFocus === 'video'
+                    ? '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 0 4px;">' +
+                          '<span style="font-size:10px;color:#79c0ff;font-weight:bold;">🎛️ Ползунки ниже настраивают: Деку Б (Видео)</span>' +
+                          '<button type="button" onclick="window.copyMusicDspToVideoV131(event)" style="padding:4px 8px;font-size:10px;font-weight:bold;border-radius:20px;background:linear-gradient(145deg,#160d2e,#090514);border:1px solid #3fb950;color:#3fb950;">📋 Скопировать DSP из Музыки</button>' +
+                      '</div>'
+                    : '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 0 4px;">' +
+                          '<span style="font-size:10px;color:#d2a8ff;font-weight:bold;">🎛️ Ползунки ниже настраивают: Деку А (Музыка)</span>' +
+                          '<span style="font-size:9.5px;color:#8b949e;">Можно включить обе деки сразу</span>' +
+                      '</div>') +
+            '</div>';
+        };
+
+        [['settingsModal', 'deckSwitchBarSettingsV131'], ['eqModal', 'deckSwitchBarEqV131'], ['specModal', 'deckSwitchBarSpecV131']].forEach(function(pair) {
+            var m = document.getElementById(pair[0]);
+            if (!m) return;
+            var cont = m.querySelector('.container') || m;
+            var ex = document.getElementById(pair[1]);
+            if (!ex) {
+                ex = document.createElement('div');
+                cont.insertBefore(ex, cont.firstChild);
+            }
+            ex.outerHTML = barHtml(pair[1]);
+        });
+        if (typeof window.renderVCoreDeckPanelV166 === 'function') window.renderVCoreDeckPanelV166();
+    };
+
+    // 3. ЧЕТЫРЕ БУФЕРА ЗВУКА В RAM (2 ВПЕРЁД + 2 НАЗАД: АУДИО FWD, АУДИО REV, ВИДЕО FWD, ВИДЕО REV)
+    // Восстанавливаем настоящий 6-поточный декодер видео в RAM и синхронно строим 4-й буфер (vd.reversedStudioBuffer)!
+    window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
+        if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+        const vd = window.videoDeckV131;
+        if (!vd || !vd.ctx) return null;
+        const mySess = ++vd.ramDecodeSession;
+        if (vd.pieceAbortCtrl) { try { vd.pieceAbortCtrl.abort(); } catch (e) {} }
+        vd.studioBuffer = null;
+        vd.reversedStudioBuffer = null;
+
+        const vid = document.getElementById('jennyVideoElV130');
+        let dur = 0;
+        try {
+            const mr = await fetch('/api/video/pcm_meta?src=' + encodeURIComponent(streamUrl));
+            if (mr.ok) { const md = await mr.json(); dur = parseFloat(md.duration) || 0; }
+        } catch (e) {}
+
+        if (!dur && vid) {
+            for (let w = 0; w < 25; w++) {
+                if (mySess !== vd.ramDecodeSession) return null;
+                const dCand = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vid) : vid.duration;
+                if (isFinite(dCand) && dCand > 0) { dur = dCand; break; }
+                await new Promise(r => setTimeout(r, 120));
+            }
+        }
+        if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
+        if (window._vidStateV130) window._vidStateV130.trueDuration = dur;
+
+        const srCandidates = (dur > 5400) ? [24000, 16000] : ((dur > 2400) ? [32000, 24000] : [44100, 32000]);
+        let sr = srCandidates[0], totalFrames = 0, audioBuf = null, revAudioBuf = null;
+        for (const candSr of srCandidates) {
+            try {
+                sr = candSr;
+                totalFrames = Math.floor(dur * sr);
+                audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                if (audioBuf && revAudioBuf) break;
+            } catch (e) {
+                audioBuf = null;
+                revAudioBuf = null;
+            }
+        }
+        if (!audioBuf) {
+            // Если фильм огромный и 2 полных буфера на 44.1кГц не влезли, берём на ступень ниже для пары FWD+REV
+            for (const candSr of [24000, 16000, 12000]) {
+                try {
+                    sr = candSr;
+                    totalFrames = Math.floor(dur * sr);
+                    audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                    revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                    if (audioBuf && revAudioBuf) break;
+                } catch (e) {}
+            }
+        }
+        if (!audioBuf || mySess !== vd.ramDecodeSession) return null;
+
+        const chL = audioBuf.getChannelData(0), chR = audioBuf.getChannelData(1);
+        const revL = revAudioBuf ? revAudioBuf.getChannelData(0) : null;
+        const revR = revAudioBuf ? revAudioBuf.getChannelData(1) : null;
+
+        const PIECE_SEC = 45;
+        const numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
+        const pieceMap = new Uint8Array(numPieces);
+        const revPieceMap = new Uint8Array(numPieces);
+        const failCounts = new Uint8Array(numPieces);
+
+        audioBuf._pieceSecV72 = PIECE_SEC;
+        audioBuf._pieceMapV72 = pieceMap;
+        audioBuf._loadedCountV72 = 0;
+        audioBuf._allPiecesLoadedV72 = false;
+        audioBuf._trueDurationV72 = dur;
+        audioBuf._ramTotalMbV134 = Math.round((totalFrames * 8 * (revAudioBuf ? 2 : 1)) / (1024 * 1024));
+
+        if (revAudioBuf) {
+            revAudioBuf._pieceSecV72 = PIECE_SEC;
+            revAudioBuf._pieceMapV72 = revPieceMap;
+            revAudioBuf._loadedCountV72 = 0;
+            revAudioBuf._allPiecesLoadedV72 = false;
+            revAudioBuf._trueDurationV72 = dur;
+        }
+
+        // Буфер #3 (Видео ВПЕРЁД) и Буфер #4 (Видео НАЗАД)
+        vd.studioBuffer = audioBuf;
+        vd.reversedStudioBuffer = revAudioBuf;
+
+        const fetchVideoPiece = async (pIdx, isUrgent) => {
+            if (pIdx < 0 || pIdx >= numPieces || pieceMap[pIdx] === 2) return true;
+            pieceMap[pIdx] = 1;
+            const stSec = pIdx * PIECE_SEC;
+            const dSec = Math.min(PIECE_SEC, dur - stSec);
+            let ctrl = null;
+            if (!isUrgent) {
+                ctrl = new AbortController();
+                vd.pieceAbortCtrl = ctrl;
+            }
+            try {
+                const u = '/api/video/pcm_chunk?src=' + encodeURIComponent(streamUrl) + '&start=' + stSec + '&dur=' + dSec + '&sr=' + sr;
+                const res = await fetch(u, ctrl ? { signal: ctrl.signal } : {});
+                if (!res.ok) { pieceMap[pIdx] = 0; return false; }
+                const ab = await res.arrayBuffer();
+                const frames = Math.floor(ab.byteLength / 8);
+                if (frames <= 0) { pieceMap[pIdx] = 0; return false; }
+                const startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
+                const maxCopy = Math.min(frames, totalFrames - startFrame);
+                if (maxCopy > 0) {
+                    const leftArr = new Float32Array(ab, 0, frames);
+                    const rightArr = new Float32Array(ab, frames * 4, frames);
+                    // Заполняем Буфер #3 (Видео Вперёд)
+                    chL.set(leftArr.subarray(0, maxCopy), startFrame);
+                    chR.set(rightArr.subarray(0, maxCopy), startFrame);
+                    // Синхронно заполняем Буфер #4 (Видео Назад / Реверс)
+                    if (revL && revR) {
+                        let dstIdx = totalFrames - 1 - startFrame;
+                        for (let i = 0; i < maxCopy; i++, dstIdx--) {
+                            revL[dstIdx] = leftArr[i];
+                            revR[dstIdx] = rightArr[i];
+                        }
+                    }
+                }
+                pieceMap[pIdx] = 2;
+                revPieceMap[numPieces - 1 - pIdx] = 2;
+                audioBuf._loadedCountV72++;
+                if (revAudioBuf) revAudioBuf._loadedCountV72 = audioBuf._loadedCountV72;
+                if (audioBuf._loadedCountV72 === 1 && vd.config && vd.config.opt_autoRms) {
+                    window.computeBufferAutoGain(audioBuf, vd.config.val_autoRms);
+                    window.buildVideoAudioGraphV131();
+                }
+                return true;
+            } catch (e) {
+                pieceMap[pIdx] = 0;
+                return false;
+            }
+        };
+
+        const pickNextPieceIdx = () => {
+            const curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid ? vid.currentTime : 0);
+            const curPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(curSec / PIECE_SEC)));
+            const isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || vd.isReversed);
+            const stepDir = isRev ? -1 : 1;
+            for (let look = 0; look < 3; look++) {
+                const cand = curPiece + look * stepDir;
+                if (cand >= 0 && cand < numPieces && pieceMap[cand] === 0 && failCounts[cand] < 4) {
+                    return { idx: cand, urgent: look <= 1 };
+                }
+            }
+            for (let offset = 0; offset < numPieces; offset++) {
+                const cand = (curPiece + offset) % numPieces;
+                if (pieceMap[cand] === 0 && failCounts[cand] < 4) {
+                    return { idx: cand, urgent: false };
+                }
+            }
+            return null;
+        };
+
+        const workerLoop = async () => {
+            while (mySess === vd.ramDecodeSession && window._vidStateV130 && window._vidStateV130.active) {
+                const task = pickNextPieceIdx();
+                if (!task) break;
+                const ok = await fetchVideoPiece(task.idx, task.urgent);
+                if (mySess !== vd.ramDecodeSession) return;
+                if (ok) {
+                    if (task.urgent) window.syncVideoRamEngineV211(false);
+                } else {
+                    failCounts[task.idx]++;
+                    await new Promise(r => setTimeout(r, 120));
+                }
+            }
+        };
+
+        await Promise.all([workerLoop(), workerLoop(), workerLoop(), workerLoop(), workerLoop(), workerLoop()]);
+        if (mySess === vd.ramDecodeSession && audioBuf._loadedCountV72 >= numPieces) {
+            audioBuf._allPiecesLoadedV72 = true;
+            if (revAudioBuf) revAudioBuf._allPiecesLoadedV72 = true;
+            window.syncVideoRamEngineV211(false);
+        }
+        return audioBuf;
+    };
+
+    // Также гарантируем, что для длинных аудио-треков на Деке А строится Буфер #2 (window.reversedStudioBuffer)
+    var _origDecodeHugeAudioV71 = window.decodeHugeTrackToRamV71;
+    if (typeof _origDecodeHugeAudioV71 === 'function') {
+        window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMeta) {
+            const buf = await _origDecodeHugeAudioV71.apply(this, arguments);
+            if (buf && window.currentPlayingTrack === filename && !window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+                try {
+                    window.reversedStudioBuffer = await window.cloneAndReverseBuffer(buf);
+                } catch (e) {}
+            }
+            return buf;
+        };
+    }
+
+    // Полноценный движок воспроизведения пары буферов Деки Б (Видео Вперёд vd.studioBuffer + Видео Назад vd.reversedStudioBuffer)
+    window.syncVideoRamEngineV211 = window.syncVideoRamEngineV131 = function(isDragging) {
+        const vd = window.videoDeckV131, st = window._vidStateV130, vid = document.getElementById('jennyVideoElV130');
+        if (!vid || !vd || !vd.ctx || !st || !st.active) return;
+        if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+        if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+
+        const gKey = (vd.config && vd.config.gearKeyV66) || 'jbuf-lock';
+        const isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || vd.isReversed);
+        vd.isReversed = isRev;
+        const targetSpd = Math.max(0.1, Math.min(16.0, window.getTargetPlaybackSpeedDeckB ? window.getTargetPlaybackSpeedDeckB() : (vd.speed || 1.0)));
+        vd.speed = targetSpd;
+
+        const curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+        const pSec = (vd.studioBuffer && vd.studioBuffer._pieceSecV72) || 45;
+        const curP = (vd.studioBuffer && vd.studioBuffer._pieceMapV72 && vd.studioBuffer._pieceMapV72.length > 0)
+            ? Math.max(0, Math.min(vd.studioBuffer._pieceMapV72.length - 1, Math.floor((isRev ? Math.max(0, curSec - 1.0) : curSec) / pSec)))
+            : -1;
+        const isPieceReady = Boolean(vd.studioBuffer && (!vd.studioBuffer._pieceMapV72 || vd.studioBuffer._pieceMapV72.length === 0 || vd.studioBuffer._pieceMapV72[curP] === 2));
+        const useRamEngine = isPieceReady && (isRev || gKey === 'jbuf-lock' || gKey === 'jbuf-shift' || gKey === 'vinyl-shift');
+
+        if (!useRamEngine) {
+            if (vd.sourceNode) {
+                vd.sourceNode.onended = null;
+                try { vd.sourceNode.stop(); } catch (e) {}
+                try { vd.sourceNode.disconnect(); } catch (e) {}
+                vd.sourceNode = null;
+            }
+            vd.isStudioPlaying = false;
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
+            const lockPitch = (gKey !== 'web-shift' && gKey !== 'jbuf-shift' && gKey !== 'vinyl-shift');
+            vid.preservesPitch = lockPitch; vid.mozPreservesPitch = lockPitch; vid.webkitPreservesPitch = lockPitch;
+            if (Math.abs(vid.playbackRate - targetSpd) > 0.005) { try { vid.playbackRate = targetSpd; } catch (e) {} }
+            return;
+        }
+
+        if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+        if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+        const WIN_SEC = Math.max(18.0, Math.min(60.0, targetSpd * 18.0));
+
+        // Если активен реверс Деки Б и готов Буфер #4 (vd.reversedStudioBuffer) — режем напрямую из обратного буфера!
+        let rawWinBuf = null;
+        if (isRev && vd.reversedStudioBuffer) {
+            const dur = vd.reversedStudioBuffer.duration;
+            const revStartSec = Math.max(0, Math.min(dur - 0.05, dur - curSec));
+            rawWinBuf = window.extractVideoWindowBufferV131(vd.reversedStudioBuffer, revStartSec, WIN_SEC, false);
+        } else {
+            rawWinBuf = window.extractVideoWindowBufferV131(vd.studioBuffer, curSec, WIN_SEC, isRev);
+        }
+        if (!rawWinBuf) return;
+
+        let playBuf = rawWinBuf, nodeRate = 1.0;
+        if (gKey === 'jbuf-lock') {
+            const tensionPct = (vd.config && vd.config.hoseTensionPct !== undefined) ? vd.config.hoseTensionPct : 100;
+            const savedCache = window._hoseSplicerCacheV46, savedCtx = window.audioCtx;
+            window._hoseSplicerCacheV46 = vd.hoseCache; window.audioCtx = vd.ctx;
+            try { playBuf = window.buildElasticHoseBufferV46(rawWinBuf, targetSpd, tensionPct); }
+            finally { window._hoseSplicerCacheV46 = savedCache; window.audioCtx = savedCtx; }
+            nodeRate = 1.0;
+        } else {
+            playBuf = rawWinBuf;
+            nodeRate = targetSpd;
+        }
+
+        if (vd.sourceNode) {
+            vd.sourceNode.onended = null;
+            try { vd.sourceNode.stop(); } catch (e) {}
+            try { vd.sourceNode.disconnect(); } catch (e) {}
+            vd.sourceNode = null;
+        }
+
+        if ((!vid.paused || isRev) && !st.userPaused && window._jennyDualDeckV211.deckB) {
+            vd.sourceNode = vd.ctx.createBufferSource();
+            vd.sourceNode.buffer = playBuf;
+            vd.sourceNode.playbackRate.value = nodeRate;
+            vd.sourceNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+            if (st.dspBypass && vd.directBypassGain) vd.directBypassGain.gain.value = 1.0;
+            vd.sourceNode.start(0, 0);
+            vd.isStudioPlaying = true;
+
+            if (isRev) {
+                if (!vid.paused) { st._internalRevPause = true; vid.pause(); }
+                const startCtxT = vd.ctx.currentTime, startVidSec = curSec;
+                vd.revFrameTimer = setInterval(() => {
+                    if (!st.active || st.userPaused || !vd.isReversed) {
+                        clearInterval(vd.revFrameTimer);
+                        vd.revFrameTimer = null;
+                        return;
+                    }
+                    const nextSec = Math.max(0, startVidSec - (vd.ctx.currentTime - startCtxT) * targetSpd);
+                    if (Math.abs(vid.currentTime - nextSec) >= 0.04) { try { vid.currentTime = nextSec; } catch (e) {} }
+                    if (nextSec <= 0.05) {
+                        window.toggleReverseModeDeckB(false);
+                    }
+                }, 45);
+            } else {
+                if (Math.abs(vid.playbackRate - targetSpd) > 0.005) { try { vid.playbackRate = targetSpd; } catch (e) {} }
+            }
+
+            const realDurSec = (gKey === 'jbuf-lock') ? playBuf.duration : (playBuf.duration / Math.max(0.25, nodeRate));
+            vd.horizonTimer = setTimeout(() => {
+                if (st.active && !st.userPaused) window.syncVideoRamEngineV211(false);
+            }, Math.max(400, (realDurSec - 0.9) * 1000));
+        }
+    };
+
+    // 4. ПОЛНОСТЬЮ ИЗОЛИРОВАННЫЕ ФУНКЦИИ И ЖЕСТЫ ВТОРОЙ ШКАЛЫ ПРОГРЕССА (ДЕКА Б: ВИДЕО)
+    window.scrubStateDeckB = {
+        active: false,
+        locked: false,
+        side: null,
+        speed: 1.0,
+        isPhysicallyReversed: false
+    };
+    window.isReversedDeckB = false;
+    window.persistedPlaybackSpeedDeckB = null;
+    window.persistedPlaybackSideDeckB = 'right';
+
+    window.getBaseSpeedDeckB = function() {
+        var vd = window.videoDeckV131;
+        if (vd && vd.config && vd.config.xNormalSpeed && vd.config.normalPlaybackSpeed) {
+            return parseFloat(vd.config.normalPlaybackSpeed) || 1.0;
+        }
+        return 1.0;
+    };
+
+    window.getTargetPlaybackSpeedDeckB = function() {
+        if (window.scrubStateDeckB && (window.scrubStateDeckB.active || window.scrubStateDeckB.locked) && window.scrubStateDeckB.speed) {
+            return window.scrubStateDeckB.speed;
+        }
+        if (window.persistedPlaybackSpeedDeckB) return window.persistedPlaybackSpeedDeckB;
+        return window._jennyVideoSpeedV170 || window.getBaseSpeedDeckB();
+    };
+
+    // Обновление UI верхней шкалы прогресса (#deckBProgressRow) строго для Видео (Дека Б)
+    window.updateProgressUIDeckB = function(currentTime, duration, isReverseVisual) {
+        var pFill = document.getElementById('progressFillDeckB');
+        var cTime = document.getElementById('currentTimeDeckB');
+        var rTime = document.getElementById('remainingTimeDeckB');
+        var dTime = document.getElementById('durationTimeDeckB');
+        var npEl  = document.getElementById('nowPlayingDeckB');
+
+        var fmt = window.formatVideoTimeV210 || window.formatTime || function(s) {
+            var m = Math.floor(s / 60), sc = Math.floor(s % 60);
+            return m + ':' + (sc < 10 ? '0' + sc : sc);
+        };
+
+        if (pFill && isFinite(duration) && duration > 0) {
+            var perc = Math.max(0, Math.min(100, (currentTime / duration) * 100));
+            pFill.style.transform = 'none';
+            if (isReverseVisual) {
+                pFill.style.left = 'auto';
+                pFill.style.right = '0';
+                pFill.style.width = (100 - perc) + '%';
+            } else {
+                pFill.style.right = 'auto';
+                pFill.style.left = '0';
+                pFill.style.width = perc + '%';
+            }
+        }
+
+        if (isFinite(duration) && duration > 0) {
+            var rem = Math.max(0, duration - currentTime);
+            if (isReverseVisual) {
+                if (cTime) cTime.innerText = '-' + fmt(rem);
+                if (rTime) rTime.innerText = fmt(currentTime);
+                if (dTime) dTime.innerText = '⏪ ' + fmt(rem) + ' / ' + fmt(duration);
+            } else {
+                if (cTime) cTime.innerText = fmt(currentTime);
+                if (rTime) rTime.innerText = '-' + fmt(rem);
+                if (dTime) dTime.innerText = fmt(currentTime) + ' / ' + fmt(duration);
+            }
+        }
+
+        if (npEl) {
+            var st = window._vidStateV130 || {};
+            var vd = window.videoDeckV131 || {};
+            var vEl = document.getElementById('jennyVideoElV130');
+            var rawTitle = st.currentTitle || vd.title || (vEl && vEl.getAttribute('data-title')) ||
+                           (vEl && vEl.src ? decodeURIComponent(vEl.src.split('/').pop().split('?')[0]) : '');
+            if (rawTitle) {
+                var hasFwd = Boolean(vd.studioBuffer);
+                var hasRev = Boolean(vd.reversedStudioBuffer);
+                var ramTag = (hasFwd && hasRev) ? 'RAM ⏩⏪ 🚀: ' : (hasFwd ? 'RAM 🚀: ' : '🎬 ');
+                npEl.innerText = ramTag + rawTitle;
+            }
+        }
+    };
+
+    // Реверс строго для Деки Б (Видео) — никак не затрагивает Деку А (Музыку)
+    window.toggleReverseModeDeckB = function(targetReversed) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130;
+        if (!vid || !vd || !st || !st.active) return;
+
+        var wasReversedNow = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+        var dur = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vid) : (vid.duration || 0);
+        var cur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+
+        if (!targetReversed) {
+            window.isReversedDeckB = false;
+            vd.isReversed = false;
+            window.scrubStateDeckB.active = false;
+            window.scrubStateDeckB.locked = false;
+            window.scrubStateDeckB.side = null;
+            window.scrubStateDeckB.isPhysicallyReversed = false;
+            window.persistedPlaybackSpeedDeckB = null;
+            window.persistedPlaybackSideDeckB = 'right';
+
+            var lockEl = document.getElementById('speedLockIndicatorDeckB');
+            if (lockEl) lockEl.style.display = 'none';
+
+            var baseSpd = window.getBaseSpeedDeckB();
+            window._jennyVideoSpeedV170 = baseSpd;
+            vd.speed = baseSpd;
+            if (!st.userPaused && vid.paused) {
+                st._internalRevPause = false;
+                vid.play().catch(function(){});
+            }
+            if (typeof window.updateVideoRevBtnUIV131 === 'function') window.updateVideoRevBtnUIV131();
+            window.syncVideoRamEngineV211(false);
+            window.updateProgressUIDeckB(cur, dur, false);
+            return;
+        }
+
+        if (!vd.studioBuffer && !vd.reversedStudioBuffer) {
+            if (typeof window.showToast === 'function') window.showToast('⏳ RAM-буферы видео (FWD+REV) ещё подгружаются...');
+            return;
+        }
+
+        window.scrubStateDeckB.active = false;
+        window.scrubStateDeckB.locked = false;
+        window.scrubStateDeckB.side = null;
+        window.scrubStateDeckB.isPhysicallyReversed = false;
+        window.persistedPlaybackSpeedDeckB = null;
+        window.persistedPlaybackSideDeckB = 'right';
+
+        var lockEl2 = document.getElementById('speedLockIndicatorDeckB');
+        if (lockEl2) lockEl2.style.display = 'none';
+
+        window.isReversedDeckB = true;
+        vd.isReversed = true;
+        var baseSpd2 = window.getBaseSpeedDeckB();
+        window._jennyVideoSpeedV170 = baseSpd2;
+        vd.speed = baseSpd2;
+        if (typeof window.updateVideoRevBtnUIV131 === 'function') window.updateVideoRevBtnUIV131();
+        window.syncVideoRamEngineV211(false);
+        window.updateProgressUIDeckB(cur, dur, true);
+    };
+
+    // Скраббинг и замок скорости строго для Деки Б (Видео)
+    window.startScrubDeckB = function(side, speed) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130;
+        if (!vid || !vd || !st || !st.active) return;
+
+        var wantReverseNow = (side === 'left');
+        window.scrubStateDeckB.active = true;
+        window.scrubStateDeckB.side = side;
+        window.scrubStateDeckB.speed = speed;
+        window.scrubStateDeckB.isPhysicallyReversed = wantReverseNow;
+        if (!wantReverseNow) {
+            window.isReversedDeckB = false;
+        }
+        vd.isReversed = wantReverseNow;
+        window._jennyVideoSpeedV170 = speed;
+        vd.speed = speed;
+
+        window.persistedPlaybackSpeedDeckB = speed;
+        window.persistedPlaybackSideDeckB = side;
+
+        var lockEl = document.getElementById('speedLockIndicatorDeckB');
+        if (lockEl) {
+            lockEl.style.display = 'block';
+            lockEl.innerText = (window.scrubStateDeckB.locked ? '🔒' : '🔄') + ' ' + (wantReverseNow ? '⏪' : '⏩') + ' x' + speed;
+        }
+
+        if (!wantReverseNow && !st.userPaused && vid.paused) {
+            st._internalRevPause = false;
+            vid.play().catch(function(){});
+        }
+        if (typeof window.updateVideoRevBtnUIV131 === 'function') window.updateVideoRevBtnUIV131();
+        window.syncVideoRamEngineV211(true);
+    };
+
+    window.stopScrubDeckB = function(keepLockedSpeed) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130;
+        if (!window.scrubStateDeckB.active && !window.scrubStateDeckB.locked && !window.isReversedDeckB) return;
+
+        if (!keepLockedSpeed) {
+            window.scrubStateDeckB.active = false;
+            window.scrubStateDeckB.locked = false;
+            window.scrubStateDeckB.side = null;
+            window.scrubStateDeckB.speed = window.getBaseSpeedDeckB();
+            window.scrubStateDeckB.isPhysicallyReversed = false;
+            window.persistedPlaybackSpeedDeckB = null;
+            window.persistedPlaybackSideDeckB = 'right';
+
+            var lockEl = document.getElementById('speedLockIndicatorDeckB');
+            if (lockEl) lockEl.style.display = 'none';
+        } else {
+            window.scrubStateDeckB.active = false;
+        }
+
+        var nowReversed = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+        var baseSpd = (keepLockedSpeed && window.persistedPlaybackSpeedDeckB)
+            ? window.persistedPlaybackSpeedDeckB
+            : window.getBaseSpeedDeckB();
+
+        window._jennyVideoSpeedV170 = baseSpd;
+        if (vd) {
+            vd.isReversed = nowReversed;
+            vd.speed = baseSpd;
+        }
+        if (vid && !nowReversed && st && !st.userPaused && vid.paused) {
+            st._internalRevPause = false;
+            vid.play().catch(function(){});
+        }
+        if (typeof window.updateVideoRevBtnUIV131 === 'function') window.updateVideoRevBtnUIV131();
+        window.syncVideoRamEngineV211(false);
+    };
+
+    // Боковые таймеры верхней шкалы (#leftTimeBlockDeckB и #rightTimeBlockDeckB) — 100% отдельно от Деки А
+    window.setupTimeBlockControlsDeckB = function() {
+        var leftBlock = document.getElementById('leftTimeBlockDeckB');
+        var rightBlock = document.getElementById('rightTimeBlockDeckB');
+        if (!leftBlock || !rightBlock || leftBlock._v211Bound) return;
+        leftBlock._v211Bound = true;
+
+        var pressTimer = null;
+        var isLongPress = false;
+        var jumpInterval = null;
+        var wasPlayingBeforeJump = false;
+
+        var startSilent10xSeekDeckB = function(dirSign) {
+            var vid = document.getElementById('jennyVideoElV130');
+            if (!vid) return;
+            wasPlayingBeforeJump = !vid.paused;
+            vid.pause();
+            if (jumpInterval) clearInterval(jumpInterval);
+            jumpInterval = setInterval(function() {
+                var dur = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vid) : (vid.duration || 0);
+                var cur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+                if (!isFinite(dur) || dur <= 0) return;
+                var isVisualReverse = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+                var step = isVisualReverse ? (-dirSign * 1.0) : (dirSign * 1.0);
+                var nextSec = Math.max(0, Math.min(dur - 0.05, cur + step));
+                if (typeof window.seekVideoToExactSecondV167 === 'function') {
+                    window.seekVideoToExactSecondV167(nextSec);
+                } else {
+                    vid.currentTime = nextSec;
+                }
+                window.updateProgressUIDeckB(nextSec, dur, isVisualReverse);
+            }, 100);
+        };
+
+        var stopSilent10xSeekDeckB = function() {
+            if (jumpInterval) {
+                clearInterval(jumpInterval);
+                jumpInterval = null;
+            }
+            var vid = document.getElementById('jennyVideoElV130');
+            if (vid && wasPlayingBeforeJump && !window.isReversedDeckB) {
+                vid.play().then(function() {
+                    window.syncVideoRamEngineV211(false);
+                }).catch(function(){});
+            } else {
+                window.syncVideoRamEngineV211(false);
+            }
+        };
+
+        leftBlock.addEventListener('touchstart', function(e) {
+            e.stopPropagation();
+            isLongPress = false;
+            clearTimeout(pressTimer);
+            pressTimer = setTimeout(function() {
+                isLongPress = true;
+                try { navigator.vibrate(30); } catch (err) {}
+                startSilent10xSeekDeckB(-1);
+            }, 420);
+        }, { passive: true });
+
+        leftBlock.addEventListener('touchend', function(e) {
+            e.stopPropagation();
+            clearTimeout(pressTimer);
+            if (isLongPress) {
+                stopSilent10xSeekDeckB();
+            } else {
+                window.toggleReverseModeDeckB(true);
+            }
+        });
+
+        leftBlock.addEventListener('touchcancel', function(e) {
+            e.stopPropagation();
+            clearTimeout(pressTimer);
+            if (isLongPress) stopSilent10xSeekDeckB();
+        });
+
+        rightBlock.addEventListener('touchstart', function(e) {
+            e.stopPropagation();
+            isLongPress = false;
+            clearTimeout(pressTimer);
+            pressTimer = setTimeout(function() {
+                isLongPress = true;
+                try { navigator.vibrate(30); } catch (err) {}
+                startSilent10xSeekDeckB(+1);
+            }, 420);
+        }, { passive: true });
+
+        rightBlock.addEventListener('touchend', function(e) {
+            e.stopPropagation();
+            clearTimeout(pressTimer);
+            if (isLongPress) {
+                stopSilent10xSeekDeckB();
+            } else {
+                window.toggleReverseModeDeckB(false);
+            }
+        });
+
+        rightBlock.addEventListener('touchcancel', function(e) {
+            e.stopPropagation();
+            clearTimeout(pressTimer);
+            if (isLongPress) stopSilent10xSeekDeckB();
+        });
+    };
+
+    // Центральная зона и радиальная дуга скорости верхней шкалы (#seekZoneDeckB) — 100% отдельно от Деки А (собственный оверлей и канвас!)
+    window.setupSeekZoneDeckB = function() {
+        var zone = document.getElementById('seekZoneDeckB');
+        if (!zone || zone._v211Bound) return;
+
+        var overlay = document.getElementById('scrubOverlayDeckB');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'scrubOverlayDeckB';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:5999;display:none;touch-action:none;';
+            document.body.appendChild(overlay);
+        }
+        var arcContainer = document.getElementById('speedArcContainerDeckB');
+        if (!arcContainer) {
+            arcContainer = document.createElement('div');
+            arcContainer.id = 'speedArcContainerDeckB';
+            arcContainer.style.cssText = 'position:fixed;inset:0;z-index:6000;pointer-events:none;transition:opacity 0.1s ease-out;opacity:0;display:none;';
+            document.body.appendChild(arcContainer);
+        }
+        var debugCanvas = document.getElementById('debugZoneCanvasDeckB');
+        if (!debugCanvas) {
+            debugCanvas = document.createElement('canvas');
+            debugCanvas.id = 'debugZoneCanvasDeckB';
+            debugCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;width:100%;height:100%;z-index:5998;';
+            overlay.appendChild(debugCanvas);
+        }
+        zone._v211Bound = true;
+
+        var startY = 0;
+        var isPullingDown = false;
+        var isScrubbing = false;
+        var isSeekingAllowed = true;
+        var scrubSide = null;
+        var currentTempSpeed = null;
+        var arcItems = [];
+        var circleAngles = [];
+        var currentAnchor = { x: 0, y: 0 };
+        var pressTimer = null;
+        var activeTouchDeckB = false;
+
+        function getX(e) {
+            if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientX;
+            if (e.touches && e.touches.length > 0) return e.touches[0].clientX;
+            return e.clientX;
+        }
+        function getY(e) {
+            if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientY;
+            if (e.touches && e.touches.length > 0) return e.touches[0].clientY;
+            return e.clientY;
+        }
+        function angleDiffSigned(a, b) {
+            return ((a - b) % 360 + 540) % 360 - 180;
+        }
+
+        function handleTapSeekDeckB(x) {
+            if (x === undefined || isNaN(x)) return;
+            var rect = zone.getBoundingClientRect();
+            if (rect.width <= 10) return;
+            var perc = Math.max(0, Math.min(1, (x - rect.left) / rect.width));
+            var vid = document.getElementById('jennyVideoElV130');
+            if (!vid) return;
+            var dur = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vid) : (vid.duration || 0);
+            if (isFinite(dur) && dur > 0) {
+                var isVisualReverse = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+                if (isVisualReverse) perc = 1.0 - perc;
+                var targetSec = perc * dur;
+                if (typeof window.seekVideoToExactSecondV167 === 'function') {
+                    window.seekVideoToExactSecondV167(targetSec);
+                } else {
+                    vid.currentTime = targetSec;
+                }
+                window.syncVideoRamEngineV211(false);
+                window.updateProgressUIDeckB(targetSec, dur, isVisualReverse);
+            }
+        }
+
+        function generateArcDeckB() {
+            arcContainer.innerHTML = '';
+            arcItems = [];
+            circleAngles = [];
+
+            var activeZones = [];
+            for (var i = 1; i <= 6; i++) {
+                var en = document.getElementById('cfg_z' + i + '_en');
+                var val = document.getElementById('cfg_z' + i + '_val');
+                if (en && en.checked && val) {
+                    activeZones.push(parseFloat(val.value) || 1.0);
+                }
+            }
+            if (activeZones.length === 0) activeZones = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+            var isLeftHanded = Boolean(window.appConfig && window.appConfig.leftHandedMode);
+            var W = window.innerWidth;
+            var H = window.innerHeight;
+
+            var eqBtn = document.getElementById('btn-eqModal');
+            if (eqBtn) {
+                var eqRect = eqBtn.getBoundingClientRect();
+                currentAnchor.x = eqRect.left + eqRect.width / 2;
+                currentAnchor.y = eqRect.top + eqRect.height / 2;
+            } else {
+                currentAnchor.y = H - 135;
+                currentAnchor.x = isLeftHanded ? 31 : (W - 31);
+            }
+
+            var startDeg = -108, endDeg = -204;
+            var rTop = Math.min(W * 0.76, H * 0.35);
+            var rMid = Math.min(W * 0.78, H * 0.36);
+            var rBot = Math.min(W * 0.58, H * 0.26);
+
+            function sampleCurvePoint(u) {
+                var deg = startDeg + u * (endDeg - startDeg);
+                var rad = deg * Math.PI / 180;
+                var r = (1 - u) * (1 - u) * rTop + 2 * (1 - u) * u * rMid + u * u * rBot;
+                var dxRH = r * Math.cos(rad);
+                var dy = r * Math.sin(rad);
+                var x = currentAnchor.x + (isLeftHanded ? -dxRH : dxRH);
+                var y = currentAnchor.y + dy;
+                return { x: Math.max(30, Math.min(W - 30, x)), y: Math.max(150, Math.min(H - 32, y)) };
+            }
+
+            var STEPS = 240, samples = [], totalLen = 0;
+            for (var k = 0; k <= STEPS; k++) {
+                var pt = sampleCurvePoint(k / STEPS);
+                if (k > 0) totalLen += Math.hypot(pt.x - samples[k - 1].x, pt.y - samples[k - 1].y);
+                samples.push({ x: pt.x, y: pt.y, s: totalLen });
+            }
+
+            var count = activeZones.length, positions = [];
+            for (var j = 0; j < count; j++) {
+                var targetS = count === 1 ? (totalLen * 0.5) : (totalLen * (j / (count - 1)));
+                var best = samples[0];
+                for (var m = 0; m < samples.length; m++) {
+                    if (samples[m].s >= targetS) { best = samples[m]; break; }
+                }
+                positions.push(best);
+            }
+
+            activeZones.forEach(function(val, index) {
+                if (index >= positions.length) return;
+                var el = document.createElement('div');
+                el.className = 'arc-item';
+                el.innerText = 'x' + (val % 1 === 0 ? val.toFixed(1) : val.toString());
+                el.dataset.val = val;
+                el.style.left = (positions[index].x - 24) + 'px';
+                el.style.top = (positions[index].y - 24) + 'px';
+                var angle = Math.atan2(positions[index].y - currentAnchor.y, positions[index].x - currentAnchor.x) * 180 / Math.PI;
+                circleAngles.push(angle);
+                arcContainer.appendChild(el);
+                arcItems.push(el);
+            });
+
+            arcContainer.style.display = 'block';
+            setTimeout(function() { arcContainer.style.opacity = '1'; }, 10);
+
+            debugCanvas.width = window.innerWidth;
+            debugCanvas.height = window.innerHeight;
+            var ctx = debugCanvas.getContext('2d');
+            if (ctx) {
+                ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+                var coreGrad = ctx.createRadialGradient(currentAnchor.x, currentAnchor.y, 2, currentAnchor.x, currentAnchor.y, 24);
+                coreGrad.addColorStop(0, 'rgba(88, 166, 255, 0.95)');
+                coreGrad.addColorStop(0.5, 'rgba(163, 113, 247, 0.45)');
+                coreGrad.addColorStop(1, 'rgba(115, 65, 190, 0)');
+                ctx.beginPath();
+                ctx.arc(currentAnchor.x, currentAnchor.y, 24, 0, 2 * Math.PI);
+                ctx.fillStyle = coreGrad;
+                ctx.fill();
+                var radius = Math.max(window.innerWidth, window.innerHeight) * 0.95;
+                ctx.lineWidth = 1.6;
+                ctx.setLineDash([7, 8]);
+                for (var li = 0; li < circleAngles.length - 1; li++) {
+                    var delta = angleDiffSigned(circleAngles[li + 1], circleAngles[li]);
+                    var midAngle = circleAngles[li] + delta / 2;
+                    var rad = midAngle * Math.PI / 180;
+                    var endX = currentAnchor.x + radius * Math.cos(rad);
+                    var endY = currentAnchor.y + radius * Math.sin(rad);
+                    var lineGrad = ctx.createLinearGradient(currentAnchor.x, currentAnchor.y, endX, endY);
+                    lineGrad.addColorStop(0, 'rgba(88, 166, 255, 0.65)');
+                    lineGrad.addColorStop(0.55, 'rgba(163, 113, 247, 0.35)');
+                    lineGrad.addColorStop(1, 'rgba(88, 166, 255, 0.0)');
+                    ctx.strokeStyle = lineGrad;
+                    ctx.beginPath();
+                    ctx.moveTo(currentAnchor.x, currentAnchor.y);
+                    ctx.lineTo(endX, endY);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+            }
+        }
+
+        zone.addEventListener('touchstart', function(e) {
+            e.stopPropagation();
+            activeTouchDeckB = true;
+            var startX = getX(e);
+            startY = getY(e);
+            var rect = zone.getBoundingClientRect();
+            var perc = (startX - rect.left) / Math.max(1, rect.width);
+
+            if (perc < 0.33) scrubSide = 'left';
+            else if (perc > 0.66) scrubSide = 'right';
+            else scrubSide = 'center';
+
+            isPullingDown = false;
+            currentTempSpeed = null;
+            isScrubbing = false;
+            isSeekingAllowed = true;
+
+            if (scrubSide === 'center') {
+                pressTimer = setTimeout(function() {
+                    pressTimer = null;
+                    isSeekingAllowed = false;
+                    try { navigator.vibrate(50); } catch (err) {}
+
+                    if (window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed)) {
+                        window.toggleReverseModeDeckB(false);
+                    } else if (window.scrubStateDeckB.active || window.scrubStateDeckB.locked) {
+                        window.stopScrubDeckB(false);
+                    }
+                    var baseSpd = window.getBaseSpeedDeckB();
+                    window._jennyVideoSpeedV170 = baseSpd;
+                    if (window.videoDeckV131) window.videoDeckV131.speed = baseSpd;
+                    var vid = document.getElementById('jennyVideoElV130');
+                    if (vid) { try { vid.playbackRate = baseSpd; } catch (err) {} }
+                    window.syncVideoRamEngineV211(false);
+
+                    var lockEl = document.getElementById('speedLockIndicatorDeckB');
+                    if (lockEl) {
+                        lockEl.style.display = 'block';
+                        lockEl.innerText = '✅ Норм: x' + baseSpd;
+                        setTimeout(function() {
+                            if (!window.scrubStateDeckB.active && !window.scrubStateDeckB.locked) {
+                                lockEl.style.display = 'none';
+                            }
+                        }, 1000);
+                    }
+                }, 160);
+            } else {
+                pressTimer = setTimeout(function() {
+                    pressTimer = null;
+                    isScrubbing = true;
+                    if (window.scrubStateDeckB.locked) {
+                        window.scrubStateDeckB.locked = false;
+                        try { navigator.vibrate(50); } catch (err) {}
+                    } else {
+                        try { navigator.vibrate(30); } catch (err) {}
+                    }
+                    var vdCfg = (window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {};
+                    var defSpeed = parseFloat(vdCfg.defaultScrubSpeed) || 2.0;
+                    window.startScrubDeckB(scrubSide, defSpeed);
+                }, 250);
+            }
+        }, { passive: true });
+
+        function handleTouchMoveDeckB(e) {
+            if (!activeTouchDeckB) return;
+            var curX = getX(e);
+            var curY = getY(e);
+            var deltaY = curY - startY;
+
+            if (scrubSide === 'center') {
+                if (Math.abs(deltaY) > 15 && pressTimer) {
+                    clearTimeout(pressTimer);
+                    pressTimer = null;
+                }
+                return;
+            }
+
+            var threshold = window.innerHeight * 0.05;
+            if (Math.abs(deltaY) > threshold || isScrubbing) {
+                isSeekingAllowed = false;
+                if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+
+                if (!isScrubbing) {
+                    isScrubbing = true;
+                    if (window.scrubStateDeckB.locked) window.scrubStateDeckB.locked = false;
+                }
+
+                if (!isPullingDown) {
+                    isPullingDown = true;
+                    overlay.style.display = 'block';
+                    generateArcDeckB();
+                    var vdCfg = (window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {};
+                    var defSpeed = parseFloat(vdCfg.defaultScrubSpeed) || 2.0;
+                    window.startScrubDeckB(scrubSide, defSpeed);
+                }
+
+                var dx = curX - currentAnchor.x;
+                var dy = curY - currentAnchor.y;
+                var fingerAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+                var minDiff = Infinity, idx = 0;
+                circleAngles.forEach(function(ang, i) {
+                    var diff = Math.abs(angleDiffSigned(fingerAngle, ang));
+                    if (diff < minDiff) { minDiff = diff; idx = i; }
+                });
+
+                if (arcItems[idx] && !arcItems[idx].classList.contains('active')) {
+                    arcItems.forEach(function(el) { el.classList.remove('active'); });
+                    arcItems[idx].classList.add('active');
+                    currentTempSpeed = parseFloat(arcItems[idx].dataset.val);
+                    window.startScrubDeckB(scrubSide, currentTempSpeed);
+                    try { navigator.vibrate(15); } catch (err) {}
+                }
+            }
+        }
+
+        function handleTouchEndDeckB(e) {
+            if (!activeTouchDeckB) return;
+            activeTouchDeckB = false;
+
+            if (pressTimer) {
+                clearTimeout(pressTimer);
+                pressTimer = null;
+                if (isSeekingAllowed) handleTapSeekDeckB(getX(e));
+            } else if (isScrubbing) {
+                arcContainer.style.opacity = '0';
+                setTimeout(function() { arcContainer.style.display = 'none'; }, 150);
+
+                if (isPullingDown && currentTempSpeed) {
+                    window.scrubStateDeckB.locked = true;
+                    window.startScrubDeckB(scrubSide, currentTempSpeed);
+                } else if (!window.scrubStateDeckB.locked) {
+                    window.stopScrubDeckB(false);
+                }
+            }
+
+            overlay.style.display = 'none';
+            isPullingDown = false;
+            isScrubbing = false;
+            scrubSide = null;
+
+            var dbg = document.getElementById('debugZoneCanvasDeckB');
+            if (dbg) {
+                var ctx = dbg.getContext('2d');
+                if (ctx) ctx.clearRect(0, 0, dbg.width, dbg.height);
+            }
+        }
+
+        zone.addEventListener('touchmove', handleTouchMoveDeckB, { passive: true });
+        overlay.addEventListener('touchmove', handleTouchMoveDeckB, { passive: false });
+        zone.addEventListener('touchend', handleTouchEndDeckB);
+        overlay.addEventListener('touchend', handleTouchEndDeckB);
+        zone.addEventListener('touchcancel', handleTouchEndDeckB);
+        overlay.addEventListener('touchcancel', handleTouchEndDeckB);
+    };
+
+    // 5. РАЗДЕЛЕНИЕ СОБЫТИЙ ЗАПУСКА АУДИО (ДЕКА А) И ВИДЕО (ДЕКА Б) БЕЗ ВЗАИМНОЙ БЛОКИРОВКИ
+    var _origPlayTrackV211 = window.playTrack;
+    if (typeof _origPlayTrackV211 === 'function') {
+        window.playTrack = async function(filename, context) {
+            window._jennyDualDeckV211.deckA = true;
+            window.saveDualDeckStateV211();
+            window.syncDualDeckVisibilityAndAudioV211();
+            window.renderDeckSwitchBannersV131();
+            return _origPlayTrackV211.apply(this, arguments);
+        };
+    }
+
+    var _origOpenVidV211 = window.openJennyVideoPlayerV130;
+    if (typeof _origOpenVidV211 === 'function') {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            window._jennyDualDeckV211.deckB = true;
+            window._dualDeckModeV131 = true;
+            if (window.videoDeckV131) window.videoDeckV131.dualMode = true;
+            window.saveDualDeckStateV211();
+            window.syncDualDeckVisibilityAndAudioV211();
+            window.renderDeckSwitchBannersV131();
+            var r = _origOpenVidV211.apply(this, arguments);
+            // Запускаем построение 2 буферов звука видео (Вперёд + Назад) в RAM
+            var effUrl = (window._vidStateV130 && window._vidStateV130.currentUrl) || streamUrl;
+            window.decodeVideoToRamV131(effUrl, titleStr);
+            return r;
+        };
+    }
+
+    var _origCloseVidV211 = window.closeVideoPlayerV130;
+    if (typeof _origCloseVidV211 === 'function') {
+        window.closeVideoPlayerV130 = function(ev) {
+            var r = _origCloseVidV211.apply(this, arguments);
+            window._jennyDualDeckV211.deckB = false;
+            window.saveDualDeckStateV211();
+            window.syncDualDeckVisibilityAndAudioV211();
+            window.renderDeckSwitchBannersV131();
+            return r;
+        };
+    }
+
+    // Отключаем перехват нижней шкалы Деки А со стороны старых V170/V210:
+    // Нижняя шкала (#deckAProgressRow) ВСЕГДА показывает только Музыку (Дека А),
+    // а Верхняя шкала (#deckBProgressRow) ВСЕГДА показывает только Видео (Дека Б)!
+    window.isDeckBVideoControlActiveV210 = function() {
+        return false; // запрещаем V210 перехватывать кнопки и прогресс-бар Деки А
+    };
+
+    // Главный цикл независимого обновления двух шкал прогресса и 4 буферов RAM
+    setInterval(function() {
+        ensureDualProgressBarsDOMV211();
+        window.setupTimeBlockControlsDeckB();
+        window.setupSeekZoneDeckB();
+        window.syncDualDeckVisibilityAndAudioV211();
+
+        // 1) Обновляем шкалу Деки Б (#deckBProgressRow) строго по видеоэлементу
+        var vEl = document.getElementById('jennyVideoElV130');
+        var stVid = window._vidStateV130;
+        if (vEl && stVid && stVid.active) {
+            if (!window._jennyDualDeckV211.deckB) {
+                window._jennyDualDeckV211.deckB = true;
+                window.saveDualDeckStateV211();
+                window.syncDualDeckVisibilityAndAudioV211();
+            }
+            var curV = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vEl) : (vEl.currentTime || 0);
+            var durV = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vEl) : (vEl.duration || 0);
+            var isRevV = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+            window.updateProgressUIDeckB(curV, durV, isRevV);
+        }
+
+        // 2) Обновляем шкалу Деки А (#deckAProgressRow) строго по аудиоэлементу (и защищаем от перезаписи!)
+        var aEl = document.getElementById('audioPlayer');
+        if (aEl && window.currentPlayingTrack) {
+            var npA = document.getElementById('nowPlaying');
+            var hasFwdA = Boolean(window.studioBuffer);
+            var hasRevA = Boolean(window.reversedStudioBuffer);
+            var prefixA = (window.appConfig && window.appConfig.studioMode)
+                ? ((hasFwdA && hasRevA) ? 'RAM ⏩⏪ 🚀: ' : 'RAM 🚀: ')
+                : '🎵 ';
+            var wantTitleA = prefixA + window.currentPlayingTrack;
+            if (npA && npA.innerText !== wantTitleA && npA.innerText.indexOf('⏳') === -1) {
+                npA.innerText = wantTitleA;
+            }
+            var pFillA = document.getElementById('progressFill');
+            if (pFillA && pFillA.style.transform && pFillA.style.transform !== 'none') {
+                pFillA.style.transform = 'none';
+            }
+            var effDurA = (isFinite(aEl.duration) && aEl.duration > 0) ? aEl.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
+            if (effDurA > 0 && typeof window.updateProgressUI === 'function') {
+                var isRevA = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+                window.updateProgressUI(aEl.currentTime || 0, effDurA, isRevA);
+            }
+        }
+    }, 80);
+
+    setTimeout(function() {
+        ensureDualProgressBarsDOMV211();
+        window.setupTimeBlockControlsDeckB();
+        window.setupSeekZoneDeckB();
+        window.syncDualDeckVisibilityAndAudioV211();
+        window.renderDeckSwitchBannersV131();
+    }, 200);
+})();
+/* ================= END JENNY V211 ================= */
+

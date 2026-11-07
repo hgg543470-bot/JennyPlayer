@@ -77,8 +77,26 @@
                 </div>
             </div>
 
-            <!-- Полоса перемотки и боковые таймеры -->
-            <div style="display:flex;gap:4px;height:48px;margin-bottom:8px;width:100%;">
+            <!-- Полоса перемотки и боковые таймеры ДЕКИ Б (ВИДЕО) — точная независимая копия прямо над первой -->
+            <div id="deckBProgressRow" style="display:none;gap:4px;height:48px;margin-bottom:6px;width:100%;">
+                <div id="leftTimeBlockDeckB" style="width:15%;min-width:54px;background:#000;border:1px solid var(--border-uniform);border-radius:50px 6px 6px 50px;display:flex;justify-content:center;align-items:center;cursor:pointer;touch-action:none;">
+                    <span id="currentTimeDeckB" class="time-display" style="color:#58a6ff;font-size:12.5px;">0:00</span>
+                </div>
+                <div id="seekZoneDeckB" style="flex-grow:1;background:#000;border:1px solid var(--border-uniform);border-radius:6px;display:flex;flex-direction:column;justify-content:center;position:relative;overflow:hidden;cursor:pointer;touch-action:none;">
+                    <div id="progressFillDeckB" style="position:absolute;left:0;top:0;height:100%;width:0%;background:rgba(115,65,190,0.45);pointer-events:none;transition:width 0.1s linear;"></div>
+                    <div style="position:relative;z-index:2;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 12px;">
+                        <span id="durationTimeDeckB" class="time-display" style="color:#8b949e;margin-bottom:1px;">0:00</span>
+                        <div class="track-title" id="nowPlayingDeckB" style="font-weight:normal;color:#e6edf3;width:100%;font-size:12.5px;">🎬 Дека Б: Выбери видео</div>
+                        <div id="speedLockIndicatorDeckB" style="display:none;color:#e3b341;font-size:10.5px;font-weight:bold;margin-top:1px;">🔒 ⏩ x2.0</div>
+                    </div>
+                </div>
+                <div id="rightTimeBlockDeckB" style="width:15%;min-width:54px;background:#000;border:1px solid var(--border-uniform);border-radius:6px 50px 50px 6px;display:flex;justify-content:center;align-items:center;cursor:pointer;touch-action:none;">
+                    <span id="remainingTimeDeckB" class="time-display" style="color:#e3b341;font-size:12.5px;">-0:00</span>
+                </div>
+            </div>
+
+            <!-- Полоса перемотки и боковые таймеры ДЕКИ А (МУЗЫКА) -->
+            <div id="deckAProgressRow" style="display:flex;gap:4px;height:48px;margin-bottom:8px;width:100%;">
                 <div id="leftTimeBlock" style="width:15%;min-width:54px;background:#000;border:1px solid var(--border-uniform);border-radius:50px 6px 6px 50px;display:flex;justify-content:center;align-items:center;cursor:pointer;touch-action:none;">
                     <span id="currentTime" class="time-display" style="color:#58a6ff;font-size:12.5px;">0:00</span>
                 </div>
