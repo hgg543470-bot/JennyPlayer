@@ -21795,3 +21795,1517 @@ let vsyncTicks = 0;
         bindCleanSingleCommitVideoSliderV216();
     }, 250);
 })();
+
+/* ================= JENNY_V217_UNIFIED_PATCH (#311): VIDEO SETTINGS & OPTIONAL FIT/ROTATE CONTROLS, CUSTOM RADIAL SPEED & REVERSE BUTTONS + NORM BASE SPEED, В+А / В / А STREAM MODES WITH AUDIO-ONLY MINI PILL, UNIFIED VECTOR SVG VIDEO HUD & BLUE/PURPLE DECK SEPARATION ================= */
+(function() {
+    if (window._jennyV217Installed) return;
+    window._jennyV217Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. ВЕКТОРНЫЕ SVG-ИКОНКИ В ЕДИНОМ СТИЛЕ ДЛЯ ВИДЕОПЛЕЕРА И ПАНЕЛЕЙ
+    // -------------------------------------------------------------------------
+    window.VID_SVGS_V217 = {
+        va: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="13" height="12" rx="2"/><polygon points="15 8 20 5 20 15 15 12"/><path d="M6 20h12"/></svg>',
+        vOnly: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2"/><polygon points="16 10 22 6 22 18 16 14"/></svg>',
+        aOnly: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+        pult: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
+        files: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+        fullOn: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>',
+        fullOff: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>',
+        pip: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="12" y="10" width="8" height="6" rx="1" fill="currentColor" fill-opacity="0.25"/></svg>',
+        close: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+        lockClosed: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+        lockOpen: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>',
+        rot90: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><polyline points="21 3 21 8 16 8"/></svg>',
+        fit: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="7 10 7 8 9 8"/><polyline points="17 14 17 16 15 16"/></svg>',
+        rev: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>',
+        norm: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+        fwd: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>',
+        dsp: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>',
+        track: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>',
+        seekBack10: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>',
+        seekFwd10: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
+        playBig: '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+        pauseBig: '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>',
+        waitBig: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg>'
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. РАЗДЕЛЕНИЕ ЦВЕТОВ ДЕКИ Б (НАСЫЩЕННЫЙ СИНИЙ) И ДЕКИ А (100% ФИОЛЕТОВЫЙ)
+    //    И ЕДИНЫЙ СТИЛЬ КНОПОК ВНУТРИ ВИДЕОПЛЕЕРА (#jennyVideoStudioRootV130)
+    // -------------------------------------------------------------------------
+    var styleV217 = document.createElement('style');
+    styleV217.id = 'jennyStyleV217';
+    styleV217.textContent = [
+        /* === ДЕКА А (АУДИО — НИЖНЯЯ ШКАЛА И 9 КНОПОК): 100% ФИОЛЕТОВЫЙ === */
+        '#deckAProgressRow #leftTimeBlock, #deckAProgressRow #seekZone, #deckAProgressRow #rightTimeBlock {',
+        '  border-color: rgba(168, 85, 247, 0.72) !important;',
+        '  box-shadow: inset 0 0 8px rgba(168, 85, 247, 0.16) !important;',
+        '}',
+        '#deckAProgressRow #progressFill {',
+        '  background: rgba(147, 51, 234, 0.46) !important;',
+        '}',
+        '#deckAProgressRow #currentTime {',
+        '  color: #c084fc !important;',
+        '}',
+        '#deckAProgressRow #remainingTime {',
+        '  color: #d8b4fe !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216 {',
+        '  background: rgba(24, 12, 46, 0.94) !important;',
+        '  border: 1.3px solid rgba(168, 85, 247, 0.68) !important;',
+        '  color: #c084fc !important;',
+        '  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(192, 132, 252, 0.18) !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216.play-accent-v216 {',
+        '  background: rgba(126, 34, 206, 0.42) !important;',
+        '  border-color: #c084fc !important;',
+        '  color: #e9d5ff !important;',
+        '  box-shadow: 0 0 12px rgba(168, 85, 247, 0.48) !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216 svg {',
+        '  color: #c084fc !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216 svg[stroke] {',
+        '  stroke: #c084fc !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216 svg[fill="currentColor"] {',
+        '  fill: #c084fc !important;',
+        '}',
+        '#mainTransportBar #tracksCount {',
+        '  color: #c084fc !important;',
+        '}',
+
+        /* === ДЕКА Б (ВИДЕО — ВЕРХНЯЯ ШКАЛА И 9 КНОПОК): НАСЫЩЕННЫЙ СИНИЙ === */
+        '#deckBProgressRow #leftTimeBlockDeckB, #deckBProgressRow #seekZoneDeckB, #deckBProgressRow #rightTimeBlockDeckB {',
+        '  border-color: rgba(59, 130, 246, 0.78) !important;',
+        '  box-shadow: inset 0 0 8px rgba(59, 130, 246, 0.18) !important;',
+        '}',
+        '#deckBProgressRow #progressFillDeckB {',
+        '  background: rgba(37, 99, 235, 0.48) !important;',
+        '}',
+        '#deckBProgressRow #currentTimeDeckB {',
+        '  color: #60a5fa !important;',
+        '}',
+        '#deckBProgressRow #remainingTimeDeckB {',
+        '  color: #93c5fd !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216 {',
+        '  background: rgba(11, 24, 54, 0.94) !important;',
+        '  border: 1.3px solid rgba(59, 130, 246, 0.72) !important;',
+        '  color: #60a5fa !important;',
+        '  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(96, 165, 250, 0.18) !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216.deckb-play-v216 {',
+        '  background: rgba(37, 99, 235, 0.42) !important;',
+        '  border-color: #60a5fa !important;',
+        '  color: #dbeafe !important;',
+        '  box-shadow: 0 0 12px rgba(59, 130, 246, 0.48) !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg {',
+        '  color: #60a5fa !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg[stroke] {',
+        '  stroke: #60a5fa !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg[fill="currentColor"] {',
+        '  fill: #60a5fa !important;',
+        '}',
+        '#deckBControlsRowV216 #tracksCountDeckBV216 {',
+        '  color: #60a5fa !important;',
+        '}',
+
+        /* === КНОПКИ ВНУТРИ ВИДЕОПЛЕЕРА (#jennyVideoStudioRootV130): ЕДИНЫЙ СИНИЙ СТИЛЬ === */
+        '#jennyVideoStudioRootV130 .v130-btn {',
+        '  background: rgba(11, 24, 54, 0.88) !important;',
+        '  border: 1.25px solid rgba(59, 130, 246, 0.62) !important;',
+        '  color: #60a5fa !important;',
+        '  border-radius: 9px !important;',
+        '  height: 32px !important;',
+        '  padding: 0 7px !important;',
+        '  font-size: 11px !important;',
+        '  font-weight: 800 !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  gap: 4px !important;',
+        '  box-shadow: 0 2px 6px rgba(0,0,0,0.55), inset 0 1px 2px rgba(96,165,250,0.16) !important;',
+        '  white-space: nowrap !important;',
+        '  box-sizing: border-box !important;',
+        '  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn svg {',
+        '  color: #60a5fa !important;',
+        '  flex-shrink: 0 !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-active-v217 {',
+        '  background: rgba(37, 99, 235, 0.44) !important;',
+        '  border-color: #60a5fa !important;',
+        '  color: #eff6ff !important;',
+        '  box-shadow: 0 0 11px rgba(59, 130, 246, 0.52), inset 0 1px 2px rgba(191, 219, 254, 0.25) !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-active-v217 svg {',
+        '  color: #93c5fd !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-off-v217 {',
+        '  background: rgba(15, 23, 42, 0.72) !important;',
+        '  border-color: rgba(100, 116, 139, 0.32) !important;',
+        '  color: #64748b !important;',
+        '  box-shadow: none !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-off-v217 svg {',
+        '  color: #64748b !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-close-v217 {',
+        '  background: rgba(185, 28, 28, 0.85) !important;',
+        '  border-color: #f87171 !important;',
+        '  color: #ffffff !important;',
+        '  width: 32px !important;',
+        '  padding: 0 !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-close-v217 svg {',
+        '  color: #ffffff !important;',
+        '}',
+        '#jennyVideoStudioRootV130 #v135BottomToolsRow {',
+        '  display: flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: space-between !important;',
+        '  gap: 4px !important;',
+        '  width: 100% !important;',
+        '  flex-wrap: nowrap !important;',
+        '  overflow-x: auto !important;',
+        '  scrollbar-width: none !important;',
+        '}',
+        '#jennyVideoStudioRootV130 #v135BottomToolsRow::-webkit-scrollbar { display: none !important; }',
+        '#jennyVideoStudioRootV130 #v135BottomToolsRow .v130-btn {',
+        '  flex: 1 1 0 !important;',
+        '  min-width: 0 !important;',
+        '  padding: 0 4px !important;',
+        '  font-size: 10.5px !important;',
+        '}',
+        '#jennyVideoStudioRootV130 #v130SeekSlider {',
+        '  accent-color: #3b82f6 !important;',
+        '}',
+        '#jennyVideoStudioRootV130 #v130CurTime, #jennyVideoStudioRootV130 #v130DurTime {',
+        '  color: #60a5fa !important;',
+        '}',
+        /* === ПРАВИЛЬНЫЙ РАЗВОРОТ НА 90° ВО ВЕСЬ ЭКРАН БЕЗ ЧЁРНЫХ ПОЛОС === */
+        '#jennyVideoStageV130.rot90-v130 {',
+        '  position: fixed !important;',
+        '  left: 50% !important;',
+        '  top: 50% !important;',
+        '  width: 100dvh !important;',
+        '  height: 100dvw !important;',
+        '  max-width: none !important;',
+        '  max-height: none !important;',
+        '  transform: translate(-50%, -50%) rotate(90deg) !important;',
+        '  transform-origin: center center !important;',
+        '}',
+        '#jennyVideoStageV130.rot90-v130 #jennyVideoElV130 {',
+        '  width: 100% !important;',
+        '  height: 100% !important;',
+        '  max-width: none !important;',
+        '  max-height: none !important;',
+        '}',
+        '#jennyVideoStageV130.rot90-v130 #v130TopDragBar {',
+        '  padding: 6px 12px !important;',
+        '}',
+        '#jennyVideoStageV130.rot90-v130 #v135BottomToolsRow .v130-btn {',
+        '  height: 30px !important;',
+        '  font-size: 11px !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(styleV217);
+
+    // -------------------------------------------------------------------------
+    // 3. НАСТРОЙКИ ВИДЕО ("🎬 Настройки видео"): ОПЦИОНАЛЬНЫЕ КНОПКИ 90° И МАСШТАБА
+    // -------------------------------------------------------------------------
+    var savedVidUiCfg = {};
+    try { savedVidUiCfg = JSON.parse(localStorage.getItem('jenny_video_ui_cfg_v217') || '{}') || {}; } catch (e) {}
+
+    window._jennyVideoUiCfgV217 = {
+        showRotateBtn: savedVidUiCfg.showRotateBtn !== undefined ? Boolean(savedVidUiCfg.showRotateBtn) : true,
+        showFitBtn:    savedVidUiCfg.showFitBtn !== undefined ? Boolean(savedVidUiCfg.showFitBtn) : true,
+        fitContain:    savedVidUiCfg.fitContain !== undefined ? Boolean(savedVidUiCfg.fitContain) : true,
+        fitCover:      savedVidUiCfg.fitCover !== undefined ? Boolean(savedVidUiCfg.fitCover) : true,
+        fitFill:       savedVidUiCfg.fitFill !== undefined ? Boolean(savedVidUiCfg.fitFill) : true
+    };
+
+    window.saveVideoUiCfgV217 = function() {
+        try { localStorage.setItem('jenny_video_ui_cfg_v217', JSON.stringify(window._jennyVideoUiCfgV217)); } catch (e) {}
+    };
+
+    window.getEnabledVideoFitModesV217 = function() {
+        var c = window._jennyVideoUiCfgV217 || {};
+        var list = [];
+        if (c.fitContain) list.push('contain');
+        if (c.fitCover)   list.push('cover');
+        if (c.fitFill)    list.push('fill');
+        if (list.length === 0) list.push('contain');
+        return list;
+    };
+
+    window.syncExactRot90DimensionsV217 = function() {
+        var stage = document.getElementById('jennyVideoStageV130');
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130 || {};
+        if (!stage) return;
+        if (st.rotated90 && !st.pipMode) {
+            var w = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0, 320);
+            var h = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, 480);
+            stage.style.setProperty('width', h + 'px', 'important');
+            stage.style.setProperty('height', w + 'px', 'important');
+        } else {
+            stage.style.removeProperty('width');
+            stage.style.removeProperty('height');
+        }
+        if (vid) {
+            var enabledFits = window.getEnabledVideoFitModesV217();
+            if (enabledFits.indexOf(st.fitMode) === -1) {
+                st.fitMode = enabledFits[0];
+            }
+            vid.style.setProperty('object-fit', st.fitMode || 'contain', 'important');
+            var glC = document.getElementById('jv166InterpCanvas');
+            if (glC) glC.style.setProperty('object-fit', st.fitMode || 'contain', 'important');
+        }
+    };
+    window.addEventListener('resize', window.syncExactRot90DimensionsV217);
+
+    window.toggleVideoUiOptionV217 = function(key, checked) {
+        var c = window._jennyVideoUiCfgV217;
+        c[key] = Boolean(checked);
+        // Гарантируем, что хотя бы один режим масштаба остаётся включённым
+        if (!c.fitContain && !c.fitCover && !c.fitFill) {
+            c.fitContain = true;
+            var chkContain = document.getElementById('chkVidUiV217_fitContain');
+            if (chkContain) chkContain.checked = true;
+        }
+        window.saveVideoUiCfgV217();
+        window.syncVideoPlayerButtonsUIV217();
+        window.syncExactRot90DimensionsV217();
+    };
+
+    // Переопределяем окно "🎬 Настройки видео" (вместо "🧪 Модули плеера...")
+    window.mountModularLabSettingsV208 = function() {
+        var sm = document.getElementById('settingsModal');
+        if (!sm) return;
+        var oldBox205 = document.getElementById('jennyExp120HzMasterBoxV205');
+        if (oldBox205) oldBox205.remove();
+
+        var deckBar = document.getElementById('deckSwitchBarSettingsV131');
+        var container = sm.querySelector('.container') || sm;
+        var box = document.getElementById('jennyModularLabBoxV208');
+        if (!box) {
+            box = document.createElement('details');
+            box.id = 'jennyModularLabBoxV208';
+            box.className = 'setting-group';
+            box.style.cssText = 'margin-bottom:10px;border:1.5px solid #30363d;border-left:3px solid #3b82f6;border-radius:10px;background:#090d14;padding:6px 10px;';
+            if (deckBar && deckBar.parentNode) deckBar.insertAdjacentElement('afterend', box);
+            else container.insertBefore(box, container.firstChild);
+        }
+
+        if (box._v217Rendered) {
+            window.syncModularLabDOMV208();
+            return;
+        }
+        box._v217Rendered = true;
+
+        var items = [
+            { key: 'core120',      icon: '⚡', title: 'Генератор кадров 120Hz & Матрица .SO ядер', desc: 'Свёрнутая кнопка ⚡ 120Hz в плеере и матрица .SO в Деке Б', color: '#00ff9d' },
+            { key: 'splitTest',    icon: '🌓', title: 'Режим сравнения (Кнопка Сплит в плеере)', desc: 'Свёрнутая кнопка 🌓 Сплит (по умолчанию играет дефолт)', color: '#00e5ff' },
+            { key: 'logDots',      icon: '📊', title: 'Лог с точками (Свёрнутая кнопка 📊 Лог)', desc: 'Свёрнутая кнопка осциллографа VSync и Лога 360', color: '#58a6ff' },
+            { key: 'tunerSliders', icon: '🎛️', title: 'Настройки декодера (Свёрнутая кнопка 🎛️ Крутилки)', desc: 'Свёрнутая кнопка 9 ползунков шейдера в плеере', color: '#d2a8ff' },
+            { key: 'stub1',        icon: '⏱️', title: 'Скрывать управление (Основной плеер)', desc: 'Через сколько секунд без касания прятать кнопки плеера', color: '#ffea00', secKey: 'main' },
+            { key: 'stub2',        icon: '❐',  title: 'Скрывать управление (Режим PiP / Мини)', desc: 'Через сколько секунд без касания прятать кнопки в мини-плеере', color: '#ff9100', secKey: 'pip' }
+        ];
+
+        var fl = window._jennyLabFlagsV208 || {};
+        var vc = window._jennyVideoUiCfgV217 || {};
+
+        var rowsHtml = items.map(function(it) {
+            var isChk = fl[it.key] ? 'checked' : '';
+            var secInputHtml = '';
+            if (it.secKey) {
+                var secVal = (it.secKey === 'pip') ? window._jennyAutoHideSecV209.pip : window._jennyAutoHideSecV209.main;
+                secInputHtml =
+                    '<div style="display:flex;align-items:center;gap:4px;margin-right:4px;" onclick="event.stopPropagation();">' +
+                        '<input type="number" step="0.1" min="0.5" max="120.0" id="inpAutoHideSecV209_' + it.secKey + '" value="' + Number(secVal).toFixed(1) + '" ' +
+                        'onchange="window.updateAutoHideSecV209(\'' + it.secKey + '\', this.value, true); this.value = Number(window._jennyAutoHideSecV209[\'' + it.secKey + '\']).toFixed(1);" ' +
+                        'oninput="window.updateAutoHideSecV209(\'' + it.secKey + '\', this.value, false);" ' +
+                        'style="width:56px;padding:3px 5px;background:#161b22;color:' + it.color + ';border:1px solid ' + it.color + ';border-radius:6px;font-family:monospace;font-size:11px;font-weight:900;text-align:center;">' +
+                        '<span style="font-size:10px;color:#8b949e;font-family:monospace;">с</span>' +
+                    '</div>';
+            }
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 4px;border-bottom:1px solid #161b22;user-select:none;">' +
+                '<label style="display:flex;flex-direction:column;gap:1px;flex:1;cursor:pointer;">' +
+                    '<span style="font-size:11.5px;font-weight:800;color:' + it.color + ';">' + it.icon + ' ' + it.title + '</span>' +
+                    '<span style="font-size:9.5px;color:#8b949e;">' + it.desc + '</span>' +
+                '</label>' +
+                secInputHtml +
+                '<input type="checkbox" id="chkLabV208_' + it.key + '" ' + isChk + ' onchange="window.toggleLabModuleFlagV208(\'' + it.key + '\', this.checked, true)" style="width:17px;height:17px;accent-color:' + it.color + ';cursor:pointer;flex-shrink:0;">' +
+            '</div>';
+        }).join('');
+
+        var extraVideoBtnsHtml =
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 4px;border-bottom:1px solid #161b22;user-select:none;">' +
+                '<label style="display:flex;flex-direction:column;gap:1px;flex:1;cursor:pointer;">' +
+                    '<span style="font-size:11.5px;font-weight:800;color:#60a5fa;">🔄 Показывать кнопку поворота (90°)</span>' +
+                    '<span style="font-size:9.5px;color:#8b949e;">Если выключено — кнопка «Полный» сама разворачивает видео на 90°</span>' +
+                '</label>' +
+                '<input type="checkbox" id="chkVidUiV217_showRotateBtn" ' + (vc.showRotateBtn ? 'checked' : '') + ' onchange="window.toggleVideoUiOptionV217(\'showRotateBtn\', this.checked)" style="width:17px;height:17px;accent-color:#3b82f6;cursor:pointer;flex-shrink:0;">' +
+            '</div>' +
+            '<div style="display:flex;flex-direction:column;padding:6px 4px;border-bottom:1px solid #161b22;user-select:none;">' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+                    '<label style="display:flex;flex-direction:column;gap:1px;flex:1;cursor:pointer;">' +
+                        '<span style="font-size:11.5px;font-weight:800;color:#60a5fa;">📐 Показывать масштаб экрана</span>' +
+                        '<span style="font-size:9.5px;color:#8b949e;">Кнопка переключения пропорций кадра внутри видеоплеера</span>' +
+                    '</label>' +
+                    '<input type="checkbox" id="chkVidUiV217_showFitBtn" ' + (vc.showFitBtn ? 'checked' : '') + ' onchange="window.toggleVideoUiOptionV217(\'showFitBtn\', this.checked)" style="width:17px;height:17px;accent-color:#3b82f6;cursor:pointer;flex-shrink:0;">' +
+                '</div>' +
+                '<details style="margin-top:6px;background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:5px 8px;">' +
+                    '<summary style="font-size:11px;font-weight:bold;color:#93c5fd;cursor:pointer;outline:none;">↳ Выбрать доступные режимы масштаба (Вписать / Заполнить / Растянуть)</summary>' +
+                    '<div style="display:flex;flex-direction:column;gap:5px;margin-top:6px;padding-top:4px;border-top:1px solid #161b22;">' +
+                        '<label style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:#e6edf3;cursor:pointer;">' +
+                            '<span>📐 Вписать (По размеру без обрезки)</span>' +
+                            '<input type="checkbox" id="chkVidUiV217_fitContain" ' + (vc.fitContain ? 'checked' : '') + ' onchange="window.toggleVideoUiOptionV217(\'fitContain\', this.checked)" style="width:16px;height:16px;accent-color:#3b82f6;">' +
+                        '</label>' +
+                        '<label style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:#e6edf3;cursor:pointer;">' +
+                            '<span>📐 Заполнить (С обрезкой краёв)</span>' +
+                            '<input type="checkbox" id="chkVidUiV217_fitCover" ' + (vc.fitCover ? 'checked' : '') + ' onchange="window.toggleVideoUiOptionV217(\'fitCover\', this.checked)" style="width:16px;height:16px;accent-color:#3b82f6;">' +
+                        '</label>' +
+                        '<label style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:#e6edf3;cursor:pointer;">' +
+                            '<span>📐 Растянуть (Во весь экран)</span>' +
+                            '<input type="checkbox" id="chkVidUiV217_fitFill" ' + (vc.fitFill ? 'checked' : '') + ' onchange="window.toggleVideoUiOptionV217(\'fitFill\', this.checked)" style="width:16px;height:16px;accent-color:#3b82f6;">' +
+                        '</label>' +
+                    '</div>' +
+                '</details>' +
+            '</div>';
+
+        box.innerHTML =
+            '<summary style="font-size:12.5px;font-weight:900;color:#60a5fa;cursor:pointer;padding:4px 2px;outline:none;display:flex;align-items:center;justify-content:space-between;">' +
+                '<span>🎬 Настройки видео</span>' +
+            '</summary>' +
+            '<div style="display:flex;flex-direction:column;gap:2px;margin-top:6px;">' +
+                extraVideoBtnsHtml +
+                rowsHtml +
+            '</div>';
+
+        window.syncModularLabDOMV208();
+        window.syncVideoPlayerButtonsUIV217();
+    };
+
+    // Форсируем перерисовку блока "🎬 Настройки видео", если он уже был создан старым кодом
+    var existingLabBox = document.getElementById('jennyModularLabBoxV208');
+    if (existingLabBox) {
+        existingLabBox._v210Rendered = false;
+        existingLabBox._v217Rendered = false;
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. КАСТОМНЫЕ РАДИАЛЬНЫЕ СКОРОСТИ (ВПЕРЁД / НАЗАД БЕЗ "REV") И БАЗОВАЯ СКОРОСТЬ "НОРМ."
+    // -------------------------------------------------------------------------
+    window.getCustomVideoSpeedZonesV217 = function() {
+        var list = [];
+        for (var i = 1; i <= 6; i++) {
+            var en = document.getElementById('cfg_z' + i + '_en');
+            var val = document.getElementById('cfg_z' + i + '_val');
+            if (en && val) {
+                if (en.checked) {
+                    var num = parseFloat(String(val.value).replace(',', '.'));
+                    if (isFinite(num) && num > 0.05 && num <= 16.0) {
+                        list.push(Math.round(num * 100) / 100);
+                    }
+                }
+            }
+        }
+        if (list.length === 0) {
+            var cfg = (window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {};
+            if (Array.isArray(cfg.scrubZones) && cfg.scrubZones.length > 0) {
+                cfg.scrubZones.forEach(function(z) {
+                    if (z && z.en !== false && isFinite(parseFloat(z.val))) {
+                        list.push(Math.round(parseFloat(z.val) * 100) / 100);
+                    }
+                });
+            }
+        }
+        if (list.length === 0) {
+            list = [1.1, 1.05, 1.5, 1.0, 0.95, 0.9];
+        }
+        return list;
+    };
+
+    window.getBaseSpeedDeckB = function() {
+        var chkDom = document.getElementById('cfg_xNormalSpeed');
+        var inpDom = document.getElementById('cfg_normalPlaybackSpeed');
+        var vd = window.videoDeckV131;
+        var vdCfg = (vd && vd.config) || window.appConfig || {};
+
+        // Если в DOM открыты настройки Деки Б или чекбокс отмечен — берём точное значение из поля "🚀 Кастомная скорость (Base)"
+        var isCustomOn = chkDom ? Boolean(chkDom.checked) : Boolean(vdCfg.xNormalSpeed);
+        if (isCustomOn) {
+            var rawVal = inpDom ? parseFloat(String(inpDom.value).replace(',', '.')) : parseFloat(vdCfg.normalPlaybackSpeed);
+            if (!isFinite(rawVal) || rawVal <= 0.05) rawVal = parseFloat(vdCfg.normalPlaybackSpeed) || 1.0;
+            return Math.max(0.1, Math.min(8.0, Math.round(rawVal * 100) / 100));
+        }
+        return 1.0;
+    };
+
+    window._lastFwdVideoSpeedV217 = 1.0;
+    window._lastRevVideoSpeedV217 = 1.0;
+
+    // Плавный реверс видео на ЛЮБОМ файле (включая .mkv и live_remux) без блокировки "⏳ RAM-буфер видео ещё подгружается..."!
+    window.startImmediateVideoReverseEngineV217 = function(revSpd) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        if (!vid || !st || !st.active || !vd) return;
+
+        var spd = Math.max(0.1, Math.min(8.0, Number(revSpd) || window.getBaseSpeedDeckB() || 1.0));
+        window._lastRevVideoSpeedV217 = spd;
+        window.isReversedDeckB = true;
+        vd.isReversed = true;
+        vd.speed = spd;
+        window._jennyVideoSpeedV170 = spd;
+
+        if (vd.revFrameTimer) {
+            clearInterval(vd.revFrameTimer);
+            vd.revFrameTimer = null;
+        }
+        if (vd.horizonTimer) {
+            clearTimeout(vd.horizonTimer);
+            vd.horizonTimer = null;
+        }
+
+        // Ставим нативный <video> на внутреннюю паузу, чтобы плавно шагать назад по времени
+        if (!vid.paused) {
+            st._internalRevPause = true;
+            try { vid.pause(); } catch (e) {}
+        }
+
+        var startAnchorSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+        var startWallMs = performance.now();
+        var lastRemuxStepTs = 0;
+
+        // Фоновая подкачка 30-секундного аудио-окна для обратного звука (если еще не загружено)
+        if (!vd.studioBuffer && !vd._fetchingRevChunkV217) {
+            vd._fetchingRevChunkV217 = true;
+            var rawUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+            var chunkStart = Math.max(0, startAnchorSec - 28);
+            var chunkDur = Math.max(6, Math.min(30, startAnchorSec - chunkStart + 2));
+            fetch('/api/video/pcm_chunk?src=' + encodeURIComponent(rawUrl) + '&start=' + chunkStart.toFixed(1) + '&dur=' + chunkDur.toFixed(1) + '&sr=32000')
+                .then(function(r) { return r.ok ? r.arrayBuffer() : null; })
+                .then(function(ab) {
+                    vd._fetchingRevChunkV217 = false;
+                    if (!ab || !vd.ctx || !vd.isReversed) return;
+                    var frames = Math.floor(ab.byteLength / 8);
+                    if (frames <= 200) return;
+                    var aBuf = vd.ctx.createBuffer(2, frames, 32000);
+                    var chL = aBuf.getChannelData(0), chR = aBuf.getChannelData(1);
+                    var leftIn = new Float32Array(ab, 0, frames);
+                    var rightIn = new Float32Array(ab, frames * 4, frames);
+                    // Записываем сэмплы сразу в обратном порядке!
+                    for (var i = 0; i < frames; i++) {
+                        chL[i] = leftIn[frames - 1 - i];
+                        chR[i] = rightIn[frames - 1 - i];
+                    }
+                    if (vd.sourceNode) {
+                        try { vd.sourceNode.stop(); } catch (e) {}
+                        try { vd.sourceNode.disconnect(); } catch (e) {}
+                    }
+                    if (vd.isReversed && !st.userPaused) {
+                        if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+                        vd.sourceNode = vd.ctx.createBufferSource();
+                        vd.sourceNode.buffer = aBuf;
+                        vd.sourceNode.playbackRate.value = vd.speed || 1.0;
+                        vd.sourceNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+                        if (st.dspBypass && vd.directBypassGain) vd.directBypassGain.gain.value = 1.0;
+                        vd.sourceNode.start(0, 0);
+                        vd.isStudioPlaying = true;
+                    }
+                })
+                .catch(function() { vd._fetchingRevChunkV217 = false; });
+        }
+
+        vd.revFrameTimer = setInterval(function() {
+            if (!st.active || st.userPaused || !vd.isReversed) {
+                clearInterval(vd.revFrameTimer);
+                vd.revFrameTimer = null;
+                return;
+            }
+            var curSpd = vd.speed || 1.0;
+            var elapsedSec = ((performance.now() - startWallMs) / 1000.0) * curSpd;
+            var nextSec = Math.max(0, startAnchorSec - elapsedSec);
+            var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+
+            st._pendingSeekSecV167 = nextSec;
+            st._pendingSeekTsV167 = performance.now();
+
+            if (!st.usingRemux) {
+                try { vid.currentTime = nextSec; } catch (e) {}
+            } else {
+                var relSec = nextSec - (st.remuxBaseOffset || 0);
+                if (relSec >= 0) {
+                    try { vid.currentTime = relSec; } catch (e) {}
+                } else if (performance.now() - lastRemuxStepTs > 1400) {
+                    lastRemuxStepTs = performance.now();
+                    var newBase = Math.max(0, nextSec - 12);
+                    st.remuxBaseOffset = newBase;
+                    var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl;
+                    var isAvi = /\.avi(\?|$)/i.test(String(st.currentTitle || '') + ' ' + String(rawBaseUrl || ''));
+                    vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+                        '&start=' + newBase.toFixed(2) +
+                        '&dur=' + (dur || 0).toFixed(2) +
+                        '&aidx=' + (st.audioTrackIdxV216 || 0) +
+                        '&transcode=' + (isAvi ? '1' : '0') +
+                        '&t=' + Date.now();
+                }
+            }
+
+            if (typeof window.updateProgressUIDeckB === 'function') {
+                window.updateProgressUIDeckB(nextSec, dur, true);
+            }
+            if (typeof window.syncInternalVideoSliderUIV212 === 'function') {
+                window.syncInternalVideoSliderUIV212(nextSec, dur);
+            }
+
+            if (nextSec <= 0.05) {
+                window.restoreNormalVideoPlaybackV217();
+            }
+        }, 75);
+
+        window.syncVideoPlayerButtonsUIV217();
+    };
+
+    window.restoreNormalVideoPlaybackV217 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        if (!vid || !st || !vd) return;
+
+        var wasRev = Boolean(vd.isReversed || window.isReversedDeckB);
+        var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+
+        window.isReversedDeckB = false;
+        vd.isReversed = false;
+        if (vd.revFrameTimer) {
+            clearInterval(vd.revFrameTimer);
+            vd.revFrameTimer = null;
+        }
+        if (vd.sourceNode) {
+            vd.sourceNode.onended = null;
+            try { vd.sourceNode.stop(); } catch (e) {}
+            try { vd.sourceNode.disconnect(); } catch (e) {}
+            vd.sourceNode = null;
+        }
+        vd.isStudioPlaying = false;
+
+        if (window.scrubStateDeckB) {
+            window.scrubStateDeckB.active = false;
+            window.scrubStateDeckB.locked = false;
+            window.scrubStateDeckB.side = null;
+            window.scrubStateDeckB.isPhysicallyReversed = false;
+        }
+        window.persistedPlaybackSpeedDeckB = null;
+        window.persistedPlaybackSideDeckB = 'right';
+        var lockEl = document.getElementById('speedLockIndicatorDeckB');
+        if (lockEl) lockEl.style.display = 'none';
+
+        var baseSpd = window.getBaseSpeedDeckB();
+        window._jennyVideoSpeedV170 = baseSpd;
+        window._lastFwdVideoSpeedV217 = baseSpd;
+        vd.speed = baseSpd;
+
+        try {
+            vid.preservesPitch = true;
+            vid.webkitPreservesPitch = true;
+            vid.defaultPlaybackRate = baseSpd;
+            vid.playbackRate = baseSpd;
+        } catch (e) {}
+
+        if (wasRev && st.usingRemux) {
+            window.seekDeckBAndPlayerSyncedV212(curSec, false);
+        } else if (!st.userPaused && vid.paused) {
+            st._internalRevPause = false;
+            vid.play().catch(function(){});
+        }
+
+        window.syncVideoRamEngineV211(false);
+        window.syncVideoPlayerButtonsUIV217();
+        if (ev && typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130('▶ Нормальное воспроизведение: ' + baseSpd + 'x');
+        }
+        if (ev && typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Переключение скорости ВПЕРЁД по 6 кастомным радиальным зонам из Настроек
+    window.cycleVideoSpeedV130 = window.cycleVideoSpeedV131 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+
+        var vd = window.videoDeckV131 || {};
+        var zones = window.getCustomVideoSpeedZonesV217();
+        var wasRev = Boolean(vd.isReversed || window.isReversedDeckB);
+
+        var nextSpd = zones[0] || 1.0;
+        if (wasRev) {
+            // Если были в реверсе — возвращаемся в режим вперёд на последнюю выбранную скорость вперёд
+            window.restoreNormalVideoPlaybackV217();
+            nextSpd = window._lastFwdVideoSpeedV217 || zones[0] || window.getBaseSpeedDeckB();
+        } else {
+            var cur = window._jennyVideoSpeedV170 || vd.speed || window.getBaseSpeedDeckB();
+            var idx = -1;
+            for (var i = 0; i < zones.length; i++) {
+                if (Math.abs(zones[i] - cur) < 0.008) { idx = i; break; }
+            }
+            nextSpd = zones[(idx + 1) % zones.length];
+        }
+
+        window._lastFwdVideoSpeedV217 = nextSpd;
+        window.setVideoDeckSpeedV170(nextSpd, false);
+        if (window.scrubStateDeckB) {
+            window.scrubStateDeckB.locked = true;
+            window.scrubStateDeckB.side = 'right';
+            window.scrubStateDeckB.speed = nextSpd;
+            window.scrubStateDeckB.isPhysicallyReversed = false;
+        }
+        window.persistedPlaybackSpeedDeckB = nextSpd;
+        window.persistedPlaybackSideDeckB = 'right';
+
+        window.syncVideoPlayerButtonsUIV217();
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130('⏩ Скорость вперёд: ' + nextSpd + 'x');
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Переключение скорости НАЗАД (Реверс без слова "REV") по тем же 6 кастомным радиальным зонам из Настроек
+    window.toggleVideoReverseV131 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+
+        var vd = window.videoDeckV131 || {};
+        var zones = window.getCustomVideoSpeedZonesV217();
+        var isRevNow = Boolean(vd.isReversed || window.isReversedDeckB);
+
+        var nextRevSpd = window._lastRevVideoSpeedV217 || zones[0] || window.getBaseSpeedDeckB();
+        if (!isRevNow) {
+            if (zones.indexOf(nextRevSpd) === -1) nextRevSpd = zones[0] || 1.0;
+        } else {
+            var cur = vd.speed || nextRevSpd;
+            var idx = -1;
+            for (var i = 0; i < zones.length; i++) {
+                if (Math.abs(zones[i] - cur) < 0.008) { idx = i; break; }
+            }
+            nextRevSpd = zones[(idx + 1) % zones.length];
+        }
+
+        window._lastRevVideoSpeedV217 = nextRevSpd;
+        if (window.scrubStateDeckB) {
+            window.scrubStateDeckB.locked = true;
+            window.scrubStateDeckB.side = 'left';
+            window.scrubStateDeckB.speed = nextRevSpd;
+            window.scrubStateDeckB.isPhysicallyReversed = true;
+        }
+        window.persistedPlaybackSpeedDeckB = nextRevSpd;
+        window.persistedPlaybackSideDeckB = 'left';
+
+        window.startImmediateVideoReverseEngineV217(nextRevSpd);
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130('⏪ Скорость назад: ' + nextRevSpd + 'x');
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Переопределяем toggleReverseModeDeckB и startScrubDeckB (для верхней шкалы Деки Б),
+    // чтобы дуга скорости влево (⏪) сразу включала реальный реверс без ожидания RAM-буфера!
+    window.toggleReverseModeDeckB = function(targetReversed) {
+        if (!targetReversed) {
+            window.restoreNormalVideoPlaybackV217();
+        } else {
+            var revSpd = window._lastRevVideoSpeedV217 || window.getBaseSpeedDeckB() || 1.0;
+            window.startImmediateVideoReverseEngineV217(revSpd);
+        }
+    };
+
+    window.startScrubDeckB = function(side, speed) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130;
+        if (!vid || !vd || !st || !st.active) return;
+
+        var wantReverseNow = (side === 'left');
+        var cleanSpd = Math.max(0.1, Math.min(8.0, Number(speed) || 1.0));
+        window.scrubStateDeckB.active = true;
+        window.scrubStateDeckB.side = side;
+        window.scrubStateDeckB.speed = cleanSpd;
+        window.scrubStateDeckB.isPhysicallyReversed = wantReverseNow;
+        window.persistedPlaybackSpeedDeckB = cleanSpd;
+        window.persistedPlaybackSideDeckB = side;
+
+        var lockEl = document.getElementById('speedLockIndicatorDeckB');
+        if (lockEl) {
+            lockEl.style.display = 'block';
+            lockEl.innerText = (window.scrubStateDeckB.locked ? '🔒' : '🔄') + ' ' + (wantReverseNow ? '⏪' : '⏩') + ' x' + cleanSpd;
+        }
+
+        if (wantReverseNow) {
+            window.startImmediateVideoReverseEngineV217(cleanSpd);
+        } else {
+            if (vd.revFrameTimer) {
+                clearInterval(vd.revFrameTimer);
+                vd.revFrameTimer = null;
+            }
+            window.isReversedDeckB = false;
+            vd.isReversed = false;
+            window._lastFwdVideoSpeedV217 = cleanSpd;
+            window._jennyVideoSpeedV170 = cleanSpd;
+            vd.speed = cleanSpd;
+            try {
+                vid.defaultPlaybackRate = cleanSpd;
+                vid.playbackRate = cleanSpd;
+            } catch (e) {}
+            if (!st.userPaused && vid.paused) {
+                st._internalRevPause = false;
+                vid.play().catch(function(){});
+            }
+            window.syncVideoRamEngineV211(true);
+            window.syncVideoPlayerButtonsUIV217();
+        }
+    };
+
+    // Поддержка радиальной дуги при удержании и потягивании на кнопках скорости внутри самого видеоплеера!
+    window.bindInPlayerSpeedArcDragV217 = function(btnEl, sideStr) {
+        if (!btnEl || btnEl._v217ArcBound) return;
+        btnEl._v217ArcBound = true;
+
+        var holdT = null;
+        var arcActive = false;
+        var arcWrap = null;
+        var arcItems = [];
+        var pickedSpd = null;
+
+        var cleanupArc = function() {
+            if (holdT) { clearTimeout(holdT); holdT = null; }
+            if (arcWrap) { arcWrap.remove(); arcWrap = null; }
+            arcItems = [];
+        };
+
+        btnEl.addEventListener('touchstart', function(e) {
+            if (!e.touches || !e.touches[0]) return;
+            cleanupArc();
+            arcActive = false;
+            pickedSpd = null;
+            var t0 = e.touches[0];
+            var anchorX = t0.clientX;
+            var anchorY = t0.clientY;
+
+            holdT = setTimeout(function() {
+                arcActive = true;
+                try { navigator.vibrate(25); } catch (err) {}
+                var zones = window.getCustomVideoSpeedZonesV217();
+                var root = document.getElementById('jennyVideoStudioRootV130') || document.body;
+                arcWrap = document.createElement('div');
+                arcWrap.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
+
+                var count = zones.length;
+                var radius = 112;
+                // Для кнопки назад (слева) раскрываем дугу вправо-вверх, для кнопки вперёд (справа) — влево-вверх (с обратной стороны!)
+                var startDeg = (sideStr === 'left') ? -15 : -165;
+                var endDeg   = (sideStr === 'left') ? -135 : -45;
+
+                zones.forEach(function(zVal, i) {
+                    var u = count === 1 ? 0.5 : (i / (count - 1));
+                    var deg = startDeg + u * (endDeg - startDeg);
+                    var rad = deg * Math.PI / 180;
+                    var cx = Math.max(28, Math.min(window.innerWidth - 28, anchorX + radius * Math.cos(rad)));
+                    var cy = Math.max(36, Math.min(window.innerHeight - 50, anchorY + radius * Math.sin(rad)));
+
+                    var b = document.createElement('div');
+                    b.className = 'arc-item';
+                    b.dataset.val = String(zVal);
+                    b.dataset.cx = String(cx);
+                    b.dataset.cy = String(cy);
+                    b.innerText = 'x' + zVal;
+                    b.style.cssText = 'position:fixed;left:' + (cx - 23) + 'px;top:' + (cy - 23) + 'px;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(11,24,54,0.95);border:2px solid #3b82f6;color:#93c5fd;font-size:12px;font-weight:900;box-shadow:0 0 14px rgba(59,130,246,0.55);transition:transform 0.1s ease;';
+                    arcWrap.appendChild(b);
+                    arcItems.push(b);
+                });
+                root.appendChild(arcWrap);
+            }, 260);
+        }, { passive: true });
+
+        btnEl.addEventListener('touchmove', function(e) {
+            if (!arcActive || !e.touches || !e.touches[0]) return;
+            e.stopPropagation();
+            var tx = e.touches[0].clientX;
+            var ty = e.touches[0].clientY;
+            var bestEl = null;
+            var bestDist = Infinity;
+            arcItems.forEach(function(item) {
+                var dx = tx - parseFloat(item.dataset.cx);
+                var dy = ty - parseFloat(item.dataset.cy);
+                var d = Math.hypot(dx, dy);
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestEl = item;
+                }
+            });
+            if (bestEl && bestDist < 75) {
+                arcItems.forEach(function(el) {
+                    var act = (el === bestEl);
+                    el.style.transform = act ? 'scale(1.22)' : 'scale(1.0)';
+                    el.style.background = act ? '#2563eb' : 'rgba(11,24,54,0.95)';
+                    el.style.color = act ? '#ffffff' : '#93c5fd';
+                });
+                var newSpd = parseFloat(bestEl.dataset.val);
+                if (newSpd !== pickedSpd) {
+                    pickedSpd = newSpd;
+                    try { navigator.vibrate(12); } catch (err) {}
+                    if (sideStr === 'left') {
+                        window._lastRevVideoSpeedV217 = pickedSpd;
+                        window.startImmediateVideoReverseEngineV217(pickedSpd);
+                    } else {
+                        window._lastFwdVideoSpeedV217 = pickedSpd;
+                        window.restoreNormalVideoPlaybackV217();
+                        window.setVideoDeckSpeedV170(pickedSpd, false);
+                    }
+                    window.syncVideoPlayerButtonsUIV217();
+                }
+            }
+        }, { passive: true });
+
+        var finishArc = function(e) {
+            if (arcActive) {
+                if (e && e.stopPropagation) e.stopPropagation();
+                if (e && e.preventDefault) e.preventDefault();
+                cleanupArc();
+                arcActive = false;
+                return;
+            }
+            cleanupArc();
+        };
+        btnEl.addEventListener('touchend', finishArc);
+        btnEl.addEventListener('touchcancel', finishArc);
+    };
+
+    // -------------------------------------------------------------------------
+    // 5. РЕЖИМ ПОТОКОВ ТЕКУЩЕГО ВИДЕОФАЙЛА: "В+А" -> "В" (ТОЛЬКО ВИДЕО) -> "А" (ТОЛЬКО АУДИО + МИНИ-ПЛАШКА)
+    // -------------------------------------------------------------------------
+    window.ensureVideoAudioOnlyBadgeDOMV217 = function() {
+        var badge = document.getElementById('jennyVideoAudioOnlyBadgeV217');
+        if (badge) return badge;
+        badge = document.createElement('div');
+        badge.id = 'jennyVideoAudioOnlyBadgeV217';
+        badge.style.cssText = 'display:none;align-items:center;justify-content:space-between;gap:8px;margin:4px 10px 4px 10px;padding:6px 10px;border-radius:10px;background:linear-gradient(135deg,rgba(11,24,54,0.96),rgba(23,37,84,0.92));border:1.5px solid #3b82f6;box-shadow:0 4px 14px rgba(37,99,235,0.35);color:#eff6ff;font-size:11.5px;font-weight:800;z-index:9999;';
+        badge.innerHTML =
+            '<div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;cursor:pointer;" onclick="window.restoreVideoFromAudioOnlyV217(event)">' +
+                '<span style="color:#60a5fa;display:inline-flex;">' + window.VID_SVGS_V217.aOnly + '</span>' +
+                '<span id="jennyVideoAudioOnlyTitleV217" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#dbeafe;">Аудио из видео</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">' +
+                '<button type="button" onclick="window.restoreVideoFromAudioOnlyV217(event)" style="padding:4px 8px;border-radius:7px;background:rgba(37,99,235,0.45);border:1px solid #60a5fa;color:#fff;font-size:10.5px;font-weight:900;display:inline-flex;align-items:center;gap:4px;cursor:pointer;">' +
+                    window.VID_SVGS_V217.va + '<span>В+А</span>' +
+                '</button>' +
+                '<button type="button" onclick="window.closeVideoPlayerV130(event)" style="width:24px;height:24px;padding:0;border-radius:6px;background:rgba(185,28,28,0.85);border:1px solid #f87171;color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;">' +
+                    window.VID_SVGS_V217.close +
+                '</button>' +
+            '</div>';
+
+        var topHdr = document.getElementById('topHeaderCapsule');
+        if (topHdr && topHdr.parentElement) {
+            topHdr.insertAdjacentElement('afterend', badge);
+        } else {
+            document.body.insertBefore(badge, document.body.firstChild);
+        }
+        return badge;
+    };
+
+    window.applyCurrentVideoStreamModeV217 = function(modeStr, showMsg) {
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        var vid = document.getElementById('jennyVideoElV130');
+        var root = document.getElementById('jennyVideoStudioRootV130');
+        if (!st || !vd || !vid) return;
+
+        st.videoStreamModeV217 = modeStr || 'va';
+        var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+        var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        var isAvi = /\.avi(\?|$)/i.test(String(st.currentTitle || '') + ' ' + String(rawBaseUrl || ''));
+        var tcFlag = isAvi ? '1' : '0';
+        var aIdx = st.audioTrackIdxV216 || 0;
+
+        var badge = window.ensureVideoAudioOnlyBadgeDOMV217();
+
+        if (st.videoStreamModeV217 === 'v_only') {
+            // РЕЖИМ "В" (ТОЛЬКО ВИДЕО): Полностью выгружаем аудио-буфер этого видео из памяти и запускаем поток без аудио (-an)!
+            if (vd.pieceAbortCtrl) { try { vd.pieceAbortCtrl.abort(); } catch (e) {} vd.pieceAbortCtrl = null; }
+            if (vd.sourceNode) {
+                vd.sourceNode.onended = null;
+                try { vd.sourceNode.stop(); } catch (e) {}
+                try { vd.sourceNode.disconnect(); } catch (e) {}
+                vd.sourceNode = null;
+            }
+            vd.studioBuffer = null;
+            vd.reversedStudioBuffer = null;
+            vd.isStudioPlaying = false;
+            vid.muted = true;
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+
+            if (badge) badge.style.display = 'none';
+            if (root && st.active) root.style.display = 'flex';
+
+            if (rawBaseUrl) {
+                st.usingRemux = true;
+                st.remuxBaseOffset = curSec;
+                st._pendingSeekSecV167 = curSec;
+                st._pendingSeekTsV167 = performance.now();
+                vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+                    '&start=' + curSec.toFixed(2) +
+                    '&dur=' + (dur || 0).toFixed(2) +
+                    '&no_audio=1&transcode=' + tcFlag + '&t=' + Date.now();
+                if (!st.userPaused) vid.play().catch(function(){});
+            }
+            if (showMsg && typeof window.showVideoFeedbackV130 === 'function') {
+                window.showVideoFeedbackV130('🎬 Режим «В»: Только видео (аудио-буфер выгружен)');
+            }
+        } else if (st.videoStreamModeV217 === 'a_only') {
+            // РЕЖИМ "А" (ТОЛЬКО АУДИО): Закрываем и выгружаем видеодекодер (-vn), сворачиваем окно в компактную плашку у поиска!
+            vid.muted = false;
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
+
+            if (rawBaseUrl) {
+                st.usingRemux = true;
+                st.remuxBaseOffset = curSec;
+                st._pendingSeekSecV167 = curSec;
+                st._pendingSeekTsV167 = performance.now();
+                vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+                    '&start=' + curSec.toFixed(2) +
+                    '&dur=' + (dur || 0).toFixed(2) +
+                    '&aidx=' + aIdx +
+                    '&audio_only=1&t=' + Date.now();
+                if (!st.userPaused) vid.play().catch(function(){});
+            }
+
+            // Прячем видео-окно и освобождаем полноэкранный блок
+            if (root) root.style.display = 'none';
+            if (window.AndroidBridge && typeof window.AndroidBridge.setVideoFullscreenLock === 'function') {
+                try { window.AndroidBridge.setVideoFullscreenLock(false, false); } catch (e) {}
+            }
+
+            if (badge) {
+                var tSpan = document.getElementById('jennyVideoAudioOnlyTitleV217');
+                if (tSpan) tSpan.innerText = 'А: ' + (st.currentTitle || 'Видео');
+                badge.style.display = 'flex';
+            }
+            if (showMsg && typeof window.showToast === 'function') {
+                window.showToast('🎵 Режим «А»: Играет только звук из видео (видеодекодер выгружен)');
+            }
+        } else {
+            // РЕЖИМ "В+А" (ВИДЕО + АУДИО ВМЕСТЕ)
+            st.videoStreamModeV217 = 'va';
+            vid.muted = false;
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
+
+            if (badge) badge.style.display = 'none';
+            if (root && st.active) root.style.display = 'flex';
+            if (typeof window.syncNativeFullscreenLockV132 === 'function') window.syncNativeFullscreenLockV132();
+
+            if (rawBaseUrl) {
+                var checkStr = String(st.currentTitle || '') + ' ' + String(rawBaseUrl || '');
+                if (/\.(mkv|avi|ts|m2ts|wmv|flv)(\?|$)/i.test(checkStr) || st.usingRemux) {
+                    st.usingRemux = true;
+                    st.remuxBaseOffset = curSec;
+                    st._pendingSeekSecV167 = curSec;
+                    st._pendingSeekTsV167 = performance.now();
+                    vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+                        '&start=' + curSec.toFixed(2) +
+                        '&dur=' + (dur || 0).toFixed(2) +
+                        '&aidx=' + aIdx +
+                        '&transcode=' + tcFlag + '&t=' + Date.now();
+                } else {
+                    st.usingRemux = false;
+                    st.remuxBaseOffset = 0;
+                    vid.src = rawBaseUrl;
+                    try { vid.currentTime = curSec; } catch (e) {}
+                }
+                if (!st.userPaused) vid.play().catch(function(){});
+            }
+            if (showMsg && typeof window.showVideoFeedbackV130 === 'function') {
+                window.showVideoFeedbackV130('🎬+🎵 Режим «В+А»: Видео + Аудио вместе');
+            }
+        }
+
+        window.syncVideoPlayerButtonsUIV217();
+    };
+
+    window.restoreVideoFromAudioOnlyV217 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        window.applyCurrentVideoStreamModeV217('va', true);
+    };
+
+    window.cycleDualDeckMixModeV131 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130 || {};
+        var order = ['va', 'v_only', 'a_only'];
+        var cur = st.videoStreamModeV217 || 'va';
+        var next = order[(order.indexOf(cur) + 1) % order.length];
+        window.applyCurrentVideoStreamModeV217(next, true);
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // -------------------------------------------------------------------------
+    // 6. ПЕРЕКЛЮЧЕНИЕ МАСШТАБА, ПОВОРОТА 90°, ПОЛНОГО ЭКРАНА, DSP, ПУЛЬТА И ФАЙЛОВ
+    // -------------------------------------------------------------------------
+    window.cycleVideoFitModeV130 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130 || {};
+        var modes = window.getEnabledVideoFitModesV217();
+        var curIdx = modes.indexOf(st.fitMode || 'contain');
+        st.fitMode = modes[(curIdx + 1) % modes.length];
+        window.syncExactRot90DimensionsV217();
+        window.syncVideoPlayerButtonsUIV217();
+        var labels = { contain: 'Вписать', cover: 'Заполнить', fill: 'Растянуть' };
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130('📐 Масштаб: ' + (labels[st.fitMode] || 'Вписать'));
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    window.toggleVideoRotate90V130 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130;
+        if (!st) return;
+        if (st.pipMode && typeof window.toggleVideoPipModeV130 === 'function') {
+            window.toggleVideoPipModeV130();
+        }
+        st.rotated90 = !st.rotated90;
+        var stage = document.getElementById('jennyVideoStageV130');
+        if (stage) stage.classList.toggle('rot90-v130', Boolean(st.rotated90));
+        window.syncExactRot90DimensionsV217();
+        window.syncVideoPlayerButtonsUIV217();
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130(st.rotated90 ? 'Горизонтальный разворот 90°' : 'Портретный режим');
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Если галочка "Показывать кнопку поворота (90°)" снята в Настройках видео —
+    // нажатие кнопки "Полный" автоматически разворачивает видео на 90°!
+    window.toggleVideoNativeFullscreenV132 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130;
+        if (!st) return;
+        if (st.desktopOverlay && typeof window.exitDesktopOverlayModeV132 === 'function') {
+            window.exitDesktopOverlayModeV132(true);
+        }
+        if (st.pipMode && typeof window.toggleVideoPipModeV130 === 'function') {
+            window.toggleVideoPipModeV130();
+        }
+        st.nativeFullscreen = !st.nativeFullscreen;
+
+        var vc = window._jennyVideoUiCfgV217 || {};
+        if (!vc.showRotateBtn) {
+            st.rotated90 = Boolean(st.nativeFullscreen);
+            var stage = document.getElementById('jennyVideoStageV130');
+            if (stage) stage.classList.toggle('rot90-v130', Boolean(st.rotated90));
+        }
+
+        if (typeof window.syncNativeFullscreenLockV132 === 'function') window.syncNativeFullscreenLockV132();
+        window.syncExactRot90DimensionsV217();
+        window.syncVideoPlayerButtonsUIV217();
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130(
+                st.nativeFullscreen
+                    ? (vc.showRotateBtn ? 'Полный экран ВКЛ' : 'Полный экран 90° ВКЛ')
+                    : 'Обычный экран'
+            );
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Кнопка "🎧 DSP": когда включён — яркая синяя рамка и подсветка; когда выключен — серый; при повторном включении снова выделяется!
+    window.toggleVideoDspModeV130 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130;
+        if (!st) return;
+        st.dspBypass = !st.dspBypass;
+        window.syncVideoRamEngineV211(false);
+        window.syncVideoPlayerButtonsUIV217();
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130(st.dspBypass ? 'Прямой звук (DSP ВЫКЛ)' : 'Тракт Деки Б (Jenny DSP ВКЛ)');
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Кнопка "Пульт" (в верхней шапке видеоплеера): сворачивает видео в Мини и открывает "🎬 Настройки видео" + DSP Деки Б
+    window.openVideoDeckDspStudioV131 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130;
+        if (st && !st.pipMode && typeof window.toggleVideoPipModeV130 === 'function') {
+            window.toggleVideoPipModeV130();
+        }
+        if (typeof window.switchActiveUiDeckV131 === 'function') {
+            window.switchActiveUiDeckV131('video');
+        }
+        var sm = document.getElementById('settingsModal');
+        if (sm && !sm.classList.contains('open') && typeof window.toggleModal === 'function') {
+            window.toggleModal('settingsModal');
+        }
+        if (typeof window.renderDeckSwitchBannersV131 === 'function') {
+            window.renderDeckSwitchBannersV131();
+        }
+        var vidSettingsBox = document.getElementById('jennyModularLabBoxV208');
+        if (vidSettingsBox) {
+            vidSettingsBox.open = true;
+            setTimeout(function() {
+                if (vidSettingsBox.scrollIntoView) vidSettingsBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 120);
+        }
+    };
+
+    // Кнопка "Файлы" (#v130BtnTorHub): работает и для торрент-раздач, и для локальных видеофайлов!
+    window.openTorHubFromVideoV130 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130 || {};
+        if (!st.pipMode && typeof window.toggleVideoPipModeV130 === 'function') {
+            window.toggleVideoPipModeV130();
+        }
+        if (st.torHash) {
+            if (typeof window.jumpToTorrentFilesFromHubV128 === 'function') {
+                window.jumpToTorrentFilesFromHubV128(st.torHash);
+                setTimeout(function() {
+                    var rowEl = document.getElementById('torFileRowV96_' + st.torFileIdx);
+                    if (rowEl && rowEl.scrollIntoView) rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 220);
+            } else if (typeof window.toggleTorrentInspectorHubV128 === 'function') {
+                window.toggleTorrentInspectorHubV128(ev, 'jobs', st.torHash);
+            }
+        } else {
+            // Для локального видео открываем вкладку "🎬 Видео" в главном списке и прокручиваем к текущему файлу!
+            document.querySelectorAll('.modal-overlay.open').forEach(function(m) { m.classList.remove('open'); });
+            window.activePlaylistTabV71 = 'videos';
+            if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+            if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+        }
+    };
+
+    // Исправление сворачивания в "Мини" (PiP) на паузе — чтобы видеокадр никогда не становился пустым чёрным квадратом
+    var _origTogglePipV217 = window.toggleVideoPipModeV130;
+    window.toggleVideoPipModeV130 = function(ev) {
+        var r = _origTogglePipV217 ? _origTogglePipV217.apply(this, arguments) : undefined;
+        var vid = document.getElementById('jennyVideoElV130');
+        var glC = document.getElementById('jv166InterpCanvas');
+        if (vid) {
+            vid.style.setProperty('visibility', 'visible', 'important');
+            vid.style.setProperty('opacity', '1', 'important');
+            vid.style.setProperty('display', 'block', 'important');
+        }
+        if (glC && (!window._jennyExp120HzEnabledV205 || !vid || vid.paused)) {
+            glC.style.setProperty('display', 'none', 'important');
+        }
+        window.syncExactRot90DimensionsV217();
+        window.syncVideoPlayerButtonsUIV217();
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+        return r;
+    };
+
+    // -------------------------------------------------------------------------
+    // 7. СИНХРОНИЗАЦИЯ ВСЕХ КНОПОК И ВЕКТОРНЫХ ИКОНОК ВНУТРИ ВИДЕОПЛЕЕРА (#jennyVideoStudioRootV130)
+    // -------------------------------------------------------------------------
+    window.syncVideoPlayerButtonsUIV217 = function() {
+        var root = document.getElementById('jennyVideoStudioRootV130');
+        if (!root) return;
+
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        var vc = window._jennyVideoUiCfgV217 || {};
+        var svgs = window.VID_SVGS_V217;
+
+        // Убираем старую кнопку "▾ Скрыть" справа от ползунка, чтобы не дублировать автоскрытие
+        var oldHideBtn = document.getElementById('v135BtnToggleBottomBar');
+        if (oldHideBtn) oldHideBtn.style.setProperty('display', 'none', 'important');
+        var btmRow = document.getElementById('v135BottomToolsRow');
+        if (btmRow) {
+            btmRow.setAttribute('data-collapsed-v135', '0');
+            if (!st.pipMode) btmRow.style.setProperty('display', 'flex', 'important');
+        }
+
+        // Переносим кнопку "Пульт" (#v131BtnOpenVideoDsp) в верхний ряд (перед кнопкой Файлы/Полный)
+        var btnPult = document.getElementById('v131BtnOpenVideoDsp');
+        var btnMix  = document.getElementById('v131BtnMixMode');
+        if (btnPult && btnMix && btnMix.parentElement && btnPult.parentElement !== btnMix.parentElement) {
+            btnMix.insertAdjacentElement('afterend', btnPult);
+            btnPult.classList.add('v130-hide-in-pip');
+        }
+        if (btnPult) {
+            btnPult.innerHTML = svgs.pult + '<span>Пульт</span>';
+            btnPult.style.cssText = '';
+        }
+
+        // Кнопка "В+А" / "В" / "А" (#v131BtnMixMode)
+        if (btnMix) {
+            var sMode = st.videoStreamModeV217 || 'va';
+            btnMix.style.cssText = '';
+            btnMix.classList.toggle('v130-btn-active-v217', sMode !== 'va');
+            if (sMode === 'v_only') {
+                btnMix.innerHTML = svgs.vOnly + '<span>В</span>';
+            } else if (sMode === 'a_only') {
+                btnMix.innerHTML = svgs.aOnly + '<span>А</span>';
+            } else {
+                btnMix.innerHTML = svgs.va + '<span>В+А</span>';
+            }
+        }
+
+        // Кнопка "Файлы" (#v130BtnTorHub)
+        var btnHub = document.getElementById('v130BtnTorHub');
+        if (btnHub) {
+            btnHub.style.cssText = '';
+            btnHub.style.display = st.pipMode ? 'none' : 'inline-flex';
+            btnHub.innerHTML = svgs.files + '<span>Файлы</span>';
+        }
+
+        // Кнопка "Полный" / "Обычн." (#v132BtnFullscreen)
+        var btnFs = document.getElementById('v132BtnFullscreen');
+        if (btnFs) {
+            btnFs.style.cssText = '';
+            btnFs.classList.toggle('v130-btn-active-v217', Boolean(st.nativeFullscreen));
+            btnFs.innerHTML = (st.nativeFullscreen ? svgs.fullOff : svgs.fullOn) + '<span>' + (st.nativeFullscreen ? 'Обычн.' : 'Полный') + '</span>';
+        }
+
+        // Кнопка "Мини" / "Развернуть" (#v130BtnPipToggle)
+        var btnPip = document.getElementById('v130BtnPipToggle');
+        if (btnPip) {
+            btnPip.style.cssText = '';
+            btnPip.innerHTML = (st.pipMode ? svgs.fullOn : svgs.pip) + '<span>' + (st.pipMode ? 'Развернуть' : 'Мини') + '</span>';
+        }
+
+        // Кнопка закрытия "✕"
+        var closeBtns = root.querySelectorAll('button[onclick*="closeVideoPlayerV130"]');
+        closeBtns.forEach(function(cb) {
+            cb.style.cssText = '';
+            cb.className = 'v130-btn v130-btn-close-v217';
+            cb.innerHTML = svgs.close;
+        });
+
+        // Центральные круглые кнопки: [-10] [▶/⏸] [+10]
+        var seekBackBtn = root.querySelector('button[onclick*="seekVideoRelativeV130(-10"]');
+        var seekFwdBtn  = root.querySelector('button[onclick*="seekVideoRelativeV130(10"]');
+        var centerPlay  = document.getElementById('v130CenterPlayBtn');
+        if (seekBackBtn && !seekBackBtn._v217Styled) {
+            seekBackBtn._v217Styled = true;
+            seekBackBtn.style.cssText = 'width:46px !important;height:46px !important;border-radius:50% !important;padding:0 !important;background:rgba(11,24,54,0.88) !important;border:1.5px solid rgba(59,130,246,0.72) !important;color:#60a5fa !important;';
+            seekBackBtn.innerHTML = svgs.seekBack10 + '<span style="font-size:10.5px;font-weight:900;margin-left:1px;">10</span>';
+        }
+        if (seekFwdBtn && !seekFwdBtn._v217Styled) {
+            seekFwdBtn._v217Styled = true;
+            seekFwdBtn.style.cssText = 'width:46px !important;height:46px !important;border-radius:50% !important;padding:0 !important;background:rgba(11,24,54,0.88) !important;border:1.5px solid rgba(59,130,246,0.72) !important;color:#60a5fa !important;';
+            seekFwdBtn.innerHTML = '<span style="font-size:10.5px;font-weight:900;margin-right:1px;">10</span>' + svgs.seekFwd10;
+        }
+        if (centerPlay) {
+            centerPlay.style.cssText = 'width:56px !important;height:56px !important;border-radius:50% !important;padding:0 !important;background:rgba(37,99,235,0.88) !important;border:2px solid #93c5fd !important;color:#ffffff !important;box-shadow:0 0 18px rgba(59,130,246,0.65) !important;';
+        }
+
+        // Нижний ряд кнопок: Замок, 90°, Масштаб, [⏪ Скорость назад], [▶ Норм.], [⏩ Скорость вперёд], DSP, Дорожка
+        var btnLock = document.getElementById('v132BtnLock');
+        if (btnLock) {
+            btnLock.style.cssText = '';
+            btnLock.classList.toggle('v130-btn-active-v217', Boolean(st.isLocked));
+            btnLock.innerHTML = (st.isLocked ? svgs.lockClosed : svgs.lockOpen) + '<span>Замок</span>';
+        }
+
+        var btnRot = document.getElementById('v130BtnRotate');
+        if (btnRot) {
+            btnRot.style.cssText = '';
+            if (!vc.showRotateBtn) {
+                btnRot.style.setProperty('display', 'none', 'important');
+            } else {
+                btnRot.style.removeProperty('display');
+                btnRot.classList.toggle('v130-btn-active-v217', Boolean(st.rotated90));
+                btnRot.innerHTML = svgs.rot90 + '<span>90°</span>';
+            }
+        }
+
+        var btnFit = document.getElementById('v130BtnFit');
+        if (btnFit) {
+            btnFit.style.cssText = '';
+            var enabledFits = window.getEnabledVideoFitModesV217();
+            if (enabledFits.indexOf(st.fitMode) === -1) {
+                st.fitMode = enabledFits[0];
+                window.syncExactRot90DimensionsV217();
+            }
+            if (!vc.showFitBtn) {
+                btnFit.style.setProperty('display', 'none', 'important');
+            } else {
+                btnFit.style.removeProperty('display');
+                var fitLabels = { contain: 'Вписать', cover: 'Заполнить', fill: 'Растянуть' };
+                btnFit.classList.toggle('v130-btn-active-v217', st.fitMode && st.fitMode !== 'contain');
+                btnFit.innerHTML = svgs.fit + '<span>' + (fitLabels[st.fitMode] || 'Вписать') + '</span>';
+            }
+        }
+
+        var zones = window.getCustomVideoSpeedZonesV217();
+        var baseSpd = window.getBaseSpeedDeckB();
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB);
+        var curSpd = Number(vd.speed || window._jennyVideoSpeedV170 || baseSpd);
+
+        // Кнопка скорости НАЗАД (#v131BtnVideoRev) — БЕЗ надписи "REV", только векторная стрелка назад и число!
+        var btnRev = document.getElementById('v131BtnVideoRev');
+        if (btnRev) {
+            btnRev.style.cssText = '';
+            var dispRevSpd = isRev ? curSpd : (window._lastRevVideoSpeedV217 || zones[0] || baseSpd);
+            btnRev.classList.toggle('v130-btn-active-v217', isRev);
+            btnRev.innerHTML = svgs.rev + '<span>' + dispRevSpd + 'x</span>';
+            window.bindInPlayerSpeedArcDragV217(btnRev, 'left');
+        }
+
+        // Кнопка восстановления обычной (базовой) скорости (#v130BtnNormSpeed) между ⏪ и ⏩
+        var btnSpd = document.getElementById('v130BtnSpeed');
+        var btnNorm = document.getElementById('v130BtnNormSpeed');
+        if (!btnNorm && btnRev && btnRev.parentElement) {
+            btnNorm = document.createElement('button');
+            btnNorm.type = 'button';
+            btnNorm.id = 'v130BtnNormSpeed';
+            btnNorm.className = 'v130-btn';
+            btnNorm.title = 'Вернуть обычное воспроизведение (Базовая скорость)';
+            btnNorm.onclick = function(ev) { window.restoreNormalVideoPlaybackV217(ev); };
+            btnRev.insertAdjacentElement('afterend', btnNorm);
+        }
+        if (btnNorm) {
+            btnNorm.style.cssText = '';
+            var isAtNormalFwd = (!isRev && Math.abs(curSpd - baseSpd) < 0.008);
+            btnNorm.classList.toggle('v130-btn-active-v217', isAtNormalFwd);
+            btnNorm.innerHTML = svgs.norm + '<span>' + baseSpd + 'x</span>';
+        }
+
+        // Кнопка скорости ВПЕРЁД (#v130BtnSpeed)
+        if (btnSpd) {
+            btnSpd.style.cssText = '';
+            var dispFwdSpd = (!isRev) ? curSpd : (window._lastFwdVideoSpeedV217 || zones[0] || baseSpd);
+            var isCustomFwdActive = (!isRev && Math.abs(curSpd - baseSpd) >= 0.008);
+            btnSpd.classList.toggle('v130-btn-active-v217', isCustomFwdActive);
+            btnSpd.innerHTML = svgs.fwd + '<span>' + dispFwdSpd + 'x</span>';
+            window.bindInPlayerSpeedArcDragV217(btnSpd, 'right');
+        }
+
+        // Кнопка "DSP" (#v130BtnDsp): чёткое выделение рамкой и цветом, когда включён, и серый, когда выключен!
+        var btnDsp = document.getElementById('v130BtnDsp');
+        if (btnDsp) {
+            btnDsp.style.cssText = '';
+            var dspOn = !st.dspBypass;
+            btnDsp.classList.toggle('v130-btn-active-v217', dspOn);
+            btnDsp.classList.toggle('v130-btn-off-v217', !dspOn);
+            btnDsp.innerHTML = svgs.dsp + '<span>' + (dspOn ? 'DSP' : 'Выкл') + '</span>';
+        }
+
+        // Кнопка "Дорожка #1" (#v130BtnRemux)
+        var btnRemux = document.getElementById('v130BtnRemux');
+        if (btnRemux) {
+            btnRemux.style.cssText = '';
+            var aIdx = (st.audioTrackIdxV216 || 0) + 1;
+            btnRemux.classList.toggle('v130-btn-active-v217', Boolean(st.usingRemux));
+            btnRemux.innerHTML = svgs.track + '<span>Дор. #' + aIdx + '</span>';
+        }
+    };
+
+    // Обновляем центральную кнопку Play/Pause на чистые векторные SVG-иконки
+    window.syncVideoPlayBtnIconV132 = function() {
+        var vid = document.getElementById('jennyVideoElV130');
+        var playBtn = document.getElementById('v130CenterPlayBtn');
+        if (!playBtn || !vid) return;
+        var vd = window.videoDeckV131 || {};
+        var svgs = window.VID_SVGS_V217;
+        if (window._vidIsBufferingV132 && window._vidPlayIntentV132 && !vd.isReversed) {
+            playBtn.innerHTML = svgs.waitBig;
+            return;
+        }
+        var isActuallyPlaying = (!vid.paused && !vid.ended && vid.readyState >= 2) || Boolean(vd.isReversed);
+        playBtn.innerHTML = (window._vidPlayIntentV132 && isActuallyPlaying) ? svgs.pauseBig : svgs.playBig;
+        if (typeof window.syncDeckBPlayBtnIconV216 === 'function') {
+            window.syncDeckBPlayBtnIconV216();
+        }
+    };
+
+    // Перехватываем setVideoDeckSpeedV170, чтобы он не затирал векторную SVG-иконку внутри #v130BtnSpeed
+    var _origSetVidSpeedV170 = window.setVideoDeckSpeedV170;
+    window.setVideoDeckSpeedV170 = function(rawSpeed, showNotification) {
+        var res = _origSetVidSpeedV170 ? _origSetVidSpeedV170.call(this, rawSpeed, showNotification) : rawSpeed;
+        window.syncVideoPlayerButtonsUIV217();
+        return res;
+    };
+
+    // При открытии нового видео сбрасываем режим В+А в 'va' и синхронизируем кнопки и масштаб
+    var _origOpenVidV217 = window.openJennyVideoPlayerV130;
+    if (typeof _origOpenVidV217 === 'function' && !_origOpenVidV217._v217Wrapped) {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            if (window._vidStateV130) {
+                window._vidStateV130.videoStreamModeV217 = 'va';
+            }
+            var badge = document.getElementById('jennyVideoAudioOnlyBadgeV217');
+            if (badge) badge.style.display = 'none';
+
+            var baseSpd = window.getBaseSpeedDeckB();
+            window._jennyVideoSpeedV170 = baseSpd;
+            window._lastFwdVideoSpeedV217 = baseSpd;
+            if (window.videoDeckV131) {
+                window.videoDeckV131.speed = baseSpd;
+                window.videoDeckV131.isReversed = false;
+            }
+            window.isReversedDeckB = false;
+
+            var r = _origOpenVidV217.apply(this, arguments);
+            var vid = document.getElementById('jennyVideoElV130');
+            if (vid) {
+                vid.muted = false;
+                try {
+                    vid.defaultPlaybackRate = baseSpd;
+                    vid.playbackRate = baseSpd;
+                } catch (e) {}
+            }
+            window.syncExactRot90DimensionsV217();
+            window.syncVideoPlayerButtonsUIV217();
+            return r;
+        };
+        window.openJennyVideoPlayerV130._v217Wrapped = true;
+    }
+
+    var _origCloseVidV217 = window.closeVideoPlayerV130;
+    if (typeof _origCloseVidV217 === 'function' && !_origCloseVidV217._v217Wrapped) {
+        window.closeVideoPlayerV130 = function(ev) {
+            var badge = document.getElementById('jennyVideoAudioOnlyBadgeV217');
+            if (badge) badge.style.display = 'none';
+            if (window.videoDeckV131 && window.videoDeckV131.revFrameTimer) {
+                clearInterval(window.videoDeckV131.revFrameTimer);
+                window.videoDeckV131.revFrameTimer = null;
+            }
+            window.isReversedDeckB = false;
+            return _origCloseVidV217.apply(this, arguments);
+        };
+        window.closeVideoPlayerV130._v217Wrapped = true;
+    }
+
+    setInterval(function() {
+        window.mountModularLabSettingsV208();
+        window.syncVideoPlayerButtonsUIV217();
+    }, 650);
+
+    setTimeout(function() {
+        window.mountModularLabSettingsV208();
+        window.syncVideoPlayerButtonsUIV217();
+        window.syncExactRot90DimensionsV217();
+    }, 200);
+})();
+/* ================= END JENNY_V217_UNIFIED_PATCH ================= */

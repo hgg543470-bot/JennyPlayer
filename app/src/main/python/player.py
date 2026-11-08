@@ -7884,3 +7884,155 @@ def start_server():
 
 if __name__ == "__main__":
     start_server()
+
+# ================= JENNY V217 (#311): VIDEO STREAM MODES (В+А / В -an / А -vn) IN LIVE_REMUX =================
+def api_video_live_remux_v217():
+    _cancel_stream_hold_release_v216()
+    raw_src = (request.query.get('src') or '').strip()
+    start_sec = float(request.query.get('start') or 0.0)
+    dur_sec = float(request.query.get('dur') or 0.0)
+    no_audio = (request.query.get('no_audio') == '1')
+    audio_only = (request.query.get('audio_only') == '1')
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+
+    if not raw_src:
+        response.status = 400
+        return "Missing src"
+
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+
+    mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
+    req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
+    now_ts = time.time()
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            if k_existing != req_key:
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+            else:
+                kept = []
+                for ts_started, p_same in plist:
+                    if now_ts - ts_started > 8.0 and p_same.poll() is not None:
+                        continue
+                    kept.append((ts_started, p_same))
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    is_tor_stream = src.startswith('/api/torrent/stream/')
+    if is_tor_stream:
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            if dur_sec <= 0:
+                dur_sec = _probe_torrent_partial_file_duration_v214(src)
+            ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
+            _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=True)
+            src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+        else:
+            src_input = _resolve_video_src_input_v131(src)
+    else:
+        src_input = _resolve_video_src_input_v131(src)
+        if (not src_input or not os.path.isfile(str(src_input))) and not str(src_input).startswith(('http://', 'https://')):
+            bn = os.path.basename(urllib.parse.unquote(src.split('?')[0]))
+            cand_p, _, _, _ = _locate_downloaded_p2p_file_v163(bn, "", -1)
+            if cand_p and os.path.isfile(cand_p):
+                src_input = cand_p
+
+    is_http = str(src_input).startswith(('http://', 'https://'))
+
+    if not is_http and src_input and os.path.isfile(src_input) and not no_audio and not audio_only:
+        ext_l = os.path.splitext(src_input)[1].lower()
+        if ext_l in ('.mp4', '.webm', '.m4v', '.mov') and start_sec <= 0.5 and request.query.get('transcode') != '1' and audio_idx == 0:
+            return static_file(os.path.basename(src_input), root=os.path.dirname(src_input))
+
+    ff_bin = find_ffmpeg_binary()
+    ff_threads = str(max(1, min(8, int(_THREAD_CFG_V216.get("videoFfmpegThreads", 3)))))
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        if start_sec > 0.5:
+            cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
+        else:
+            cmd.extend(['-seekable', '0', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '262144', '-analyzeduration', '300000'])
+
+    if start_sec > 0.5:
+        cmd.extend(['-ss', f"{start_sec:.2f}"])
+
+    is_legacy_avi = str(src_input).lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob')) or (request.query.get('transcode') == '1') or ('.avi' in src.lower())
+    v_codec_args = [
+        '-threads', ff_threads, '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '24', '-pix_fmt', 'yuv420p', '-g', '30'
+    ] if is_legacy_avi else ['-c:v', 'copy']
+
+    if audio_only:
+        # Режим "А" (Только Аудио): полностью отключаем видеодекодер (-vn), отдаём лёгкий аудиопоток
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-vn', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+            '-threads', ff_threads,
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+    elif no_audio:
+        # Режим "В" (Только Видео): полностью выгружаем звуковой поток (-an)
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-map', '0:v:0', '-an', '-sn', '-dn',
+            *v_codec_args,
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+    else:
+        # Режим "В+А" (Видео + Аудио)
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-map', '0:v:0', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+            *v_codec_args,
+            '-threads', ff_threads,
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none"
+    }
+    def _remux_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_remux_gen(), status=200, headers=resp_hdrs)
+
+_override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v217)
+# ================= END JENNY V217 =================
