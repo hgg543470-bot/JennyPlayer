@@ -7136,6 +7136,736 @@ def api_video_pcm_meta_v214():
 _override_bottle_route_v212('/api/video/pcm_meta', 'GET', api_video_pcm_meta_v214)
 
 
+
+# ==============================================================================
+# 🚀 JENNY V216 (#310): THREAD POOL & STREAM HOLD MANAGER (20s), FAST XFLAC RAM/TMP
+#    CACHE, 1ms BINARY AVI/MKV DURATION PARSER, SLIDING TORRENT LOOKAHEAD & AUDIO TRACK REMUX
+# ==============================================================================
+import tempfile
+import hashlib
+
+_THREAD_CFG_V216 = {
+    "audioRamWorkers": 2,
+    "videoFfmpegThreads": 3,
+    "torrentPrebufferPieces": 8,
+    "serverPoolThreads": 64,
+    "streamHoldDelaySec": 20
+}
+_XFLAC_RAM_CACHE_V216 = {}
+_XFLAC_RAM_ORDER_V216 = []
+_STREAM_HOLD_TIMER_V216 = None
+_STREAM_HOLD_LOCK_V216 = threading.Lock()
+
+
+def _load_thread_cfg_v216():
+    global _THREAD_CFG_V216
+    try:
+        if os.path.exists(PRESET_FILE):
+            with open(PRESET_FILE, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+            tc = d.get("threadConfigV216")
+            if isinstance(tc, dict):
+                for k in _THREAD_CFG_V216:
+                    if k in tc:
+                        try:
+                            _THREAD_CFG_V216[k] = int(float(tc[k]))
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+    return _THREAD_CFG_V216
+
+
+_load_thread_cfg_v216()
+
+
+@route('/api/threads/config', method=['GET', 'POST'])
+def api_threads_config_v216():
+    global _THREAD_CFG_V216
+    response.content_type = 'application/json; charset=utf-8'
+    if request.method == 'POST':
+        try:
+            body = json.loads(request.body.read().decode('utf-8') or "{}")
+            for k, lim in (
+                ("audioRamWorkers", (1, 8)),
+                ("videoFfmpegThreads", (1, 8)),
+                ("torrentPrebufferPieces", (2, 32)),
+                ("serverPoolThreads", (16, 128)),
+                ("streamHoldDelaySec", (0, 180))
+            ):
+                if k in body:
+                    try:
+                        val = int(float(body[k]))
+                        _THREAD_CFG_V216[k] = max(lim[0], min(lim[1], val))
+                    except Exception:
+                        pass
+            data = {}
+            if os.path.exists(PRESET_FILE):
+                try:
+                    with open(PRESET_FILE, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {}
+            data["threadConfigV216"] = dict(_THREAD_CFG_V216)
+            os.makedirs(os.path.dirname(PRESET_FILE), exist_ok=True)
+            with open(PRESET_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            return json.dumps({"status": "error", "error": str(e)})
+    return json.dumps({"status": "ok", "config": _THREAD_CFG_V216})
+
+
+def _cancel_stream_hold_release_v216():
+    global _STREAM_HOLD_TIMER_V216
+    with _STREAM_HOLD_LOCK_V216:
+        if _STREAM_HOLD_TIMER_V216 is not None:
+            try:
+                _STREAM_HOLD_TIMER_V216.cancel()
+            except Exception:
+                pass
+            _STREAM_HOLD_TIMER_V216 = None
+
+
+def _execute_delayed_stream_release_v216(hash_to_release: str = ""):
+    global _STREAM_HOLD_TIMER_V216
+    with _STREAM_HOLD_LOCK_V216:
+        _STREAM_HOLD_TIMER_V216 = None
+    try:
+        _kill_stale_video_ffmpeg_procs_v212()
+        with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+            for k_ex, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+            _ACTIVE_REMUX_PROCS_BY_KEY_V214.clear()
+        if hash_to_release:
+            h_low = hash_to_release.strip().lower()
+            _STREAM_ONLY_ACTIVE_V143.pop(h_low, None)
+    except Exception:
+        pass
+
+
+@post('/api/video/release_stream')
+def api_video_release_stream_v216():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+    except Exception:
+        req = {}
+    h_low = str(req.get("hash") or "").strip().lower()
+    immediate = bool(req.get("immediate"))
+    hold_sec = 0.0 if immediate else float(_THREAD_CFG_V216.get("streamHoldDelaySec", 20))
+    _cancel_stream_hold_release_v216()
+    if hold_sec <= 0.1:
+        _execute_delayed_stream_release_v216(h_low)
+        return json.dumps({"status": "released_immediately", "hold_sec": 0})
+    with _STREAM_HOLD_LOCK_V216:
+        global _STREAM_HOLD_TIMER_V216
+        t = threading.Timer(hold_sec, _execute_delayed_stream_release_v216, args=(h_low,))
+        t.daemon = True
+        t.start()
+        _STREAM_HOLD_TIMER_V216 = t
+    return json.dumps({"status": "holding", "hold_sec": hold_sec})
+
+
+# 1. Быстрый RAM + внутренний TMP кэш для .xflac (без записи 50 МБ на медленный FUSE /storage/emulated/0/Download!)
+def _ensure_xflac_wav_cache_v87(full_xf: str) -> str:
+    st = os.stat(full_xf)
+    cur_sig = f"{full_xf}|{st.st_size}|{int(st.st_mtime)}"
+    sig_hash = hashlib.md5(cur_sig.encode('utf-8')).hexdigest()[:16]
+    tmp_dir = os.path.join(tempfile.gettempdir(), "jenny_xflac_cache")
+    os.makedirs(tmp_dir, exist_ok=True)
+    cache_path = os.path.join(tmp_dir, f"xf_{sig_hash}.wav")
+
+    if os.path.isfile(cache_path) and os.path.getsize(cache_path) > 44:
+        return cache_path
+
+    if cur_sig in _XFLAC_RAM_CACHE_V216:
+        wav_bytes = _XFLAC_RAM_CACHE_V216[cur_sig]
+        try:
+            with open(cache_path, 'wb') as f_out:
+                f_out.write(wav_bytes)
+            return cache_path
+        except Exception:
+            pass
+
+    with _XFLAC_CACHE_LOCK_V87:
+        if os.path.isfile(cache_path) and os.path.getsize(cache_path) > 44:
+            return cache_path
+        with open(full_xf, 'rb') as f_in:
+            raw_data = f_in.read()
+        wav_bytes = _decode_xflac_bytes_to_wav_v85(raw_data)
+        _XFLAC_RAM_CACHE_V216[cur_sig] = wav_bytes
+        _XFLAC_RAM_ORDER_V216.append(cur_sig)
+        while len(_XFLAC_RAM_ORDER_V216) > 2:
+            old_k = _XFLAC_RAM_ORDER_V216.pop(0)
+            _XFLAC_RAM_CACHE_V216.pop(old_k, None)
+        try:
+            # Очищаем старые временные файлы в tmp_dir, оставляя последние 3
+            existing = sorted(
+                [os.path.join(tmp_dir, fn) for fn in os.listdir(tmp_dir) if fn.endswith('.wav')],
+                key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0
+            )
+            for old_p in existing[:-3]:
+                try:
+                    os.remove(old_p)
+                except Exception:
+                    pass
+            with open(cache_path, 'wb') as f_out:
+                f_out.write(wav_bytes)
+        except Exception:
+            fallback_p = os.path.join(os.path.dirname(full_xf), "temp_final_xflac_stream_cache.wav")
+            with open(fallback_p, 'wb') as f_out:
+                f_out.write(wav_bytes)
+            return fallback_p
+        return cache_path
+
+
+# 2. Мгновенный бинарный парсер длительности из первых 64 КБ заголовка AVI (avih) и MKV/WebM (EBML Info)
+def _parse_header_duration_bytes_v216(hdr: bytes) -> float:
+    if not hdr or len(hdr) < 64:
+        return 0.0
+    try:
+        # Проверка AVI (RIFF....AVI ....avih)
+        if hdr[:4] == b'RIFF' and b'AVI ' in hdr[:16]:
+            idx = hdr.find(b'avih')
+            if idx != -1 and idx + 28 <= len(hdr):
+                us_per_frame = struct.unpack_from('<I', hdr, idx + 8)[0]
+                total_frames = struct.unpack_from('<I', hdr, idx + 24)[0]
+                if 1000 <= us_per_frame <= 200000 and total_frames > 10:
+                    dur = (us_per_frame * total_frames) / 1000000.0
+                    if 1.0 < dur < 86400.0:
+                        return round(dur, 2)
+    except Exception:
+        pass
+
+    try:
+        # Проверка Matroska / WebM EBML (\x1a\x45\xdf\xa3)
+        if hdr[:4] == b'\x1a\x45\xdf\xa3':
+            tc_scale = 1000000  # дефолт 1 мс в наносекундах
+            tc_pos = hdr.find(b'\x2a\xd7\xb1')
+            if tc_pos != -1 and tc_pos + 8 <= len(hdr):
+                sz_b = hdr[tc_pos + 3]
+                v_len = sz_b & 0x7F
+                if 1 <= v_len <= 4 and tc_pos + 4 + v_len <= len(hdr):
+                    val = int.from_bytes(hdr[tc_pos + 4:tc_pos + 4 + v_len], 'big')
+                    if 1000 <= val <= 1000000000:
+                        tc_scale = val
+            # Ищем элемент Duration (\x44\x89) с размером 4 (\x84) или 8 (\x88) байт
+            search_from = 0
+            while True:
+                d_pos = hdr.find(b'\x44\x89', search_from)
+                if d_pos == -1 or d_pos + 7 > len(hdr):
+                    break
+                sz_marker = hdr[d_pos + 2]
+                if sz_marker == 0x84 and d_pos + 7 <= len(hdr):
+                    f_val = struct.unpack_from('>f', hdr, d_pos + 3)[0]
+                    dur = (f_val * tc_scale) / 1000000000.0
+                    if 2.0 < dur < 86400.0:
+                        return round(dur, 2)
+                elif sz_marker == 0x88 and d_pos + 11 <= len(hdr):
+                    d_val = struct.unpack_from('>d', hdr, d_pos + 3)[0]
+                    dur = (d_val * tc_scale) / 1000000000.0
+                    if 2.0 < dur < 86400.0:
+                        return round(dur, 2)
+                search_from = d_pos + 2
+    except Exception:
+        pass
+    return 0.0
+
+
+def _probe_torrent_partial_file_duration_v214(raw_src: str) -> float:
+    src = (raw_src or "").strip()
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+
+    # Если это локальный путь или /api/media/...
+    if not src.startswith('/api/torrent/stream/'):
+        real_p = _resolve_video_src_input_v131(src)
+        if real_p and not str(real_p).startswith(('http://', 'https://')) and os.path.isfile(real_p):
+            try:
+                with open(real_p, 'rb') as f:
+                    hdr = f.read(131072)
+                d_bin = _parse_header_duration_bytes_v216(hdr)
+                if d_bin > 1.0:
+                    return d_bin
+            except Exception:
+                pass
+        return 0.0
+
+    parts = src.strip('/').split('/')
+    if len(parts) < 5:
+        return 0.0
+    h_low = parts[3].lower()
+    try:
+        f_idx = int(parts[4].split('?')[0])
+    except Exception:
+        f_idx = 0
+
+    # 1. Пробуем прочитать первые 128 КБ локального файла в torrents_tmp / JennyVideo
+    try:
+        local_p, _, _, _ = _locate_downloaded_p2p_file_v163("", h_low, f_idx)
+        if local_p and os.path.isfile(local_p) and os.path.getsize(local_p) >= 65536:
+            try:
+                with open(local_p, 'rb') as f:
+                    hdr = f.read(131072)
+                d_bin = _parse_header_duration_bytes_v216(hdr)
+                if d_bin > 1.0:
+                    return d_bin
+            except Exception:
+                pass
+            ff_bin = find_ffmpeg_binary()
+            pr = subprocess.run(
+                [ff_bin, '-hide_banner', '-seekable', '0', '-probesize', '262144', '-analyzeduration', '400000', '-i', local_p],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2.0
+            )
+            raw = (pr.stderr or "") + (pr.stdout or "")
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+            if m:
+                return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+
+    # 2. Если файл ещё не найден на диске по имени, но 1-й кусок уже есть в демоне — читаем 64 КБ по Range из демона!
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.8) as sr:
+            st_obj = json.loads(sr.read().decode("utf-8", "ignore"))
+        for tor in (st_obj.get("torrents") or []):
+            if (tor.get("hash") or "").strip().lower() == h_low:
+                p_map = tor.get("pieces_map") or ""
+                for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                    if int(fobj.get("index", -1)) == f_idx:
+                        beg_p = int(fobj.get("begin_piece") or 0)
+                        if not p_map or (0 <= beg_p < len(p_map) and p_map[beg_p] in ('4', '3')):
+                            req = urllib.request.Request(
+                                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}",
+                                headers={"Range": "bytes=0-131071"}
+                            )
+                            with urllib.request.urlopen(req, timeout=1.2) as hr:
+                                hdr_bytes = hr.read(131072)
+                            d_bin = _parse_header_duration_bytes_v216(hdr_bytes)
+                            if d_bin > 1.0:
+                                return d_bin
+                        break
+                break
+    except Exception:
+        pass
+
+    return 0.0
+
+
+@route('/api/video/pcm_meta', method='GET')
+def api_video_pcm_meta_v216():
+    response.content_type = 'application/json'
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        return json.dumps({"duration": 0, "size": 0})
+    src_input = _resolve_video_src_input_v131(src)
+
+    # Если файл .avi/.mkv лежит в torrents_tmp, а передали /api/media/<name>, ищем также через _locate_downloaded_p2p_file_v163
+    if (not src_input or not os.path.isfile(str(src_input))) and not str(src_input).startswith(('http://', 'https://')):
+        bn = os.path.basename(urllib.parse.unquote(src.split('?')[0]))
+        cand_p, _, _, _ = _locate_downloaded_p2p_file_v163(bn, "", -1)
+        if cand_p and os.path.isfile(cand_p):
+            src_input = cand_p
+
+    if not src_input or str(src_input).startswith(('http://', 'https://')) or not os.path.isfile(src_input):
+        dur_partial = _probe_torrent_partial_file_duration_v214(src)
+        return json.dumps({"duration": dur_partial, "size": 0})
+
+    dur_sec, sz_bytes = 0.0, 0
+    try:
+        sz_bytes = os.path.getsize(src_input)
+        with open(src_input, 'rb') as f:
+            hdr = f.read(131072)
+        dur_sec = _parse_header_duration_bytes_v216(hdr)
+        if dur_sec <= 1.0:
+            ff_bin = find_ffmpeg_binary()
+            pr = subprocess.run(
+                [ff_bin, '-hide_banner', '-seekable', '0', '-probesize', '262144', '-analyzeduration', '400000', '-i', src_input],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=4
+            )
+            raw = (pr.stderr or "") + (pr.stdout or "")
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+            if m:
+                dur_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+    return json.dumps({"duration": dur_sec, "size": sz_bytes})
+_override_bottle_route_v212('/api/video/pcm_meta', 'GET', api_video_pcm_meta_v216)
+
+
+# 3. Скользящий упреждающий буфер предзагрузки кусков торрента (LIFO порядок: от дальнего к текущему куску!)
+def _boost_torrent_file_and_pieces_v214(h_low: str, f_idx: int, ratio: float = -1.0, byte_offset: int = -1, sync_start: bool = False):
+    h_low = (h_low or "").strip().lower()
+    if not h_low:
+        return
+    f_idx = int(f_idx)
+    _cancel_stream_hold_release_v216()
+    if '_ensure_torrent_registered_in_daemon_v145' in globals():
+        _ensure_torrent_registered_in_daemon_v145(h_low)
+
+    _temporarily_prioritize_torrent_v214(h_low, duration_sec=20.0)
+
+    persisted_st = _load_persisted_dl_state_v143() if '_load_persisted_dl_state_v143' in globals() else {}
+    exp_files = set(int(x) for x in (persisted_st.get(h_low, {}).get("explicit_files") or []))
+    comp_files = set(int(x) for x in (persisted_st.get(h_low, {}).get("completed_files") or []))
+    pending_exp = exp_files - comp_files
+
+    if pending_exp:
+        active_files = sorted(list(pending_exp | {f_idx}))
+    else:
+        active_files = [f_idx]
+
+    _STREAM_ONLY_ACTIVE_V143.setdefault(h_low, set()).add(f_idx)
+    _JTORRENT_ACTIVE_FILES_V106[h_low] = set(active_files)
+    _TORRENT_STATUS_CACHE_V212["data"] = None
+
+    def _do_boost():
+        try:
+            now_b = time.time()
+            if not hasattr(_boost_torrent_file_and_pieces_v214, "_recent_file_select"):
+                _boost_torrent_file_and_pieces_v214._recent_file_select = {}
+            sel_key = f"{h_low}_{f_idx}"
+            if now_b - _boost_torrent_file_and_pieces_v214._recent_file_select.get(sel_key, 0.0) > 6.0:
+                _boost_torrent_file_and_pieces_v214._recent_file_select[sel_key] = now_b
+                cached_trs, _, _ = _load_trackers_state_v110()
+                try:
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                        data=json.dumps({"hash": h_low, "action": "resume"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    ), timeout=1.0).read()
+                except Exception:
+                    pass
+                try:
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                        data=json.dumps({"hash": h_low, "files": active_files, "trackers": list(cached_trs or [])}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    ), timeout=2.0).read()
+                except Exception:
+                    pass
+                try:
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                        data=json.dumps({"hash": h_low, "action": "boost_file", "file_index": f_idx}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    ), timeout=1.2).read()
+                except Exception:
+                    pass
+
+            beg_p, end_p, f_len = 0, 0, 0
+            p_map_str = ""
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.2) as sr:
+                st_obj = json.loads(sr.read().decode("utf-8", "ignore"))
+                for tor in (st_obj.get("torrents") or []):
+                    if (tor.get("hash") or "").strip().lower() == h_low:
+                        p_map_str = tor.get("pieces_map") or ""
+                        for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                            if int(fobj.get("index", -1)) == f_idx:
+                                beg_p = int(fobj.get("begin_piece") or 0)
+                                end_p = int(fobj.get("end_piece") or 0)
+                                f_len = int(fobj.get("length") or fobj.get("size") or 0)
+                                break
+                        break
+
+            if end_p > beg_p:
+                calc_ratio = ratio
+                if calc_ratio < 0.0 and byte_offset > 0 and f_len > 0:
+                    calc_ratio = float(byte_offset) / float(f_len)
+
+                lookahead = max(2, min(24, int(_THREAD_CFG_V216.get("torrentPrebufferPieces", 8))))
+                span = max(1, end_p - beg_p)
+                if 0.0 < calc_ratio <= 1.0:
+                    center_p = max(beg_p, min(end_p - 1, beg_p + int(calc_ratio * span)))
+                else:
+                    center_p = beg_p
+
+                # Собираем следующие `lookahead` НЕскачанных кусков начиная с center_p,
+                # и отправляем boost_piece в ОБРАТНОМ порядке (от дальнего к center_p),
+                # чтобы center_p встал ПЕРВЫМ в LIFO-очередь демона, center_p+1 — вторым и т.д.!
+                missing_ahead = []
+                if beg_p < end_p and (not p_map_str or (beg_p < len(p_map_str) and p_map_str[beg_p] != '4')):
+                    missing_ahead.append(beg_p)
+                for cand_p in range(center_p, min(end_p, center_p + lookahead * 2)):
+                    if cand_p in missing_ahead:
+                        continue
+                    if p_map_str and 0 <= cand_p < len(p_map_str) and p_map_str[cand_p] == '4':
+                        continue
+                    missing_ahead.append(cand_p)
+                    if len(missing_ahead) >= lookahead:
+                        break
+
+                pieces_to_boost = list(reversed(missing_ahead))
+
+                if not hasattr(_boost_torrent_file_and_pieces_v214, "_recent_boosts"):
+                    _boost_torrent_file_and_pieces_v214._recent_boosts = {}
+                recent_map = _boost_torrent_file_and_pieces_v214._recent_boosts
+
+                for idx_order, p_idx in enumerate(pieces_to_boost):
+                    b_key = f"{h_low}_{p_idx}"
+                    # Для самого главного текущего куска (последнего в списке) разрешаем обновление каждые 1.8 сек, для дальних — раз в 4.5 сек
+                    cooldown = 1.8 if idx_order == len(pieces_to_boost) - 1 else 4.5
+                    if now_b - recent_map.get(b_key, 0.0) < cooldown:
+                        continue
+                    recent_map[b_key] = now_b
+                    try:
+                        urllib.request.urlopen(urllib.request.Request(
+                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                            data=json.dumps({"hash": h_low, "action": "boost_piece", "piece_index": int(p_idx)}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        ), timeout=0.5).read()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    if sync_start:
+        _do_boost()
+    else:
+        threading.Thread(target=_do_boost, daemon=True).start()
+
+
+@route('/api/torrent/stream/<hash_str>/<file_idx:int>', method='GET')
+def api_torrent_stream_proxy_v216(hash_str, file_idx):
+    _cancel_stream_hold_release_v216()
+    ensure_jtorrent_daemon_v96()
+    h_low = hash_str.strip().lower()
+    f_idx = int(file_idx)
+    key = f"{h_low}_{f_idx}"
+
+    conv_fn = _JTORRENT_CONVERTED_V96.get(key)
+    if conv_fn:
+        local_p = resolve_track_full_path_v71(conv_fn)
+        if local_p and os.path.isfile(local_p):
+            return static_file(os.path.basename(local_p), root=os.path.dirname(local_p))
+
+    rng_hdr = request.headers.get("Range") or ""
+    rng_start = 0
+    if rng_hdr.startswith("bytes="):
+        try:
+            s_part = rng_hdr[6:].split("-")[0].strip()
+            if s_part:
+                rng_start = int(s_part)
+        except Exception:
+            rng_start = 0
+
+    if rng_start > 0:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.8) as sr:
+                st_obj = json.loads(sr.read().decode("utf-8", "ignore"))
+            for tor in (st_obj.get("torrents") or []):
+                if (tor.get("hash") or "").strip().lower() == h_low:
+                    p_map = tor.get("pieces_map") or ""
+                    for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                        if int(fobj.get("index", -1)) == f_idx:
+                            f_len = int(fobj.get("length") or fobj.get("size") or 0)
+                            end_p = int(fobj.get("end_piece") or 0)
+                            if f_len > 4194304 and rng_start > (f_len - 2097152):
+                                if p_map and 0 < end_p <= len(p_map) and p_map[end_p - 1] != '4':
+                                    response.status = 416
+                                    return "Tail Cues not ready yet"
+                            break
+                    break
+        except Exception:
+            pass
+
+    cur_set = _JTORRENT_ACTIVE_FILES_V106.get(h_low, set())
+    is_first_open = (f_idx not in cur_set)
+
+    _boost_torrent_file_and_pieces_v214(
+        h_low,
+        f_idx,
+        ratio=-1.0,
+        byte_offset=rng_start,
+        sync_start=is_first_open
+    )
+
+    u = f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}"
+    hdrs = {"Range": rng_hdr} if rng_hdr else {}
+
+    r = None
+    last_err = None
+    for attempt in range(4):
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(u, headers=hdrs), timeout=30)
+            break
+        except Exception as e:
+            last_err = e
+            time.sleep(0.25)
+            _boost_torrent_file_and_pieces_v214(h_low, f_idx, byte_offset=rng_start, sync_start=True)
+
+    if r is None:
+        response.status = 503
+        return f"Stream busy: {last_err}"
+
+    resp_hdrs = {
+        "Cache-Control": "no-store",
+        "Accept-Ranges": "bytes"
+    }
+    ctype = r.headers.get("Content-Type") or "video/mp4"
+    resp_hdrs["Content-Type"] = ctype
+
+    for k in ("Content-Length", "Accept-Ranges", "Content-Range"):
+        if r.headers.get(k):
+            resp_hdrs[k] = r.headers.get(k)
+
+    status_code = r.status
+
+    def _chunk_gen():
+        bytes_streamed = 0
+        last_slide_boost_ts = time.time()
+        last_slide_bytes = 0
+        try:
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                bytes_streamed += len(chunk)
+                now_c = time.time()
+                # Каждые ~1.2 МБ или 2.5 секунды сдвигаем окно предзагрузки вперёд по ходу чтения потока!
+                if (bytes_streamed - last_slide_bytes >= 1258291) or (now_c - last_slide_boost_ts >= 2.5):
+                    last_slide_bytes = bytes_streamed
+                    last_slide_boost_ts = now_c
+                    _boost_torrent_file_and_pieces_v214(
+                        h_low, f_idx, ratio=-1.0, byte_offset=rng_start + bytes_streamed, sync_start=False
+                    )
+                yield chunk
+        finally:
+            try:
+                r.close()
+            except Exception:
+                pass
+
+    return bottle.HTTPResponse(body=_chunk_gen(), status=status_code, headers=resp_hdrs)
+_override_bottle_route_v212('/api/torrent/stream/<hash_str>/<file_idx:int>', 'GET', api_torrent_stream_proxy_v216)
+
+
+@route('/api/video/live_remux', method='GET')
+def api_video_live_remux_v216():
+    _cancel_stream_hold_release_v216()
+    raw_src = (request.query.get('src') or '').strip()
+    start_sec = float(request.query.get('start') or 0.0)
+    dur_sec = float(request.query.get('dur') or 0.0)
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+
+    if not raw_src:
+        response.status = 400
+        return "Missing src"
+
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+
+    req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}"
+    now_ts = time.time()
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            if k_existing != req_key:
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+            else:
+                kept = []
+                for ts_started, p_same in plist:
+                    if now_ts - ts_started > 8.0 and p_same.poll() is not None:
+                        continue
+                    kept.append((ts_started, p_same))
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    is_tor_stream = src.startswith('/api/torrent/stream/')
+    if is_tor_stream:
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            if dur_sec <= 0:
+                dur_sec = _probe_torrent_partial_file_duration_v214(src)
+            ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
+            _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=True)
+            src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+        else:
+            src_input = _resolve_video_src_input_v131(src)
+    else:
+        src_input = _resolve_video_src_input_v131(src)
+        if (not src_input or not os.path.isfile(str(src_input))) and not str(src_input).startswith(('http://', 'https://')):
+            bn = os.path.basename(urllib.parse.unquote(src.split('?')[0]))
+            cand_p, _, _, _ = _locate_downloaded_p2p_file_v163(bn, "", -1)
+            if cand_p and os.path.isfile(cand_p):
+                src_input = cand_p
+
+    is_http = str(src_input).startswith(('http://', 'https://'))
+
+    if not is_http and src_input and os.path.isfile(src_input):
+        ext_l = os.path.splitext(src_input)[1].lower()
+        if ext_l in ('.mp4', '.webm', '.m4v', '.mov') and start_sec <= 0.5 and request.query.get('transcode') != '1' and audio_idx == 0:
+            return static_file(os.path.basename(src_input), root=os.path.dirname(src_input))
+
+    ff_bin = find_ffmpeg_binary()
+    ff_threads = str(max(1, min(8, int(_THREAD_CFG_V216.get("videoFfmpegThreads", 3)))))
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        if start_sec > 0.5:
+            cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
+        else:
+            cmd.extend(['-seekable', '0', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '262144', '-analyzeduration', '300000'])
+
+    if start_sec > 0.5:
+        cmd.extend(['-ss', f"{start_sec:.2f}"])
+
+    is_legacy_avi = str(src_input).lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob')) or (request.query.get('transcode') == '1') or ('.avi' in src.lower())
+    v_codec_args = [
+        '-threads', ff_threads, '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '24', '-pix_fmt', 'yuv420p', '-g', '30'
+    ] if is_legacy_avi else ['-c:v', 'copy']
+
+    cmd.extend([
+        '-fflags', '+genpts+igndts+nobuffer',
+        '-i', src_input,
+        '-map', '0:v:0', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+        *v_codec_args,
+        '-threads', ff_threads,
+        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-flush_packets', '1',
+        '-f', 'mp4', '-'
+    ])
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none"
+    }
+    def _remux_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_remux_gen(), status=200, headers=resp_hdrs)
+_override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v216)
+
+
 def start_server():
 
 

@@ -185,6 +185,9 @@ public class PlaybackService extends Service {
                 .setActions(actions)
                 .setState(state, currentPosMs, isPlaying ? currentSpeed : 0f);
         mediaSession.setPlaybackState(stateBuilder.build());
+        try {
+            mediaSession.setActive(isPlaying);
+        } catch (Throwable ignored) {}
     }
 
     private Notification buildNotification() {

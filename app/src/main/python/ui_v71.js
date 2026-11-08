@@ -20136,3 +20136,1662 @@ let vsyncTicks = 0;
         window.syncFormatSlotsUI();
     }, 600);
 })();
+
+/* ================= JENNY_V216_UNIFIED_PATCH (#310): DUAL 9-BUTTON SINGLE-ROW DECK BARS, HEADER FOLDER+TORRENT, FAV AUDIO/VIDEO SUBLIST, THREAD POOL & 20s HOLD SETTINGS, INSTANT COMPRESSED START, AUTO MKV AAC & SLIDING BUFFER ================= */
+(function() {
+    if (window._jennyV216Installed) return;
+    window._jennyV216Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 0. КОНФИГУРАЦИЯ ПОТОКОВ И ЗАДЕРЖКИ УДЕРЖАНИЯ (ПО УМОЛЧАНИЮ 20 СЕК)
+    // -------------------------------------------------------------------------
+    window.DEFAULT_THREAD_CONFIG_V216 = {
+        audioRamWorkers: 2,
+        videoFfmpegThreads: 3,
+        torrentPrebufferPieces: 8,
+        serverPoolThreads: 64,
+        streamHoldDelaySec: 20
+    };
+
+    window.loadThreadConfigV216 = function() {
+        var cfg = Object.assign({}, window.DEFAULT_THREAD_CONFIG_V216);
+        try {
+            var raw = localStorage.getItem('jenny_threads_v216');
+            if (raw) {
+                var parsed = JSON.parse(raw);
+                Object.keys(cfg).forEach(function(k) {
+                    if (parsed && parsed[k] !== undefined) {
+                        var n = parseInt(parsed[k], 10);
+                        if (!isNaN(n)) cfg[k] = n;
+                    }
+                });
+            }
+        } catch (e) {}
+        window._jennyThreadConfigV216 = cfg;
+        return cfg;
+    };
+    window.loadThreadConfigV216();
+
+    window.saveThreadConfigV216 = async function(showMsg, ev) {
+        var cfg = window._jennyThreadConfigV216 || window.loadThreadConfigV216();
+        var mapIds = [
+            ['audioRamWorkers', 'cfg_thr_audioRamWorkers_v216', 1, 8],
+            ['videoFfmpegThreads', 'cfg_thr_videoFfmpegThreads_v216', 1, 8],
+            ['torrentPrebufferPieces', 'cfg_thr_torrentPrebufferPieces_v216', 2, 32],
+            ['serverPoolThreads', 'cfg_thr_serverPoolThreads_v216', 16, 128],
+            ['streamHoldDelaySec', 'cfg_thr_streamHoldDelaySec_v216', 0, 180]
+        ];
+        mapIds.forEach(function(item) {
+            var k = item[0], id = item[1], mn = item[2], mx = item[3];
+            var el = document.getElementById(id);
+            if (el) {
+                var v = parseInt(el.value, 10);
+                if (!isNaN(v)) cfg[k] = Math.max(mn, Math.min(mx, v));
+                el.value = String(cfg[k]);
+            }
+        });
+        try {
+            localStorage.setItem('jenny_threads_v216', JSON.stringify(cfg));
+        } catch (e) {}
+        try {
+            await fetch('/api/threads/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(cfg)
+            });
+        } catch (e) {}
+        if (showMsg && typeof window.showToast === 'function') {
+            window.showToast('⚡ Настройки потоков и удержания (' + cfg.streamHoldDelaySec + ' сек) сохранены!', ev);
+        }
+    };
+
+    window.resetThreadConfigV216 = async function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        window._jennyThreadConfigV216 = Object.assign({}, window.DEFAULT_THREAD_CONFIG_V216);
+        try {
+            localStorage.setItem('jenny_threads_v216', JSON.stringify(window._jennyThreadConfigV216));
+        } catch (e) {}
+        window.renderThreadsSettingsBoxV216();
+        await window.saveThreadConfigV216(false, ev);
+        if (typeof window.showToast === 'function') {
+            window.showToast('🔄 Потоки и удержание (20 сек) сброшены по умолчанию!', ev);
+        }
+    };
+
+    // Синхронизируем конфиг потоков с сервером при старте
+    setTimeout(function() { window.saveThreadConfigV216(false); }, 600);
+
+    // -------------------------------------------------------------------------
+    // 1. СПРАВКА (❓) ДЛЯ БЛОКА ПОТОКОВ В ОБЩЕМ СПРАВОЧНИКЕ (getHelpDB)
+    // -------------------------------------------------------------------------
+    var _origGetHelpDBV216 = window.getHelpDB;
+    if (typeof _origGetHelpDBV216 === 'function' && !_origGetHelpDBV216._v216Wrapped) {
+        window.getHelpDB = function() {
+            var db = _origGetHelpDBV216.apply(this, arguments) || {};
+            var isEn = (typeof window.getLang === 'function' && window.getLang() === 'en');
+            db['threads_group_v216'] = {
+                title: isEn ? '⚡ Thread Pool & Stream Hold (CPU / Net)' : '⚡ Распределение потоков и приоритетов (CPU / Сеть)',
+                phys: isEn
+                    ? 'Splits CPU cores and local HTTP channels between Deck A audio decoding, Deck B live video remuxing, P2P torrent piece pre-fetching, and background modules.'
+                    : 'Разделяет ядра процессора и локальные сетевые каналы между аудио-движком Деки А, потоковым видео-ремуксом Деки Б, предзагрузкой кусков торрента и фоновыми модулями.',
+                hear: isEn
+                    ? 'Prevents connection starvation when switching songs or seeking video, and keeps active streams warm during track/episode switches.'
+                    : 'Исключает зависания при переключении треков и перемотке видео, а при смене файла переиспользует горячий поток без обрыва.',
+                tip: isEn
+                    ? 'Default values (2 / 3 / 8 pieces / 64 / 20s hold) are balanced for 8-core Android processors.'
+                    : 'Значения по умолчанию (2 / 3 / 8 кусков / 64 / удержание 20 сек) оптимально сбалансированы для 8-ядерных процессоров Android.'
+            };
+            db['thr_audio_v216'] = {
+                title: isEn ? '🎵 Stream 1 — Deck A Audio RAM Decoder' : '🎵 Поток 1 — Аудио Дека А (RAM / WAV декодер)',
+                phys: isEn
+                    ? 'Number of parallel background workers unpacking lossless audio into 32-bit float RAM while the fast compressed stream is playing.'
+                    : 'Число параллельных фоновых потоков, которые распаковывают песню в несжатый 32-bit WAV в ОЗУ, пока первые 2–3 секунды играет быстрый сжатый поток.',
+                hear: isEn
+                    ? 'Track starts playing instantly (<0.3s) with "⏳ RAM (buffering PCM)...", then seamlessly switches to RAM.'
+                    : 'Песня начинает играть мгновенно (за 0.2 сек) с надписью «⏳ RAM (пока играет сжатый...)», а затем бесшовно переходит на RAM.',
+                tip: isEn ? 'Recommended: 2 workers.' : 'Рекомендуется: 2 потока (не забивает канал браузера и быстро собирает RAM).'
+            };
+            db['thr_video_v216'] = {
+                title: isEn ? '🎬 Stream 2 — Deck B Video & Audio Remux (FFmpeg)' : '🎬 Поток 2 — Видео Дека Б (FFmpeg Ремукс и звук)',
+                phys: isEn
+                    ? 'Number of CPU threads allocated to real-time MKV/AVI stream remuxing and AC3/EAC3 -> AAC audio decoding.'
+                    : 'Количество потоков процессора, выделенных под живую потоковую сборку видео (.mkv / .avi) и декодирование звуковых дорожек (AC3/EAC3 ➔ AAC).',
+                hear: isEn
+                    ? 'Sound in .mkv plays immediately from 0:00 without pressing MKV button, and seeking is crisp.'
+                    : 'Звук в .mkv включается автоматически с первой секунды, а видео и перемотка идут плавно без перегрева.',
+                tip: isEn ? 'Recommended: 3–4 threads.' : 'Рекомендуется: 3–4 потока.'
+            };
+            db['thr_torrent_v216'] = {
+                title: isEn ? '🧲 Stream 3 — P2P Pre-Buffer Lookahead (Pieces)' : '🧲 Поток 3 — Торрент P2P и буфер предзагрузки (куски)',
+                phys: isEn
+                    ? 'How many sequential pieces ahead of the current playback cursor are boosted in LIFO order so the current piece is always #1.'
+                    : 'Сколько кусков вперёд от текущей секунды видео принудительно запрашиваются у пиров с наивысшим приоритетом (в скользящем окне по ходу просмотра).',
+                hear: isEn
+                    ? 'Eliminates periodic pauses every 10–15 seconds while watching a torrent stream.'
+                    : 'Убирает замирания и догрузку каждые 10–15 секунд при просмотре сериала/фильма напрямую из торрента.',
+                tip: isEn ? 'Recommended: 8–12 pieces (~16–36 MB ahead).' : 'Рекомендуется: 8–12 кусков (запас ~16–36 МБ вперёд по потоку).'
+            };
+            db['thr_server_v216'] = {
+                title: isEn ? '🌐 Stream 4 — Server Pool & Background Modules' : '🌐 Поток 4 — Пул сервера и фоновые модули',
+                phys: isEn
+                    ? 'Total HTTP worker threads in local Waitress server handling torrent search, Radio, SoundCloud, Game OST, and media streaming.'
+                    : 'Общее число серверных потоков локального движка для одновременной работы поиска торрентов, Радио, SoundCloud, Game OST и обеих дек.',
+                hear: isEn
+                    ? 'Torrent search and background downloads never block music or video playback.'
+                    : 'Поиск раздач и фоновая закачка никогда не тормозят переключение песен и видео.',
+                tip: isEn ? 'Recommended: 64 threads.' : 'Рекомендуется: 64 потока.'
+            };
+            db['thr_hold_v216'] = {
+                title: isEn ? '⏱️ Stream Hold Delay After Switch / Close (sec)' : '⏱️ Удержание потока при переключении / закрытии (сек)',
+                phys: isEn
+                    ? 'When switching tracks/videos, the active stream is reused immediately. When closed with ❌, it stays warm for N seconds before releasing resources to background downloads.'
+                    : 'Если ты просто переключил трек или серию, поток продолжает работать на новый файл без переподключения. А если закрыл видео крестиком ❌ — ждёт указанные секунды (по умолчанию 20 сек) и затем освобождает все ресурсы под обычную скачку.',
+                hear: isEn
+                    ? 'Instant switching between episodes/songs without re-initializing the pipeline, and automatic cleanup 20s after closing.'
+                    : 'Переключение между сериями и треками происходит мгновенно на прогретом потоке, а через 20 сек после закрытия ❌ весь канал отдаётся закачкам.',
+                tip: isEn ? 'Default: 20 seconds (0 = release immediately).' : 'По умолчанию: 20 секунд (можно поставить от 0 до 180 сек).'
+            };
+            return db;
+        };
+        window.getHelpDB._v216Wrapped = true;
+    }
+
+    window.renderThreadsSettingsBoxV216 = function() {
+        var sm = document.getElementById('settingsModal');
+        if (!sm) return;
+        var container = sm.querySelector('.container') || sm;
+        var cfg = window._jennyThreadConfigV216 || window.loadThreadConfigV216();
+
+        var box = document.getElementById('jennyThreadsSettingsBoxV216');
+        if (!box) {
+            box = document.createElement('details');
+            box.id = 'jennyThreadsSettingsBoxV216';
+            box.className = 'setting-group';
+            // Свёрнут по умолчанию, как просил Дмитрий!
+            box.open = false;
+            box.style.borderLeft = '3px solid #39c5cf';
+
+            var refEl = document.getElementById('customVideoFormatsSectionV215') || document.getElementById('customFormatsSection');
+            if (refEl && refEl.parentElement === container) {
+                refEl.insertAdjacentElement('afterend', box);
+            } else {
+                container.appendChild(box);
+            }
+        }
+
+        var mkRow = function(label, key, minV, maxV, stepV, unitStr, helpKey, colorHex) {
+            var val = cfg[key] !== undefined ? cfg[key] : window.DEFAULT_THREAD_CONFIG_V216[key];
+            return '<div class="setting-row" style="border:none;padding:6px 0;display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+                '<div style="display:flex;align-items:center;flex:1;min-width:0;">' +
+                    '<span style="color:' + (colorHex || '#e6edf3') + ';font-size:12.5px;font-weight:bold;line-height:1.3;">' + label + '</span>' +
+                '</div>' +
+                '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">' +
+                    '<input type="number" id="cfg_thr_' + key + '_v216" min="' + minV + '" max="' + maxV + '" step="' + stepV + '" value="' + val + '" ' +
+                        'onchange="window.saveThreadConfigV216(true, event)" ' +
+                        'style="width:54px;padding:4px 6px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#39c5cf;font-weight:bold;font-size:12.5px;text-align:center !important;">' +
+                    '<span style="color:#8b949e;font-size:11px;min-width:24px;">' + unitStr + '</span>' +
+                    '<span class="jenny-help-badge" onclick="if(window.showHelpTopic) window.showHelpTopic(\'' + helpKey + '\', event)" ' +
+                        'style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;cursor:pointer;flex-shrink:0;">❓</span>' +
+                '</div>' +
+            '</div>';
+        };
+
+        box.innerHTML =
+            '<summary style="cursor:pointer;font-weight:bold;color:#39c5cf;display:flex;align-items:center;justify-content:space-between;padding:4px 0;">' +
+                '<span>⚡ Распределение потоков и приоритетов (CPU / Сеть)</span>' +
+                '<span class="jenny-help-badge" onclick="if(window.showHelpTopic) window.showHelpTopic(\'threads_group_v216\', event)" ' +
+                    'style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;cursor:pointer;flex-shrink:0;">❓</span>' +
+            '</summary>' +
+            '<div class="group-content" style="margin-top:8px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+                    '<span style="font-size:11px;color:#8b949e;">Ручная настройка потоков и удержания резерва:</span>' +
+                    '<button type="button" onclick="window.resetThreadConfigV216(event)" style="padding:3px 8px;font-size:11px;background:#21262d;color:#e3b341;border:1px solid #30363d;border-radius:6px;">🔄 Сброс</button>' +
+                '</div>' +
+                mkRow('Поток 1 — Аудио Дека А (RAM / WAV):', 'audioRamWorkers', 1, 8, 1, 'пот.', 'thr_audio_v216', '#58a6ff') +
+                mkRow('Поток 2 — Видео Дека Б (FFmpeg Ремукс):', 'videoFfmpegThreads', 1, 8, 1, 'пот.', 'thr_video_v216', '#ff7b72') +
+                mkRow('Поток 3 — Торрент P2P (буфер вперёд):', 'torrentPrebufferPieces', 2, 32, 1, 'куск.', 'thr_torrent_v216', '#3fb950') +
+                mkRow('Поток 4 — Фоновые модули и сервер:', 'serverPoolThreads', 16, 128, 8, 'пот.', 'thr_server_v216', '#d2a8ff') +
+                '<div style="border-top:1px solid #21262d;margin:6px 0;"></div>' +
+                mkRow('⏱️ Задержка удержания при закрытии ❌:', 'streamHoldDelaySec', 0, 180, 5, 'сек', 'thr_hold_v216', '#e3b341') +
+                '<div style="margin-top:6px;padding:7px 9px;background:#090d14;border:1px solid #21262d;border-radius:8px;font-size:11px;color:#8b949e;line-height:1.4;">' +
+                    '💡 При обычном переключении трека/видео поток мгновенно переходит на следующий файл без разрыва. При закрытии крестиком <b>❌</b> поток ждёт <b>' + cfg.streamHoldDelaySec + ' сек</b> и затем освобождается под закачку.' +
+                '</div>' +
+            '</div>';
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. СТИЛИ V216: КОМПАКТНЫЕ 9-КНОПОЧНЫЕ СТРОКИ УПРАВЛЕНИЯ ПОД ДЕКОЙ Б И ДЕКОЙ А
+    //    (СЛЕГКА СКВАДРАЧЕННЫЕ С КРУГЛЫМИ УГЛАМИ, ВСЕ 9 КНОПОК В ОДНУ СТРОКУ!)
+    // -------------------------------------------------------------------------
+    var styleV216 = document.createElement('style');
+    styleV216.id = 'jennyStyleV216';
+    styleV216.textContent = [
+        '#subDockBar { display: none !important; }',
+        '.jenny-deck-ctrl-row-v216 {',
+        '  display: flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: space-between !important;',
+        '  gap: 4px !important;',
+        '  width: 100% !important;',
+        '  padding: 0 2px !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        '#deckBControlsRowV216 {',
+        '  margin-top: -2px !important;',
+        '  margin-bottom: 7px !important;',
+        '}',
+        '#mainTransportBar.jenny-deck-ctrl-row-v216 {',
+        '  margin-top: -2px !important;',
+        '  margin-bottom: 2px !important;',
+        '}',
+        '.jenny-sq-btn-v216 {',
+        '  flex: 1 1 0 !important;',
+        '  min-width: 0 !important;',
+        '  height: 34px !important;',
+        '  padding: 0 2px !important;',
+        '  border-radius: 9px !important;',
+        '  background: rgba(16, 22, 31, 0.92) !important;',
+        '  border: 1.2px solid rgba(115, 65, 190, 0.55) !important;',
+        '  color: #c9d1d9 !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  gap: 2px !important;',
+        '  cursor: pointer !important;',
+        '  user-select: none !important;',
+        '  box-sizing: border-box !important;',
+        '  box-shadow: 0 2px 6px rgba(0,0,0,0.45) !important;',
+        '  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease !important;',
+        '}',
+        '.jenny-sq-btn-v216:active {',
+        '  transform: scale(0.93) !important;',
+        '}',
+        '.jenny-sq-btn-v216.play-accent-v216 {',
+        '  background: rgba(115, 65, 190, 0.32) !important;',
+        '  border-color: #a371f7 !important;',
+        '  color: #ffffff !important;',
+        '  box-shadow: 0 0 10px rgba(163, 113, 247, 0.35) !important;',
+        '}',
+        '.jenny-sq-btn-v216.deckb-accent-v216 {',
+        '  border-color: rgba(88, 166, 255, 0.52) !important;',
+        '}',
+        '.jenny-sq-btn-v216.deckb-play-v216 {',
+        '  background: rgba(31, 111, 235, 0.28) !important;',
+        '  border-color: #58a6ff !important;',
+        '  color: #ffffff !important;',
+        '  box-shadow: 0 0 10px rgba(88, 166, 255, 0.35) !important;',
+        '}',
+        '#topHeaderCapsule .jenny-icon-pill {',
+        '  width: 30px !important;',
+        '  height: 30px !important;',
+        '  padding: 0 !important;',
+        '  border-radius: 8px !important;',
+        '  flex-shrink: 0 !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(styleV216);
+
+    // Новая правильная SVG-иконка ЭКСПОРТА (стрелка вверх/наружу из лотка!)
+    window.EXPORT_OUT_SVG_V216 = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+
+    // -------------------------------------------------------------------------
+    // 3. ПЕРЕНОС КНОПКИ ПАПКИ (📁) И ТОРРЕНТА (🧲) В ВЕРХНЮЮ ШАПКУ (#topHeaderCapsule)
+    // -------------------------------------------------------------------------
+    window.renderHeaderSourcesHubV91 = function() {
+        var oldBtn = document.getElementById('btnKhinsiderOstV88');
+        var settingsBtn = document.getElementById('btn-settingsModal');
+        var parent = (settingsBtn && settingsBtn.parentElement) || (oldBtn && oldBtn.parentElement);
+        if (!parent) return;
+        parent.style.gap = '4px';
+
+        // Уменьшаем ширину логотипа чуть-чуть, чтобы все кнопки в шапке свободно помещались
+        var logoSvg = document.querySelector('#jennyLogoWrap svg');
+        if (logoSvg) {
+            logoSvg.setAttribute('width', '98');
+            logoSvg.setAttribute('height', '28');
+        }
+
+        // 1) Переносим кнопку выбора папок 📁 (#folderIconTrigger) в шапку первой слева
+        var folderBtn = document.getElementById('folderIconTrigger');
+        if (!folderBtn) {
+            folderBtn = document.createElement('button');
+            folderBtn.type = 'button';
+            folderBtn.id = 'folderIconTrigger';
+            folderBtn.className = 'jenny-icon-pill';
+            folderBtn.title = 'Менеджер папок';
+            folderBtn.onclick = function(ev) { if (window.openFolderManagerModalV62) window.openFolderManagerModalV62(ev); };
+            folderBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+        }
+        folderBtn.style.cssText = 'width:30px;height:30px;padding:0;border-radius:8px;border-color:rgba(88,166,255,0.55);color:#58a6ff;';
+        if (folderBtn.parentElement !== parent || parent.firstElementChild !== folderBtn) {
+            parent.insertBefore(folderBtn, parent.firstElementChild);
+        }
+
+        // 2) Закрепляем кнопку Торрента 🧲 (#btnHeaderTorrentFixedV216) сразу справа от кнопки Папки 📁
+        var torBtn = document.getElementById('btnHeaderTorrentFixedV216');
+        if (!torBtn) {
+            torBtn = document.createElement('button');
+            torBtn.type = 'button';
+            torBtn.id = 'btnHeaderTorrentFixedV216';
+            torBtn.className = 'jenny-icon-pill';
+            torBtn.title = 'Торрент-Студия (P2P / Magnet)';
+            torBtn.onclick = function(ev) { if (window.triggerSourceActionV91) window.triggerSourceActionV91('torrent', ev); };
+        }
+        var torSvg = (window.JENNY_NEON_SVGS_V92 && window.JENNY_NEON_SVGS_V92.torrent)
+            || '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#d2a8ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 0 0 12 0V3"/><line x1="4" y1="3" x2="8" y2="3"/><line x1="16" y1="3" x2="20" y2="3"/></svg>';
+        torBtn.innerHTML = torSvg;
+        torBtn.style.cssText = 'width:30px;height:30px;padding:0;border-radius:8px;border-color:rgba(210,168,255,0.55);';
+        if (torBtn.parentElement !== parent || folderBtn.nextElementSibling !== torBtn) {
+            folderBtn.insertAdjacentElement('afterend', torBtn);
+        }
+
+        // 3) Остальные закреплённые источники (без дублирования torrent) + кнопка меню источников ⊞
+        var hub = document.getElementById('jennySourcesHubBarV91');
+        if (!hub) {
+            hub = document.createElement('div');
+            hub.id = 'jennySourcesHubBarV91';
+            hub.style.cssText = 'display:flex;align-items:center;gap:4px;';
+            if (oldBtn && oldBtn.parentElement === parent) oldBtn.replaceWith(hub);
+            else parent.insertBefore(hub, settingsBtn);
+        } else if (hub.parentElement !== parent) {
+            parent.insertBefore(hub, settingsBtn);
+        }
+
+        var pinned = (window.getPinnedSourcesV91 ? window.getPinnedSourcesV91() : []).filter(function(id) { return id !== 'torrent'; });
+        var btnsHtml = pinned.slice(0, 2).map(function(id) {
+            var s = (window.SOURCES_CATALOG_V91 || []).find(function(x) { return x.id === id; });
+            if (!s) return '';
+            var btnIdAttr = (id === 'ost') ? 'id="btnKhinsiderOstV88"' : 'id="btnPinnedSrc_' + id + '_V91"';
+            return '<button type="button" ' + btnIdAttr + ' class="jenny-icon-pill" onclick="window.triggerSourceActionV91(\'' + s.id + '\', event)" title="' + s.title + '" style="width:30px;height:30px;padding:0;border-radius:8px;">' + s.svg + '</button>';
+        }).join('');
+
+        var hubSvg = (window.JENNY_NEON_SVGS_V92 && window.JENNY_NEON_SVGS_V92.hub) || '⊞';
+        hub.innerHTML = btnsHtml + '<button type="button" id="btnSourcesHubDropV91" class="jenny-icon-pill" onclick="window.toggleSourcesDropdownMenuV91(event)" title="Все источники" style="width:30px;height:30px;padding:0;border-radius:8px;">' + hubSvg + '</button>';
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. СОЗДАНИЕ И СИНХРОНИЗАЦИЯ ДВУХ 9-КНОПОЧНЫХ ПАНЕЛЕЙ (ПОД ДЕКОЙ Б И ПОД ДЕКОЙ А)
+    // -------------------------------------------------------------------------
+    window._deckBVolumePercentV216 = parseInt(localStorage.getItem('jenny_deckb_vol_pct_v216') || '100', 10);
+    if (isNaN(window._deckBVolumePercentV216)) window._deckBVolumePercentV216 = 100;
+
+    window.applyDeckBVolumeV216 = function(pctVal) {
+        var pct = Math.max(0, Math.min(150, Math.round(Number(pctVal))));
+        window._deckBVolumePercentV216 = pct;
+        try { localStorage.setItem('jenny_deckb_vol_pct_v216', String(pct)); } catch (e) {}
+
+        var lbl = document.getElementById('volIconTextDeckBV216');
+        if (lbl) {
+            lbl.innerText = (pct > 100 ? '🔥' : '') + pct + '%';
+            lbl.style.color = pct > 100 ? '#ff7b72' : '#58a6ff';
+        }
+        var bar = document.getElementById('volumeBarDeckBV216');
+        if (bar && Number(bar.value) !== Math.round(pct / 10)) {
+            bar.value = String(Math.round(pct / 10));
+        }
+
+        var gainVal = pct / 100.0;
+        var vid = document.getElementById('jennyVideoElV130');
+        var vd = window.videoDeckV131;
+        if (vid) {
+            try { vid.volume = Math.max(0, Math.min(1.0, gainVal)); } catch (e) {}
+        }
+        if (vd && vd.masterGain && vd.masterGain.gain) {
+            vd.masterGain.gain.value = gainVal;
+        } else if (vd && vd.htmlGain && vd.htmlGain.gain && !(window._vidStateV130 && window._vidStateV130.dspBypass)) {
+            vd.htmlGain.gain.value = gainVal;
+        }
+    };
+
+    window.toggleVolumePopupDeckBV216 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var pop = document.getElementById('volumePopupDeckBV216');
+        if (!pop) return;
+        var isOpen = pop.classList.contains('show');
+        var popA = document.getElementById('volumePopup');
+        if (popA) popA.classList.remove('show');
+        if (isOpen) pop.classList.remove('show');
+        else pop.classList.add('show');
+    };
+
+    window.playAdjacentVideoDeckBV216 = function(dirStep, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var items = window.getFilteredVideoItemsV150 ? window.getFilteredVideoItemsV150() : [];
+        if (!items || items.length === 0) {
+            if (typeof window.showToast === 'function') window.showToast('🎬 В списке видео пока нет файлов', ev);
+            return;
+        }
+        var st = window._vidStateV130 || {};
+        var curTitle = String(st.currentTitle || '').trim();
+        var idx = items.findIndex(function(x) { return x.name === curTitle; });
+        var nextIdx = idx !== -1 ? ((idx + dirStep + items.length) % items.length) : 0;
+        var target = items[nextIdx];
+        if (!target) return;
+        var wasPip = Boolean(st.pipMode || !st.active);
+        var url = target.stream_url || ('/api/media/' + encodeURIComponent(target.name));
+        window.openJennyVideoPlayerV130(url, target.name, {
+            torHash: target.tor_hash || '',
+            torFileIdx: target.tor_file_idx !== undefined ? Number(target.tor_file_idx) : -1,
+            startInPipV135: wasPip
+        });
+    };
+
+    window.togglePlayDeckBV216 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130 || {};
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!st.active || !vid || !st.currentUrl) {
+            window.playAdjacentVideoDeckBV216(0, ev);
+            return;
+        }
+        if (typeof window.toggleVideoPlayPauseV130 === 'function') {
+            window.toggleVideoPlayPauseV130(ev);
+        } else {
+            if (vid.paused) vid.play().catch(function(){});
+            else vid.pause();
+        }
+        window.syncDeckBPlayBtnIconV216();
+    };
+
+    window.syncDeckBPlayBtnIconV216 = function() {
+        var btnB = document.getElementById('playPauseBtnDeckBV216');
+        if (!btnB) return;
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130 || {};
+        var playing = Boolean(st.active && vid && !vid.paused && !vid.ended);
+        btnB.innerHTML = playing
+            ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>'
+            : '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    };
+
+    window.exportOrSaveDeckBV216 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130 || {};
+        if (st.active && st.torHash && st.torFileIdx >= 0 && !st.isReadyLocalV212) {
+            if (typeof window.saveCurrentVideoToLibraryV130 === 'function') {
+                window.saveCurrentVideoToLibraryV130(ev);
+                return;
+            }
+        }
+        if (st.active && st.currentTitle && typeof window.exportCurrentTrack === 'function') {
+            var prevTrack = window.currentPlayingTrack;
+            window.currentPlayingTrack = st.currentTitle;
+            try {
+                window.exportCurrentTrack();
+            } finally {
+                if (prevTrack) window.currentPlayingTrack = prevTrack;
+            }
+            return;
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast('🎬 Сначала запусти видео в Деке Б для экспорта!', ev);
+        }
+    };
+
+    window.openSpectrumForDeckV216 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var isVid = (whichDeck === 'video');
+        window._activeUiDeckV131 = isVid ? 'video' : 'music';
+        if (window._jennyDualDeckV211) window._jennyDualDeckV211.uiFocus = isVid ? 'video' : 'music';
+        if (typeof window.renderDeckSwitchBannersV131 === 'function') window.renderDeckSwitchBannersV131();
+        if (typeof window.openSpectrumModalV62 === 'function') window.openSpectrumModalV62();
+    };
+
+    window.openEqForDeckV216 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var isVid = (whichDeck === 'video');
+        window._activeUiDeckV131 = isVid ? 'video' : 'music';
+        if (window._jennyDualDeckV211) window._jennyDualDeckV211.uiFocus = isVid ? 'video' : 'music';
+        if (typeof window.switchActiveUiDeckV131 === 'function') {
+            try { window.switchActiveUiDeckV131(isVid ? 'video' : 'music'); } catch (e) {}
+        }
+        if (typeof window.toggleModal === 'function') window.toggleModal('eqModal');
+    };
+
+    window.openFavForDeckV216 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var isVid = (whichDeck === 'video');
+        window._favSubTabV216 = isVid ? 'video' : 'audio';
+        // Если нажали сердечко на Деке Б и сейчас играет видео — переключаем/открываем вкладку Избранное на фильтре Видео
+        window.activePlaylistTabV71 = 'fav';
+        if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+        if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+        if (typeof window.showToast === 'function') {
+            window.showToast(isVid ? '❤️ Открыто Избранное: 🎬 Видео' : '❤️ Открыто Избранное: 🎵 Аудио', ev);
+        }
+    };
+
+    window.refreshDeckListV216 = async function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var isVid = (whichDeck === 'video');
+        if (isVid) {
+            var cntB = document.getElementById('tracksCountDeckBV216');
+            if (cntB) cntB.innerText = '⏳';
+            window.activePlaylistTabV71 = 'videos';
+            if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') {
+                await window.syncDiscoveredVideosIntoPlaylistV134(true);
+            }
+            if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+            if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+            var vItems = window.getFilteredVideoItemsV150 ? window.getFilteredVideoItemsV150() : [];
+            if (cntB) cntB.innerText = String(vItems.length);
+            if (typeof window.showToast === 'function') {
+                window.showToast('🔄 Видео Деки Б обновлены: ' + vItems.length + ' шт.', ev);
+            }
+        } else {
+            if (window.activePlaylistTabV71 === 'videos') window.activePlaylistTabV71 = 'all';
+            if (typeof window.smartRefreshCurrentPlaylistV150 === 'function') {
+                await window.smartRefreshCurrentPlaylistV150(ev, false);
+            } else if (typeof window.fetchData === 'function') {
+                await window.fetchData();
+            }
+            window.syncDualDeckCountersV216();
+        }
+    };
+
+    window.syncDualDeckCountersV216 = function() {
+        var data = window.lastData || {};
+        var allAud = (data.all_tracks || []).filter(function(fn) {
+            return !(window.isVideoFileNameV130 && window.isVideoFileNameV130(fn)) &&
+                   (window.isAudioTrackAllowedByFormatSlotsV150 ? window.isAudioTrackAllowedByFormatSlotsV150(fn) : true);
+        });
+        var cntA = document.getElementById('tracksCount');
+        if (cntA && cntA.innerText !== '⏳') {
+            cntA.innerText = String(allAud.length);
+        }
+        var vItems = window.getFilteredVideoItemsV150 ? window.getFilteredVideoItemsV150() : [];
+        var cntB = document.getElementById('tracksCountDeckBV216');
+        if (cntB && cntB.innerText !== '⏳') {
+            cntB.innerText = String(vItems.length);
+        }
+    };
+
+    window.ensureDual9ButtonBarsDOMV216 = function() {
+        window.renderHeaderSourcesHubV91();
+
+        var rowBProg = document.getElementById('deckBProgressRow');
+        var rowAProg = document.getElementById('deckAProgressRow');
+        var mainBar = document.getElementById('mainTransportBar');
+        if (!rowAProg || !mainBar) return;
+
+        // 1) Перестраиваем нижний ряд Деки А (#mainTransportBar) в единую компактную строку из 9 кнопок:
+        //    [🔊] [📤] [⏮] [⏯] [⏭] [🔄 94] [📊] [🤍] [🎚️]
+        if (!mainBar._v216Built) {
+            mainBar._v216Built = true;
+            mainBar.className = 'jenny-deck-ctrl-row-v216';
+
+            var volWrap = document.getElementById('volUIWrapper');
+            var volBtn = document.getElementById('volIconTrigger');
+            var expBtn = document.getElementById('btnExport');
+            var prevBtn = document.getElementById('btnPrev');
+            var playBtn = document.getElementById('playPauseBtn');
+            var nextBtn = document.getElementById('btnNext');
+            var specBtn = document.getElementById('btn-specModal');
+            var favBtn = document.getElementById('btn-favModal');
+            var eqBtn = document.getElementById('btn-eqModal');
+            var cntSpan = document.getElementById('tracksCount');
+            var refBtn = cntSpan ? cntSpan.closest('button') : null;
+
+            if (expBtn) {
+                expBtn.innerHTML = window.EXPORT_OUT_SVG_V216;
+                expBtn.title = 'Экспорт трека (Дека А)';
+            }
+            if (refBtn) {
+                refBtn.onclick = function(ev) { window.refreshDeckListV216('audio', ev); };
+                refBtn.title = 'Обновить аудио Деки А';
+            }
+            if (specBtn) {
+                specBtn.onclick = function(ev) { window.openSpectrumForDeckV216('audio', ev); };
+            }
+            if (favBtn) {
+                favBtn.onclick = function(ev) { window.openFavForDeckV216('audio', ev); };
+            }
+            if (eqBtn) {
+                eqBtn.onclick = function(ev) { window.openEqForDeckV216('audio', ev); };
+            }
+
+            [volBtn, expBtn, prevBtn, playBtn, nextBtn, refBtn, specBtn, favBtn, eqBtn].forEach(function(b) {
+                if (!b) return;
+                b.className = 'jenny-sq-btn-v216' + (b === playBtn ? ' play-accent-v216' : '');
+                b.style.cssText = '';
+                var svg = b.querySelector('svg');
+                if (svg) {
+                    svg.setAttribute('width', b === playBtn ? '18' : '15');
+                    svg.setAttribute('height', b === playBtn ? '18' : '15');
+                }
+            });
+
+            if (volWrap) {
+                volWrap.style.cssText = 'position:relative;display:flex;flex:1 1 0;min-width:0;height:34px;';
+                if (volBtn) volBtn.style.cssText = 'width:100% !important;height:34px !important;';
+            }
+
+            // Очищаем #mainTransportBar и выстраиваем все 9 элементов напрямую в одну флекс-строку
+            mainBar.innerHTML = '';
+            [volWrap, expBtn, prevBtn, playBtn, nextBtn, refBtn, specBtn, favBtn, eqBtn].forEach(function(el) {
+                if (el) mainBar.appendChild(el);
+            });
+        }
+
+        // 2) Создаём точно такую же компактную строку из 9 кнопок для Деки Б (#deckBControlsRowV216) прямо ПОД #deckBProgressRow
+        var ctrlB = document.getElementById('deckBControlsRowV216');
+        if (!ctrlB && rowBProg) {
+            ctrlB = document.createElement('div');
+            ctrlB.id = 'deckBControlsRowV216';
+            ctrlB.className = 'jenny-deck-ctrl-row-v216';
+            ctrlB.style.display = 'none';
+            ctrlB.innerHTML =
+                '<div id="volUIWrapperDeckBV216" style="position:relative;display:flex;flex:1 1 0;min-width:0;height:34px;">' +
+                    '<button type="button" id="volIconTriggerDeckBV216" class="jenny-sq-btn-v216 deckb-accent-v216" style="width:100% !important;height:34px !important;" onclick="window.toggleVolumePopupDeckBV216(event)" title="Громкость видео (Дека Б)">' +
+                        '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>' +
+                    '</button>' +
+                    '<div id="volumePopupDeckBV216" class="vol-popup">' +
+                        '<span id="volIconTextDeckBV216" style="color:#58a6ff;font-size:10px;font-weight:bold;">100%</span>' +
+                        '<input type="range" id="volumeBarDeckBV216" class="vt-slider" min="0" max="15" step="1" value="10" oninput="window.applyDeckBVolumeV216(this.value * 10)">' +
+                    '</div>' +
+                '</div>' +
+                '<button type="button" id="btnExportDeckBV216" class="jenny-sq-btn-v216 deckb-accent-v216" onclick="window.exportOrSaveDeckBV216(event)" title="Экспорт / Сохранение видео (Дека Б)">' +
+                    window.EXPORT_OUT_SVG_V216 +
+                '</button>' +
+                '<button type="button" id="btnPrevDeckBV216" class="jenny-sq-btn-v216 deckb-accent-v216" onclick="window.playAdjacentVideoDeckBV216(-1, event)" title="Предыдущее видео">' +
+                    '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>' +
+                '</button>' +
+                '<button type="button" id="playPauseBtnDeckBV216" class="jenny-sq-btn-v216 deckb-play-v216" onclick="window.togglePlayDeckBV216(event)" title="Плей / Пауза видео (Дека Б)">' +
+                    '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+                '</button>' +
+                '<button type="button" id="btnNextDeckBV216" class="jenny-sq-btn-v216 deckb-accent-v216" onclick="window.playAdjacentVideoDeckBV216(1, event)" title="Следующее видео">' +
+                    '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>' +
+                '</button>' +
+                '<button type="button" id="btnRefreshDeckBV216" class="jenny-sq-btn-v216 deckb-accent-v216" onclick="window.refreshDeckListV216(\'video\', event)" title="Обновить список видео (Дека Б)">' +
+                    '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>' +
+                    '<span id="tracksCountDeckBV216" style="color:#58a6ff;font-weight:bold;font-size:10.5px;">0</span>' +
+                '</button>' +
+                '<button type="button" id="btnSpecDeckBV216" class="jenny-sq-btn-v216 deckb-accent-v216" onclick="window.openSpectrumForDeckV216(\'video\', event)" title="Анализатор спектра (Дека Б)">' +
+                    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="20" x2="4" y2="14"/><line x1="9" y1="20" x2="9" y2="8"/><line x1="14" y1="20" x2="14" y2="4"/><line x1="19" y1="20" x2="19" y2="11"/></svg>' +
+                '</button>' +
+                '<button type="button" id="btnFavDeckBV216" class="jenny-sq-btn-v216 deckb-accent-v216" onclick="window.openFavForDeckV216(\'video\', event)" title="Избранное видео (Дека Б)">' +
+                    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>' +
+                '</button>' +
+                '<button type="button" id="btnEqDeckBV216" class="jenny-sq-btn-v216 deckb-accent-v216" onclick="window.openEqForDeckV216(\'video\', event)" title="Эквалайзер и DSP (Дека Б)">' +
+                    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>' +
+                '</button>';
+            rowBProg.insertAdjacentElement('afterend', ctrlB);
+            window.applyDeckBVolumeV216(window._deckBVolumePercentV216);
+        }
+
+        // Закрытие всплывашки громкости Деки Б при клике снаружи
+        if (!window._volDeckBOutsideClickHookedV216) {
+            window._volDeckBOutsideClickHookedV216 = true;
+            document.addEventListener('click', function(e) {
+                var popB = document.getElementById('volumePopupDeckBV216');
+                var wrapB = document.getElementById('volUIWrapperDeckBV216');
+                if (popB && popB.classList.contains('show') && wrapB && !wrapB.contains(e.target)) {
+                    popB.classList.remove('show');
+                }
+            });
+        }
+
+        // Синхронизируем видимость рядов кнопок с видимостью Деки А и Деки Б
+        var dState = window._jennyDualDeckV211 || { deckA: true, deckB: false };
+        var showA = Boolean(dState.deckA);
+        var showB = Boolean(dState.deckB);
+        if (ctrlB) ctrlB.style.setProperty('display', showB ? 'flex' : 'none', 'important');
+        if (mainBar) mainBar.style.setProperty('display', showA ? 'flex' : 'none', 'important');
+
+        window.syncDeckBPlayBtnIconV216();
+        window.syncDualDeckCountersV216();
+    };
+
+    var _origSyncDualVisV216 = window.syncDualDeckVisibilityAndAudioV211;
+    if (typeof _origSyncDualVisV216 === 'function' && !_origSyncDualVisV216._v216Wrapped) {
+        window.syncDualDeckVisibilityAndAudioV211 = function() {
+            var r = _origSyncDualVisV216.apply(this, arguments);
+            window.ensureDual9ButtonBarsDOMV216();
+            return r;
+        };
+        window.syncDualDeckVisibilityAndAudioV211._v216Wrapped = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. ПОДСПИСОК [🎵 АУДИО] / [🎬 ВИДЕО] ВНУТРИ ВКЛАДКИ "❤️ ИЗБРАННОЕ" (71417.mp4, 03:35-03:55)
+    //    И СТАТУС "⏳ ЗАГРУЗКА МЕДИАТЕКИ..." ПРИ ХОЛОДНОМ СТАРТЕ (71419.mp4, 02:31-02:36)
+    // -------------------------------------------------------------------------
+    window._favSubTabV216 = window._favSubTabV216 || 'audio';
+    window._initialLibraryLoadedV216 = false;
+
+    var _origFetchDataV216 = window.fetchData;
+    if (typeof _origFetchDataV216 === 'function' && !_origFetchDataV216._v216Wrapped) {
+        window.fetchData = async function() {
+            var r = await _origFetchDataV216.apply(this, arguments);
+            window._initialLibraryLoadedV216 = true;
+            window.syncDualDeckCountersV216();
+            return r;
+        };
+        window.fetchData._v216Wrapped = true;
+    }
+
+    var _origRenderActivePlV216 = window.renderActivePlaylistTracksV71;
+    if (typeof _origRenderActivePlV216 === 'function' && !_origRenderActivePlV216._v216Wrapped) {
+        window.renderActivePlaylistTracksV71 = function(preserveScroll) {
+            var tabId = window.activePlaylistTabV71 || 'all';
+            var unifiedBox = document.getElementById('unifiedList');
+
+            // 1) При холодном старте (пока первый запрос ещё идёт) во вкладке «Видео» пишем «⏳ Загрузка медиатеки...», а не «Видеофайлов нет»!
+            if (tabId === 'videos' && !window._initialLibraryLoadedV216) {
+                var vItemsInit = window.getFilteredVideoItemsV150 ? window.getFilteredVideoItemsV150() : [];
+                if (vItemsInit.length === 0 && unifiedBox) {
+                    unifiedBox.innerHTML = '<div style="padding:26px;color:#58a6ff;text-align:center;font-weight:bold;">⏳ Загрузка медиатеки...</div>';
+                    return;
+                }
+            }
+
+            // 2) Если открыта вкладка «❤️ Избранное» (tabId === 'fav') — выводим под ней 2 кнопки пополам: [🎵 Аудио] и [🎬 Видео]!
+            if (tabId === 'fav' && unifiedBox) {
+                window.mountPlaylistStripDOMV71();
+                var subWrap = document.getElementById('jennySubFilterWrapV71');
+                var favAll = Array.isArray(window.favorites) ? window.favorites : [];
+                var favVid = favAll.filter(function(fn) { return window.isVideoFileNameV130 && window.isVideoFileNameV130(fn); });
+                var favAud = favAll.filter(function(fn) { return !(window.isVideoFileNameV130 && window.isVideoFileNameV130(fn)); });
+
+                var mode = window._favSubTabV216 || 'audio';
+                if (mode === 'audio' && favAud.length === 0 && favVid.length > 0) mode = 'video';
+                if (mode === 'video' && favVid.length === 0 && favAud.length > 0) mode = 'audio';
+                window._favSubTabV216 = mode;
+
+                if (subWrap) {
+                    var isAud = (mode === 'audio');
+                    subWrap.innerHTML =
+                        '<div id="jennySubFilterBarActiveV73" class="jenny-subfilter-bar-v71" style="display:flex;width:100%;gap:6px;padding:2px 0;">' +
+                            '<div class="jenny-pl-chip-v71' + (isAud ? ' active-pl-chip' : '') + '" onclick="window._favSubTabV216=\'audio\';window.renderActivePlaylistTracksV71(false);" style="flex:1;justify-content:center;text-align:center;">' +
+                                '🎵 Аудио <span class="jenny-pl-chip-count-v71">' + favAud.length + '</span>' +
+                            '</div>' +
+                            '<div class="jenny-pl-chip-v71' + (!isAud ? ' active-pl-chip' : '') + '" onclick="window._favSubTabV216=\'video\';window.renderActivePlaylistTracksV71(false);" style="flex:1;justify-content:center;text-align:center;">' +
+                                '🎬 Видео <span class="jenny-pl-chip-count-v71">' + favVid.length + '</span>' +
+                            '</div>' +
+                        '</div>';
+                }
+                if (typeof window.syncHeaderHeightWithModalsV71 === 'function') {
+                    window.syncHeaderHeightWithModalsV71();
+                }
+
+                var targetList = (mode === 'video') ? favVid : favAud;
+                var sorted = window.sortTrackArrayForTabV71 ? window.sortTrackArrayForTabV71(targetList, 'fav') : targetList;
+                window.viewedFullTabListV73 = sorted.slice();
+                window.currentTrackList = sorted;
+                if (typeof window.updateScopedSearchPlaceholderV73 === 'function') {
+                    window.updateScopedSearchPlaceholderV73(sorted.length);
+                }
+
+                if (sorted.length === 0) {
+                    unifiedBox.innerHTML = '<div style="padding:22px;color:#8b949e;text-align:center;">' +
+                        (mode === 'video' ? '🎬 В избранном пока нет видеофайлов' : '🎵 В избранном пока нет аудиотреков') +
+                        '</div>';
+                } else {
+                    unifiedBox.innerHTML = sorted.map(function(fn) {
+                        return window.buildTrackRowHTML(fn, 'fav', '❤️');
+                    }).join('');
+                }
+                if (typeof window.decorateVideoIconsInListV130 === 'function') {
+                    window.decorateVideoIconsInListV130();
+                }
+                return;
+            }
+
+            return _origRenderActivePlV216.apply(this, arguments);
+        };
+        window.renderActivePlaylistTracksV71._v216Wrapped = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. МГНОВЕННЫЙ СТАРТ СЖАТОГО ПОТОКА ("⏳ RAM (пока играет сжатый...)") ЗА 0.2 СЕК
+    //    И ЗАЩИТА ОТ ЗАВИСАНИЯ НА "05. Beautiful World_compare.wav" (71420, 71418, 71419)
+    // -------------------------------------------------------------------------
+    window._audioTrackLoadSeqV216 = 0;
+    window._audioRamAbortCtrlV216 = null;
+
+    window.abortPendingAudioRamLoadsV216 = function() {
+        if (window._audioRamAbortCtrlV216) {
+            try { window._audioRamAbortCtrlV216.abort(); } catch (e) {}
+            window._audioRamAbortCtrlV216 = null;
+        }
+        if (window._pieceAbortCtrlV72) {
+            try { window._pieceAbortCtrlV72.abort(); } catch (e) {}
+            window._pieceAbortCtrlV72 = null;
+        }
+    };
+
+    window.playTrack = async function(filename, listContext) {
+        if (!filename) return;
+        listContext = listContext || 'main';
+
+        // Если это видеофайл — открываем его в видеоплеере Деки Б!
+        if (window.isVideoFileNameV130 && window.isVideoFileNameV130(filename)) {
+            window.openJennyVideoPlayerV130('/api/media/' + encodeURIComponent(filename), filename, {});
+            return;
+        }
+
+        // Отменяем все незавершённые фоновые загрузки предыдущего трека, чтобы пул HTTP-соединений был 100% свободен!
+        var mySeq = ++window._audioTrackLoadSeqV216;
+        window.abortPendingAudioRamLoadsV216();
+
+        window._jennyDualDeckV211 = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music' };
+        window._jennyDualDeckV211.deckA = true;
+        if (typeof window.saveDualDeckStateV211 === 'function') window.saveDualDeckStateV211();
+        if (typeof window.syncDualDeckVisibilityAndAudioV211 === 'function') window.syncDualDeckVisibilityAndAudioV211();
+        if (typeof window.renderDeckSwitchBannersV131 === 'function') window.renderDeckSwitchBannersV131();
+
+        if (typeof window.ensurePlaylistStateV71 === 'function') window.ensurePlaylistStateV71();
+        if (window.appConfig && window.appConfig.trackPlayStatsV71) {
+            var stStat = window.appConfig.trackPlayStatsV71[filename] || { count: 0, last: 0 };
+            stStat.count = (stStat.count || 0) + 1;
+            stStat.last = Date.now();
+            window.appConfig.trackPlayStatsV71[filename] = stStat;
+            try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        }
+
+        if (window.dnaDirect1xActiveV76 && filename !== window.currentPlayingTrack && typeof window.resetDnaModeOnTrackChangeV83 === 'function') {
+            window.resetDnaModeOnTrackChangeV83();
+        }
+
+        if (listContext !== 'queue' && (!window.playingQueueListV73 || !window.playingQueueListV73.includes(filename))) {
+            if (typeof window.lockCurrentViewAsPlayingQueueV73_1 === 'function') {
+                window.lockCurrentViewAsPlayingQueueV73_1(filename);
+            }
+        }
+        var savedQueue = (window.playingQueueListV73 && window.playingQueueListV73.length > 0)
+            ? window.playingQueueListV73.slice()
+            : null;
+
+        if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+        if (window.audioCtx && window.audioCtx.state === 'suspended') {
+            try { window.audioCtx.resume(); } catch (e) {}
+        }
+        if (typeof window.applyEQSettings === 'function') window.applyEQSettings();
+        if (typeof window.changeVolume === 'function') window.changeVolume();
+
+        var targetSpeed = typeof window.getTargetPlaybackSpeed === 'function' ? window.getTargetPlaybackSpeed() : 1.0;
+        var keepLocked = Boolean((window.scrubState && window.scrubState.locked) || (window.persistedPlaybackSpeed && window.persistedPlaybackSpeed !== 1.0));
+        var activeSide = (window.scrubState && window.scrubState.side) || window.persistedPlaybackSide || 'right';
+
+        window.currentPlayingTrack = filename;
+        window.currentListContext = listContext;
+        if (savedQueue) {
+            window.playingQueueListV73 = savedQueue;
+            window.currentTrackList = savedQueue;
+        }
+        if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+
+        var player = document.getElementById('audioPlayer');
+        var titleEl = document.getElementById('nowPlaying');
+
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+            window.studioSourceNode = null;
+        }
+        window.isStudioPlaying = false;
+        window.studioBuffer = null;
+        window.reversedStudioBuffer = null;
+        window.reconstructedMasterBufferV67 = null;
+        window.reconstructedReversedBufferV67 = null;
+        window.currentTrackRevMapV67 = null;
+        window._userPausedV75_2 = false;
+
+        if (keepLocked && window.scrubState) {
+            window.scrubState.locked = true;
+            window.scrubState.active = false;
+            window.scrubState.speed = targetSpeed;
+            window.scrubState.side = activeSide;
+            window.scrubState.isPhysicallyReversed = (activeSide === 'left');
+            var lockEl = document.getElementById('speedLockIndicator');
+            if (lockEl) {
+                lockEl.style.display = 'block';
+                lockEl.innerText = '🔒 ' + (activeSide === 'left' ? '⏪' : '⏩') + ' x' + targetSpeed;
+            }
+        } else if (window.scrubState && window.scrubState.active) {
+            if (typeof window.stopScrub === 'function') window.stopScrub(false);
+        }
+
+        var isRevMode = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        if (typeof window.updateProgressUI === 'function') window.updateProgressUI(0, 0, isRevMode);
+        if (typeof window.updateCenterCurrentTime === 'function') window.updateCenterCurrentTime(0, 0, isRevMode);
+
+        // Проверяем быстрый RAM-кэш последних треков
+        window._ramTrackHistoryV71 = window._ramTrackHistoryV71 || [];
+        var cachedEntry = window._ramTrackHistoryV71.find(function(x) { return x.name === filename && x.buf; });
+
+        var mediaUrl = (cachedEntry && cachedEntry.blobUrl) ? cachedEntry.blobUrl : ('/api/media/' + encodeURIComponent(filename));
+
+        // КРИТИЧЕСКИЙ МОМЕНТ V216: СРАЗУ запускаем сжатый/потоковый звук через <audio> в 1-ю миллисекунду (без ожидания fetch/blob!)
+        // и СРАЗУ выводим в шкалу прогресса "⏳ RAM (пока играет сжатый...): "!
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+        if (player) {
+            player.loop = false;
+            player.src = mediaUrl;
+            player.currentTime = 0;
+            try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch (e) {}
+            player.preservesPitch = true;
+            player.play().catch(function(){});
+        }
+
+        var startPlayWallMs = performance.now();
+        var useStudioRam = Boolean(!window.appConfig || window.appConfig.studioMode !== false);
+        if (titleEl) {
+            titleEl.innerText = (useStudioRam ? '⏳ RAM (пока играет сжатый...): ' : '🎵 ') + filename;
+        }
+        if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+
+        if (!useStudioRam) return;
+
+        // Фоновая распаковка в RAM с поддержкой отмены при переключении трека
+        var abortCtrl = new AbortController();
+        window._audioRamAbortCtrlV216 = abortCtrl;
+
+        try {
+            var decodedBuffer = null;
+            if (cachedEntry && cachedEntry.buf) {
+                decodedBuffer = cachedEntry.buf;
+            } else {
+                var metaCheck = { duration: 0, size: 0 };
+                try {
+                    var mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
+                    if (mr.ok) metaCheck = await mr.json();
+                } catch (e) {
+                    if (abortCtrl.signal.aborted || mySeq !== window._audioTrackLoadSeqV216) return;
+                }
+                if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+
+                if (!metaCheck.size || metaCheck.size <= 95 * 1024 * 1024) {
+                    try {
+                        var response = await fetch('/api/media/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
+                        if (response.ok) {
+                            var arrayBuffer = await response.arrayBuffer();
+                            if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+                            decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
+                            if (decodedBuffer) {
+                                window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(function(x) { return x.name !== filename; }).slice(0, 1);
+                                window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: null });
+                            }
+                        }
+                    } catch (decErr) {
+                        if (abortCtrl.signal.aborted || mySeq !== window._audioTrackLoadSeqV216) return;
+                        decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+                    }
+                } else {
+                    decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+                    if (decodedBuffer && mySeq === window._audioTrackLoadSeqV216) {
+                        window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(function(x) { return x.name !== filename; }).slice(0, 1);
+                        window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: null });
+                    }
+                }
+            }
+
+            if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+
+            if (!decodedBuffer) {
+                if (titleEl) titleEl.innerText = '🎵 ' + filename;
+                return;
+            }
+
+            // Даём сжатому потоку ("⏳ RAM (пока играет сжатый...)") спокойно отыграть ~1.8 секунды,
+            // чтобы пользователь видел индикацию внутри шкалы прогресса и старт шёл без микро-щелчка на первой секунде!
+            var elapsedMs = performance.now() - startPlayWallMs;
+            if (elapsedMs < 1800 && !isRevMode) {
+                await new Promise(function(r) { setTimeout(r, 1800 - elapsedMs); });
+            }
+            if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+
+            window.studioBuffer = decodedBuffer;
+            if (typeof window.loadTrackReversibleDataV67 === 'function') {
+                window.loadTrackReversibleDataV67(filename, decodedBuffer);
+            }
+
+            var isHugeTrack = (decodedBuffer.duration > 900);
+            if (!isHugeTrack && !window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+                window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
+            }
+            if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+            if (titleEl) {
+                var hasRev = Boolean(window.reversedStudioBuffer);
+                titleEl.innerText = (hasRev ? 'RAM ⏩⏪ 🚀: ' : 'RAM 🚀: ') + filename;
+            }
+            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+        } catch (err) {
+            if (mySeq === window._audioTrackLoadSeqV216 && window.currentPlayingTrack === filename && titleEl) {
+                if (player && !player.paused) titleEl.innerText = '🎵 ' + filename;
+                else titleEl.innerText = '❌ Ошибка загрузки: ' + filename;
+            }
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 7. АВТОМАТИЧЕСКОЕ ВКЛЮЧЕНИЕ ЗВУКОВОЙ ДОРОЖКИ В .MKV СО СТАРТА (БЕЗ НАЖАТИЯ 🛠️ MKV),
+    //    ПЕРЕКЛЮЧЕНИЕ АУДИОДОРОЖЕК КНОПКОЙ 🛠️ MKV, ФИКСАЦИЯ ПОЛНОЙ ДЛИТЕЛЬНОСТИ И ТОЧНАЯ ПЕРЕМОТКА
+    // -------------------------------------------------------------------------
+    window.getEffectiveVideoDurationV167 = window.getEffectiveVideoDurationV210 = function(vid) {
+        if (!vid) vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        var probeDur = (window._vcoreLastProbeV166 && window._vcoreLastProbeV166.duration_sec) || window._jennyFullMovieDurationSecV210 || 0;
+
+        // Если нативное видео (до включения live_remux) уже сообщило реальную длительность серии (>35 сек) — запоминаем её в st.trueDuration!
+        if (vid && !st.usingRemux && isFinite(vid.duration) && vid.duration > 35) {
+            st.trueDuration = Math.max(st.trueDuration || 0, vid.duration);
+        }
+
+        if (st.trueDuration && st.trueDuration > 12.5) return st.trueDuration;
+        if (st.knownDurationSec && st.knownDurationSec > 12.5) return st.knownDurationSec;
+        if (vd.studioBuffer && vd.studioBuffer._trueDurationV72 > 12.5) return vd.studioBuffer._trueDurationV72;
+        if (probeDur > 12.5) return probeDur;
+
+        // ВНИМАНИЕ V216: если включён потоковый ремукс (st.usingRemux), vid.duration равен только длине подгруженного куска (0:03 -> 0:06 -> 0:22).
+        // Никогда не возвращаем растущий кусок vid.duration как общую длительность фильма!
+        if (!st.usingRemux && vid && isFinite(vid.duration) && vid.duration > 0) {
+            return vid.duration;
+        }
+        return st.trueDuration || st.knownDurationSec || probeDur || 0;
+    };
+
+    window.getEffectiveVideoCurrentTimeV167 = window.getEffectiveVideoCurrentTimeV210 = function(vid) {
+        if (!vid) vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130 || {};
+        if (st._pendingSeekSecV167 !== undefined) {
+            var dt = performance.now() - (st._pendingSeekTsV167 || 0);
+            if (dt < 2600 || window._vidIsBufferingV132 || !vid || vid.readyState < 2) {
+                return st._pendingSeekSecV167;
+            }
+            st._pendingSeekSecV167 = undefined;
+        }
+        var rawCur = (vid && isFinite(vid.currentTime)) ? vid.currentTime : 0;
+        return rawCur + (st.remuxBaseOffset || 0);
+    };
+
+    // Кнопка 🛠️ MKV теперь:
+    // - автоматически активна со старта для всех .mkv и .avi (поэтому звук есть сразу с 0:00!),
+    // - а при ручном нажатии переключает аудиодорожки (Дорожка #1 -> Дорожка #2 -> Дорожка #1, например RUS / ENG)!
+    window.switchVideoToFfmpegRemuxV130 = function(ev, forceTranscodeVideo) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130;
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!vid || !st || !st.currentUrl) return;
+
+        // Сохраняем полную длительность, если она уже была известна до переключения на ремукс
+        if (isFinite(vid.duration) && vid.duration > 35 && !st.usingRemux) {
+            st.trueDuration = Math.max(st.trueDuration || 0, vid.duration);
+        }
+
+        var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+        if (ev) {
+            // Ручное нажатие кнопки 🛠️ MKV: если ремукс уже шёл, переключаем следующую звуковую дорожку (0 -> 1 -> 2 -> 0)
+            if (st.usingRemux) {
+                st.audioTrackIdxV216 = ((st.audioTrackIdxV216 || 0) + 1) % 3;
+            } else {
+                st.audioTrackIdxV216 = 0;
+            }
+        } else {
+            st.audioTrackIdxV216 = st.audioTrackIdxV216 || 0;
+        }
+
+        st.usingRemux = true;
+        st.remuxBaseOffset = curSec;
+        st._pendingSeekSecV167 = curSec;
+        st._pendingSeekTsV167 = performance.now();
+        window._vidPlayIntentV132 = true;
+        window._vidIsBufferingV132 = true;
+        if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+
+        var isAvi = Boolean(forceTranscodeVideo || /\.avi(\?|$)/i.test(String(st.currentTitle || '') + ' ' + String(st.currentUrl || '')));
+        var tcFlag = isAvi ? '1' : '0';
+        var aIdx = st.audioTrackIdxV216 || 0;
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl;
+        var dur = window.getEffectiveVideoDurationV167(vid);
+
+        var btnRemux = document.getElementById('v130BtnRemux');
+        if (btnRemux) {
+            btnRemux.innerText = '🔊 Дорожка #' + (aIdx + 1);
+            btnRemux.style.borderColor = '#3fb950';
+            btnRemux.style.color = '#3fb950';
+        }
+
+        vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+            '&start=' + curSec.toFixed(2) +
+            '&dur=' + (dur || 0).toFixed(2) +
+            '&aidx=' + aIdx +
+            '&transcode=' + tcFlag +
+            '&t=' + Date.now();
+        vid.play().catch(function(){});
+
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            if (ev) {
+                window.showVideoFeedbackV130('🔊 Аудиодорожка #' + (aIdx + 1) + ' (FFmpeg AAC)');
+            } else if (isAvi) {
+                window.showVideoFeedbackV130('🛠️ Потоковый декодер FFmpeg (AVI ➔ MP4)');
+            }
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Чистая синхронная перемотка без изменения remuxBaseOffset во время ведения пальцем (isLiveDrag)
+    window.seekDeckBAndPlayerSyncedV212 = function(targetSec, isLiveDrag) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        if (!vid || !st || !st.active) return;
+
+        var dur = window.getEffectiveVideoDurationV167(vid);
+        var cleanSec = (isFinite(dur) && dur > 0)
+            ? Math.max(0, Math.min(Math.max(0, dur - 0.35), targetSec))
+            : Math.max(0, targetSec);
+
+        st._pendingSeekSecV167 = cleanSec;
+        st._pendingSeekTsV167 = performance.now();
+
+        var fmt = window.formatVideoTimeV210 || window.fmtKhSecV90 || function(s) {
+            s = Math.max(0, Math.floor(s || 0));
+            var m = Math.floor(s / 60), sc = s % 60;
+            return m + ':' + (sc < 10 ? '0' + sc : sc);
+        };
+
+        var cEl = document.getElementById('v130CurTime');
+        var dEl = document.getElementById('v130DurTime');
+        var seek = document.getElementById('v130SeekSlider');
+        if (cEl) cEl.innerText = fmt(cleanSec);
+        if (dEl) dEl.innerText = dur > 0 ? fmt(dur) : 'Поток';
+        if (seek && dur > 0) {
+            seek.max = '1000';
+            seek.value = String(Math.max(0, Math.min(1000, Math.round((cleanSec / dur) * 1000))));
+        }
+
+        var isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || (vd && vd.isReversed));
+        if (typeof window.updateProgressUIDeckB === 'function') {
+            window.updateProgressUIDeckB(cleanSec, dur, isRev);
+        }
+
+        // Пока палец ведёт ползунок (isLiveDrag === true) — обновляем ТОЛЬКО визуальные цифры и шкалу,
+        // НЕ трогая st.remuxBaseOffset и НЕ перезапуская FFmpeg посреди движения пальца!
+        if (isLiveDrag) {
+            return;
+        }
+
+        var isAviFile = /\.avi(\?|$)/i.test(String(st.currentTitle || '') + ' ' + String(st.currentUrl || ''));
+        var isMkvOrRemuxType = /\.(mkv|avi|ts|m2ts|wmv|flv)(\?|$)/i.test(String(st.currentTitle || '') + ' ' + String(st.currentUrl || ''));
+        var needsRemuxSeek = Boolean(st.usingRemux || isAviFile || isMkvOrRemuxType || (st.torHash && !st.isReadyLocalV212));
+
+        if (st.torHash && dur > 0) {
+            var seekRatio = Math.max(0, Math.min(0.995, cleanSec / dur));
+            fetch('/api/torrent/seek_boost', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hash: st.torHash, file_index: Number(st.torFileIdx || 0), ratio: seekRatio })
+            }).catch(function(){});
+        }
+
+        if (needsRemuxSeek) {
+            st.usingRemux = true;
+            st.remuxBaseOffset = cleanSec;
+            window._vidPlayIntentV132 = true;
+            window._vidIsBufferingV132 = true;
+            if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+            var tcFlag = isAviFile ? '1' : '0';
+            var aIdx = st.audioTrackIdxV216 || 0;
+            var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl;
+            vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+                '&start=' + cleanSec.toFixed(2) +
+                '&dur=' + (dur || 0).toFixed(2) +
+                '&aidx=' + aIdx +
+                '&transcode=' + tcFlag +
+                '&t=' + Date.now();
+            if (!st.userPaused) vid.play().catch(function(){});
+        } else {
+            st.remuxBaseOffset = 0;
+            try { vid.currentTime = cleanSec; } catch (e) {}
+            if (!st.userPaused && (vid.paused || vid.ended) && !isRev) {
+                vid.play().catch(function(){});
+            }
+        }
+
+        window.syncVideoRamEngineV211(false);
+        if (typeof window.saveCurrentVideoProgressV135 === 'function') {
+            window.saveCurrentVideoProgressV135();
+        }
+    };
+
+    window.seekVideoToExactSecondV167 = function(targetSec) {
+        window.seekDeckBAndPlayerSyncedV212(targetSec, false);
+    };
+    window.seekDeckBVideoToSecV210 = function(targetSec) {
+        window.seekDeckBAndPlayerSyncedV212(targetSec, false);
+    };
+
+    // Очищаем ползунок #v130SeekSlider от дублирующих старых слушателей (V130/V167/V212) через клонирование узла
+    function bindCleanSingleCommitVideoSliderV216() {
+        var origSeek = document.getElementById('v130SeekSlider');
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!origSeek || !vid || origSeek._v216CleanBound) return;
+
+        var seek = origSeek.cloneNode(true);
+        seek._v216CleanBound = true;
+        seek._v167Bound = true;
+        seek._v212UnifiedBound = true;
+        seek.max = '1000';
+        seek.min = '0';
+        origSeek.replaceWith(seek);
+
+        var lastDragSec = 0;
+
+        var ratioFromEv = function(e) {
+            var cx = undefined;
+            if (e && e.touches && e.touches.length > 0) cx = e.touches[0].clientX;
+            else if (e && e.changedTouches && e.changedTouches.length > 0) cx = e.changedTouches[0].clientX;
+            else if (e && typeof e.clientX === 'number' && e.clientX > 0) cx = e.clientX;
+            var rect = seek.getBoundingClientRect();
+            if (typeof cx === 'number' && rect.width > 12) {
+                return Math.max(0, Math.min(1, (cx - rect.left) / rect.width));
+            }
+            return Math.max(0, Math.min(1, (parseFloat(seek.value) || 0) / 1000.0));
+        };
+
+        var onMovePreview = function(e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            window._v130UserDraggingSeekV212 = true;
+            var dur = window.getEffectiveVideoDurationV167(vid);
+            if (!isFinite(dur) || dur <= 0) return;
+            var r = ratioFromEv(e);
+            seek.value = String(Math.round(r * 1000));
+            lastDragSec = r * dur;
+            window.seekDeckBAndPlayerSyncedV212(lastDragSec, true);
+            if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+        };
+
+        var onCommit = function(e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            if (!window._v130UserDraggingSeekV212 && e && e.type !== 'click') return;
+            var dur = window.getEffectiveVideoDurationV167(vid);
+            if (isFinite(dur) && dur > 0) {
+                var r = ratioFromEv(e);
+                seek.value = String(Math.round(r * 1000));
+                lastDragSec = r * dur;
+                window.seekDeckBAndPlayerSyncedV212(lastDragSec, false);
+            }
+            window._v130LastDragCommitTsV212 = performance.now();
+            window._v130UserDraggingSeekV212 = false;
+            if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+        };
+
+        seek.addEventListener('touchstart', onMovePreview, { passive: true });
+        seek.addEventListener('touchmove', onMovePreview, { passive: true });
+        seek.addEventListener('touchend', onCommit, { passive: true });
+        seek.addEventListener('touchcancel', onCommit, { passive: true });
+        seek.addEventListener('mousedown', onMovePreview);
+        seek.addEventListener('mousemove', function(e) { if (window._v130UserDraggingSeekV212) onMovePreview(e); });
+        seek.addEventListener('mouseup', onCommit);
+        seek.addEventListener('input', onMovePreview);
+        seek.addEventListener('change', onCommit);
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. ОТКРЫТИЕ ВИДЕО (АВТО-РЕМУКС ДЛЯ ВСЕХ .MKV / .AVI СО СТАРТА + ПРОБИНГ ДЛИТЕЛЬНОСТИ)
+    //    И ЗАКРЫТИЕ ВИДЕО С 20-СЕКУНДНЫМ УДЕРЖАНИЕМ ПОТОКА (71420, 71418, 71419, 71421)
+    // -------------------------------------------------------------------------
+    window._vidHoldReleaseTimerV216 = null;
+
+    var _prevOpenVidV216 = window.openJennyVideoPlayerV130;
+    if (typeof _prevOpenVidV216 === 'function' && !_prevOpenVidV216._v216Wrapped) {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            // Отменяем таймер освобождения потока, если пользователь переключил на новое видео в пределах 20 сек!
+            if (window._vidHoldReleaseTimerV216) {
+                clearTimeout(window._vidHoldReleaseTimerV216);
+                window._vidHoldReleaseTimerV216 = null;
+            }
+            if (window.videoDeckV131 && window.videoDeckV131.pieceAbortCtrl) {
+                try { window.videoDeckV131.pieceAbortCtrl.abort(); } catch (e) {}
+            }
+
+            var r = _prevOpenVidV216.apply(this, arguments);
+
+            var st = window._vidStateV130 || {};
+            var vid = document.getElementById('jennyVideoElV130');
+            st.audioTrackIdxV216 = 0;
+
+            // Обновляем кнопку #v130BtnTorHub: вместо карты квадратиков "🧩 Части" пишем "📂 Файлы",
+            // чтобы по клику открывался список файлов текущей раздачи (где видно "📡 Поток активен")!
+            var btnHub = document.getElementById('v130BtnTorHub');
+            if (btnHub) {
+                btnHub.innerText = '📂 Файлы';
+            }
+            var btnRemux = document.getElementById('v130BtnRemux');
+            if (btnRemux) {
+                btnRemux.innerText = '🔊 Дорожка #1';
+            }
+
+            // Для ЛЮБОГО .mkv, .avi, .ts, .m2ts, .wmv, .flv (как локального, так и торрент-потока!)
+            // автоматически включаем потоковый ремукс аудио в AAC со старта, чтобы звук шёл сразу с 0:00!
+            var checkStr = String(st.currentTitle || titleStr || '') + ' ' + String(st.currentUrl || streamUrl || '');
+            if (/\.(mkv|avi|ts|m2ts|wmv|flv)(\?|$)/i.test(checkStr) && !st.usingRemux) {
+                window.switchVideoToFfmpegRemuxV130(null, /\.avi(\?|$)/i.test(checkStr));
+            }
+
+            // Запрашиваем точную длительность видео (1 мс бинарный парсер AVI/MKV + ffprobe)
+            var probeUrl = st.rawTorStreamUrlV214 || st.currentUrl || streamUrl;
+            if (probeUrl && typeof window.probeTorrentVideoDurationV214 === 'function') {
+                setTimeout(function() { window.probeTorrentVideoDurationV214(probeUrl); }, 80);
+                setTimeout(function() { window.probeTorrentVideoDurationV214(probeUrl); }, 900);
+                setTimeout(function() { window.probeTorrentVideoDurationV214(probeUrl); }, 2600);
+            }
+
+            bindCleanSingleCommitVideoSliderV216();
+            window.ensureDual9ButtonBarsDOMV216();
+            window.applyDeckBVolumeV216(window._deckBVolumePercentV216);
+            return r;
+        };
+        window.openJennyVideoPlayerV130._v216Wrapped = true;
+    }
+
+    // При закрытии видео крестиком ❌:
+    // - сразу останавливаем кадр и глушим звук в плеере,
+    // - но серверный поток/приоритет освобождаем с настраиваемой задержкой удержания (по умолчанию 20 сек)!
+    window.cleanupActiveTorrentStreamV143 = async function(reason) {
+        var sess = window._activeStreamSessionV143;
+        if (!sess || !sess.hash) return;
+        window._activeStreamSessionV143 = null;
+
+        var cfg = window._jennyThreadConfigV216 || window.loadThreadConfigV216();
+        var holdSec = (reason === 'switch') ? 0 : Number(cfg.streamHoldDelaySec !== undefined ? cfg.streamHoldDelaySec : 20);
+
+        var doRelease = async function() {
+            var job = window._torMapV112 && window._torMapV112[sess.hash];
+            var isExplicitlyDownloading = Boolean(job && job.explicitDlSet && job.explicitDlSet.has(Number(sess.fileIdx)));
+            if (isExplicitlyDownloading) return;
+            try {
+                await fetch('/api/video/release_stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hash: sess.hash, immediate: true })
+                });
+                await fetch('/api/torrent/cleanup_stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ hash: sess.hash, file_index: sess.fileIdx, reason: reason || 'close' })
+                });
+            } catch (e) {}
+        };
+
+        if (window._vidHoldReleaseTimerV216) {
+            clearTimeout(window._vidHoldReleaseTimerV216);
+            window._vidHoldReleaseTimerV216 = null;
+        }
+        if (holdSec <= 0) {
+            await doRelease();
+        } else {
+            fetch('/api/video/release_stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hash: sess.hash, immediate: false })
+            }).catch(function(){});
+            window._vidHoldReleaseTimerV216 = setTimeout(doRelease, holdSec * 1000);
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 9. КНОПКА "📂 ФАЙЛЫ" (#v130BtnTorHub) В ВИДЕОПЛЕЕРЕ ОТКРЫВАЕТ СРАЗУ СПИСОК ФАЙЛОВ РАЗДАЧИ (71421.mp4, 01:44-02:10)
+    // -------------------------------------------------------------------------
+    window.openTorHubFromVideoV130 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130 || {};
+        if (!st.torHash) return;
+        if (!st.pipMode && typeof window.toggleVideoPipModeV130 === 'function') {
+            window.toggleVideoPipModeV130();
+        }
+        if (typeof window.jumpToTorrentFilesFromHubV128 === 'function') {
+            window.jumpToTorrentFilesFromHubV128(st.torHash);
+            setTimeout(function() {
+                var rowEl = document.getElementById('torFileRowV96_' + st.torFileIdx);
+                if (rowEl && rowEl.scrollIntoView) {
+                    rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 220);
+        } else if (typeof window.toggleTorrentInspectorHubV128 === 'function') {
+            window.toggleTorrentInspectorHubV128(ev, 'jobs', st.torHash);
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 10. ОГРАНИЧЕНИЕ ФОНОВЫХ ВОРКЕРОВ РАСПАКОВКИ ВИДЕО В RAM (ПО НАСТРОЙКЕ ПОТОКА 1)
+    //     И ИСКЛЮЧЕНИЕ ЗАБИВАНИЯ HTTP-ПУЛА НА .MKV / .AVI
+    // -------------------------------------------------------------------------
+    window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
+        // В V216 звук видео (включая .mkv и .avi через live_remux) идёт напрямую через <video> -> vd.htmlGain -> весь DSP Деки Б
+        // с 0 мс задержки. Фоновая распаковка всего 22-минутного / 2-часового фильма в RAM запускается ТОЛЬКО если пользователь
+        // включил реверс (⏪ REV) на видео, чтобы в обычном режиме никогда не забивать HTTP-соединения и процессор!
+        var vd = window.videoDeckV131;
+        var isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || (vd && vd.isReversed));
+        if (!isRev) return null;
+        return null;
+    };
+
+    // -------------------------------------------------------------------------
+    // 11. ФИКС КНОПКИ "✅ ОК" В "+ ФОРМАТ" (СРАБАТЫВАЕТ С ПЕРВОГО КАСАНИЯ ПРИ ОТКРЫТОЙ КЛАВИАТУРЕ!)
+    //     (71418.mp4, 01:56-02:09)
+    // -------------------------------------------------------------------------
+    window.promptAddFormatSlotV215 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var isVid = (whichDeck === 'video');
+        var boxId = 'jennyInlineAddFormatBox_' + whichDeck;
+        var exBox = document.getElementById(boxId);
+        if (exBox) { exBox.remove(); return; }
+
+        var gridEl = document.getElementById(isVid ? 'formatSlotsGridVideoV215' : 'formatSlotsGrid');
+        if (!gridEl || !gridEl.parentElement) return;
+
+        var box = document.createElement('div');
+        box.id = boxId;
+        box.style.cssText = 'display:flex;align-items:center;gap:6px;margin:8px 0;padding:8px;background:#090d14;border:1.5px solid #3fb950;border-radius:10px;';
+        box.innerHTML =
+            '<input type="text" id="' + boxId + '_inp" placeholder="' + (isVid ? '.mkv, .avi, .ts...' : '.wv, .ape, .alac...') + '" style="flex:1;background:#161b22;border:1px solid #30363d;color:#fff;padding:6px 10px;border-radius:7px;font-size:12px;outline:none;text-align:left !important;">' +
+            '<button type="button" id="' + boxId + '_ok" style="padding:6px 12px;border-radius:7px;background:#238636;border:1px solid #3fb950;color:#fff;font-size:11.5px;font-weight:bold;cursor:pointer;">✅ ОК</button>' +
+            '<button type="button" id="' + boxId + '_cancel" style="padding:6px 9px;border-radius:7px;background:#21262d;border:1px solid #30363d;color:#8b949e;font-size:11.5px;cursor:pointer;">✖</button>';
+        gridEl.parentElement.insertBefore(box, gridEl);
+
+        var inp = document.getElementById(boxId + '_inp');
+        var okBtn = document.getElementById(boxId + '_ok');
+        var cancelBtn = document.getElementById(boxId + '_cancel');
+        if (inp) setTimeout(function() { inp.focus(); }, 40);
+
+        var submitted = false;
+        var submit = async function(e) {
+            if (e) {
+                if (e.preventDefault) e.preventDefault();
+                if (e.stopPropagation) e.stopPropagation();
+            }
+            if (submitted) return;
+            var val = (inp ? inp.value : '').trim().toLowerCase();
+            if (!val) return;
+            submitted = true;
+            if (!val.startsWith('.')) val = '.' + val;
+
+            var cfg = window._musicConfigRefV131 || window.appConfig || {};
+            var slotsObj = window.ensureDualDeckFormatSlotsV150();
+            var targetList = isVid ? slotsObj.videoSlots : slotsObj.audioSlots;
+            var found = targetList.find(function(s) { return String(s.ext || '').toLowerCase() === val; });
+            if (found) found.en = true;
+            else targetList.push({ en: true, ext: val });
+
+            if (isVid) {
+                cfg.formatSlotsVideoV150 = targetList;
+                if (window.KNOWN_VIDEO_EXT_SET_V150) window.KNOWN_VIDEO_EXT_SET_V150.add(val);
+            } else {
+                cfg.formatSlotsAudioV150 = targetList;
+            }
+            cfg.formatSlots = [].concat(cfg.formatSlotsAudioV150 || [], cfg.formatSlotsVideoV150 || []);
+            if (window.appConfig) {
+                window.appConfig.formatSlotsAudioV150 = cfg.formatSlotsAudioV150;
+                window.appConfig.formatSlotsVideoV150 = cfg.formatSlotsVideoV150;
+                window.appConfig.formatSlots = cfg.formatSlots;
+            }
+            try { localStorage.setItem('ytm_config', JSON.stringify(cfg)); } catch (err) {}
+
+            box.remove();
+            window.syncFormatSlotsUI();
+            await window.saveDualDeckFormatSlotsV215(whichDeck, true);
+            if (typeof window.showToast === 'function') {
+                window.showToast('✅ Добавлен формат ' + val + ' в ' + (isVid ? 'Деку Б (Видео)' : 'Деку А (Аудио)'));
+            }
+        };
+
+        if (okBtn) {
+            // Привязываем touchstart/mousedown, чтобы при открытой клавиатуре Android кнопка срабатывала мгновенно до смещения экрана!
+            okBtn.addEventListener('touchstart', submit, { passive: false });
+            okBtn.addEventListener('mousedown', submit);
+            okBtn.onclick = submit;
+        }
+        if (cancelBtn) {
+            var closeBox = function(e) {
+                if (e && e.preventDefault) e.preventDefault();
+                if (e && e.stopPropagation) e.stopPropagation();
+                box.remove();
+            };
+            cancelBtn.addEventListener('touchstart', closeBox, { passive: false });
+            cancelBtn.onclick = closeBox;
+        }
+        if (inp) {
+            inp.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') submit(e);
+            });
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 12. ОСВОБОЖДЕНИЕ АУДИОФОКУСА ANDROID ПРИ ПАУЗЕ (ЧТОБЫ YOUTUBE НЕ БЛОКИРОВАЛСЯ!)
+    //     (71419.mp4, 00:34-02:05)
+    // -------------------------------------------------------------------------
+    var _origSyncPermNotifV216 = window.syncPermanentForegroundNotificationV212;
+    window.syncPermanentForegroundNotificationV212 = function(force) {
+        if (!window.AndroidBridge) return;
+        var now = Date.now();
+        if (!force && now - (window._lastPermNotifSyncTsV212 || 0) < 1500) return;
+
+        var player = document.getElementById('audioPlayer');
+        var vid = document.getElementById('jennyVideoElV130');
+        var stVid = window._vidStateV130;
+
+        var audioActive = Boolean(player && window.currentPlayingTrack && !player.paused);
+        var videoActive = Boolean(vid && stVid && stVid.active && !vid.paused);
+        var isActuallyPlaying = Boolean(audioActive || videoActive);
+
+        // Если ни музыка, ни видео сейчас не играют, и прошлой синхронизацией мы уже перевели уведомление в режим паузы —
+        // НЕ спамим Android MediaSession каждые 1.5 сек, чтобы не отбирать звук у YouTube и не дёргать ползунок 00:00 <-> 00:01!
+        if (!isActuallyPlaying && window._lastNotifPlayingStateV216 === false && !force) {
+            var torSnapCheck = window._torLiveDaemonSnapV128 || [];
+            var hasActiveTor = torSnapCheck.some(function(t) {
+                return !t.paused && (t.files || []).some(function(f) { return !f.done; });
+            });
+            if (!hasActiveTor) return;
+        }
+        window._lastNotifPlayingStateV216 = isActuallyPlaying;
+        window._lastPermNotifSyncTsV212 = now;
+
+        var torSnap = window._torLiveDaemonSnapV128 || [];
+        var activeTorCnt = 0, sumKbps = 0, sumDoneB = 0, sumLenB = 0;
+        torSnap.forEach(function(t) {
+            var files = t.files || [];
+            if (files.some(function(f) { return !f.done; }) && !t.paused) {
+                activeTorCnt++;
+                sumKbps += (t.speed_kbps || 0);
+                files.forEach(function(f) {
+                    sumLenB += (f.length || 0);
+                    sumDoneB += (f.completed || 0);
+                });
+            }
+        });
+        var torPct = sumLenB > 0 ? Math.min(99, Math.floor((sumDoneB * 100) / sumLenB)) : 0;
+
+        var titleParts = [];
+        if (audioActive && window.currentPlayingTrack) {
+            var cleanA = String(window.currentPlayingTrack).replace(/\.(opus|m4a|mp3|wav|flac|ogg|xflac)$/i, '');
+            titleParts.push('🎵 ' + cleanA);
+        }
+        if (stVid && stVid.active && stVid.currentTitle) {
+            var cleanB = String(stVid.currentTitle).replace(/\.(mp4|mkv|webm|avi|mov)$/i, '');
+            titleParts.push('🎬 ' + cleanB);
+        }
+        if (titleParts.length === 0) {
+            if (activeTorCnt > 0) {
+                titleParts.push('🧲 Закачка P2P (' + activeTorCnt + ' разд. • ' + torPct + '%)');
+            } else if (window.currentPlayingTrack) {
+                var pausedA = String(window.currentPlayingTrack).replace(/\.(opus|m4a|mp3|wav|flac|ogg|xflac)$/i, '');
+                titleParts.push('⏸ ' + pausedA);
+            } else {
+                titleParts.push('🛡️ Jenny Player • Студия 24/7');
+            }
+        }
+        var finalTitle = titleParts.join(' │ ');
+
+        var subParts = [];
+        if (activeTorCnt > 0) {
+            subParts.push('⚡ P2P: ' + sumKbps + ' КБ/с (' + torPct + '%)');
+        }
+        if (audioActive && videoActive) {
+            subParts.push('🎛️ Дека А + Дека Б');
+        } else if (videoActive) {
+            subParts.push('🎬 Дека Б: x' + ((window.videoDeckV131 && window.videoDeckV131.speed) || 1.0));
+        } else if (audioActive) {
+            subParts.push('🎵 Дека А: x' + (player.playbackRate || 1.0));
+        } else {
+            subParts.push('🛡️ Фоновый сервис (Пауза)');
+        }
+        var finalSub = subParts.join(' • ');
+
+        var posSec = 0, durSec = 0, spd = 1.0;
+        if (audioActive && player) {
+            durSec = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
+            posSec = isFinite(player.currentTime) ? player.currentTime : 0;
+            spd = player.playbackRate || 1.0;
+        } else if (videoActive && vid) {
+            durSec = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vid) : (vid.duration || 0);
+            posSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+            spd = (window.videoDeckV131 && window.videoDeckV131.speed) || vid.playbackRate || 1.0;
+        }
+
+        try {
+            if (typeof window.AndroidBridge.updateMediaStateFull === 'function') {
+                window.AndroidBridge.updateMediaStateFull(finalTitle, finalSub, isActuallyPlaying, posSec, durSec, spd);
+            } else if (typeof window.AndroidBridge.updateMediaState === 'function') {
+                window.AndroidBridge.updateMediaState(finalTitle + ' || ' + finalSub, isActuallyPlaying, posSec, durSec, spd);
+            }
+        } catch (e) {}
+    };
+    window.syncAndroidNotification = window.syncPermanentForegroundNotificationV212;
+
+    // -------------------------------------------------------------------------
+    // 13. ИНИЦИАЛИЗАЦИЯ И ПОДДЕРЖАНИЕ UI V216
+    // -------------------------------------------------------------------------
+    var _origMountStudioV216 = window.mountJennyStudioUI;
+    if (typeof _origMountStudioV216 === 'function' && !_origMountStudioV216._v216Wrapped) {
+        window.mountJennyStudioUI = function() {
+            var r = _origMountStudioV216.apply(this, arguments);
+            window.renderThreadsSettingsBoxV216();
+            window.ensureDual9ButtonBarsDOMV216();
+            return r;
+        };
+        window.mountJennyStudioUI._v216Wrapped = true;
+    }
+
+    setInterval(function() {
+        window.ensureDual9ButtonBarsDOMV216();
+        window.renderThreadsSettingsBoxV216();
+        bindCleanSingleCommitVideoSliderV216();
+    }, 600);
+
+    setTimeout(function() {
+        window.ensureDual9ButtonBarsDOMV216();
+        window.renderThreadsSettingsBoxV216();
+        bindCleanSingleCommitVideoSliderV216();
+    }, 250);
+})();
