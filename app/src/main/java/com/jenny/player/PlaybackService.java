@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -26,8 +27,10 @@ public class PlaybackService extends Service {
 
     private MediaSession mediaSession;
     private PowerManager.WakeLock wakeLock;
-    private String currentTitle = "Jenny Player";
-    private boolean isPlaying = false;
+    private WifiManager.WifiLock wifiLock;
+    private String currentTitle = "Jenny Player • Студия активна";
+    private String currentSubtitle = "🛡️ Фоновый движок 24/7 (P2P + 32-bit DSP)";
+    private boolean isPlaying = true;
     private long currentPosMs = 0;
     private long currentDurMs = 0;
     private float currentSpeed = 1.0f;
@@ -35,24 +38,51 @@ public class PlaybackService extends Service {
     public static void ensureChannel(Context ctx) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID, "Jenny Player Playback", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("Медиа-шторка и фоновое воспроизведение");
+                    CHANNEL_ID, "Jenny Player & P2P Engine", NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("Постоянная работа плеера и P2P-торрента в фоне без засыпания");
             channel.setShowBadge(false);
             NotificationManager nm = ctx.getSystemService(NotificationManager.class);
             if (nm != null) nm.createNotificationChannel(channel);
         }
     }
 
+    private void acquireAllLocksV212() {
+        try {
+            if (wakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "JennyPlayer::CoreWakeLockV212");
+                    wakeLock.setReferenceCounted(false);
+                }
+            }
+            if (wakeLock != null && !wakeLock.isHeld()) {
+                wakeLock.acquire();
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            if (wifiLock == null) {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    int lockType = WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        lockType = WifiManager.WIFI_MODE_FULL_LOW_LATENCY;
+                    }
+                    wifiLock = wm.createWifiLock(lockType, "JennyPlayer::CoreWifiLockV212");
+                    wifiLock.setReferenceCounted(false);
+                }
+            }
+            if (wifiLock != null && !wifiLock.isHeld()) {
+                wifiLock.acquire();
+            }
+        } catch (Throwable ignored) {}
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
         ensureChannel(this);
-
-        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        if (pm != null) {
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "JennyPlayer::AudioWakeLock");
-            wakeLock.setReferenceCounted(false);
-        }
+        acquireAllLocksV212();
 
         mediaSession = new MediaSession(this, "JennyPlayerSession");
         mediaSession.setCallback(new MediaSession.Callback() {
@@ -87,6 +117,8 @@ public class PlaybackService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        acquireAllLocksV212();
+
         if (intent != null && intent.getAction() != null) {
             String act = intent.getAction();
             if (ACTION_PREV.equals(act)) {
@@ -100,7 +132,19 @@ public class PlaybackService extends Service {
                 return START_STICKY;
             } else if (ACTION_UPDATE.equals(act)) {
                 String t = intent.getStringExtra("title");
-                if (t != null && !t.isEmpty()) currentTitle = t;
+                String sub = intent.getStringExtra("subtitle");
+                if (t != null && !t.isEmpty()) {
+                    if ((sub == null || sub.isEmpty()) && t.contains(" || ")) {
+                        String[] parts = t.split(" \\|\\| ", 2);
+                        currentTitle = parts[0];
+                        currentSubtitle = parts[1];
+                    } else {
+                        currentTitle = t;
+                    }
+                }
+                if (sub != null && !sub.isEmpty()) {
+                    currentSubtitle = sub;
+                }
                 isPlaying = intent.getBooleanExtra("playing", isPlaying);
                 currentPosMs = intent.getLongExtra("pos", currentPosMs);
                 currentDurMs = intent.getLongExtra("dur", currentDurMs);
@@ -108,22 +152,16 @@ public class PlaybackService extends Service {
             }
         }
 
-        if (wakeLock != null) {
-            if (isPlaying && !wakeLock.isHeld()) {
-                wakeLock.acquire();
-            } else if (!isPlaying && wakeLock.isHeld()) {
-                wakeLock.release();
-            }
-        }
-
         updateMediaSessionState();
         Notification notification = buildNotification();
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
-        } else {
-            startForeground(NOTIF_ID, notification);
-        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            } else {
+                startForeground(NOTIF_ID, notification);
+            }
+        } catch (Throwable ignored) {}
 
         return START_STICKY;
     }
@@ -131,7 +169,7 @@ public class PlaybackService extends Service {
     private void updateMediaSessionState() {
         MediaMetadata.Builder metaBuilder = new MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, currentTitle)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, "🔥 HACKED BY JENNY 🔥")
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, currentSubtitle)
                 .putLong(MediaMetadata.METADATA_KEY_DURATION, currentDurMs > 0 ? currentDurMs : -1L);
         mediaSession.setMetadata(metaBuilder.build());
 
@@ -180,21 +218,35 @@ public class PlaybackService extends Service {
 
         builder.setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
                 .setContentTitle(currentTitle)
-                .setContentText("🔥 HACKED BY JENNY 🔥")
+                .setContentText(currentSubtitle)
+                .setSubText("🛡️ Работа в фоне 24/7")
                 .setContentIntent(contentPending)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .setOngoing(isPlaying)
+                .setOngoing(true)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_previous, "Prev", prevPending).build())
                 .addAction(new Notification.Action.Builder(playPauseIcon, playPauseLabel, playPausePending).build())
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_next, "Next", nextPending).build())
                 .setStyle(style);
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
+            } catch (Throwable ignored) {}
+        }
+
         return builder.build();
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        acquireAllLocksV212();
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override
     public void onDestroy() {
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
         if (mediaSession != null) {
             mediaSession.setActive(false);
             mediaSession.release();

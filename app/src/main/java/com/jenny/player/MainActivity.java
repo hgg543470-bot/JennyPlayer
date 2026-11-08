@@ -504,6 +504,33 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception ignored) {}
     }
 
+    
+    private void ensurePermanentForegroundServiceV212() {
+        try {
+            PlaybackService.ensureChannel(this);
+        ensurePermanentForegroundServiceV212();
+            Intent svc = new Intent(this, PlaybackService.class);
+            svc.setAction(PlaybackService.ACTION_UPDATE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(svc);
+            } else {
+                startService(svc);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private boolean isIgnoringBatteryOptimizationsInternalV212() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                if (pm != null) {
+                    return pm.isIgnoringBatteryOptimizations(getPackageName());
+                }
+            } catch (Throwable ignored) {}
+        }
+        return true;
+    }
+
     private boolean hasStoragePermissionInternalV165() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return Environment.isExternalStorageManager();
@@ -869,6 +896,7 @@ public class MainActivity extends AppCompatActivity {
         // 1. Сразу регистрируем канал уведомлений при старте!
         // Это мгновенно разблокирует серый тумблер в настройках Android 13-16
         PlaybackService.ensureChannel(this);
+        ensurePermanentForegroundServiceV212();
 
         // 2. Разрешения запрашиваются дружелюбно со стартового экрана (Onboarding V165),
         // чтобы не пугать пользователя системными окнами до загрузки интерфейса.
@@ -1133,6 +1161,56 @@ public class MainActivity extends AppCompatActivity {
                     e.printStackTrace();
                 }
             });
+        }
+
+        @JavascriptInterface
+        
+        @JavascriptInterface
+        public boolean isIgnoringBatteryOptimizations() {
+            return isIgnoringBatteryOptimizationsInternalV212();
+        }
+
+        @JavascriptInterface
+        public void requestIgnoreBatteryOptimizations() {
+            runOnUiThread(() -> {
+                try {
+                    ensurePermanentForegroundServiceV212();
+                    if (isIgnoringBatteryOptimizationsInternalV212()) {
+                        evalJs("if(window.onBatteryOptUpdatedV212) window.onBatteryOptUpdatedV212(true);");
+                        return;
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        isOpeningSettingsV146 = true;
+                        try {
+                            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                            intent.setData(Uri.parse("package:" + getPackageName()));
+                            startActivity(intent);
+                        } catch (Exception e1) {
+                            Intent intent2 = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                            startActivity(intent2);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void updateMediaStateFull(String title, String subtitle, boolean isPlaying, double posSec, double durSec, double speed) {
+            Intent svc = new Intent(MainActivity.this, PlaybackService.class);
+            svc.setAction(PlaybackService.ACTION_UPDATE);
+            svc.putExtra("title", title);
+            svc.putExtra("subtitle", subtitle);
+            svc.putExtra("playing", isPlaying);
+            svc.putExtra("pos", (long) (posSec * 1000));
+            svc.putExtra("dur", (long) (durSec * 1000));
+            svc.putExtra("speed", (float) speed);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(svc);
+            } else {
+                startService(svc);
+            }
         }
 
         @JavascriptInterface

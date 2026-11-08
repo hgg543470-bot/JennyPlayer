@@ -15780,7 +15780,7 @@ let vsyncTicks = 0;
         var vidDur = vEl.duration;
         var curUrl = String(vEl.currentSrc || vEl.src || '');
         var lowerSrc = rawSrc.toLowerCase();
-        var isAviOrMkv = (lowerSrc.indexOf('.avi') !== -1 || lowerSrc.indexOf('.mkv') !== -1);
+        var isAviOrMkv = (lowerSrc.indexOf('.avi') !== -1);
 
         if (curUrl.indexOf('blob:') === 0 && window.isLocalFileFullyDownloadedV210(rawSrc)) {
             var directUrl = rawSrc.indexOf('/api/') === 0 ? rawSrc : ('/api/media/' + encodeURIComponent(rawSrc.replace(/^\/+/, '')));
@@ -18386,3 +18386,533 @@ let vsyncTicks = 0;
 })();
 /* ================= END JENNY V211 ================= */
 
+/* ================= JENNY V212 (#301): INSTANT TORRENT IMPORT, NO PROGRESS ROLLBACK, ZERO BUFFERING FOR READY VIDEOS & 24/7 FOREGROUND SERVICE ================= */
+(function() {
+    if (window._jennyV212Installed) return;
+    window._jennyV212Installed = true;
+
+    window._torMaxProgressMapV212 = window._torMaxProgressMapV212 || {};
+    window._bgUnrestrictedGrantedV212 = true;
+
+    // 1. Точная длительность видео для всех шкал (включая #v130DurTime внутри видеоплеера!),
+    //    чтобы никогда не показывалось фальшивое 0:10!
+    window.getEffectiveVideoDurationV167 = function(vid) {
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        var probeDur = (window._vcoreLastProbeV166 && window._vcoreLastProbeV166.duration_sec) || window._jennyFullMovieDurationSecV210 || 0;
+        if (st.trueDuration && st.trueDuration > 12.5) return st.trueDuration;
+        if (vd.studioBuffer && vd.studioBuffer._trueDurationV72 > 12.5) return vd.studioBuffer._trueDurationV72;
+        if (probeDur > 12.5) return probeDur;
+        if (vid && isFinite(vid.duration) && vid.duration > 12.5) {
+            return vid.duration + (st.remuxBaseOffset || 0);
+        }
+        if (st.trueDuration && st.trueDuration > 0) return st.trueDuration;
+        if (probeDur > 0) return probeDur;
+        if (vid && isFinite(vid.duration) && vid.duration > 0) {
+            return vid.duration + (st.remuxBaseOffset || 0);
+        }
+        return 0;
+    };
+    window.getEffectiveVideoDurationV210 = window.getEffectiveVideoDurationV167;
+
+    // 2. Проверка: является ли видеофайл уже полностью скачанным (готовым) локальным файлом?
+    window.resolveReadyLocalVideoInfoV212 = function(streamUrl, titleStr, opts) {
+        opts = opts || {};
+        var urlStr = String(streamUrl || '').trim();
+        var hash = String(opts.torHash || '').toLowerCase();
+        var fIdx = (opts.torFileIdx !== undefined && opts.torFileIdx !== null) ? Number(opts.torFileIdx) : -1;
+
+        if ((!hash || fIdx < 0) && urlStr.indexOf('/api/torrent/stream/') === 0) {
+            var parts = urlStr.split('?')[0].replace(/^\/+/, '').split('/');
+            if (parts.length >= 5) {
+                hash = parts[3].toLowerCase();
+                fIdx = Number(parts[4]);
+            }
+        }
+
+        var fileName = String(titleStr || '').split('/').pop().split('?')[0].trim();
+        if (!fileName && urlStr.indexOf('/api/media/') === 0) {
+            try { fileName = decodeURIComponent(urlStr.slice('/api/media/'.length).split('?')[0]); } catch (e) {}
+        }
+
+        if (hash && fIdx >= 0) {
+            var dTor = (window._torLiveDaemonSnapV128 || []).find(function(t) { return String(t.hash || '').toLowerCase() === hash; });
+            var dFile = dTor && (dTor.files || []).find(function(f) { return Number(f.index) === fIdx; });
+            var job = window._torMapV112 && window._torMapV112[hash];
+            var jSt = job && job.fileStatusMap && job.fileStatusMap[fIdx];
+            var maxKey = hash + '_' + fIdx;
+            var maxRec = window._torMaxProgressMapV212[maxKey];
+
+            var readyName = (jSt && jSt.xflac_file) || (dFile && dFile.xflac_file) || (maxRec && maxRec.xflac_file) || '';
+            var isDone = Boolean(
+                readyName ||
+                (dFile && (dFile.done || Number(dFile.percent) >= 100 || (dFile.length > 0 && dFile.completed >= dFile.length))) ||
+                (jSt && (jSt.done || Number(jSt.percent) >= 100 || (jSt.length > 0 && jSt.completed >= jSt.length))) ||
+                (maxRec && maxRec.done)
+            );
+            if (!fileName && dFile && dFile.path) {
+                fileName = String(dFile.path).split('/').pop();
+            }
+            if (isDone && (readyName || fileName)) {
+                var finalFn = readyName || fileName;
+                return {
+                    isReadyLocal: true,
+                    url: '/api/media/' + encodeURIComponent(finalFn),
+                    fileName: finalFn
+                };
+            }
+        }
+
+        if (fileName && window._dedicatedVideoMetaMapV137 && window._dedicatedVideoMetaMapV137[fileName]) {
+            var meta = window._dedicatedVideoMetaMapV137[fileName];
+            if (meta.is_ready_local || meta.in_video_dir || Number(meta.percent) >= 100 || !meta.tor_hash) {
+                return {
+                    isReadyLocal: true,
+                    url: '/api/media/' + encodeURIComponent(fileName),
+                    fileName: fileName
+                };
+            }
+        }
+
+        if (urlStr.indexOf('/api/media/') === 0) {
+            return {
+                isReadyLocal: true,
+                url: urlStr,
+                fileName: fileName
+            };
+        }
+
+        return {
+            isReadyLocal: false,
+            url: urlStr,
+            fileName: fileName
+        };
+    };
+
+    // 3. Перехватываем openJennyVideoPlayerV130:
+    //    Для готовых (100% скачанных) видео ОТКЛЮЧАЕМ буферизацию торрента, убираем torHash и запускаем напрямую!
+    var _origOpenVidV212 = window.openJennyVideoPlayerV130;
+    if (typeof _origOpenVidV212 === 'function') {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            opts = Object.assign({}, opts || {});
+            var check = window.resolveReadyLocalVideoInfoV212(streamUrl, titleStr, opts);
+            if (check.isReadyLocal) {
+                streamUrl = check.url;
+                opts.torHash = '';
+                opts.torFileIdx = -1;
+            }
+            var r = _origOpenVidV212.call(this, streamUrl, titleStr, opts);
+            if (check.isReadyLocal) {
+                var st = window._vidStateV130;
+                if (st) {
+                    st.torHash = '';
+                    st.torFileIdx = -1;
+                    st.currentUrl = check.url;
+                    st.isReadyLocalV212 = true;
+                }
+                window._vidIsBufferingV132 = false;
+                if (typeof window.syncVideoPlayBtnIconV132 === 'function') {
+                    window.syncVideoPlayBtnIconV132();
+                }
+                var subEl = document.getElementById('v130VideoSubTelemetry');
+                if (subEl) {
+                    subEl.innerText = '🎬 Локальный файл готов • Прямой старт без буферизации';
+                }
+                var btnHub = document.getElementById('v130BtnTorHub');
+                var btnSave = document.getElementById('v130BtnSaveVideo');
+                if (btnHub) btnHub.style.display = 'none';
+                if (btnSave) btnSave.style.display = 'none';
+            }
+            return r;
+        };
+    }
+
+    // Блокируем ложное срабатывание waiting-буферизации на локальных готовых видеофайлах
+    function bindLocalVideoNoBufferGuardV212() {
+        var v = document.getElementById('jennyVideoElV130');
+        if (!v || v._v212NoBufferHooked) return;
+        v._v212NoBufferHooked = true;
+        v.addEventListener('waiting', function(e) {
+            var st = window._vidStateV130;
+            if (st && (st.isReadyLocalV212 || !st.torHash)) {
+                window._vidIsBufferingV132 = false;
+                if (typeof window.syncVideoPlayBtnIconV132 === 'function') {
+                    window.syncVideoPlayBtnIconV132();
+                }
+            }
+        }, true);
+        v.addEventListener('canplay', function() {
+            window._vidIsBufferingV132 = false;
+            if (typeof window.syncVideoPlayBtnIconV132 === 'function') {
+                window.syncVideoPlayBtnIconV132();
+            }
+        });
+    }
+    setTimeout(bindLocalVideoNoBufferGuardV212, 300);
+
+    // 4. Фикс отката прогресса (764.3 -> 763.3 МБ, 1% -> 0%) и вечного "Перенос в плеер (0/1)..."
+    window.clampTorrentFileMonotonicV212 = function(hash, fObj) {
+        if (!fObj) return fObj;
+        var h = String(hash || '').toLowerCase();
+        var idx = Number(fObj.index || 0);
+        var key = h + '_' + idx;
+        var prev = window._torMaxProgressMapV212[key] || { completed: 0, percent: 0, done: false, xflac_file: '' };
+
+        var len = Number(fObj.length || fObj.size || 0);
+        var comp = Math.max(prev.completed, Number(fObj.completed || 0));
+        var isDone = Boolean(prev.done || fObj.done || fObj.xflac_file || (len > 0 && comp >= len));
+        if (isDone && len > 0) comp = len;
+
+        var pct = isDone ? 100 : (len > 0 ? Math.min(99, Math.floor((comp * 100) / len)) : 0);
+        if (!isDone && pct < prev.percent) pct = Math.min(99, prev.percent);
+
+        var fnName = String(fObj.path || fObj.full_path || '').split('/').pop();
+        var isDirectMedia = /\.(mp4|mkv|webm|avi|mov|m4v|3gp|mp3|m4a|ogg|opus|aac)$/i.test(fnName);
+        var readyFile = fObj.xflac_file || prev.xflac_file || (isDone && isDirectMedia ? fnName : '');
+
+        var updated = {
+            completed: comp,
+            percent: pct,
+            done: isDone,
+            xflac_file: readyFile
+        };
+        window._torMaxProgressMapV212[key] = updated;
+
+        fObj.completed = comp;
+        fObj.percent = pct;
+        fObj.done = isDone;
+        if (readyFile) fObj.xflac_file = readyFile;
+        return fObj;
+    };
+
+    var _origRefreshSnapV128 = window.refreshTorrentDaemonSnapV128;
+    window.refreshTorrentDaemonSnapV128 = async function() {
+        try {
+            window.mountTorrentHeaderHubMenuV128();
+            var d = await fetch('/api/torrent/status').then(function(r) { return r.json(); });
+            var list = (d && d.torrents) || [];
+            list.forEach(function(t) {
+                var h = String(t.hash || '').toLowerCase();
+                var job = window._torMapV112 && window._torMapV112[h];
+                var sumLen = 0, sumDone = 0, readyCnt = 0, allDone = true;
+
+                (t.files || []).forEach(function(f) {
+                    window.clampTorrentFileMonotonicV212(h, f);
+                    var fIdx = Number(f.index);
+                    if (job && job.validIdxSet && job.validIdxSet.has(fIdx)) {
+                        var prevSt = (job.fileStatusMap && job.fileStatusMap[fIdx]) || {};
+                        var readyFile = f.xflac_file || prevSt.xflac_file || '';
+                        job.fileStatusMap[fIdx] = {
+                            completed: f.completed || 0,
+                            length: f.length || 0,
+                            percent: f.percent || 0,
+                            done: Boolean(f.done),
+                            full_path: f.full_path || '',
+                            xflac_file: readyFile
+                        };
+                        if (job.targetSet && job.targetSet.has(fIdx)) {
+                            sumLen += (f.length || 0);
+                            sumDone += (f.completed || 0);
+                            if (!f.done) allDone = false;
+                            if (readyFile) readyCnt++;
+                            else if (f.done) {
+                                window.enqueueTorrentTrackImportV112(job, f, t.name);
+                            }
+                        }
+                    }
+                });
+
+                if (job) {
+                    job.seeders = t.seeders || 0;
+                    job.peers = t.peers || 0;
+                    job.speedKbps = t.speed_kbps || 0;
+                    job.totalPeers = t.total_peers || 0;
+                    job.paused = Boolean(t.paused);
+                    job.readyCnt = readyCnt;
+                    if (job.targetSet && job.targetSet.size > 0) {
+                        var rawPct = sumLen > 0 ? Math.floor((sumDone * 100) / sumLen) : 0;
+                        job.netPct = allDone ? 100 : Math.min(99, Math.max(job.netPct || 0, rawPct));
+                        if (readyCnt >= job.targetSet.size) {
+                            job.dlActive = false;
+                            job.completedAll = true;
+                            job.netPct = 100;
+                        }
+                    }
+                }
+            });
+
+            window._torLiveDaemonSnapV128 = list;
+            window._lastTorStatusFetchTsV212 = Date.now();
+
+            var activeCnt = 0, sumKbps = 0, sumReady = 0, sumTotal = 0;
+            list.forEach(function(t) {
+                var files = t.files || [];
+                if (files.some(function(f) { return !f.done; }) && !t.paused) activeCnt++;
+                sumKbps += (t.speed_kbps || 0);
+                sumReady += files.filter(function(f) { return f.done; }).length;
+                sumTotal += files.length;
+            });
+
+            var lbl = document.getElementById('lblTorHeaderHubMenuV128');
+            if (lbl) {
+                if (activeCnt > 0) lbl.innerText = 'Активно: ' + activeCnt + ' (' + sumReady + '/' + sumTotal + ')' + (sumKbps > 0 ? ' • ⚡' + sumKbps + 'КБ/с' : '') + ' • Части';
+                else if (list.length > 0) lbl.innerText = 'Раздач: ' + list.length + ' (' + sumReady + '/' + sumTotal + ') • Части';
+                else lbl.innerText = 'Раздачи • Треки • Части';
+            }
+
+            var curH = window._torStateV96 && window._torStateV96.currentHash;
+            if (curH && window._torMapV112 && window._torMapV112[curH] && window._torScreenModeV112 === 'files') {
+                window.paintOpenedTorrentJobProgressV112(window._torMapV112[curH], window._lastTorEncBadgeV212 || null);
+            }
+            if (document.getElementById('jennyTorInspectorModalV128')) {
+                window.renderTorrentInspectorHubV128();
+            }
+        } catch (e) {}
+    };
+
+    window.ensureMultiTorrentWorkerV112 = function() {
+        if (window._torGlobalTimerV112) return;
+        window._torGlobalTimerV112 = setInterval(async function() {
+            var allJobs = Object.values(window._torMapV112 || {});
+            var activeJobs = allJobs.filter(function(j) { return j.dlActive; });
+            if (activeJobs.length === 0 && !window._torImportWorkerBusyV112 && (!window._torImportQueueV112 || window._torImportQueueV112.length === 0)) {
+                clearInterval(window._torGlobalTimerV112);
+                window._torGlobalTimerV112 = null;
+                if (window._torStateV96) window._torStateV96.dlActive = false;
+                return;
+            }
+            if (Date.now() - (window._lastTorStatusFetchTsV212 || 0) > 650) {
+                await window.refreshTorrentDaemonSnapV128();
+            }
+        }, 800);
+    };
+
+    window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var h = window._torStateV96 && window._torStateV96.currentHash;
+        var job = h && window._torMapV112 ? window._torMapV112[h] : null;
+        if (!job) return;
+        var cleanIdx = Number(fileIdx);
+        if (!job.validIdxSet.has(cleanIdx)) return;
+
+        job.explicitDlSet = job.explicitDlSet || new Set();
+        if (job.explicitDlSet.size === 0) {
+            job.selectedFiles.clear();
+            job.targetSet.clear();
+            document.querySelectorAll('#torBodyListV96 input[type="checkbox"]').forEach(function(c) { c.checked = false; });
+        }
+
+        job.explicitDlSet.add(cleanIdx);
+        job.selectedFiles.add(cleanIdx);
+        job.targetSet.add(cleanIdx);
+        job.dlActive = true;
+        job.completedAll = false;
+
+        var chk = document.querySelector('#torFileRowV96_' + cleanIdx + ' input[type="checkbox"]');
+        if (chk) chk.checked = true;
+        if (typeof window.updateTorrentSelectAllBtnUIV117 === 'function') window.updateTorrentSelectAllBtnUIV117();
+        if (btnEl) { btnEl.innerText = '⏳'; btnEl.style.color = '#3fb950'; }
+
+        var fSt = job.fileStatusMap && job.fileStatusMap[cleanIdx];
+        var fMeta = (job.files || []).find(function(x) { return Number(x.index) === cleanIdx; });
+        if (fSt && fSt.done && !fSt.xflac_file) {
+            window.enqueueTorrentTrackImportV112(job, { index: cleanIdx, full_path: fSt.full_path || (fMeta && fMeta.full_path) || '' }, job.name);
+        }
+
+        await fetch('/api/torrent/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hash: job.hash,
+                magnet: job.magnet || '',
+                files: Array.from(job.explicitDlSet),
+                explicit: true
+            })
+        }).catch(function() {});
+        window.ensureMultiTorrentWorkerV112();
+    };
+
+    // 5. ПОСТОЯННАЯ ПЛАШКА УВЕДОМЛЕНИЯ (FOREGROUND SERVICE 24/7) + ЗАЩИТА ОТ ЗАСЫПАНИЯ ANDROID
+    window.syncPermanentForegroundNotificationV212 = function(force) {
+        if (!window.AndroidBridge) return;
+        var now = Date.now();
+        if (!force && now - (window._lastPermNotifSyncTsV212 || 0) < 1200) return;
+        window._lastPermNotifSyncTsV212 = now;
+
+        var player = document.getElementById('audioPlayer');
+        var vid = document.getElementById('jennyVideoElV130');
+        var stVid = window._vidStateV130;
+
+        var audioActive = Boolean(player && window.currentPlayingTrack && !player.paused);
+        var videoActive = Boolean(vid && stVid && stVid.active && !vid.paused);
+
+        var torSnap = window._torLiveDaemonSnapV128 || [];
+        var activeTorCnt = 0, sumKbps = 0, sumDoneB = 0, sumLenB = 0;
+        torSnap.forEach(function(t) {
+            var files = t.files || [];
+            if (files.some(function(f) { return !f.done; }) && !t.paused) {
+                activeTorCnt++;
+                sumKbps += (t.speed_kbps || 0);
+                files.forEach(function(f) {
+                    sumLenB += (f.length || 0);
+                    sumDoneB += (f.completed || 0);
+                });
+            }
+        });
+        var torPct = sumLenB > 0 ? Math.min(99, Math.floor((sumDoneB * 100) / sumLenB)) : 0;
+
+        var titleParts = [];
+        if (audioActive && window.currentPlayingTrack) {
+            var cleanA = String(window.currentPlayingTrack).replace(/\.(opus|m4a|mp3|wav|flac|ogg|xflac)$/i, '');
+            titleParts.push('🎵 ' + cleanA);
+        }
+        if (stVid && stVid.active && stVid.currentTitle) {
+            var cleanB = String(stVid.currentTitle).replace(/\.(mp4|mkv|webm|avi|mov)$/i, '');
+            titleParts.push('🎬 ' + cleanB);
+        }
+        if (titleParts.length === 0) {
+            if (activeTorCnt > 0) {
+                titleParts.push('🧲 Закачка P2P (' + activeTorCnt + ' разд. • ' + torPct + '%)');
+            } else if (window.currentPlayingTrack) {
+                var pausedA = String(window.currentPlayingTrack).replace(/\.(opus|m4a|mp3|wav|flac|ogg|xflac)$/i, '');
+                titleParts.push('⏸ ' + pausedA);
+            } else {
+                titleParts.push('🛡️ Jenny Player • Студия 24/7');
+            }
+        }
+        var finalTitle = titleParts.join(' │ ');
+
+        var subParts = [];
+        if (activeTorCnt > 0) {
+            subParts.push('⚡ P2P: ' + sumKbps + ' КБ/с (' + torPct + '%)');
+        }
+        if (audioActive && videoActive) {
+            subParts.push('🎛️ Дека А + Дека Б (4 RAM буфера)');
+        } else if (videoActive) {
+            subParts.push('🎬 Дека Б: x' + ((window.videoDeckV131 && window.videoDeckV131.speed) || 1.0));
+        } else if (audioActive) {
+            subParts.push('🎵 Дека А: x' + (player.playbackRate || 1.0));
+        } else {
+            subParts.push('🛡️ Фоновый сервис активен (Защита от сна ВКЛ)');
+        }
+        var finalSub = subParts.join(' • ');
+
+        var posSec = 0, durSec = 0, spd = 1.0;
+        if (audioActive && player) {
+            durSec = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
+            posSec = isFinite(player.currentTime) ? player.currentTime : 0;
+            spd = player.playbackRate || 1.0;
+        } else if (videoActive && vid) {
+            durSec = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vid) : (vid.duration || 0);
+            posSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+            spd = (window.videoDeckV131 && window.videoDeckV131.speed) || vid.playbackRate || 1.0;
+        }
+
+        var keepAlivePlaying = true;
+
+        try {
+            if (typeof window.AndroidBridge.updateMediaStateFull === 'function') {
+                window.AndroidBridge.updateMediaStateFull(finalTitle, finalSub, keepAlivePlaying, posSec, durSec, spd);
+            } else if (typeof window.AndroidBridge.updateMediaState === 'function') {
+                window.AndroidBridge.updateMediaState(finalTitle + ' || ' + finalSub, keepAlivePlaying, posSec, durSec, spd);
+            }
+        } catch (e) {}
+    };
+
+    window.syncAndroidNotification = window.syncPermanentForegroundNotificationV212;
+
+    // 6. Проверка и запрос разрешения «Работать в фоне без ограничений» (REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+    window.checkBackgroundUnrestrictedStatusV212 = async function() {
+        try {
+            if (window.AndroidBridge && typeof window.AndroidBridge.isIgnoringBatteryOptimizations === 'function') {
+                window._bgUnrestrictedGrantedV212 = Boolean(window.AndroidBridge.isIgnoringBatteryOptimizations());
+            } else {
+                var r = await fetch('/api/android/bg_status');
+                if (r.ok) {
+                    var d = await r.json();
+                    window._bgUnrestrictedGrantedV212 = Boolean(d.ignoring_battery_optimizations);
+                }
+            }
+        } catch (e) {}
+        window.updateBgShieldButtonsUIV212();
+        return window._bgUnrestrictedGrantedV212;
+    };
+
+    window.requestBackgroundUnrestrictedV212 = async function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        window.syncPermanentForegroundNotificationV212(true);
+        try {
+            if (window.AndroidBridge && typeof window.AndroidBridge.requestIgnoreBatteryOptimizations === 'function') {
+                window.AndroidBridge.requestIgnoreBatteryOptimizations();
+            } else {
+                await fetch('/api/android/request_bg_unrestricted', { method: 'POST' });
+            }
+            if (typeof window.showToast === 'function') {
+                window.showToast('🛡️ Выбери «Нет ограничений» / «Разрешить» для работы торрента и звука в фоне 24/7!');
+            }
+        } catch (e) {}
+        setTimeout(window.checkBackgroundUnrestrictedStatusV212, 1500);
+        setTimeout(window.checkBackgroundUnrestrictedStatusV212, 4000);
+    };
+
+    window.onBatteryOptUpdatedV212 = function(granted) {
+        window._bgUnrestrictedGrantedV212 = Boolean(granted);
+        window.updateBgShieldButtonsUIV212();
+        if (granted && typeof window.showToast === 'function') {
+            window.showToast('✅ Фоновый режим 24/7 без ограничений батареи активирован!');
+        }
+    };
+
+    window.updateBgShieldButtonsUIV212 = function() {
+        var ok = Boolean(window._bgUnrestrictedGrantedV212);
+        var btnTor = document.getElementById('btnTorBgShieldV212');
+        if (btnTor) {
+            btnTor.style.borderColor = ok ? '#3fb950' : '#e3b341';
+            btnTor.style.color = ok ? '#3fb950' : '#e3b341';
+            btnTor.style.background = ok ? 'rgba(63,185,80,0.16)' : 'rgba(227,179,65,0.18)';
+            btnTor.innerText = ok ? '🛡️ Фон 24/7' : '⚠️ Разрешить фон';
+        }
+        var btnSet = document.getElementById('btnSettingsBgShieldV212');
+        if (btnSet) {
+            btnSet.className = 'jenny-deck-pill-v211 ' + (ok ? 'active-a' : '');
+            btnSet.innerHTML = ok
+                ? '<span>🛡️</span><span>Фон 24/7 + Уведомление: АКТИВНЫ</span><span class="deck-dot"></span>'
+                : '<span>⚠️</span><span>Разрешить работу в фоне без ограничений (Анти-сон)</span>';
+        }
+    };
+
+    function mountBgShieldButtonsV212() {
+        var torHdr = document.querySelector('#jennyTorrentModalV91 .jenny-modal-hdr-v71');
+        if (torHdr && !document.getElementById('btnTorBgShieldV212')) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.id = 'btnTorBgShieldV212';
+            btn.onclick = function(e) { window.requestBackgroundUnrestrictedV212(e); };
+            btn.style.cssText = 'padding:4px 7px;font-size:10.5px;border-radius:7px;background:rgba(63,185,80,0.16);border:1px solid #3fb950;color:#3fb950;font-weight:900;flex-shrink:0;cursor:pointer;';
+            btn.innerText = '🛡️ Фон 24/7';
+            torHdr.appendChild(btn);
+        }
+
+        var deckBar = document.getElementById('deckSwitchBarSettingsV131');
+        if (deckBar && !document.getElementById('btnSettingsBgShieldV212')) {
+            var wrap = document.createElement('div');
+            wrap.style.cssText = 'margin:4px 0 8px 0;display:flex;width:100%;';
+            wrap.innerHTML = '<button type="button" id="btnSettingsBgShieldV212" onclick="window.requestBackgroundUnrestrictedV212(event)" class="jenny-deck-pill-v211 active-a" style="width:100%;padding:8px 12px;font-size:11.5px;"></button>';
+            deckBar.insertAdjacentElement('afterend', wrap);
+        }
+        window.updateBgShieldButtonsUIV212();
+    }
+
+    setInterval(function() {
+        bindLocalVideoNoBufferGuardV212();
+        mountBgShieldButtonsV212();
+        window.syncPermanentForegroundNotificationV212(false);
+    }, 1500);
+
+    setTimeout(function() {
+        mountBgShieldButtonsV212();
+        window.syncPermanentForegroundNotificationV212(true);
+        window.checkBackgroundUnrestrictedStatusV212();
+    }, 500);
+})();
+/* ================= END JENNY V212 ================= */

@@ -5306,7 +5306,612 @@ def api_video_full_stream_v210():
             pass
 
 
+# ==============================================================================
+# 🚀🛡️ JENNY V212 (#301): INSTANT VIDEO IMPORT (0.1ms), MONOTONIC PROGRESS (NO ROLLBACK),
+# ZERO BUFFERING FOR COMPLETED VIDEOS, SPEED BOOSTER & PERMANENT ANDROID FOREGROUND SERVICE
+# ==============================================================================
+_TORRENT_MAX_PROGRESS_V212 = {}       # f"{hash}_{idx}" -> {"completed": int, "percent": int, "done": bool}
+_TORRENT_STATUS_CACHE_V212 = {"ts": 0.0, "data": None}
+_TORRENT_ENDGAME_BOOST_TS_V212 = {}   # f"{hash}_{idx}" -> last_boost_ts
+_PERSISTED_DL_RAM_CACHE_V212 = None
+_ANDROID_WAKELOCK_V212 = None
+_ANDROID_WIFILOCK_V212 = None
+
+# 1. Быстрый RAM-кэш состояния закачек (без чтения флеш-памяти 4 раза в секунду)
+_orig_load_persisted_v143 = _load_persisted_dl_state_v143 if '_load_persisted_dl_state_v143' in globals() else None
+_orig_save_persisted_v143 = _save_persisted_dl_state_v143 if '_save_persisted_dl_state_v143' in globals() else None
+
+def _load_persisted_dl_state_v143() -> dict:
+    global _PERSISTED_DL_RAM_CACHE_V212
+    if _PERSISTED_DL_RAM_CACHE_V212 is not None:
+        return _PERSISTED_DL_RAM_CACHE_V212
+    if _orig_load_persisted_v143:
+        _PERSISTED_DL_RAM_CACHE_V212 = _orig_load_persisted_v143()
+    else:
+        _PERSISTED_DL_RAM_CACHE_V212 = {}
+    return _PERSISTED_DL_RAM_CACHE_V212
+
+def _save_persisted_dl_state_v143(state: dict):
+    global _PERSISTED_DL_RAM_CACHE_V212
+    _PERSISTED_DL_RAM_CACHE_V212 = state
+    if _orig_save_persisted_v143:
+        _orig_save_persisted_v143(state)
+
+# 2. Прямой захват Android WakeLock + WifiLock + запуск постоянного Foreground Service через Chaquopy
+def _ensure_android_foreground_and_locks_v212(title_str: str = "", sub_str: str = ""):
+    global _ANDROID_WAKELOCK_V212, _ANDROID_WIFILOCK_V212
+    try:
+        from com.chaquo.python import Python
+        from java import jclass
+        app = Python.getPlatform().getApplication()
+        if not app:
+            return False
+        Context = jclass("android.content.Context")
+        if _ANDROID_WAKELOCK_V212 is None:
+            PowerManager = jclass("android.os.PowerManager")
+            pm = app.getSystemService(Context.POWER_SERVICE)
+            if pm:
+                wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "JennyPlayer::PythonCoreWakeLockV212")
+                wl.setReferenceCounted(False)
+                wl.acquire()
+                _ANDROID_WAKELOCK_V212 = wl
+        elif not _ANDROID_WAKELOCK_V212.isHeld():
+            _ANDROID_WAKELOCK_V212.acquire()
+
+        if _ANDROID_WIFILOCK_V212 is None:
+            WifiManager = jclass("android.net.wifi.WifiManager")
+            wm = app.getSystemService(Context.WIFI_SERVICE)
+            if wm:
+                wfl = wm.createWifiLock(3, "JennyPlayer::PythonCoreWifiLockV212")
+                wfl.setReferenceCounted(False)
+                wfl.acquire()
+                _ANDROID_WIFILOCK_V212 = wfl
+        elif not _ANDROID_WIFILOCK_V212.isHeld():
+            _ANDROID_WIFILOCK_V212.acquire()
+
+        Intent = jclass("android.content.Intent")
+        BuildVersion = jclass("android.os.Build$VERSION")
+        PlaybackServiceCls = jclass("com.jenny.player.PlaybackService")
+        PlaybackServiceCls.ensureChannel(app)
+
+        svc = Intent(app, PlaybackServiceCls)
+        svc.setAction("com.jenny.player.ACTION_UPDATE")
+        t_val = title_str or "Jenny Player • Студия 24/7"
+        s_val = sub_str or "🛡️ Фоновый режим P2P + DSP активен"
+        svc.putExtra("title", f"{t_val} || {s_val}")
+        svc.putExtra("subtitle", s_val)
+        svc.putExtra("playing", True)
+        if BuildVersion.SDK_INT >= 26:
+            app.startForegroundService(svc)
+        else:
+            app.startService(svc)
+        return True
+    except Exception:
+        return False
+
+threading.Thread(target=_ensure_android_foreground_and_locks_v212, daemon=True).start()
+
+@route('/api/android/bg_status', method='GET')
+def api_android_bg_status_v212():
+    response.content_type = 'application/json; charset=utf-8'
+    ignoring_batt = True
+    try:
+        from com.chaquo.python import Python
+        from java import jclass
+        app = Python.getPlatform().getApplication()
+        Context = jclass("android.content.Context")
+        BuildVersion = jclass("android.os.Build$VERSION")
+        if BuildVersion.SDK_INT >= 23:
+            pm = app.getSystemService(Context.POWER_SERVICE)
+            if pm:
+                ignoring_batt = bool(pm.isIgnoringBatteryOptimizations(app.getPackageName()))
+    except Exception:
+        pass
+    _ensure_android_foreground_and_locks_v212()
+    return json.dumps({
+        "status": "ok",
+        "ignoring_battery_optimizations": ignoring_batt,
+        "wakelock_held": _ANDROID_WAKELOCK_V212 is not None,
+        "wifilock_held": _ANDROID_WIFILOCK_V212 is not None
+    })
+
+@post('/api/android/request_bg_unrestricted')
+def api_android_request_bg_unrestricted_v212():
+    response.content_type = 'application/json; charset=utf-8'
+    _ensure_android_foreground_and_locks_v212()
+    launched = False
+    try:
+        from com.chaquo.python import Python
+        from java import jclass
+        app = Python.getPlatform().getApplication()
+        Intent = jclass("android.content.Intent")
+        Settings = jclass("android.provider.Settings")
+        Uri = jclass("android.net.Uri")
+        pkg = app.getPackageName()
+        try:
+            intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.setData(Uri.parse(f"package:{pkg}"))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(intent)
+            launched = True
+        except Exception:
+            intent2 = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            intent2.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(intent2)
+            launched = True
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+    return json.dumps({"status": "ok", "launched": launched})
+
+
+# 3. Мгновенный (0.1 мс) перенос готового видео или аудио из торрента в плеер без вечного зависания
+def _instant_import_completed_file_v212(h_low: str, f_idx: int, full_p: str, rel_path: str = "", tor_name: str = "Torrent") -> str:
+    h_low = (h_low or "").strip().lower()
+    key = f"{h_low}_{f_idx}"
+    if key in _JTORRENT_CONVERTED_V96 and _JTORRENT_CONVERTED_V96[key]:
+        existing = _JTORRENT_CONVERTED_V96[key]
+        v_cand = os.path.join(VIDEO_DIR_V137, existing)
+        m_cand = os.path.join(MUSIC_DIR, existing)
+        if os.path.isfile(v_cand) or os.path.isfile(m_cand) or (existing in _discovered_video_paths_v134 and os.path.isfile(_discovered_video_paths_v134[existing])):
+            return existing
+
+    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    base_fn = os.path.basename((full_p or rel_path or "").strip())
+    if not base_fn:
+        return ""
+
+    cands = []
+    if full_p:
+        cands.append(full_p)
+        if not os.path.isabs(full_p):
+            cands.append(os.path.join(tor_dir, full_p.lstrip("/")))
+    if rel_path:
+        cands.append(os.path.join(tor_dir, rel_path.lstrip("/")))
+        if tor_name:
+            cands.append(os.path.join(tor_dir, tor_name, rel_path.lstrip("/")))
+    cands.append(os.path.join(VIDEO_DIR_V137, base_fn))
+    cands.append(os.path.join(MUSIC_DIR, base_fn))
+
+    real_src = ""
+    best_sz = -1
+    for c in cands:
+        if c and os.path.isfile(c):
+            try:
+                sz = os.path.getsize(c)
+                if sz > best_sz:
+                    best_sz = sz
+                    real_src = c
+            except Exception:
+                pass
+
+    if not real_src and os.path.isdir(tor_dir):
+        for r_w, _, files_w in os.walk(tor_dir):
+            for fn_w in files_w:
+                if fn_w.lower() == base_fn.lower():
+                    p_w = os.path.join(r_w, fn_w)
+                    try:
+                        sz = os.path.getsize(p_w)
+                        if sz > best_sz:
+                            best_sz = sz
+                            real_src = p_w
+                    except Exception:
+                        pass
+
+    if not real_src or best_sz <= 0:
+        return ""
+
+    ext = os.path.splitext(base_fn)[1].lower()
+    if ext in _VIDEO_EXTS_V134:
+        os.makedirs(VIDEO_DIR_V137, exist_ok=True)
+        vid_dst = os.path.join(VIDEO_DIR_V137, base_fn)
+        final_p = real_src
+        if os.path.abspath(real_src) != os.path.abspath(vid_dst):
+            try:
+                if os.path.isfile(vid_dst):
+                    if os.path.getsize(vid_dst) < best_sz:
+                        os.remove(vid_dst)
+                    else:
+                        final_p = vid_dst
+                if not os.path.isfile(vid_dst):
+                    try:
+                        os.link(real_src, vid_dst)
+                        final_p = vid_dst
+                    except Exception:
+                        os.replace(real_src, vid_dst)
+                        final_p = vid_dst
+            except Exception:
+                final_p = real_src
+
+        sz_mb = round(best_sz / (1024.0 * 1024.0), 1)
+        _discovered_video_paths_v134[base_fn] = final_p
+        _discovered_video_meta_v137[base_fn] = {
+            "name": base_fn,
+            "size_mb": sz_mb,
+            "percent": 100,
+            "in_video_dir": True,
+            "is_ready_local": True,
+            "tor_hash": "",
+            "tor_file_idx": -1,
+            "stream_url": "/api/media/" + urllib.parse.quote(base_fn)
+        }
+        _JTORRENT_CONVERTED_V96[key] = base_fn
+        if '_mark_explicit_file_done_v143' in globals():
+            _mark_explicit_file_done_v143(h_low, int(f_idx))
+        return base_fn
+
+    elif ext in ('.mp3', '.m4a', '.ogg', '.opus', '.aac'):
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        aud_dst = os.path.join(MUSIC_DIR, base_fn)
+        if os.path.abspath(real_src) != os.path.abspath(aud_dst):
+            try:
+                if os.path.exists(aud_dst) and os.path.getsize(aud_dst) < best_sz:
+                    os.remove(aud_dst)
+                if not os.path.exists(aud_dst):
+                    try:
+                        os.link(real_src, aud_dst)
+                    except Exception:
+                        os.replace(real_src, aud_dst)
+            except Exception:
+                pass
+        _JTORRENT_CONVERTED_V96[key] = base_fn
+        if '_mark_explicit_file_done_v143' in globals():
+            _mark_explicit_file_done_v143(h_low, int(f_idx))
+        return base_fn
+
+    return ""
+
+
+# 4. Переопределяем /api/torrent/import_track с мгновенным импортом видео и полным набором полей ответа
+@post('/api/torrent/import_track')
+def api_torrent_import_track_v212():
+    response.content_type = 'application/json; charset=utf-8'
+    req = json.loads(request.body.read().decode('utf-8') or "{}")
+    full_p = (req.get("full_path") or "").strip()
+    tor_name = (req.get("torrent_name") or "Torrent").strip()
+    fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
+    h_low = str(req.get("hash") or "").strip().lower()
+    f_idx = int(req.get("index") or 0)
+    key = f"{h_low}_{f_idx}"
+
+    if key in _JTORRENT_CONVERTED_V96 and _JTORRENT_CONVERTED_V96[key]:
+        fn_ready = _JTORRENT_CONVERTED_V96[key]
+        return json.dumps({
+            "ok": True,
+            "status": "ok",
+            "filename": fn_ready,
+            "xflac_file": fn_ready,
+            "imported": fn_ready,
+            "size_mb": 0,
+            "direct": True
+        }, ensure_ascii=False)
+
+    ext = os.path.splitext(full_p)[1].lower()
+    if ext in _VIDEO_EXTS_V134 or ext in ('.mp3', '.m4a', '.ogg', '.opus', '.aac'):
+        fn_done = _instant_import_completed_file_v212(h_low, f_idx, full_p, full_p, tor_name)
+        if fn_done:
+            p_resolved = resolve_track_full_path_v71(fn_done)
+            sz_mb = round(os.path.getsize(p_resolved) / (1024.0 * 1024.0), 2) if (p_resolved and os.path.isfile(p_resolved)) else 0.0
+            return json.dumps({
+                "ok": True,
+                "status": "ok",
+                "filename": fn_done,
+                "xflac_file": fn_done,
+                "imported": fn_done,
+                "size_mb": sz_mb,
+                "direct": True
+            }, ensure_ascii=False)
+
+    return api_torrent_import_track_v105()
+
+
+# 5. Переопределяем /api/torrent/status:
+#    - Кэш 0.28с (убирает лаги и просадки скорости от 4-кратного опроса в секунду)
+#    - Строго монотонный прогресс (никаких откатов 764.3 -> 763.3 МБ и 1% -> 0%!)
+#    - Честный floor процента (99.5% остаётся 99%, пока файл реально не докачан на 100%)
+#    - Автоматический 0.1мс перенос готовых видео в плеер прямо внутри статуса!
+#    - Авто-дожим последних кусков (Endgame Piece Booster) при >= 94%
+@route('/api/torrent/status', method='GET')
+def api_torrent_status_v212():
+    response.content_type = 'application/json; charset=utf-8'
+    now = time.time()
+    if _TORRENT_STATUS_CACHE_V212["data"] is not None and (now - _TORRENT_STATUS_CACHE_V212["ts"] < 0.28):
+        return _TORRENT_STATUS_CACHE_V212["data"]
+
+    try:
+        if not ensure_jtorrent_daemon_v96():
+            return json.dumps({"status": "ok", "torrents": []})
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=2.5) as r:
+            data = json.loads(r.read().decode("utf-8"))
+
+        persisted_st = _load_persisted_dl_state_v143()
+        for t in (data.get("torrents") or []):
+            th = (t.get("hash") or "").strip().lower()
+            t_name = (t.get("name") or "Torrent").strip()
+            exp_set = set(int(x) for x in (persisted_st.get(th, {}).get("explicit_files") or []))
+            comp_set = set(int(x) for x in (persisted_st.get(th, {}).get("completed_files") or []))
+            t["has_explicit_dl"] = bool(exp_set)
+            p_map_str = str(t.get("pieces_map") or "")
+
+            for f in (t.get("files") or []):
+                f_idx = int(f.get("index", 0))
+                key = f"{th}_{f_idx}"
+                is_exp = (f_idx in exp_set)
+                f["explicit_dl"] = is_exp
+
+                f_len = int(f.get("length") or f.get("size") or 0)
+                raw_comp = int(f.get("completed") or 0)
+                raw_done = bool(f.get("done")) or (f_idx in comp_set) or (key in _JTORRENT_CONVERTED_V96)
+
+                prev_prog = _TORRENT_MAX_PROGRESS_V212.get(key)
+                if prev_prog:
+                    if prev_prog["done"]:
+                        raw_done = True
+                    if raw_comp < prev_prog["completed"]:
+                        raw_comp = prev_prog["completed"]
+
+                if f_len > 0 and raw_comp >= f_len:
+                    raw_comp = f_len
+                    raw_done = True
+
+                if raw_done:
+                    if f_len > 0:
+                        raw_comp = f_len
+                    eff_pct = 100
+                else:
+                    eff_pct = min(99, int((raw_comp * 100) // f_len)) if f_len > 0 else 0
+                    if prev_prog and eff_pct < prev_prog["percent"]:
+                        eff_pct = min(99, prev_prog["percent"])
+
+                _TORRENT_MAX_PROGRESS_V212[key] = {
+                    "completed": raw_comp,
+                    "percent": eff_pct,
+                    "done": raw_done
+                }
+
+                f["completed"] = raw_comp
+                f["percent"] = eff_pct
+                f["done"] = raw_done
+
+                f_path = (f.get("full_path") or f.get("path") or "").strip()
+                if raw_done and not _JTORRENT_CONVERTED_V96.get(key):
+                    ext_f = os.path.splitext(f_path)[1].lower()
+                    if ext_f in _VIDEO_EXTS_V134 or (is_exp and ext_f in ('.mp3', '.m4a', '.ogg', '.opus', '.aac')):
+                        _instant_import_completed_file_v212(th, f_idx, f.get("full_path") or "", f.get("path") or "", t_name)
+
+                f["xflac_file"] = _JTORRENT_CONVERTED_V96.get(key, "")
+
+                if not raw_done and (f.get("is_lead") or is_exp) and eff_pct >= 94 and p_map_str:
+                    last_b = _TORRENT_ENDGAME_BOOST_TS_V212.get(key, 0.0)
+                    if now - last_b >= 4.0:
+                        _TORRENT_ENDGAME_BOOST_TS_V212[key] = now
+                        beg_p = max(0, int(f.get("begin_piece") or 0))
+                        end_p = min(len(p_map_str), int(f.get("end_piece") or len(p_map_str)))
+                        missing_p = [p_i for p_i in range(beg_p, end_p) if p_map_str[p_i] != '4'][:3]
+                        if missing_p:
+                            def _boost_tail(h_target, p_list, f_target):
+                                try:
+                                    urllib.request.urlopen(urllib.request.Request(
+                                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                        data=json.dumps({"hash": h_target, "action": "boost_file", "file_index": f_target}).encode("utf-8"),
+                                        headers={"Content-Type": "application/json"}
+                                    ), timeout=1.0).read()
+                                    for mp in p_list:
+                                        urllib.request.urlopen(urllib.request.Request(
+                                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                            data=json.dumps({"hash": h_target, "action": "boost_piece", "piece_index": mp}).encode("utf-8"),
+                                            headers={"Content-Type": "application/json"}
+                                        ), timeout=1.0).read()
+                                except Exception:
+                                    pass
+                            threading.Thread(target=_boost_tail, args=(th, missing_p, f_idx), daemon=True).start()
+
+        out_json = json.dumps(data, ensure_ascii=False)
+        _TORRENT_STATUS_CACHE_V212["ts"] = now
+        _TORRENT_STATUS_CACHE_V212["data"] = out_json
+        return out_json
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+# 6. Очистка кэша прогресса при удалении раздачи
+_orig_delete_tor_files_v142 = _delete_torrent_files_from_disk_v142
+def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = False, keep_torrent_meta: bool = False) -> float:
+    h = (target_hash or "").strip().lower()
+    if nuke_all:
+        _TORRENT_MAX_PROGRESS_V212.clear()
+    elif h:
+        for k in [k for k in _TORRENT_MAX_PROGRESS_V212.keys() if k.startswith(h + "_")]:
+            _TORRENT_MAX_PROGRESS_V212.pop(k, None)
+        for k in [k for k in _JTORRENT_CONVERTED_V96.keys() if k.startswith(h + "_")]:
+            _JTORRENT_CONVERTED_V96.pop(k, None)
+    _TORRENT_STATUS_CACHE_V212["data"] = None
+    return _orig_delete_tor_files_v142(target_hash, nuke_all=nuke_all, keep_torrent_meta=keep_torrent_meta)
+
+
+# 7. Безопасная синхронизация библиотеки видео БЕЗ кражи недокачанных файлов из torrents_tmp
+#    и БЕЗ привязки tor_hash к уже готовым скачанным видеофайлам (чтобы готовые видео НИКОГДА не буферизовались!)
+def sync_downloaded_videos_to_library_v134(force=False):
+    global _last_vid_scan_ts_v136
+    now = time.time()
+    if not force and (now - _last_vid_scan_ts_v136 < 2.5) and (_discovered_video_paths_v134 or _discovered_video_meta_v137):
+        return list(_discovered_video_meta_v137.values())
+    _last_vid_scan_ts_v136 = now
+    if force:
+        _discovered_video_paths_v134.clear()
+        _discovered_video_meta_v137.clear()
+
+    _migrate_videos_from_music_dir_v137()
+    scan_dirs = _collect_video_scan_dirs_v137()
+    tor_tmp = os.path.abspath(os.path.join(MUSIC_DIR, "torrents_tmp"))
+
+    incomplete_basenames = set()
+    completed_tor_videos = {}  # bn -> (cand_full, sz_mb, h, f_idx)
+    active_tor_videos = {}     # bn -> (pct, sz_mb, h, f_idx)
+
+    try:
+        ensure_jtorrent_daemon_v96()
+        port = globals().get('_JTORRENT_PORT_V96', "18081")
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/status")
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
+            st_data = json.loads(resp.read().decode('utf-8', 'ignore'))
+            tor_list = st_data if isinstance(st_data, list) else (st_data.get('torrents') or [])
+            for tor in tor_list:
+                h = (tor.get('hash') or '').lower()
+                t_name = (tor.get('name') or 'Torrent').strip()
+                for f in (tor.get('files') or []):
+                    rel_p = f.get('path') or f.get('name') or ''
+                    if not rel_p or not rel_p.lower().endswith(_VIDEO_EXTS_V134):
+                        continue
+                    bn = os.path.basename(rel_p)
+                    f_idx = int(f.get('index', 0))
+                    f_len = int(f.get('length') or f.get('size') or 0)
+                    f_comp = int(f.get('completed') or 0)
+                    is_done = bool(f.get('done')) or (f_len > 0 and f_comp >= f_len)
+                    pct = 100 if is_done else (min(99, int((f_comp * 100) // f_len)) if f_len > 0 else int(f.get('percent') or 0))
+                    sz_mb = round(f_len / (1024.0 * 1024.0), 1)
+
+                    if is_done:
+                        imported_fn = _instant_import_completed_file_v212(h, f_idx, f.get('full_path') or '', rel_p, t_name)
+                        v_full = _discovered_video_paths_v134.get(imported_fn or bn) or os.path.join(VIDEO_DIR_V137, bn)
+                        completed_tor_videos[bn] = (v_full, sz_mb, h, f_idx)
+                    else:
+                        incomplete_basenames.add(bn)
+                        active_tor_videos[bn] = (pct, sz_mb, h, f_idx)
+                        broken_stub = os.path.join(VIDEO_DIR_V137, bn)
+                        if os.path.isfile(broken_stub) and f_len > 0 and os.path.getsize(broken_stub) < f_len:
+                            try:
+                                os.remove(broken_stub)
+                            except Exception:
+                                pass
+    except Exception:
+        pass
+
+    for root_d in scan_dirs:
+        if os.path.abspath(root_d).startswith(tor_tmp):
+            continue
+        try:
+            for r, dirs, files in os.walk(root_d):
+                if os.path.abspath(r).startswith(tor_tmp):
+                    continue
+                dirs[:] = [d for d in dirs if d not in ('.git', 'Android', 'proc', 'sys', 'usr', 'lib', 'torrents_tmp')]
+                for fn in files:
+                    if fn.lower().endswith(_VIDEO_EXTS_V134) and not fn.startswith('.'):
+                        if fn in incomplete_basenames:
+                            continue
+                        full_p = os.path.join(r, fn)
+                        try:
+                            sz = os.path.getsize(full_p)
+                            if sz < 64 * 1024:
+                                continue
+                        except Exception:
+                            continue
+                        _discovered_video_paths_v134[fn] = full_p
+                        _discovered_video_meta_v137[fn] = {
+                            "name": fn,
+                            "size_mb": round(sz / (1024.0 * 1024.0), 1),
+                            "percent": 100,
+                            "in_video_dir": full_p.startswith(VIDEO_DIR_V137),
+                            "is_ready_local": True,
+                            "tor_hash": "",
+                            "tor_file_idx": -1,
+                            "stream_url": "/api/media/" + urllib.parse.quote(fn)
+                        }
+        except Exception:
+            pass
+
+    for bn, (v_full, sz_mb, h, f_idx) in completed_tor_videos.items():
+        if v_full and os.path.isfile(v_full):
+            _discovered_video_paths_v134[bn] = v_full
+        _discovered_video_meta_v137[bn] = {
+            "name": bn,
+            "size_mb": sz_mb,
+            "percent": 100,
+            "in_video_dir": True,
+            "is_ready_local": True,
+            "tor_hash": "",
+            "tor_file_idx": -1,
+            "stream_url": "/api/media/" + urllib.parse.quote(bn)
+        }
+
+    for bn, (pct, sz_mb, h, f_idx) in active_tor_videos.items():
+        if bn not in _discovered_video_meta_v137:
+            _discovered_video_meta_v137[bn] = {
+                "name": bn,
+                "size_mb": sz_mb,
+                "percent": pct,
+                "in_video_dir": False,
+                "is_ready_local": False,
+                "tor_hash": h,
+                "tor_file_idx": f_idx,
+                "stream_url": f"/api/torrent/stream/{h}/{f_idx}"
+            }
+
+    return list(_discovered_video_meta_v137.values())
+
+
+# 8. Улучшенный full_stream_v210: отдаёт локальные .mkv/.mp4 напрямую через static_file (с поддержкой Range),
+#    и не падает с 404 если передан http://127.0.0.1:18081/stream
+@route('/api/video/full_stream_v210', method='GET')
+def api_video_full_stream_v212():
+    raw_src = (request.query.get('src') or request.query.get('path') or '').strip()
+    start_sec = 0.0
+    try:
+        start_sec = max(0.0, float(request.query.get('start') or 0.0))
+    except Exception:
+        start_sec = 0.0
+
+    real_path = _resolve_video_src_input_v131(raw_src) if ("_resolve_video_src_input_v131" in globals() and raw_src) else raw_src
+    is_http_stream = str(real_path).startswith(('http://', 'https://'))
+    if not real_path or (not is_http_stream and not os.path.isfile(real_path)):
+        response.status = 404
+        return "File not found"
+
+    if not is_http_stream:
+        ext = os.path.splitext(real_path)[1].lower()
+        if ext in ('.mp4', '.mkv', '.webm', '.m4v', '.mov') and start_sec <= 0.1 and request.query.get('transcode') != '1':
+            folder, fname = os.path.split(real_path)
+            return static_file(fname, root=folder)
+    else:
+        ext = '.mkv'
+
+    ff_bin = find_ffmpeg_binary()
+    response.content_type = 'video/mp4'
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Accept-Ranges'] = 'none'
+
+    vcodec_arg = ['-c:v', 'copy']
+    if ext == '.avi':
+        vcodec_arg = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p']
+
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if start_sec > 0.1:
+        cmd += ['-ss', f"{start_sec:.2f}"]
+    cmd += [
+        '-i', real_path,
+        *vcodec_arg,
+        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-f', 'mp4', 'pipe:1'
+    ]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
+    def _stream_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(131072)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_stream_gen(), status=200, headers=response.headers)
+
+
 def start_server():
+
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
     if MUSIC_DIR != DEFAULT_MUSIC_DIR:
