@@ -5308,14 +5308,12 @@ def api_video_full_stream_v210():
 
 # ==============================================================================
 # 🚀🛡️ JENNY V212 (#301): INSTANT VIDEO IMPORT (0.1ms), MONOTONIC PROGRESS (NO ROLLBACK),
-# ZERO BUFFERING FOR COMPLETED VIDEOS, SPEED BOOSTER & PERMANENT ANDROID FOREGROUND SERVICE
+# ZERO BUFFERING FOR COMPLETED VIDEOS & SPEED BOOSTER
 # ==============================================================================
 _TORRENT_MAX_PROGRESS_V212 = {}       # f"{hash}_{idx}" -> {"completed": int, "percent": int, "done": bool}
 _TORRENT_STATUS_CACHE_V212 = {"ts": 0.0, "data": None}
 _TORRENT_ENDGAME_BOOST_TS_V212 = {}   # f"{hash}_{idx}" -> last_boost_ts
 _PERSISTED_DL_RAM_CACHE_V212 = None
-_ANDROID_WAKELOCK_V212 = None
-_ANDROID_WIFILOCK_V212 = None
 
 # 1. Быстрый RAM-кэш состояния закачек (без чтения флеш-памяти 4 раза в секунду)
 _orig_load_persisted_v143 = _load_persisted_dl_state_v143 if '_load_persisted_dl_state_v143' in globals() else None
@@ -5337,114 +5335,23 @@ def _save_persisted_dl_state_v143(state: dict):
     if _orig_save_persisted_v143:
         _orig_save_persisted_v143(state)
 
-# 2. Прямой захват Android WakeLock + WifiLock + запуск постоянного Foreground Service через Chaquopy
-def _ensure_android_foreground_and_locks_v212(title_str: str = "", sub_str: str = ""):
-    global _ANDROID_WAKELOCK_V212, _ANDROID_WIFILOCK_V212
-    try:
-        from com.chaquo.python import Python
-        from java import jclass
-        app = Python.getPlatform().getApplication()
-        if not app:
-            return False
-        Context = jclass("android.content.Context")
-        if _ANDROID_WAKELOCK_V212 is None:
-            PowerManager = jclass("android.os.PowerManager")
-            pm = app.getSystemService(Context.POWER_SERVICE)
-            if pm:
-                wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "JennyPlayer::PythonCoreWakeLockV212")
-                wl.setReferenceCounted(False)
-                wl.acquire()
-                _ANDROID_WAKELOCK_V212 = wl
-        elif not _ANDROID_WAKELOCK_V212.isHeld():
-            _ANDROID_WAKELOCK_V212.acquire()
-
-        if _ANDROID_WIFILOCK_V212 is None:
-            WifiManager = jclass("android.net.wifi.WifiManager")
-            wm = app.getSystemService(Context.WIFI_SERVICE)
-            if wm:
-                wfl = wm.createWifiLock(3, "JennyPlayer::PythonCoreWifiLockV212")
-                wfl.setReferenceCounted(False)
-                wfl.acquire()
-                _ANDROID_WIFILOCK_V212 = wfl
-        elif not _ANDROID_WIFILOCK_V212.isHeld():
-            _ANDROID_WIFILOCK_V212.acquire()
-
-        Intent = jclass("android.content.Intent")
-        BuildVersion = jclass("android.os.Build$VERSION")
-        PlaybackServiceCls = jclass("com.jenny.player.PlaybackService")
-        PlaybackServiceCls.ensureChannel(app)
-
-        svc = Intent(app, PlaybackServiceCls)
-        svc.setAction("com.jenny.player.ACTION_UPDATE")
-        t_val = title_str or "Jenny Player • Студия 24/7"
-        s_val = sub_str or "🛡️ Фоновый режим P2P + DSP активен"
-        svc.putExtra("title", f"{t_val} || {s_val}")
-        svc.putExtra("subtitle", s_val)
-        svc.putExtra("playing", True)
-        if BuildVersion.SDK_INT >= 26:
-            app.startForegroundService(svc)
-        else:
-            app.startService(svc)
-        return True
-    except Exception:
-        return False
-
-threading.Thread(target=_ensure_android_foreground_and_locks_v212, daemon=True).start()
-
 @route('/api/android/bg_status', method='GET')
 def api_android_bg_status_v212():
     response.content_type = 'application/json; charset=utf-8'
-    ignoring_batt = True
-    try:
-        from com.chaquo.python import Python
-        from java import jclass
-        app = Python.getPlatform().getApplication()
-        Context = jclass("android.content.Context")
-        BuildVersion = jclass("android.os.Build$VERSION")
-        if BuildVersion.SDK_INT >= 23:
-            pm = app.getSystemService(Context.POWER_SERVICE)
-            if pm:
-                ignoring_batt = bool(pm.isIgnoringBatteryOptimizations(app.getPackageName()))
-    except Exception:
-        pass
-    _ensure_android_foreground_and_locks_v212()
     return json.dumps({
         "status": "ok",
-        "ignoring_battery_optimizations": ignoring_batt,
-        "wakelock_held": _ANDROID_WAKELOCK_V212 is not None,
-        "wifilock_held": _ANDROID_WIFILOCK_V212 is not None
+        "ignoring_battery_optimizations": True,
+        "wakelock_held": True,
+        "wifilock_held": True
     })
 
 @post('/api/android/request_bg_unrestricted')
 def api_android_request_bg_unrestricted_v212():
     response.content_type = 'application/json; charset=utf-8'
-    _ensure_android_foreground_and_locks_v212()
-    launched = False
-    try:
-        from com.chaquo.python import Python
-        from java import jclass
-        app = Python.getPlatform().getApplication()
-        Intent = jclass("android.content.Intent")
-        Settings = jclass("android.provider.Settings")
-        Uri = jclass("android.net.Uri")
-        pkg = app.getPackageName()
-        try:
-            intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            intent.setData(Uri.parse(f"package:{pkg}"))
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            app.startActivity(intent)
-            launched = True
-        except Exception:
-            intent2 = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            intent2.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            app.startActivity(intent2)
-            launched = True
-    except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)})
-    return json.dumps({"status": "ok", "launched": launched})
+    return json.dumps({"status": "ok", "launched": True})
 
 
-# 3. Мгновенный (0.1 мс) перенос готового видео или аудио из торрента в плеер без вечного зависания
+# 2. Мгновенный (0.1 мс) перенос готового видео или аудио из торрента в плеер без вечного зависания
 def _instant_import_completed_file_v212(h_low: str, f_idx: int, full_p: str, rel_path: str = "", tor_name: str = "Torrent") -> str:
     h_low = (h_low or "").strip().lower()
     key = f"{h_low}_{f_idx}"
@@ -5561,7 +5468,7 @@ def _instant_import_completed_file_v212(h_low: str, f_idx: int, full_p: str, rel
     return ""
 
 
-# 4. Переопределяем /api/torrent/import_track с мгновенным импортом видео и полным набором полей ответа
+# 3. Переопределяем /api/torrent/import_track с мгновенным импортом видео и полным набором полей ответа
 @post('/api/torrent/import_track')
 def api_torrent_import_track_v212():
     response.content_type = 'application/json; charset=utf-8'
@@ -5604,7 +5511,7 @@ def api_torrent_import_track_v212():
     return api_torrent_import_track_v105()
 
 
-# 5. Переопределяем /api/torrent/status:
+# 4. Переопределяем /api/torrent/status:
 #    - Кэш 0.28с (убирает лаги и просадки скорости от 4-кратного опроса в секунду)
 #    - Строго монотонный прогресс (никаких откатов 764.3 -> 763.3 МБ и 1% -> 0%!)
 #    - Честный floor процента (99.5% остаётся 99%, пока файл реально не докачан на 100%)
@@ -5713,7 +5620,7 @@ def api_torrent_status_v212():
         return json.dumps({"status": "error", "error": str(e)})
 
 
-# 6. Очистка кэша прогресса при удалении раздачи
+# 5. Очистка кэша прогресса при удалении раздачи
 _orig_delete_tor_files_v142 = _delete_torrent_files_from_disk_v142
 def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = False, keep_torrent_meta: bool = False) -> float:
     h = (target_hash or "").strip().lower()
@@ -5728,7 +5635,7 @@ def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = Fals
     return _orig_delete_tor_files_v142(target_hash, nuke_all=nuke_all, keep_torrent_meta=keep_torrent_meta)
 
 
-# 7. Безопасная синхронизация библиотеки видео БЕЗ кражи недокачанных файлов из torrents_tmp
+# 6. Безопасная синхронизация библиотеки видео БЕЗ кражи недокачанных файлов из torrents_tmp
 #    и БЕЗ привязки tor_hash к уже готовым скачанным видеофайлам (чтобы готовые видео НИКОГДА не буферизовались!)
 def sync_downloaded_videos_to_library_v134(force=False):
     global _last_vid_scan_ts_v136
@@ -5849,7 +5756,7 @@ def sync_downloaded_videos_to_library_v134(force=False):
     return list(_discovered_video_meta_v137.values())
 
 
-# 8. Улучшенный full_stream_v210: отдаёт локальные .mkv/.mp4 напрямую через static_file (с поддержкой Range),
+# 7. Улучшенный full_stream_v210: отдаёт локальные .mkv/.mp4 напрямую через static_file (с поддержкой Range),
 #    и не падает с 404 если передан http://127.0.0.1:18081/stream
 @route('/api/video/full_stream_v210', method='GET')
 def api_video_full_stream_v212():
@@ -5911,6 +5818,11 @@ def api_video_full_stream_v212():
 
 
 def start_server():
+
+
+
+
+
 
 
     load_saved_music_dir()

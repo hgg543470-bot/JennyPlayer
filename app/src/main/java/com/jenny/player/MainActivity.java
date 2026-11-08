@@ -507,9 +507,7 @@ public class MainActivity extends AppCompatActivity {
     
     private void ensurePermanentForegroundServiceV212() {
         try {
-            PlaybackService.ensureChannel(this);
-        ensurePermanentForegroundServiceV212();
-            Intent svc = new Intent(this, PlaybackService.class);
+            Intent svc = new Intent(MainActivity.this, PlaybackService.class);
             svc.setAction(PlaybackService.ACTION_UPDATE);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(svc);
@@ -896,7 +894,7 @@ public class MainActivity extends AppCompatActivity {
         // 1. Сразу регистрируем канал уведомлений при старте!
         // Это мгновенно разблокирует серый тумблер в настройках Android 13-16
         PlaybackService.ensureChannel(this);
-        ensurePermanentForegroundServiceV212();
+        permWatchHandlerV147.postDelayed(() -> ensurePermanentForegroundServiceV212(), 1200);
 
         // 2. Разрешения запрашиваются дружелюбно со стартового экрана (Onboarding V165),
         // чтобы не пугать пользователя системными окнами до загрузки интерфейса.
@@ -1163,7 +1161,7 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
-        @JavascriptInterface
+                @JavascriptInterface
         public boolean isIgnoringBatteryOptimizations() {
             return isIgnoringBatteryOptimizationsInternalV212();
         }

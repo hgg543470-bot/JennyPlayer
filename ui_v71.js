@@ -18527,7 +18527,6 @@ let vsyncTicks = 0;
         };
     }
 
-    // Блокируем ложное срабатывание waiting-буферизации на локальных готовых видеофайлах
     function bindLocalVideoNoBufferGuardV212() {
         var v = document.getElementById('jennyVideoElV130');
         if (!v || v._v212NoBufferHooked) return;
