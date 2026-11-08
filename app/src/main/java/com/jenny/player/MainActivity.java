@@ -1164,8 +1164,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @JavascriptInterface
-        
-        @JavascriptInterface
         public boolean isIgnoringBatteryOptimizations() {
             return isIgnoringBatteryOptimizationsInternalV212();
         }

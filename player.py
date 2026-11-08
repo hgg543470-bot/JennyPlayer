@@ -5912,6 +5912,7 @@ def api_video_full_stream_v212():
 
 def start_server():
 
+
     load_saved_music_dir()
     cleanup_stale_temps(DEFAULT_MUSIC_DIR)
     if MUSIC_DIR != DEFAULT_MUSIC_DIR:
