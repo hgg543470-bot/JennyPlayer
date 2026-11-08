@@ -10425,13 +10425,13 @@ vid.addEventListener('play', () => { window._vidStateV130.userPaused = false; if
 vid.addEventListener('pause', () => { if (window._vidStateV130._internalRevPause) { window._vidStateV130._internalRevPause = false; return; } if (playBtn) playBtn.innerText = '▶'; window.wakeVideoHudV130(false); });
 vid.addEventListener('seeked', () => { if (!userDraggingSeek) window.syncVideoRamEngineV131(false); });
 vid.addEventListener('timeupdate', () => {
-if (userDraggingSeek) return;
+if (userDraggingSeek || window._v130UserDraggingSeekV212) return;
 const cEl = document.getElementById('v130CurTime'), dEl = document.getElementById('v130DurTime');
-const cur = (vid.currentTime || 0) + (window._vidStateV130.remuxBaseOffset || 0);
-const dur = isFinite(vid.duration) ? (vid.duration + (window._vidStateV130.remuxBaseOffset || 0)) : 0;
+const cur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : ((vid.currentTime || 0) + (window._vidStateV130.remuxBaseOffset || 0));
+const dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (isFinite(vid.duration) ? vid.duration : 0);
 if (cEl) cEl.innerText = window.fmtKhSecV90 ? window.fmtKhSecV90(cur) : '0:00';
 if (dEl) dEl.innerText = dur > 0 ? (window.fmtKhSecV90 ? window.fmtKhSecV90(dur) : '0:00') : 'Поток';
-if (seek && dur > 0) seek.value = Math.min(1000, Math.round((cur / dur) * 1000));
+if (seek && dur > 0) seek.value = String(Math.min(1000, Math.max(0, Math.round((cur / dur) * 1000))));
 });
 
 let lastTapTs = 0, startX = 0, startY = 0, initLeft = 0, initTop = 0, gestureMode = '', canStartPipDrag = false;
@@ -11013,9 +11013,10 @@ window.switchVideoToFfmpegRemuxV130(null, true);
 });
 }
 
-// Если файл .avi — сразу запускаем через потоковый FFmpeg-транскодер (Android WebView не декодирует .avi нативно)
-if (/\.avi$/i.test(st.currentTitle)) {
-window.switchVideoToFfmpegRemuxV130(null, true);
+// Если файл .avi или это недокачанный .mkv/.webm/.ts торрент-поток — сразу запускаем через потоковый FFmpeg live_remux без двойного старта!
+const isTorMkvOrAvi = Boolean(st.torHash && /\.(mkv|avi|webm|ts|m2ts|wmv|flv)(\?|$)/i.test(String(st.currentTitle || '') + ' ' + String(effectiveUrl || '')));
+if (/\.avi$/i.test(st.currentTitle) || isTorMkvOrAvi) {
+window.switchVideoToFfmpegRemuxV130(null, /\.avi$/i.test(st.currentTitle));
 } else {
 vid.src = effectiveUrl;
 vid.playbackRate = vd.speed || 1.0;
@@ -13797,10 +13798,17 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
         return 0;
     };
 
-    window.getEffectiveVideoCurrentTimeV167 = function(vid) {
+    window.getEffectiveVideoCurrentTimeV167 = window.getEffectiveVideoCurrentTimeV210 = function(vid) {
+        if (!vid) vid = document.getElementById('jennyVideoElV130');
         const st = window._vidStateV130 || {};
-        if (st._pendingSeekSecV167 !== undefined && (performance.now() - (st._pendingSeekTsV167 || 0) < 900)) {
-            return st._pendingSeekSecV167;
+        if (st._pendingSeekSecV167 !== undefined) {
+            const dt = performance.now() - (st._pendingSeekTsV167 || 0);
+            if (dt < 2500 || window._vidIsBufferingV132 || !vid || vid.readyState < 2) {
+                return st._pendingSeekSecV167;
+            }
+            if ((vid.currentTime || 0) > 0.15) {
+                st._pendingSeekSecV167 = undefined;
+            }
         }
         const rawCur = (vid && isFinite(vid.currentTime)) ? vid.currentTime : 0;
         return rawCur + (st.remuxBaseOffset || 0);
@@ -15927,40 +15935,26 @@ let vsyncTicks = 0;
             var audNow = window.audio || document.querySelector('audio');
             /* V211: allow Deck A and Deck B to play simultaneously */
 
-            var curT = window.getEffectiveVideoCurrentTimeV210(vEl);
-            var durT = window.getEffectiveVideoDurationV210(vEl);
-            var remT = Math.max(0, durT - curT);
-            var pct = durT > 0 ? Math.max(0, Math.min(100, (curT / durT) * 100)) : 0;
+            var curT = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vEl) : window.getEffectiveVideoCurrentTimeV210(vEl);
+            var durT = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vEl) : window.getEffectiveVideoDurationV210(vEl);
 
-            var elCur = document.getElementById('currentTime');
-            var elDur = document.getElementById('duration');
-            var elBar = document.getElementById('progressBar') || document.getElementById('progress');
-            var elPlay = document.getElementById('playBtn');
-
-            if (elCur && !window._isScrubbingDeckBV210) elCur.textContent = window.formatVideoTimeV210(curT);
-            if (elDur) elDur.textContent = '-' + window.formatVideoTimeV210(remT);
-            if (elBar && !window._isScrubbingDeckBV210) elBar.style.width = pct.toFixed(2) + '%';
-
-            // Обновляем верхнюю мелкую цифру над названием трека на нижней панели (вместо 0:00 / 5:00)
-            var topSub = document.getElementById('scrubTimePreview') || document.getElementById('trackSubInfo') || document.querySelector('#trackInfo > div:first-child');
-            if (topSub && topSub.id !== 'trackTitle' && /^[\d:.\s\/+-]+$/.test(topSub.textContent.trim())) {
-                topSub.textContent = window.formatVideoTimeV210(curT) + ' / ' + window.formatVideoTimeV210(durT);
+            // V215: НИКОГДА не пишем время видео в #currentTime / #remainingTime Деки А!
+            // Обновляем строго внутренний ползунок видеоплеера (#v130SeekSlider, #v130CurTime, #v130DurTime) и верхнюю шкалу Деки Б!
+            if (!window._v130UserDraggingSeekV212 && (performance.now() - (window._v130LastDragCommitTsV212 || 0) >= 350)) {
+                var vSeek = document.getElementById('v130SeekSlider');
+                var vTimeLeft = document.getElementById('v130CurTime') || document.getElementById('v130TimeCur');
+                var vTimeRight = document.getElementById('v130DurTime') || document.getElementById('v130TimeDur');
+                if (vSeek && durT > 0) {
+                    vSeek.max = '1000';
+                    vSeek.value = String(Math.min(1000, Math.max(0, Math.round((curT / durT) * 1000))));
+                }
+                if (vTimeLeft) vTimeLeft.textContent = window.formatVideoTimeV210(curT);
+                if (vTimeRight) vTimeRight.textContent = durT > 0 ? window.formatVideoTimeV210(durT) : 'Поток';
+                if (typeof window.updateProgressUIDeckB === 'function' && durT > 0) {
+                    var isRevB = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+                    window.updateProgressUIDeckB(curT, durT, isRevB);
+                }
             }
-
-            if (elPlay && !elPlay.querySelector('svg')) {
-                var wantIcon = vEl.paused ? '▶' : '⏸';
-                if (elPlay.textContent.trim() !== wantIcon) elPlay.textContent = wantIcon;
-            }
-
-            var vSeek = document.getElementById('v130SeekSlider');
-            var vTimeLeft = document.getElementById('v130TimeCur');
-            var vTimeRight = document.getElementById('v130TimeDur');
-            if (vSeek && durT > 0 && !window._v130UserDraggingSeekV212) {
-                vSeek.max = 1000;
-                vSeek.value = Math.min(1000, Math.max(0, Math.round((curT / durT) * 1000)));
-            }
-            if (vTimeLeft) vTimeLeft.textContent = window.formatVideoTimeV210(curT);
-            if (vTimeRight) vTimeRight.textContent = window.formatVideoTimeV210(durT);
         }
     }
 
@@ -18631,24 +18625,43 @@ let vsyncTicks = 0;
             window._v130LastLiveVideoSeekTsV212 = now;
         }
 
-        // Если это торрент-поток и пользователь отпустил ползунок — приоритизируем куски в точке перемотки!
-        if (!isLiveDrag && st.torHash && dur > 0) {
-            var seekRatio = Math.max(0, Math.min(0.995, cleanSec / dur));
-            fetch('/api/torrent/seek_boost?hash=' + encodeURIComponent(st.torHash) + '&index=' + encodeURIComponent(st.torFileIdx || 0) + '&ratio=' + seekRatio.toFixed(4)).catch(function(){});
+        var isAviFile = /\.avi(\?|$)/i.test(String(st.currentTitle || '') + ' ' + String(st.currentUrl || ''));
+        var isMkvOrAviTor = Boolean(st.torHash && !st.isReadyLocalV212 && /\.(mkv|avi|webm|ts|m2ts|wmv|flv)(\?|$)/i.test(String(st.currentTitle || '') + ' ' + String(st.currentUrl || '')));
+        var needsRemuxSeek = Boolean(st.usingRemux || isAviFile || isMkvOrAviTor);
+
+        if (isLiveDrag) {
+            // Пока палец ведёт ползунок: на ремуксе/AVI/торренте обновляем только позицию и цифры, не сбрасывая поток!
+            if (needsRemuxSeek) {
+                st.remuxBaseOffset = cleanSec;
+            } else {
+                try { vid.currentTime = cleanSec; } catch (e) {}
+            }
+            return;
         }
 
-        var isMkvOrAviTor = Boolean(st.torHash && !st.isReadyLocalV212 && /\.(mkv|avi|webm|ts|m2ts|wmv|flv)$/i.test(st.currentTitle || st.currentUrl || ''));
-        if ((st.usingRemux || isMkvOrAviTor) && !isLiveDrag) {
+        if (st.torHash && dur > 0) {
+            var seekRatio = Math.max(0, Math.min(0.995, cleanSec / dur));
+            fetch('/api/torrent/seek_boost', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hash: st.torHash, file_index: Number(st.torFileIdx || 0), ratio: seekRatio })
+            }).catch(function(){});
+        }
+
+        if (needsRemuxSeek) {
             st.usingRemux = true;
             st.remuxBaseOffset = cleanSec;
-            var tcFlag = /\.avi$/i.test(st.currentTitle || '') ? '1' : '0';
+            window._vidPlayIntentV132 = true;
+            window._vidIsBufferingV132 = true;
+            if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+            var tcFlag = isAviFile ? '1' : '0';
             var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl;
-            vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) + '&start=' + cleanSec.toFixed(2) + '&transcode=' + tcFlag + '&t=' + Date.now();
+            vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) + '&start=' + cleanSec.toFixed(2) + '&dur=' + (dur || 0).toFixed(2) + '&transcode=' + tcFlag + '&t=' + Date.now();
             if (!st.userPaused) vid.play().catch(function(){});
-        } else if (!st.usingRemux) {
+        } else {
             st.remuxBaseOffset = 0;
             try { vid.currentTime = cleanSec; } catch (e) {}
-            if (!isLiveDrag && !st.userPaused && (vid.paused || vid.ended) && !isRev) {
+            if (!st.userPaused && (vid.paused || vid.ended) && !isRev) {
                 vid.play().catch(function(){});
             }
         }
@@ -18904,6 +18917,24 @@ let vsyncTicks = 0;
                 } catch (e) {}
             }
 
+            // V215: Сбрасываем старую длительность (21:22) и позицию (4:14 / 6:32) от прошлого видео ПЕРЕД открытием нового!
+            if (window._vidStateV130) {
+                window._vidStateV130.trueDuration = 0;
+                window._vidStateV130.knownDurationSec = 0;
+                window._vidStateV130.remuxBaseOffset = 0;
+                window._vidStateV130._pendingSeekSecV167 = undefined;
+                window._vidStateV130.rawTorStreamUrlV214 = rawInputUrl;
+            }
+            window._jennyFullMovieDurationSecV210 = 0;
+            if (window._vcoreLastProbeV166) window._vcoreLastProbeV166.duration_sec = 0;
+
+            var cElInit = document.getElementById('v130CurTime');
+            var dElInit = document.getElementById('v130DurTime');
+            var sElInit = document.getElementById('v130SeekSlider');
+            if (cElInit) cElInit.innerText = '0:00';
+            if (dElInit) dElInit.innerText = 'Поток';
+            if (sElInit) sElInit.value = '0';
+
             var r = _origOpenVidV212.call(this, streamUrl, titleStr, opts);
             var st = window._vidStateV130;
             var vid = document.getElementById('jennyVideoElV130');
@@ -18913,42 +18944,34 @@ let vsyncTicks = 0;
                     st.torHash = '';
                     st.torFileIdx = -1;
                     st.currentUrl = check.url;
+                    st.rawTorStreamUrlV214 = check.url;
                     st.isReadyLocalV212 = true;
+                    st.isTorrentStream = false;
                 }
                 window._vidIsBufferingV132 = false;
                 if (typeof window.syncVideoPlayBtnIconV132 === 'function') {
                     window.syncVideoPlayBtnIconV132();
                 }
                 var subEl = document.getElementById('v130VideoSubTelemetry');
-                if (subEl && subEl.innerText && subEl.innerText.indexOf('Локальный файл готов') !== -1) {
-                    subEl.innerText = '';
-                }
+                if (subEl) subEl.innerText = '';
                 var btnHub = document.getElementById('v130BtnTorHub');
                 var btnSave = document.getElementById('v130BtnSaveVideo');
                 if (btnHub) btnHub.style.display = 'none';
                 if (btnSave) btnSave.style.display = 'none';
+                if (typeof window.probeTorrentVideoDurationV214 === 'function') {
+                    setTimeout(function() { window.probeTorrentVideoDurationV214(check.url); }, 150);
+                }
             } else {
                 if (st) {
                     st.isReadyLocalV212 = false;
-                    st.isTorrentStream = true;
+                    st.isTorrentStream = Boolean(st.torHash);
                     st.rawTorStreamUrlV214 = rawInputUrl;
                     st.remuxBaseOffset = 0;
                     st._pendingSeekSecV167 = undefined;
-
-                    // Для недокачанных .mkv / .avi / .ts торрент-потоков сразу запускаем live_remux (-seekable 0),
-                    // чтобы не ждать 25 секунд ошибки встроенного декодера WebView!
-                    var isMkvOrAvi = /\.(mkv|avi|webm|ts|m2ts|wmv|flv)(\?|$)/i.test(String(titleStr || '') + ' ' + rawInputUrl);
-                    if (isMkvOrAvi && vid) {
-                        var isAvi = /\.avi(\?|$)/i.test(String(titleStr || '') + ' ' + rawInputUrl);
-                        st.usingRemux = true;
-                        st.remuxBaseOffset = 0;
-                        vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawInputUrl) + '&start=0&transcode=' + (isAvi ? '1' : '0') + '&t=' + Date.now();
-                        vid.play().catch(function(){});
-                    }
                     if (typeof window.probeTorrentVideoDurationV214 === 'function') {
-                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 600);
-                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 2000);
-                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 4500);
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 800);
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 2200);
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 4800);
                     }
                 }
                 if (vid) {
@@ -19383,18 +19406,19 @@ let vsyncTicks = 0;
 /* ================= END JENNY V212 ================= */
 
 
-/* ================= JENNY_V214_UNIFIED_PATCH: HEADER OVERFLOW FIX, ONBOARDING BG 24/7, SEARCH/YEAR/FORMAT TAGS, LIVE_REMUX PROBE & 93 TRACKS ================= */
+
+
+/* ================= JENNY_V215_UNIFIED_PATCH: INSTANT TORRENT START/SEEK, AVI FIX, DUAL FORMAT SLOTS, NO AUDIO MUTE GAP & CLEAN TORRENT ROWS ================= */
 (function() {
-    if (window._jennyV214Installed) return;
-    window._jennyV214Installed = true;
+    if (window._jennyV215Installed) return;
+    window._jennyV215Installed = true;
 
     // -------------------------------------------------------------------------
-    // 1. СТИЛИ V214: ШАПКА ТОРРЕНТ-СТУДИИ БЕЗ ВЫЛЕЗАНИЯ ТЕКСТА + ПЕРЕНОС ЧИПОВ ФОРМАТОВ
+    // 1. СТИЛИ V215: ШАПКА ТОРРЕНТ-СТУДИИ БЕЗ ВЫЛЕЗАНИЯ ТЕКСТА + ЧИПЫ ФОРМАТОВ
     // -------------------------------------------------------------------------
-    var styleV214 = document.createElement('style');
-    styleV214.id = 'jennyStyleV214';
-    styleV214.textContent = [
-        /* Фикс вылезания текста из центральной кнопки #btnTorHeaderHubMenuV128 на логотип и кнопку В фон */
+    var styleV215 = document.createElement('style');
+    styleV215.id = 'jennyStyleV215';
+    styleV215.textContent = [
         '#btnTorHeaderHubMenuV128 {',
         '  overflow: hidden !important;',
         '  text-overflow: ellipsis !important;',
@@ -19421,31 +19445,460 @@ let vsyncTicks = 0;
         '  pointer-events: none !important;',
         '}'
     ].join('\n');
-    document.head.appendChild(styleV214);
+    document.head.appendChild(styleV215);
 
     // -------------------------------------------------------------------------
-    // 2. ОЧИСТКА КЭША P2P:50% ПРИ СТОПЕ / УДАЛЕНИИ / СБРОСЕ ТОРРЕНТА
+    // 2. УБИРАЕМ НАДПИСЬ "📁 ОТКРЫТИЕ ВИДЕОФАЙЛА..." / "🧲 БУФЕРИЗАЦИЯ..." КАК ТОЛЬКО КАДР ГОТОВ
+    // -------------------------------------------------------------------------
+    function hookClearVideoSubTelemetryV215() {
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!vid || vid._v215SubClearHooked) return;
+        vid._v215SubClearHooked = true;
+        var clearOpeningText = function() {
+            var subEl = document.getElementById('v130VideoSubTelemetry');
+            if (!subEl) return;
+            var txt = subEl.innerText || '';
+            if (txt.indexOf('Открытие видеофайла') !== -1 || txt.indexOf('Буферизация видеопотока') !== -1 || txt.indexOf('Локальный файл готов') !== -1) {
+                subEl.innerText = '';
+            }
+        };
+        vid.addEventListener('loadeddata', clearOpeningText);
+        vid.addEventListener('canplay', clearOpeningText);
+        vid.addEventListener('playing', clearOpeningText);
+    }
+    setInterval(function() {
+        hookClearVideoSubTelemetryV215();
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var subEl = document.getElementById('v130VideoSubTelemetry');
+        if (vid && st && st.active && subEl && vid.readyState >= 2 && !window._vidIsBufferingV132) {
+            var txt = subEl.innerText || '';
+            if (txt.indexOf('Открытие видеофайла') !== -1 || txt.indexOf('Буферизация видеопотока') !== -1 || txt.indexOf('Локальный файл готов') !== -1) {
+                subEl.innerText = '';
+            }
+        }
+    }, 300);
+
+    // -------------------------------------------------------------------------
+    // 3. УБИРАЕМ 5-СЕКУНДНОЕ ПРОПАДАНИЕ ЗВУКА НА ВИДЕО (Video #4, 03:52-04:13)
+    //    И РАЗГРУЖАЕМ CPU ДЛЯ ПЛАВНОГО ВОСПРОИЗВЕДЕНИЯ И ПЕРЕМОТКИ .AVI (Video #1, 01:08-01:35)
+    // -------------------------------------------------------------------------
+    // При обычном воспроизведении вперёд (1.0x без реверса) <video> уже подключён через vd.htmlGain -> vd.inputMixer
+    // ко всему DSP-тракту Деки Б (эквалайзер, кроссовер, мастеринг, FIR) со 100% синхронизацией губ и без пауз!
+    // Переключать звук на RAM-буфер (vd.sourceNode) нужно ТОЛЬКО при включённом реверсе (⏪ REV) или скраббинге!
+    window.syncVideoRamEngineV211 = window.syncVideoRamEngineV131 = function(isDragging) {
+        var vd = window.videoDeckV131, st = window._vidStateV130, vid = document.getElementById('jennyVideoElV130');
+        if (!vid || !vd || !vd.ctx || !st || !st.active) return;
+
+        if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+        if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+
+        var gKey = (vd.config && vd.config.gearKeyV66) || 'jbuf-lock';
+        var isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || vd.isReversed);
+        vd.isReversed = isRev;
+        var targetSpd = Math.max(0.1, Math.min(16.0, window.getTargetPlaybackSpeedDeckB ? window.getTargetPlaybackSpeedDeckB() : (vd.speed || 1.0)));
+        vd.speed = targetSpd;
+
+        var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+        var pSec = (vd.studioBuffer && vd.studioBuffer._pieceSecV72) || 45;
+        var curP = (vd.studioBuffer && vd.studioBuffer._pieceMapV72 && vd.studioBuffer._pieceMapV72.length > 0)
+            ? Math.max(0, Math.min(vd.studioBuffer._pieceMapV72.length - 1, Math.floor((isRev ? Math.max(0, curSec - 1.0) : curSec) / pSec)))
+            : -1;
+        var isPieceReady = Boolean(vd.studioBuffer && vd.studioBuffer._pieceMapV72 && curP >= 0 && vd.studioBuffer._pieceMapV72[curP] === 2);
+
+        // При обычном проигрывании вперёд (!isRev) всегда используем прямой поток <video> через DSP Деки Б:
+        // это гарантирует мгновенный звук без 5-секундной немой паузы и идеальный липсинк!
+        var useRamEngine = isRev && isPieceReady;
+
+        if (!useRamEngine) {
+            if (vd.sourceNode) {
+                vd.sourceNode.onended = null;
+                try { vd.sourceNode.stop(); } catch (e) {}
+                try { vd.sourceNode.disconnect(); } catch (e) {}
+                vd.sourceNode = null;
+            }
+            vd.isStudioPlaying = false;
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
+            var lockPitch = (gKey !== 'web-shift' && gKey !== 'jbuf-shift' && gKey !== 'vinyl-shift');
+            vid.preservesPitch = lockPitch; vid.mozPreservesPitch = lockPitch; vid.webkitPreservesPitch = lockPitch;
+            if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
+                try { vid.playbackRate = targetSpd; } catch (e) {}
+            }
+            return;
+        }
+
+        // Режим РЕВЕРСА (⏪ REV): играем из обратного RAM-буфера Деки Б!
+        if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+        if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+
+        var WIN_SEC = Math.max(18.0, Math.min(60.0, targetSpd * 18.0));
+        var rawWinBuf = window.extractVideoWindowBufferV131 ? window.extractVideoWindowBufferV131(vd.studioBuffer, curSec, WIN_SEC, true) : null;
+        if (!rawWinBuf) return;
+
+        var playBuf = rawWinBuf, nodeRate = targetSpd;
+        if (vd.sourceNode) {
+            vd.sourceNode.onended = null;
+            try { vd.sourceNode.stop(); } catch (e) {}
+            try { vd.sourceNode.disconnect(); } catch (e) {}
+            vd.sourceNode = null;
+        }
+
+        if (!st.userPaused) {
+            vd.sourceNode = vd.ctx.createBufferSource();
+            vd.sourceNode.buffer = playBuf;
+            vd.sourceNode.playbackRate.value = nodeRate;
+            vd.sourceNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+            if (st.dspBypass && vd.directBypassGain) vd.directBypassGain.gain.value = 1.0;
+            vd.sourceNode.start(0, 0);
+            vd.isStudioPlaying = true;
+
+            var startRevMediaSec = curSec;
+            var startRevWallMs = performance.now();
+            vd.revFrameTimer = setInterval(function() {
+                if (!st.active || st.userPaused || !vd.isReversed) {
+                    clearInterval(vd.revFrameTimer);
+                    vd.revFrameTimer = null;
+                    return;
+                }
+                var elapsed = ((performance.now() - startRevWallMs) / 1000.0) * targetSpd;
+                var nextSec = Math.max(0, startRevMediaSec - elapsed);
+                if (!st.usingRemux) {
+                    try { vid.currentTime = nextSec; } catch (e) {}
+                }
+                var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+                if (typeof window.updateProgressUIDeckB === 'function' && dur > 0) {
+                    window.updateProgressUIDeckB(nextSec, dur, true);
+                }
+                if (nextSec <= 0.05) {
+                    clearInterval(vd.revFrameTimer);
+                    vd.revFrameTimer = null;
+                }
+            }, 90);
+        }
+    };
+
+    // Для .avi файлов (которые транскодируются на лету через libx264) не запускаем фоновые FFmpeg-воркеры RAM,
+    // чтобы 100% процессора отдавалось плавному декодированию видео без замирания кадра!
+    var _origDecodeVidRamV215 = window.decodeVideoToRamV131;
+    window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
+        var st = window._vidStateV130 || {};
+        var tStr = String(titleStr || st.currentTitle || streamUrl || '');
+        if (/\.avi(\?|$)/i.test(tStr) || (st.torHash && !st.isReadyLocalV212)) {
+            return null;
+        }
+        if (typeof _origDecodeVidRamV215 === 'function') {
+            return await _origDecodeVidRamV215.call(this, streamUrl, titleStr);
+        }
+        return null;
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. БЛОК ФОРМАТОВ ФАЙЛОВ В НАСТРОЙКАХ: ПОКАЗЫВАТЬ И ДЕКУ А (АУДИО), И ДЕКУ Б (ВИДЕО)!
+    //    (Video #1, 02:18-03:15)
+    // -------------------------------------------------------------------------
+    window.saveDualDeckFormatSlotsV215 = async function(whichDeck, triggerReload) {
+        var slotsObj = window.ensureDualDeckFormatSlotsV150();
+        var isVid = (whichDeck === 'video');
+        var targetList = isVid ? slotsObj.videoSlots : slotsObj.audioSlots;
+        var prefix = isVid ? 'cfg_fmt_vid_' : 'cfg_fmt_aud_';
+        var newSlots = [];
+
+        for (var i = 1; i <= targetList.length; i++) {
+            var chk = document.getElementById(prefix + i + '_en');
+            var inp = document.getElementById(prefix + i + '_val');
+            var raw = inp ? inp.value.trim().toLowerCase() : (targetList[i - 1] ? targetList[i - 1].ext : '');
+            if (raw && !raw.startsWith('.')) raw = '.' + raw;
+            if (!raw) continue;
+            var isEn = chk ? Boolean(chk.checked) : true;
+            if (inp) inp.style.opacity = isEn ? '1' : '0.4';
+            newSlots.push({ en: isEn, ext: raw });
+        }
+
+        var cfg = window._musicConfigRefV131 || window.appConfig || {};
+        if (isVid) {
+            cfg.formatSlotsVideoV150 = newSlots;
+            window.KNOWN_VIDEO_EXT_SET_V150 = new Set([].concat(Array.from(window.KNOWN_VIDEO_EXT_SET_V150 || []), newSlots.map(function(s) { return s.ext; })));
+        } else {
+            cfg.formatSlotsAudioV150 = newSlots;
+        }
+        cfg.formatSlots = [].concat(cfg.formatSlotsAudioV150 || [], cfg.formatSlotsVideoV150 || []);
+
+        if (window.appConfig) {
+            window.appConfig.formatSlotsAudioV150 = cfg.formatSlotsAudioV150;
+            window.appConfig.formatSlotsVideoV150 = cfg.formatSlotsVideoV150;
+            window.appConfig.formatSlots = cfg.formatSlots;
+        }
+        try { localStorage.setItem('ytm_config', JSON.stringify(cfg)); } catch (e) {}
+
+        try {
+            await fetch('/api/config/save_single', {
+                method: 'POST',
+                body: JSON.stringify({ category: 'main', key: 'formatSlots', value: cfg.formatSlots })
+            });
+        } catch (e) {}
+
+        if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+        if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+        if (triggerReload && typeof window.smartRefreshCurrentPlaylistV150 === 'function') {
+            await window.smartRefreshCurrentPlaylistV150(null, true);
+        }
+    };
+
+    window.resetDeckFormatSlotsV215 = async function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var isVid = (whichDeck === 'video');
+        var cfg = window._musicConfigRefV131 || window.appConfig || {};
+        if (isVid) {
+            cfg.formatSlotsVideoV150 = JSON.parse(JSON.stringify(window.DEFAULT_VIDEO_FORMAT_SLOTS_V150));
+        } else {
+            cfg.formatSlotsAudioV150 = JSON.parse(JSON.stringify(window.DEFAULT_AUDIO_FORMAT_SLOTS_V150));
+        }
+        window.syncFormatSlotsUI();
+        await window.saveDualDeckFormatSlotsV215(whichDeck, true);
+        if (typeof window.showToast === 'function') {
+            window.showToast(isVid ? '🔄 Форматы видео (Дека Б) сброшены!' : '🔄 Форматы аудио (Дека А) сброшены!', ev);
+        }
+    };
+
+    window.promptAddFormatSlotV215 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var isVid = (whichDeck === 'video');
+        var boxId = 'jennyInlineAddFormatBox_' + whichDeck;
+        var exBox = document.getElementById(boxId);
+        if (exBox) { exBox.remove(); return; }
+
+        var gridEl = document.getElementById(isVid ? 'formatSlotsGridVideoV215' : 'formatSlotsGrid');
+        if (!gridEl || !gridEl.parentElement) return;
+
+        var box = document.createElement('div');
+        box.id = boxId;
+        box.style.cssText = 'display:flex;align-items:center;gap:6px;margin:8px 0;padding:8px;background:#090d14;border:1.5px solid #3fb950;border-radius:10px;';
+        box.innerHTML =
+            '<input type="text" id="' + boxId + '_inp" placeholder="' + (isVid ? '.mkv, .avi, .ts...' : '.wv, .ape, .alac...') + '" style="flex:1;background:#161b22;border:1px solid #30363d;color:#fff;padding:6px 10px;border-radius:7px;font-size:12px;outline:none;text-align:left !important;">' +
+            '<button type="button" id="' + boxId + '_ok" style="padding:6px 12px;border-radius:7px;background:#238636;border:1px solid #3fb950;color:#fff;font-size:11.5px;font-weight:bold;">✅ ОК</button>' +
+            '<button type="button" onclick="this.parentElement.remove()" style="padding:6px 9px;border-radius:7px;background:#21262d;border:1px solid #30363d;color:#8b949e;font-size:11.5px;">✖</button>';
+        gridEl.parentElement.insertBefore(box, gridEl);
+
+        var inp = document.getElementById(boxId + '_inp');
+        var okBtn = document.getElementById(boxId + '_ok');
+        if (inp) setTimeout(function() { inp.focus(); }, 40);
+
+        var submit = async function() {
+            var val = (inp ? inp.value : '').trim().toLowerCase();
+            if (!val) return;
+            if (!val.startsWith('.')) val = '.' + val;
+            var slotsObj = window.ensureDualDeckFormatSlotsV150();
+            var targetList = isVid ? slotsObj.videoSlots : slotsObj.audioSlots;
+            var found = targetList.find(function(s) { return String(s.ext || '').toLowerCase() === val; });
+            if (found) found.en = true;
+            else targetList.push({ en: true, ext: val });
+            if (isVid && window.KNOWN_VIDEO_EXT_SET_V150) window.KNOWN_VIDEO_EXT_SET_V150.add(val);
+            box.remove();
+            window.syncFormatSlotsUI();
+            await window.saveDualDeckFormatSlotsV215(whichDeck, true);
+            if (typeof window.showToast === 'function') {
+                window.showToast('✅ Добавлен формат ' + val + ' в ' + (isVid ? 'Деку Б (Видео)' : 'Деку А (Аудио)'));
+            }
+        };
+        if (okBtn) okBtn.onclick = submit;
+        if (inp) inp.onkeydown = function(e) { if (e.key === 'Enter') submit(); };
+    };
+
+    window.syncFormatSlotsUI = function() {
+        var slotsObj = window.ensureDualDeckFormatSlotsV150();
+        var audioSlots = slotsObj.audioSlots || [];
+        var videoSlots = slotsObj.videoSlots || [];
+        var d = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music' };
+
+        var showAudio = Boolean(d.deckA || (!d.deckA && !d.deckB && d.uiFocus !== 'video'));
+        var showVideo = Boolean(d.deckB || d.uiFocus === 'video');
+
+        var secAud = document.getElementById('customFormatsSection');
+        if (!secAud) return;
+
+        // 1. Рендерим блок Деки А (Аудио)
+        secAud.style.display = showAudio ? 'block' : 'none';
+        secAud.style.borderLeftColor = '#58a6ff';
+        var sumAud = secAud.querySelector('summary');
+        if (sumAud) {
+            var spAud = sumAud.querySelector('span:not(.jenny-help-badge)');
+            if (spAud) spAud.innerText = '🎵 Форматы аудиофайлов (Дека А)';
+        }
+        var addBtnAud = secAud.querySelector('button[onclick*="addNewFormatSlot"]');
+        if (addBtnAud) addBtnAud.setAttribute('onclick', "window.promptAddFormatSlotV215('audio', event)");
+        var rstBtnAud = secAud.querySelector('button[onclick*="resetFormatSlots"]');
+        if (rstBtnAud) rstBtnAud.setAttribute('onclick', "window.resetDeckFormatSlotsV215('audio', event)");
+
+        var gridAud = document.getElementById('formatSlotsGrid');
+        if (gridAud) {
+            gridAud.innerHTML = audioSlots.map(function(s, idx) {
+                var i = idx + 1;
+                var extVal = String(s.ext || '').trim().toLowerCase();
+                if (extVal && !extVal.startsWith('.')) extVal = '.' + extVal;
+                var clr = (extVal === '.xflac') ? '#3fb950' : '#58a6ff';
+                return '<div style="display:flex;align-items:center;justify-content:space-between;background:#0d1117;padding:4px 8px;border-radius:4px;border:1px solid ' + (s.en ? '#30363d' : '#1c2128') + ';">' +
+                    '<input type="checkbox" id="cfg_fmt_aud_' + i + '_en" ' + (s.en ? 'checked' : '') + ' onchange="window.saveDualDeckFormatSlotsV215(\'audio\', true)">' +
+                    '<input type="text" id="cfg_fmt_aud_' + i + '_val" value="' + extVal + '" oninput="window.saveDualDeckFormatSlotsV215(\'audio\', false)" onchange="window.saveDualDeckFormatSlotsV215(\'audio\', true)" style="width:65px;font-size:12px;font-weight:bold;padding:2px;text-align:center;background:transparent;color:' + clr + ';opacity:' + (s.en ? '1' : '0.4') + ';border:none;outline:none;font-family:monospace;">' +
+                '</div>';
+            }).join('');
+        }
+
+        // 2. Создаём/обновляем отдельный блок Деки Б (Видео) прямо под блоком Деки А,
+        //    чтобы при включённой Деке Б (или обеих деках сразу!) форматы видео ВСЕГДА были на виду!
+        var secVid = document.getElementById('customVideoFormatsSectionV215');
+        if (!secVid) {
+            secVid = document.createElement('details');
+            secVid.id = 'customVideoFormatsSectionV215';
+            secVid.open = true;
+            secVid.style.cssText = secAud.style.cssText;
+            secVid.className = secAud.className;
+            secVid.style.borderLeft = '3px solid #ff7b72';
+            secVid.innerHTML =
+                '<summary style="cursor:pointer;font-weight:bold;color:#ff7b72;display:flex;align-items:center;justify-content:space-between;padding:4px 0;">' +
+                    '<span>🎬 Форматы видеофайлов (Дека Б)</span>' +
+                '</summary>' +
+                '<div style="margin-top:8px;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:6px;">' +
+                        '<span style="font-size:11px;color:#8b949e;">Активные расширения видео в папке:</span>' +
+                        '<div style="display:flex;gap:6px;">' +
+                            '<button type="button" onclick="window.promptAddFormatSlotV215(\'video\', event)" style="padding:4px 8px;font-size:11px;background:rgba(46,160,67,0.2);color:#3fb950;border:1px solid #3fb950;border-radius:6px;font-weight:bold;">➕ Формат</button>' +
+                            '<button type="button" onclick="window.resetDeckFormatSlotsV215(\'video\', event)" style="padding:4px 8px;font-size:11px;background:#21262d;color:#e3b341;border:1px solid #30363d;border-radius:6px;">🔄 Сброс</button>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div id="formatSlotsGridVideoV215" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;"></div>' +
+                '</div>';
+            secAud.insertAdjacentElement('afterend', secVid);
+        }
+
+        secVid.style.display = showVideo ? 'block' : 'none';
+        var gridVid = document.getElementById('formatSlotsGridVideoV215');
+        if (gridVid) {
+            gridVid.innerHTML = videoSlots.map(function(s, idx) {
+                var i = idx + 1;
+                var extVal = String(s.ext || '').trim().toLowerCase();
+                if (extVal && !extVal.startsWith('.')) extVal = '.' + extVal;
+                return '<div style="display:flex;align-items:center;justify-content:space-between;background:#0d1117;padding:4px 8px;border-radius:4px;border:1px solid ' + (s.en ? '#30363d' : '#1c2128') + ';">' +
+                    '<input type="checkbox" id="cfg_fmt_vid_' + i + '_en" ' + (s.en ? 'checked' : '') + ' onchange="window.saveDualDeckFormatSlotsV215(\'video\', true)">' +
+                    '<input type="text" id="cfg_fmt_vid_' + i + '_val" value="' + extVal + '" oninput="window.saveDualDeckFormatSlotsV215(\'video\', false)" onchange="window.saveDualDeckFormatSlotsV215(\'video\', true)" style="width:65px;font-size:12px;font-weight:bold;padding:2px;text-align:center;background:transparent;color:#ff7b72;opacity:' + (s.en ? '1' : '0.4') + ';border:none;outline:none;font-family:monospace;">' +
+                '</div>';
+            }).join('');
+        }
+    };
+
+    // Вызываем syncFormatSlotsUI при каждом переключении кнопок Дека А / Дека Б!
+    var _origRenderDeckBannersV215 = window.renderDeckSwitchBannersV131;
+    if (typeof _origRenderDeckBannersV215 === 'function' && !_origRenderDeckBannersV215._v215Wrapped) {
+        window.renderDeckSwitchBannersV131 = function() {
+            var r = _origRenderDeckBannersV215.apply(this, arguments);
+            if (typeof window.syncFormatSlotsUI === 'function') window.syncFormatSlotsUI();
+            return r;
+        };
+        window.renderDeckSwitchBannersV131._v215Wrapped = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. КАРТОЧКИ ФАЙЛОВ В ТОРРЕНТ-РАЗДАЧЕ БЕЗ КРИВОГО ПЕРЕНОСА "• ▶ Поток / ⬇️ Скачать"
+    //    И С ЯРКОЙ ПОДСВЕТКОЙ АКТИВНОГО ПОТОКА (📡 В потоке) И ЗАКАЧКИ (⬇️ Качается)
+    //    (Video #3, 01:38 и Video #4, 00:10-01:30, 03:00-03:11)
+    // -------------------------------------------------------------------------
+    function cleanAndHighlightTorrentFileRowsV215() {
+        var curH = window._torStateV96 && window._torStateV96.currentHash;
+        if (!curH || window._torScreenModeV112 !== 'files') return;
+        var job = window._torMapV112 && window._torMapV112[curH];
+        var vidSt = window._vidStateV130 || {};
+        var activeStreamHash = (vidSt.active && vidSt.torHash) ? String(vidSt.torHash).toLowerCase() : (window._activeStreamSessionV143 ? String(window._activeStreamSessionV143.hash || '').toLowerCase() : '');
+        var activeStreamIdx = (vidSt.active && vidSt.torHash) ? Number(vidSt.torFileIdx) : (window._activeStreamSessionV143 ? Number(window._activeStreamSessionV143.fileIdx) : -1);
+
+        var rows = document.querySelectorAll('#torBodyListV96 [id^="torFileRowV96_"]');
+        rows.forEach(function(rowEl) {
+            var fIdx = Number(String(rowEl.id).replace('torFileRowV96_', ''));
+            var pEl = document.getElementById('torFileProgV96_' + fIdx);
+            var dlBtn = document.getElementById('torDlSingleBtnV98_' + fIdx);
+            var playBtn = rowEl.querySelector('.tor-prev-btn-v97');
+
+            var fMeta = (job && job.files || []).find(function(x) { return Number(x.index) === fIdx; });
+            var st = (job && job.fileStatusMap && job.fileStatusMap[fIdx]) || {};
+            var totMb = (((st.length || (fMeta && fMeta.length) || 0)) / (1024 * 1024)).toFixed(1);
+            var doneMb = (((st.completed || 0)) / (1024 * 1024)).toFixed(1);
+            var pct = Math.max(0, Math.min(100, Number(st.percent || 0)));
+            var readyFile = st.xflac_file || (fMeta && fMeta.xflac_file) || '';
+
+            var isStreamingNow = (activeStreamHash === String(curH).toLowerCase() && activeStreamIdx === fIdx);
+            var isExplicitDl = Boolean(job && job.explicitDlSet && job.explicitDlSet.has(fIdx));
+            var isActivelyDownloading = Boolean(job && job.dlActive && (isExplicitDl || (job.targetSet && job.targetSet.has(fIdx) && Number(st.completed || 0) > 0)));
+
+            if (pEl) {
+                pEl.style.height = 'auto';
+                pEl.style.lineHeight = '1.35';
+                pEl.style.whiteSpace = 'nowrap';
+                pEl.style.overflow = 'hidden';
+                pEl.style.textOverflow = 'ellipsis';
+
+                if (readyFile) {
+                    pEl.innerHTML = '<span style="color:#3fb950;font-weight:800;">✅ В плеере: ' + readyFile + '</span>';
+                } else if (isStreamingNow && isActivelyDownloading) {
+                    pEl.innerHTML = '💾 ' + totMb + ' МБ • <span style="color:#00e5ff;font-weight:900;">📡 В потоке</span> • <span style="color:#3fb950;font-weight:900;">⬇️ ' + doneMb + ' МБ (' + pct + '%)</span>';
+                } else if (isStreamingNow) {
+                    pEl.innerHTML = '💾 ' + totMb + ' МБ • <span style="color:#00e5ff;font-weight:900;background:rgba(0,229,255,0.14);padding:1px 6px;border-radius:5px;border:1px solid rgba(0,229,255,0.4);">📡 Поток активен (' + pct + '%)</span>';
+                } else if (isActivelyDownloading) {
+                    pEl.innerHTML = '💾 ' + totMb + ' МБ • <span style="color:#3fb950;font-weight:900;background:rgba(63,185,80,0.15);padding:1px 6px;border-radius:5px;border:1px solid rgba(63,185,80,0.4);">⬇️ Качается: ' + doneMb + ' МБ (' + pct + '%)</span>';
+                } else if (pct > 0 && Number(st.completed || 0) > 0) {
+                    pEl.innerHTML = '💾 ' + totMb + ' МБ • <span style="color:#d2a8ff;font-weight:bold;">На диске: ' + doneMb + ' МБ (' + pct + '%)</span>';
+                } else {
+                    pEl.innerHTML = '💾 ' + totMb + ' МБ';
+                }
+            }
+
+            if (playBtn) {
+                playBtn.style.background = isStreamingNow ? 'rgba(0,229,255,0.22)' : '#161b22';
+                playBtn.style.borderColor = isStreamingNow ? '#00e5ff' : '#30363d';
+                playBtn.style.color = isStreamingNow ? '#00e5ff' : '#58a6ff';
+                playBtn.style.boxShadow = isStreamingNow ? '0 0 8px rgba(0,229,255,0.4)' : 'none';
+            }
+
+            if (dlBtn && !readyFile) {
+                dlBtn.style.background = isActivelyDownloading ? 'rgba(63,185,80,0.32)' : 'rgba(63,185,80,0.16)';
+                dlBtn.style.borderColor = isActivelyDownloading ? '#00e676' : 'rgba(63,185,80,0.6)';
+                dlBtn.style.boxShadow = isActivelyDownloading ? '0 0 8px rgba(0,230,118,0.4)' : 'none';
+                dlBtn.innerText = isActivelyDownloading ? '⏳' : '⬇️';
+            }
+        });
+    }
+
+    var _origPaintJobV215 = window.paintOpenedTorrentJobProgressV112;
+    if (typeof _origPaintJobV215 === 'function' && !_origPaintJobV215._v215Wrapped) {
+        window.paintOpenedTorrentJobProgressV112 = function(job, te) {
+            var r = _origPaintJobV215.apply(this, arguments);
+            cleanAndHighlightTorrentFileRowsV215();
+            return r;
+        };
+        window.paintOpenedTorrentJobProgressV112._v215Wrapped = true;
+    }
+    setInterval(cleanAndHighlightTorrentFileRowsV215, 500);
+
+    // -------------------------------------------------------------------------
+    // 6. ОЧИСТКА КЭША ПРОГРЕССА ПРИ СТОПЕ / УДАЛЕНИИ + ОНБОРДИНГ 24/7 + ФИЛЬТРЫ ТОРРЕНТА
     // -------------------------------------------------------------------------
     ['stopCurrentOpenTorrentV143', 'deleteCurrentOpenTorrentV143', 'nukeAllTorrentsV142', 'cleanupActiveTorrentStreamV143', 'resetOpenTorrentScreenUI_V143'].forEach(function(fnName) {
         var origFn = window[fnName];
-        if (typeof origFn === 'function' && !origFn._v214Wrapped) {
+        if (typeof origFn === 'function' && !origFn._v215Wrapped) {
             var wrapped = async function() {
                 var curHash = (window._torStateV96 && window._torStateV96.currentHash) || '';
                 if (typeof window.clearTorMonotonicCacheV214 === 'function') {
                     window.clearTorMonotonicCacheV214(fnName === 'nukeAllTorrentsV142' ? '' : curHash);
                 }
-                return await origFn.apply(this, arguments);
+                var res = await origFn.apply(this, arguments);
+                cleanAndHighlightTorrentFileRowsV215();
+                return res;
             };
-            wrapped._v214Wrapped = true;
+            wrapped._v215Wrapped = true;
             window[fnName] = wrapped;
         }
     });
 
-    // -------------------------------------------------------------------------
-    // 3. ВСТРАИВАНИЕ РАЗРЕШЕНИЯ "🛡️ ФОН 24/7" В ШАГ 2 ОНБОРДИНГА (renderOnboardingPageV165)
-    // -------------------------------------------------------------------------
     var origRenderOnbV165 = window.renderOnboardingPageV165;
-    if (typeof origRenderOnbV165 === 'function' && !origRenderOnbV165._v214Wrapped) {
+    if (typeof origRenderOnbV165 === 'function' && !origRenderOnbV165._v215Wrapped) {
         window.renderOnboardingPageV165 = function(pageIdx) {
             var res = origRenderOnbV165.apply(this, arguments);
             var p = Math.max(0, Math.min(3, Number(pageIdx) || 0));
@@ -19464,14 +19917,10 @@ let vsyncTicks = 0;
             }
             return res;
         };
-        window.renderOnboardingPageV165._v214Wrapped = true;
+        window.renderOnboardingPageV165._v215Wrapped = true;
     }
 
-    // -------------------------------------------------------------------------
-    // 4. ФИКС ПОЛЯ ПОИСКА #torMagnetInpV91 (БЕЗ АВТОЗАПОЛНЕНИЯ ПОЧТЫ И СБРОСА КЛАВИАТУРЫ),
-    //    ПЕРЕНОС ПОЛЯ "📅 ГОД" (#torYearInpV125) НА СТРОКУ НИЖЕ + ВСЕ 11 ЧИПОВ ФОРМАТОВ
-    // -------------------------------------------------------------------------
-    var FULL_TORRENT_FORMAT_TAGS_V214 = [
+    var FULL_TORRENT_FORMAT_TAGS_V215 = [
         { id: 'all',   label: '🌐 ВСЕ',   color: '#58a6ff' },
         { id: 'flac',  label: '💎 FLAC',  color: '#3fb950' },
         { id: 'wav',   label: '🌊 WAV',   color: '#39c5cf' },
@@ -19485,12 +19934,12 @@ let vsyncTicks = 0;
         { id: '4k',    label: '🔥 4K',    color: '#ff7b72' }
     ];
 
-    window.TORRENT_FORMAT_TAGS_V101 = FULL_TORRENT_FORMAT_TAGS_V214.slice();
+    window.TORRENT_FORMAT_TAGS_V101 = FULL_TORRENT_FORMAT_TAGS_V215.slice();
 
     window.fixTorrentSearchInputAutofillV214 = function() {
         var inp = document.getElementById('torMagnetInpV91');
-        if (!inp || inp._v214AutofillFixed) return;
-        inp._v214AutofillFixed = true;
+        if (!inp || inp._v215AutofillFixed) return;
+        inp._v215AutofillFixed = true;
         inp.setAttribute('type', 'search');
         inp.setAttribute('name', 'jenny_tor_q_' + Math.floor(Math.random() * 100000));
         inp.setAttribute('autocomplete', 'off');
@@ -19501,7 +19950,6 @@ let vsyncTicks = 0;
         inp.setAttribute('data-lpignore', 'true');
         inp.setAttribute('data-form-type', 'other');
 
-        // Держим readOnly до реального касания, чтобы Android Autofill не предлагал dmitry.m136@gmail.com
         inp.readOnly = true;
         var unlock = function() {
             if (inp.readOnly) inp.readOnly = false;
@@ -19511,7 +19959,6 @@ let vsyncTicks = 0;
         inp.addEventListener('focus', unlock, { passive: true });
     };
 
-    // Переопределяем ensureTorrentYearInputV125: поле "📅 Год" размещается в строке фильтров под поиском!
     window.ensureTorrentYearInputV125 = function() {
         window.fixTorrentSearchInputAutofillV214();
         var topRow = document.getElementById('torTopFilterRowV214');
@@ -19520,7 +19967,7 @@ let vsyncTicks = 0;
             yInp = document.createElement('input');
             yInp.type = 'search';
             yInp.id = 'torYearInpV125';
-            yInp.setAttribute('name', 'jenny_tor_yr_v214');
+            yInp.setAttribute('name', 'jenny_tor_yr_v215');
             yInp.setAttribute('autocomplete', 'off');
             yInp.setAttribute('inputmode', 'numeric');
             yInp.setAttribute('maxlength', '4');
@@ -19543,9 +19990,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // Переопределяем renderTorrentFilterBarV99:
-    // - Первая строка под поиском: 🎯 Точный | 👥 >=2 | 🚫 >0 | 📅 Год
-    // - Вторая область (с переносом flex-wrap): ВСЕ 11 аудио и видео форматов видны сразу!
     window.renderTorrentFilterBarV99 = function() {
         window.fixTorrentSearchInputAutofillV214();
         var m = document.getElementById('jennyTorrentModalV91');
@@ -19560,7 +20004,7 @@ let vsyncTicks = 0;
             stLine.parentNode.insertBefore(bar, stLine);
         }
         var ts = window._torStateV96 || {};
-        window.TORRENT_FORMAT_TAGS_V101 = FULL_TORRENT_FORMAT_TAGS_V214.slice();
+        window.TORRENT_FORMAT_TAGS_V101 = FULL_TORRENT_FORMAT_TAGS_V215.slice();
 
         var mkCheck = function(k, icon, label, activeColor) {
             var on = Boolean(ts[k]);
@@ -19568,7 +20012,7 @@ let vsyncTicks = 0;
         };
 
         var curTag = ts.formatTag || 'all';
-        var tagsHtml = FULL_TORRENT_FORMAT_TAGS_V214.map(function(t) {
+        var tagsHtml = FULL_TORRENT_FORMAT_TAGS_V215.map(function(t) {
             var act = (curTag === t.id);
             return '<button type="button" onclick="window.selectTorrentFormatTagV101(\'' + t.id + '\')" style="padding:4px 8px;font-size:10.5px;border-radius:9px;font-weight:900;flex:0 0 auto;background:' + (act ? 'rgba(88,166,255,0.22)' : '#0d1117') + ';border:1.5px solid ' + (act ? t.color : '#262c36') + ';color:' + (act ? t.color : '#8b949e') + ';box-shadow:' + (act ? '0 0 8px rgba(88,166,255,0.25)' : 'none') + ';">' + t.label + '</button>';
         }).join('');
@@ -19586,7 +20030,6 @@ let vsyncTicks = 0;
         window.ensureTorrentYearInputV125();
     };
 
-    // Живая фильтрация при нажатии на чип формата (и в поиске раздач, и внутри открытой раздачи!)
     window.matchesFileOrResultFormatTagV214 = function(textStr, tagId) {
         var t = String(textStr || '').toLowerCase();
         var tag = String(tagId || 'all').toLowerCase().trim();
@@ -19609,7 +20052,6 @@ let vsyncTicks = 0;
         window._torStateV96.formatTag = tagId || 'all';
         window.renderTorrentFilterBarV99();
 
-        // Если открыт список файлов внутри торрента — фильтруем строки файлов на лету
         if (window._torScreenModeV112 === 'files') {
             var rows = document.querySelectorAll('#torBodyListV96 [id^="torFileRowV96_"]');
             rows.forEach(function(r) {
@@ -19619,7 +20061,6 @@ let vsyncTicks = 0;
             return;
         }
 
-        // Если в поле поиска есть запрос — перезапускаем поиск с выбранным форматом
         var inp = document.getElementById('torMagnetInpV91');
         if (inp && inp.value.trim() && !inp.value.trim().toLowerCase().startsWith('magnet:?')) {
             if (typeof window.runTorrentActionV96 === 'function') {
@@ -19629,17 +20070,21 @@ let vsyncTicks = 0;
     };
 
     // -------------------------------------------------------------------------
-    // 5. БЫСТРЫЙ ПРОБИНГ ДЛИТЕЛЬНОСТИ ТОРРЕНТ-СТРИМА ДЛЯ ПОЛЗУНКА ПЕРЕМОТКИ
+    // 7. ПРОБИНГ РЕАЛЬНОЙ ДЛИТЕЛЬНОСТИ ОТКРЫТОГО ВИДЕО (С ЗАЩИТОЙ ОТ ЧУЖОГО ОТВЕТА)
     // -------------------------------------------------------------------------
     window.probeTorrentVideoDurationV214 = function(streamUrl) {
         var st = window._vidStateV130;
         if (!st || !st.active || !streamUrl) return;
-        fetch('/api/video/probe?src=' + encodeURIComponent(streamUrl))
+        var expectedUrl = st.rawTorStreamUrlV214 || st.currentUrl;
+        fetch('/api/video/pcm_meta?src=' + encodeURIComponent(streamUrl))
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                var dur = Number(d && d.duration_sec) || 0;
+                if (!window._vidStateV130 || !window._vidStateV130.active) return;
+                if ((window._vidStateV130.rawTorStreamUrlV214 || window._vidStateV130.currentUrl) !== expectedUrl) return;
+                var dur = Number(d && (d.duration || d.duration_sec)) || 0;
                 if (dur > 1) {
                     st.trueDuration = dur;
+                    st.knownDurationSec = dur;
                     window._jennyFullMovieDurationSecV210 = dur;
                     if (!window._vcoreLastProbeV166) window._vcoreLastProbeV166 = {};
                     window._vcoreLastProbeV166.duration_sec = dur;
@@ -19657,12 +20102,15 @@ let vsyncTicks = 0;
     };
 
     // -------------------------------------------------------------------------
-    // 6. АВТОЗАГРУЗКА ВСЕХ 93 АУДИОТРЕКОВ ПРИ СТАРТЕ В ВКЛАДКУ "🎵 ВСЕ 93"
+    // 8. АВТОЗАГРУЗКА ВСЕХ 93 АУДИОТРЕКОВ ПРИ СТАРТЕ В ВКЛАДКУ "🎵 ВСЕ 93"
     // -------------------------------------------------------------------------
-    async function autoRefreshAllAudioOnStartupV214() {
+    async function autoRefreshAllAudioOnStartupV215() {
         try {
             if (typeof window.ensureDualDeckFormatSlotsV150 === 'function') {
                 window.ensureDualDeckFormatSlotsV150();
+            }
+            if (typeof window.syncFormatSlotsUI === 'function') {
+                window.syncFormatSlotsUI();
             }
             if (typeof window.fetchData === 'function') {
                 await window.fetchData();
@@ -19680,10 +20128,11 @@ let vsyncTicks = 0;
         } catch (e) {}
     }
 
-    setTimeout(autoRefreshAllAudioOnStartupV214, 450);
-    setTimeout(autoRefreshAllAudioOnStartupV214, 1600);
+    setTimeout(autoRefreshAllAudioOnStartupV215, 450);
+    setTimeout(autoRefreshAllAudioOnStartupV215, 1600);
     setTimeout(function() {
         window.fixTorrentSearchInputAutofillV214();
         window.renderTorrentFilterBarV99();
+        window.syncFormatSlotsUI();
     }, 600);
 })();

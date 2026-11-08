@@ -3881,11 +3881,13 @@ def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = Fals
                 if (h and h in entry.lower()) or (entry in target_names):
                     _rm_item(os.path.join(tor_dir, entry))
 
-    # Удаляем также перенесенные видеофайлы этой раздачи из JennyVideo и кэша вкладки Видео
+    # V215: При сбросе торрентов (nuke_all) удаляем ТОЛЬКО временный кэш torrents_tmp и файлы с явным tor_hash,
+    # НИКОГДА не удаляя личные видеофайлы пользователя из JennyVideo или Download!
     if "VIDEO_DIR_V137" in globals() and os.path.isdir(VIDEO_DIR_V137):
         for fn in list(os.listdir(VIDEO_DIR_V137)):
             meta = _discovered_video_meta_v137.get(fn) or {}
-            if nuke_all or fn in target_names or (h and meta.get("tor_hash") == h):
+            file_tor_hash = (meta.get("tor_hash") or "").strip().lower()
+            if (file_tor_hash and (nuke_all or (h and file_tor_hash == h))) or (not nuke_all and fn in target_names and file_tor_hash):
                 _rm_item(os.path.join(VIDEO_DIR_V137, fn))
                 _discovered_video_paths_v134.pop(fn, None)
                 _discovered_video_meta_v137.pop(fn, None)
@@ -4102,22 +4104,8 @@ _discovered_video_meta_v137 = {}
 _last_vid_scan_ts_v136 = 0.0
 
 def _migrate_videos_from_music_dir_v137():
-    """Если видеофайлы оказались в папке музыки MUSIC_DIR — переносим их в /storage/emulated/0/JennyVideo."""
-    try:
-        if 'MUSIC_DIR' not in globals() or not os.path.isdir(MUSIC_DIR):
-            return
-        os.makedirs(VIDEO_DIR_V137, exist_ok=True)
-        for fn in os.listdir(MUSIC_DIR):
-            if fn.lower().endswith(_VIDEO_EXTS_V134) and not fn.startswith('.'):
-                src_p = os.path.join(MUSIC_DIR, fn)
-                dst_p = os.path.join(VIDEO_DIR_V137, fn)
-                if os.path.isfile(src_p) and os.path.abspath(src_p) != os.path.abspath(dst_p):
-                    try:
-                        os.replace(src_p, dst_p)
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+    """V215: Никогда не переносим личные видео пользователя из MUSIC_DIR / Download в JennyVideo!"""
+    return
 
 def _collect_video_scan_dirs_v137():
     load_multi_dirs_v71()
@@ -6567,6 +6555,7 @@ def api_torrent_status_v214():
             exp_list = set(int(x) for x in persisted_st.get(th, {}).get("explicit_files", []))
             stream_set = _STREAM_ONLY_ACTIVE_V143.get(th, set()) if '_STREAM_ONLY_ACTIVE_V143' in globals() else set()
             p_map_str = t.get("pieces_map") or ""
+            piece_len = int(t.get("piece_length") or 0)
 
             for f in t_files:
                 f_idx = int(f.get("index", 0))
@@ -6574,6 +6563,24 @@ def api_torrent_status_v214():
                 f_len = int(f.get("length") or f.get("size") or 0)
                 raw_comp = int(f.get("completed") or 0)
                 raw_done = bool(f.get("done")) or (f_len > 0 and raw_comp >= f_len)
+
+                # V215: Защита от фантомных 27924.0 / 69916.1 МБ (39%) при открытии больших 4K-раздач:
+                # сверяем raw_comp с реальным числом скачанных ('4') и качающихся ('3') кусков в pieces_map!
+                if p_map_str:
+                    beg_p = max(0, int(f.get("begin_piece") or 0))
+                    end_p = min(len(p_map_str), int(f.get("end_piece") or len(p_map_str)))
+                    if end_p > beg_p:
+                        f_slice = p_map_str[beg_p:end_p]
+                        done_p_cnt = f_slice.count('4')
+                        part_p_cnt = f_slice.count('3')
+                        if done_p_cnt == 0 and part_p_cnt == 0 and not _JTORRENT_CONVERTED_V96.get(key):
+                            raw_comp = 0
+                            raw_done = False
+                        elif piece_len > 0 and not _JTORRENT_CONVERTED_V96.get(key):
+                            max_valid_comp = (done_p_cnt + part_p_cnt) * piece_len
+                            if raw_comp > max_valid_comp and done_p_cnt < (end_p - beg_p):
+                                raw_comp = min(f_len, max_valid_comp)
+                                raw_done = False
 
                 prev_rec = _TORRENT_MAX_PROGRESS_V212.get(key)
                 if prev_rec:
@@ -6754,35 +6761,39 @@ def _boost_torrent_file_and_pieces_v214(h_low: str, f_idx: int, ratio: float = -
                         break
 
             if end_p > beg_p:
-                pieces_to_boost = []
-                # Всегда бустим первые 6 кусков начала файла (для мгновенного старта с 0:00)
-                for hp in range(beg_p, min(end_p, beg_p + 6)):
-                    pieces_to_boost.append(hp)
-                # И последние 2 куска (Cues / moov для MKV / MP4)
-                for tp in range(max(beg_p, end_p - 2), end_p):
-                    if tp not in pieces_to_boost:
-                        pieces_to_boost.append(tp)
-
                 calc_ratio = ratio
                 if calc_ratio < 0.0 and byte_offset > 0 and f_len > 0:
                     calc_ratio = float(byte_offset) / float(f_len)
 
+                # V215: Узкий целевой буст (1-2 куска!), чтобы вся скорость (1.5-2 МБ/с) шла в текущий кусок,
+                # а НЕ размазывалась на 8 кусков (32 МБ / 5%)!
+                # Причём отправляем boost_piece в ОБРАТНОМ порядке, чтобы главный кусок встал ПЕРВЫМ в очереди демона!
+                pieces_to_boost = []
                 if 0.0 < calc_ratio <= 1.0:
                     span = max(1, end_p - beg_p)
                     center_p = max(beg_p, min(end_p - 1, beg_p + int(calc_ratio * span)))
-                    seek_pieces = []
-                    for sp in range(max(beg_p, center_p - 1), min(end_p, center_p + 6)):
-                        seek_pieces.append(sp)
-                    if (end_p - 1) not in seek_pieces:
-                        seek_pieces.append(end_p - 1)
-                    for sp in reversed(seek_pieces):
-                        if sp in pieces_to_boost:
-                            pieces_to_boost.remove(sp)
-                        pieces_to_boost.insert(0, sp)
+                    if beg_p < end_p and (not p_map_str or p_map_str[beg_p] != '4'):
+                        pieces_to_boost.append(beg_p)
+                    if center_p + 1 < end_p:
+                        pieces_to_boost.append(center_p + 1)
+                    pieces_to_boost.append(center_p)
+                else:
+                    if beg_p + 1 < end_p:
+                        pieces_to_boost.append(beg_p + 1)
+                    pieces_to_boost.append(beg_p)
 
-                for p_idx in pieces_to_boost[:12]:
+                now_b = time.time()
+                if not hasattr(_boost_torrent_file_and_pieces_v214, "_recent_boosts"):
+                    _boost_torrent_file_and_pieces_v214._recent_boosts = {}
+                recent_map = _boost_torrent_file_and_pieces_v214._recent_boosts
+
+                for p_idx in pieces_to_boost:
                     if p_map_str and 0 <= p_idx < len(p_map_str) and p_map_str[p_idx] == '4':
                         continue
+                    b_key = f"{h_low}_{p_idx}"
+                    if now_b - recent_map.get(b_key, 0.0) < 3.5:
+                        continue
+                    recent_map[b_key] = now_b
                     try:
                         urllib.request.urlopen(urllib.request.Request(
                             f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
@@ -6800,21 +6811,26 @@ def _boost_torrent_file_and_pieces_v214(h_low: str, f_idx: int, ratio: float = -
         threading.Thread(target=_do_boost, daemon=True).start()
 
 
-@post('/api/torrent/seek_boost')
+@route('/api/torrent/seek_boost', method=['GET', 'POST'])
 def api_torrent_seek_boost_v214():
     response.content_type = 'application/json; charset=utf-8'
     try:
-        req = json.loads(request.body.read().decode("utf-8") or "{}")
-        h_low = (req.get("hash") or "").strip().lower()
-        f_idx = int(req.get("file_index") or 0)
-        ratio = float(req.get("ratio") if req.get("ratio") is not None else -1.0)
+        if request.method == 'POST':
+            req = json.loads(request.body.read().decode("utf-8") or "{}")
+        else:
+            req = {}
+        h_low = (req.get("hash") or request.query.get("hash") or "").strip().lower()
+        f_idx = int(req.get("file_index") if req.get("file_index") is not None else (request.query.get("index") or request.query.get("file_index") or 0))
+        ratio_raw = req.get("ratio") if req.get("ratio") is not None else request.query.get("ratio")
+        ratio = float(ratio_raw if ratio_raw is not None else -1.0)
         if h_low:
             ensure_jtorrent_daemon_v96()
-            _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=False)
+            _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=True)
         return json.dumps({"status": "ok", "hash": h_low, "file_index": f_idx, "ratio": ratio})
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 _override_bottle_route_v212('/api/torrent/seek_boost', 'POST', api_torrent_seek_boost_v214)
+_override_bottle_route_v212('/api/torrent/seek_boost', 'GET', api_torrent_seek_boost_v214)
 
 
 @route('/api/torrent/stream/<hash_str>/<file_idx:int>', method='GET')
@@ -6840,6 +6856,29 @@ def api_torrent_stream_proxy_v214(hash_str, file_idx):
                 rng_start = int(s_part)
         except Exception:
             rng_start = 0
+
+    # V215: Если FFmpeg при открытии или перемотке недокачанного .mkv лезет в самый конец файла (>98% длины) за таблицей Cues,
+    # а последний кусок (end_p - 1) ещё НЕ скачан — мгновенно возвращаем 416, чтобы FFmpeg НЕ висел 25 секунд в ожидании конца файла,
+    # а сразу перешёл к нужному куску по битрейту!
+    if rng_start > 0:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.8) as sr:
+                st_obj = json.loads(sr.read().decode("utf-8", "ignore"))
+            for tor in (st_obj.get("torrents") or []):
+                if (tor.get("hash") or "").strip().lower() == h_low:
+                    p_map = tor.get("pieces_map") or ""
+                    for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                        if int(fobj.get("index", -1)) == f_idx:
+                            f_len = int(fobj.get("length") or fobj.get("size") or 0)
+                            end_p = int(fobj.get("end_piece") or 0)
+                            if f_len > 4194304 and rng_start > (f_len - 2097152):
+                                if p_map and 0 < end_p <= len(p_map) and p_map[end_p - 1] != '4':
+                                    response.status = 416
+                                    return "Tail Cues not ready yet"
+                            break
+                    break
+        except Exception:
+            pass
 
     cur_set = _JTORRENT_ACTIVE_FILES_V106.get(h_low, set())
     is_first_open = (f_idx not in cur_set)
@@ -6913,8 +6952,6 @@ def api_video_live_remux_v214():
     if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
         src = '/' + src.split('8080/', 1)[1]
 
-    # Убиваем только старые FFmpeg-процессы от ДРУГИХ файлов или ДРУГИХ точек перемотки,
-    # НЕ убивая параллельный пробный запрос Android WebView к тому же самому (src, start_sec)!
     req_key = f"{src}::{round(start_sec, 1)}"
     now_ts = time.time()
     with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
@@ -6934,7 +6971,8 @@ def api_video_live_remux_v214():
                     kept.append((ts_started, p_same))
                 _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
 
-    if src.startswith('/api/torrent/stream/'):
+    is_tor_stream = src.startswith('/api/torrent/stream/')
+    if is_tor_stream:
         parts = src.strip('/').split('/')
         if len(parts) >= 5:
             h_low = parts[3].lower()
@@ -6942,10 +6980,17 @@ def api_video_live_remux_v214():
                 f_idx = int(parts[4].split('?')[0])
             except Exception:
                 f_idx = 0
+            if dur_sec <= 0:
+                dur_sec = _probe_torrent_partial_file_duration_v214(src)
             ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
             _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=True)
+            # Направляем FFmpeg через наш прокси /api/torrent/stream/..., который мгновенно отсекает Cues-запросы в нескачанный хвост!
+            src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+        else:
+            src_input = _resolve_video_src_input_v131(src)
+    else:
+        src_input = _resolve_video_src_input_v131(src)
 
-    src_input = _resolve_video_src_input_v131(src)
     is_http = str(src_input).startswith(('http://', 'https://'))
 
     if not is_http and src_input and os.path.isfile(src_input):
@@ -6957,19 +7002,17 @@ def api_video_live_remux_v214():
     cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
     if is_http:
         if start_sec > 0.5:
-            # При перемотке используем HTTP Range (seekable 1), чтобы FFmpeg прыгнул в нужный кусок
-            cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '1048576', '-analyzeduration', '1000000'])
+            cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
         else:
-            # При старте с 0:00 используем seekable 0, чтобы FFmpeg НЕ прыгал в конец 800 МБ .mkv файла за Cues,
-            # а мгновенно отдавал первые кадры из 0-го куска!
-            cmd.extend(['-seekable', '0', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '1048576', '-analyzeduration', '1000000'])
+            # Мгновенный старт с 0:00 уже после первых 256 КБ первого куска (P2P: 0-1%)!
+            cmd.extend(['-seekable', '0', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '262144', '-analyzeduration', '300000'])
 
     if start_sec > 0.5:
         cmd.extend(['-ss', f"{start_sec:.2f}"])
 
-    is_legacy_avi = str(src_input).lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob')) or (request.query.get('transcode') == '1' and '.avi' in src.lower())
+    is_legacy_avi = str(src_input).lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob')) or (request.query.get('transcode') == '1') or ('.avi' in src.lower())
     v_codec_args = [
-        '-threads', '0', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'
+        '-threads', '0', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '24', '-pix_fmt', 'yuv420p', '-g', '30'
     ] if is_legacy_avi else ['-c:v', 'copy']
 
     cmd.extend([
@@ -6979,7 +7022,7 @@ def api_video_live_remux_v214():
         *v_codec_args,
         '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-frag_duration', '200000',
+        '-flush_packets', '1',
         '-f', 'mp4', '-'
     ])
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
