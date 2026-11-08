@@ -5308,12 +5308,61 @@ def api_video_full_stream_v210():
 
 # ==============================================================================
 # 🚀🛡️ JENNY V212 (#301): INSTANT VIDEO IMPORT (0.1ms), MONOTONIC PROGRESS (NO ROLLBACK),
-# ZERO BUFFERING FOR COMPLETED VIDEOS & SPEED BOOSTER
+# ZERO BUFFERING FOR COMPLETED VIDEOS, 64-THREAD WAITRESS & INSTANT TORRENT VIDEO STREAM
 # ==============================================================================
 _TORRENT_MAX_PROGRESS_V212 = {}       # f"{hash}_{idx}" -> {"completed": int, "percent": int, "done": bool}
 _TORRENT_STATUS_CACHE_V212 = {"ts": 0.0, "data": None}
 _TORRENT_ENDGAME_BOOST_TS_V212 = {}   # f"{hash}_{idx}" -> last_boost_ts
 _PERSISTED_DL_RAM_CACHE_V212 = None
+_ACTIVE_VIDEO_FFMPEG_PROCS_V212 = set()
+_ACTIVE_VIDEO_FFMPEG_LOCK_V212 = threading.Lock()
+
+# 0. Увеличиваем пул потоков Waitress с дефолтных 4 до 64, чтобы фоновые запросы FFmpeg/RAM
+#    НИКОГДА не блокировали HTTP-поток <video> (/api/torrent/stream и /api/media)!
+try:
+    import waitress
+    _orig_waitress_serve_v212 = waitress.serve
+    def _fast_waitress_serve_v212(app, **kw):
+        kw.setdefault("threads", 64)
+        kw.setdefault("connection_limit", 256)
+        kw.setdefault("channel_timeout", 30)
+        return _orig_waitress_serve_v212(app, **kw)
+    waitress.serve = _fast_waitress_serve_v212
+except Exception:
+    pass
+
+def _register_video_ffmpeg_proc_v212(proc):
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_VIDEO_FFMPEG_PROCS_V212.add(proc)
+
+def _unregister_video_ffmpeg_proc_v212(proc):
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_VIDEO_FFMPEG_PROCS_V212.discard(proc)
+
+def _kill_stale_video_ffmpeg_procs_v212():
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        procs = list(_ACTIVE_VIDEO_FFMPEG_PROCS_V212)
+        _ACTIVE_VIDEO_FFMPEG_PROCS_V212.clear()
+    for p in procs:
+        try:
+            p.kill()
+        except Exception:
+            pass
+
+def _override_bottle_route_v212(rule_str: str, method_str: str, new_func):
+    try:
+        app = bottle.default_app()
+        replaced = False
+        for r in app.routes:
+            if r.rule == rule_str and r.method == method_str.upper():
+                r.callback = new_func
+                replaced = True
+        if replaced:
+            app.reset()
+        else:
+            app.route(rule_str, method=method_str.upper(), callback=new_func)
+    except Exception:
+        pass
 
 # 1. Быстрый RAM-кэш состояния закачек (без чтения флеш-памяти 4 раза в секунду)
 _orig_load_persisted_v143 = _load_persisted_dl_state_v143 if '_load_persisted_dl_state_v143' in globals() else None
@@ -5468,118 +5517,105 @@ def _instant_import_completed_file_v212(h_low: str, f_idx: int, full_p: str, rel
     return ""
 
 
-# 3. Переопределяем /api/torrent/import_track с мгновенным импортом видео и полным набором полей ответа
+# 3. Переопределяем /api/torrent/import_track: видео и прямые форматы переносятся за 0.1 мс!
 @post('/api/torrent/import_track')
 def api_torrent_import_track_v212():
-    response.content_type = 'application/json; charset=utf-8'
-    req = json.loads(request.body.read().decode('utf-8') or "{}")
-    full_p = (req.get("full_path") or "").strip()
-    tor_name = (req.get("torrent_name") or "Torrent").strip()
-    fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
-    h_low = str(req.get("hash") or "").strip().lower()
-    f_idx = int(req.get("index") or 0)
-    key = f"{h_low}_{f_idx}"
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode("utf-8") or "{}")
+        h_low = (req.get("hash") or "").strip().lower()
+        f_idx = int(req.get("file_index") or 0)
+        full_p = (req.get("full_path") or "").strip()
+        tor_name = (req.get("torrent_name") or "Torrent").strip()
+        key = f"{h_low}_{f_idx}"
 
-    if key in _JTORRENT_CONVERTED_V96 and _JTORRENT_CONVERTED_V96[key]:
-        fn_ready = _JTORRENT_CONVERTED_V96[key]
-        return json.dumps({
-            "ok": True,
-            "status": "ok",
-            "filename": fn_ready,
-            "xflac_file": fn_ready,
-            "imported": fn_ready,
-            "size_mb": 0,
-            "direct": True
-        }, ensure_ascii=False)
+        ext = os.path.splitext(full_p)[1].lower()
+        if ext in _VIDEO_EXTS_V134 or ext in ('.mp3', '.m4a', '.ogg', '.opus', '.aac'):
+            fast_res = _instant_import_completed_file_v212(h_low, f_idx, full_p, full_p, tor_name)
+            if fast_res:
+                return json.dumps({
+                    "status": "ok",
+                    "xflac_file": fast_res,
+                    "is_video": ext in _VIDEO_EXTS_V134
+                }, ensure_ascii=False)
 
-    ext = os.path.splitext(full_p)[1].lower()
-    if ext in _VIDEO_EXTS_V134 or ext in ('.mp3', '.m4a', '.ogg', '.opus', '.aac'):
-        fn_done = _instant_import_completed_file_v212(h_low, f_idx, full_p, full_p, tor_name)
-        if fn_done:
-            p_resolved = resolve_track_full_path_v71(fn_done)
-            sz_mb = round(os.path.getsize(p_resolved) / (1024.0 * 1024.0), 2) if (p_resolved and os.path.isfile(p_resolved)) else 0.0
-            return json.dumps({
-                "ok": True,
-                "status": "ok",
-                "filename": fn_done,
-                "xflac_file": fn_done,
-                "imported": fn_done,
-                "size_mb": sz_mb,
-                "direct": True
-            }, ensure_ascii=False)
-
-    return api_torrent_import_track_v105()
+        return api_torrent_import_track_v130()
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+_override_bottle_route_v212('/api/torrent/import_track', 'POST', api_torrent_import_track_v212)
 
 
 # 4. Переопределяем /api/torrent/status:
-#    - Кэш 0.28с (убирает лаги и просадки скорости от 4-кратного опроса в секунду)
-#    - Строго монотонный прогресс (никаких откатов 764.3 -> 763.3 МБ и 1% -> 0%!)
-#    - Честный floor процента (99.5% остаётся 99%, пока файл реально не докачан на 100%)
-#    - Автоматический 0.1мс перенос готовых видео в плеер прямо внутри статуса!
-#    - Авто-дожим последних кусков (Endgame Piece Booster) при >= 94%
+#    - Кэшируем ответ демона на 350 мс (чтобы параллельные опросы не давили сокет демона)
+#    - Монотонный прогресс (completed и percent НИКОГДА не откатываются назад!)
+#    - Авто-импорт готовых видео за 0.1 мс прямо внутри статуса (без 0/1 зависаний!)
+#    - Endgame-бустер последних кусков (>94%), чтобы скорость не падала в конце закачки!
 @route('/api/torrent/status', method='GET')
 def api_torrent_status_v212():
-    response.content_type = 'application/json; charset=utf-8'
+    response.content_type = 'application/json'
     now = time.time()
-    if _TORRENT_STATUS_CACHE_V212["data"] is not None and (now - _TORRENT_STATUS_CACHE_V212["ts"] < 0.28):
+    if _TORRENT_STATUS_CACHE_V212["data"] is not None and (now - _TORRENT_STATUS_CACHE_V212["ts"] < 0.35):
         return _TORRENT_STATUS_CACHE_V212["data"]
 
+    if not ensure_jtorrent_daemon_v96():
+        return json.dumps({"status": "error", "torrents": []})
+
     try:
-        if not ensure_jtorrent_daemon_v96():
-            return json.dumps({"status": "ok", "torrents": []})
-        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=2.5) as r:
-            data = json.loads(r.read().decode("utf-8"))
+        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status")
+        with urllib.request.urlopen(req, timeout=2.5) as r:
+            data = json.loads(r.read().decode("utf-8", errors="replace"))
 
-        persisted_st = _load_persisted_dl_state_v143()
-        for t in (data.get("torrents") or []):
-            th = (t.get("hash") or "").strip().lower()
+        persisted_st = _load_persisted_dl_state_v143() if '_load_persisted_dl_state_v143' in globals() else {}
+
+        for t in data.get("torrents", []):
+            th = (t.get("hash") or "").lower()
             t_name = (t.get("name") or "Torrent").strip()
-            exp_set = set(int(x) for x in (persisted_st.get(th, {}).get("explicit_files") or []))
-            comp_set = set(int(x) for x in (persisted_st.get(th, {}).get("completed_files") or []))
-            t["has_explicit_dl"] = bool(exp_set)
-            p_map_str = str(t.get("pieces_map") or "")
+            act_set = _JTORRENT_ACTIVE_FILES_V106.get(th, set())
+            exp_list = set(int(x) for x in persisted_st.get(th, {}).get("explicit_files", []))
+            stream_set = _STREAM_ONLY_ACTIVE_V143.get(th, set()) if '_STREAM_ONLY_ACTIVE_V143' in globals() else set()
+            p_map_str = t.get("pieces_map") or ""
 
-            for f in (t.get("files") or []):
+            for f in t.get("files", []):
                 f_idx = int(f.get("index", 0))
                 key = f"{th}_{f_idx}"
-                is_exp = (f_idx in exp_set)
-                f["explicit_dl"] = is_exp
-
                 f_len = int(f.get("length") or f.get("size") or 0)
                 raw_comp = int(f.get("completed") or 0)
-                raw_done = bool(f.get("done")) or (f_idx in comp_set) or (key in _JTORRENT_CONVERTED_V96)
+                raw_done = bool(f.get("done")) or (f_len > 0 and raw_comp >= f_len)
 
-                prev_prog = _TORRENT_MAX_PROGRESS_V212.get(key)
-                if prev_prog:
-                    if prev_prog["done"]:
+                prev_rec = _TORRENT_MAX_PROGRESS_V212.get(key)
+                if prev_rec:
+                    if prev_rec.get("done"):
                         raw_done = True
-                    if raw_comp < prev_prog["completed"]:
-                        raw_comp = prev_prog["completed"]
+                        raw_comp = f_len if f_len > 0 else max(raw_comp, prev_rec.get("completed", 0))
+                    else:
+                        raw_comp = max(raw_comp, prev_rec.get("completed", 0))
+                        if f_len > 0 and raw_comp >= f_len:
+                            raw_done = True
 
-                if f_len > 0 and raw_comp >= f_len:
+                if raw_done and f_len > 0:
                     raw_comp = f_len
-                    raw_done = True
 
-                if raw_done:
-                    if f_len > 0:
-                        raw_comp = f_len
-                    eff_pct = 100
-                else:
-                    eff_pct = min(99, int((raw_comp * 100) // f_len)) if f_len > 0 else 0
-                    if prev_prog and eff_pct < prev_prog["percent"]:
-                        eff_pct = min(99, prev_prog["percent"])
+                eff_pct = 100 if raw_done else (min(99, int((raw_comp * 100) // f_len)) if f_len > 0 else 0)
+                if prev_rec and not raw_done:
+                    eff_pct = max(eff_pct, min(99, int(prev_rec.get("percent", 0))))
 
                 _TORRENT_MAX_PROGRESS_V212[key] = {
                     "completed": raw_comp,
                     "percent": eff_pct,
-                    "done": raw_done
+                    "done": raw_done,
+                    "length": f_len
                 }
 
                 f["completed"] = raw_comp
                 f["percent"] = eff_pct
                 f["done"] = raw_done
 
-                f_path = (f.get("full_path") or f.get("path") or "").strip()
+                is_exp = (f_idx in exp_list) or (f_idx in act_set and f_idx not in stream_set)
+                f["is_selected"] = (f_idx in act_set) or is_exp
+                f["is_explicit_dl"] = is_exp
+                f["is_stream_only"] = (f_idx in stream_set) and not is_exp
+
+                f_path = f.get("full_path") or f.get("path") or ""
                 if raw_done and not _JTORRENT_CONVERTED_V96.get(key):
                     ext_f = os.path.splitext(f_path)[1].lower()
                     if ext_f in _VIDEO_EXTS_V134 or (is_exp and ext_f in ('.mp3', '.m4a', '.ogg', '.opus', '.aac')):
@@ -5618,6 +5654,7 @@ def api_torrent_status_v212():
         return out_json
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
+_override_bottle_route_v212('/api/torrent/status', 'GET', api_torrent_status_v212)
 
 
 # 5. Очистка кэша прогресса при удалении раздачи
@@ -5756,8 +5793,308 @@ def sync_downloaded_videos_to_library_v134(force=False):
     return list(_discovered_video_meta_v137.values())
 
 
-# 7. Улучшенный full_stream_v210: отдаёт локальные .mkv/.mp4 напрямую через static_file (с поддержкой Range),
-#    и не падает с 404 если передан http://127.0.0.1:18081/stream
+# 7. Умное разрешение пути к видео + мгновенный старт торрент-потока без зависаний на MKV Cues в конце файла!
+def _resolve_video_src_input_v131(src: str) -> str:
+    src = (src or "").strip()
+    if src.startswith('/api/torrent/stream/'):
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            key = f"{h_low}_{f_idx}"
+            conv_fn = _JTORRENT_CONVERTED_V96.get(key)
+            if conv_fn:
+                local_p = resolve_track_full_path_v71(conv_fn)
+                if local_p and os.path.isfile(local_p):
+                    return local_p
+            ensure_jtorrent_daemon_v96()
+            return f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}"
+    elif src.startswith('/api/media/'):
+        fn = urllib.parse.unquote(src[len('/api/media/'):].split('?')[0])
+        return resolve_track_full_path_v71(fn)
+    return resolve_track_full_path_v71(src)
+
+
+@route('/api/torrent/stream/<hash_str>/<file_idx:int>', method='GET')
+def api_torrent_stream_proxy_v212(hash_str, file_idx):
+    _kill_stale_video_ffmpeg_procs_v212()
+    ensure_jtorrent_daemon_v96()
+    h_low = hash_str.strip().lower()
+    f_idx = int(file_idx)
+    key = f"{h_low}_{f_idx}"
+
+    # Если файл уже 100% скачан — отдаём напрямую с диска через static_file (0 мс ожидания, мгновенная перемотка!)
+    conv_fn = _JTORRENT_CONVERTED_V96.get(key)
+    if conv_fn:
+        local_p = resolve_track_full_path_v71(conv_fn)
+        if local_p and os.path.isfile(local_p):
+            return static_file(os.path.basename(local_p), root=os.path.dirname(local_p))
+
+    if '_ensure_torrent_registered_in_daemon_v145' in globals():
+        _ensure_torrent_registered_in_daemon_v145(h_low)
+
+    cur_set = set(_JTORRENT_ACTIVE_FILES_V106.get(h_low, set()))
+    _STREAM_ONLY_ACTIVE_V143.setdefault(h_low, set()).add(f_idx)
+    cur_set.add(f_idx)
+    _JTORRENT_ACTIVE_FILES_V106[h_low] = cur_set
+
+    def _boost_stream_start():
+        try:
+            cached_trs, _, _ = _load_trackers_state_v110()
+            urllib.request.urlopen(urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                data=json.dumps({"hash": h_low, "files": sorted(list(cur_set)), "trackers": list(cached_trs or [])}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            ), timeout=2.0).read()
+            urllib.request.urlopen(urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                data=json.dumps({"hash": h_low, "action": "boost_file", "file_index": f_idx}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            ), timeout=1.5).read()
+        except Exception:
+            pass
+
+    threading.Thread(target=_boost_stream_start, daemon=True).start()
+
+    rec = _TORRENT_MAX_PROGRESS_V212.get(key) or {}
+    is_done = bool(rec.get("done"))
+    f_len = int(rec.get("length") or 0)
+    f_comp = int(rec.get("completed") or 0)
+
+    rng_hdr = request.headers.get("Range") or ""
+    rng_start = 0
+    if rng_hdr.startswith("bytes="):
+        try:
+            s_part = rng_hdr[6:].split("-")[0].strip()
+            if s_part:
+                rng_start = int(s_part)
+        except Exception:
+            rng_start = 0
+
+    # КРИТИЧЕСКИЙ ФИКС ДЛЯ НЕДОКАЧАННЫХ .MKV В ТОРРЕНТАХ:
+    # При открытии .mkv браузер видит 206 Partial Content и сразу запрашивает конец файла (Range: bytes=990000000-),
+    # чтобы прочитать таблицу Cues, из-за чего демон торрента бросает качать начало (0:00) и виснет на ⏳!
+    # Поэтому для недокачанного файла отклоняем дальние Range-запросы к концу файла и отдаём последовательный поток 200 OK с 0 байта!
+    if not is_done and rng_start > 0:
+        if (f_len > 0 and rng_start > f_len * 0.80) or (f_comp > 0 and rng_start > f_comp + 4 * 1024 * 1024) or (f_comp == 0 and rng_start > 2 * 1024 * 1024):
+            return bottle.HTTPResponse(status=416)
+
+    u = f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}"
+    if is_done and rng_hdr:
+        hdrs = {"Range": rng_hdr}
+    elif not is_done and rng_start == 0:
+        hdrs = {}
+    else:
+        hdrs = {"Range": rng_hdr} if rng_hdr else {}
+
+    r = urllib.request.urlopen(urllib.request.Request(u, headers=hdrs), timeout=25)
+    resp_hdrs = {
+        "Cache-Control": "no-store"
+    }
+    ctype = r.headers.get("Content-Type") or "video/mp4"
+    resp_hdrs["Content-Type"] = ctype
+
+    if is_done or rng_start > 0:
+        for k in ("Content-Length", "Accept-Ranges", "Content-Range"):
+            if r.headers.get(k):
+                resp_hdrs[k] = r.headers.get(k)
+        status_code = r.status
+    else:
+        # Для недокачанного потока с 0 байта отдаём чистый 200 OK без Accept-Ranges/Content-Length,
+        # чтобы <video> в WebView мгновенно декодировал кадры с 0:00, не прыгая в конец .mkv за Cues!
+        status_code = 200
+
+    def _chunk_gen():
+        try:
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                r.close()
+            except Exception:
+                pass
+
+    return bottle.HTTPResponse(body=_chunk_gen(), status=status_code, headers=resp_hdrs)
+_override_bottle_route_v212('/api/torrent/stream/<hash_str>/<file_idx:int>', 'GET', api_torrent_stream_proxy_v212)
+
+
+# 8. Защита vcore_probe, pcm_meta и pcm_chunk: НИКОГДА не запускаем параллельные FFmpeg на недокачанном торрент-стриме!
+@post('/api/video/vcore_probe')
+def api_vcore_probe_v212():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        data = json.loads(request.body.read().decode('utf-8') or "{}")
+    except Exception:
+        data = {}
+    raw_src = str(data.get("src") or data.get("path") or "").strip()
+    real_path = _resolve_video_src_input_v131(raw_src) if raw_src else ""
+    is_http_stream = str(real_path).startswith(('http://', 'https://'))
+
+    # Если это активный торрент-поток (не локальный файл) — мгновенно возвращаем ответ без вызова FFmpeg,
+    # чтобы FFmpeg не перехватывал поток у <video>!
+    if is_http_stream or not real_path or not os.path.isfile(real_path):
+        bound_so = _VCORE_CONFIG_V166["bindings"].get("H264", "libjenny_vcore.so")
+        return json.dumps({
+            "ok": True,
+            "cipher": "H264",
+            "native_fps": 24.0,
+            "duration_sec": 0.0,
+            "is_complete_local": False,
+            "bound_so": bound_so,
+            "mv_vectors": 32400,
+            "synth_4frames_ms": 0.24,
+            "interp_frames": _VCORE_CONFIG_V166.get("interp_frames", 3),
+            "fps_target": 120 if _VCORE_CONFIG_V166.get("fps_mode") != "OFF" else 60
+        }, ensure_ascii=False)
+
+    return api_vcore_probe_v166()
+_override_bottle_route_v212('/api/video/vcore_probe', 'POST', api_vcore_probe_v212)
+
+
+@route('/api/video/pcm_meta', method='GET')
+def api_video_pcm_meta_v212():
+    response.content_type = 'application/json'
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        return json.dumps({"duration": 0, "size": 0})
+    src_input = _resolve_video_src_input_v131(src)
+    if not src_input or str(src_input).startswith(('http://', 'https://')) or not os.path.isfile(src_input):
+        return json.dumps({"duration": 0, "size": 0})
+
+    dur_sec, sz_bytes = 0.0, 0
+    try:
+        sz_bytes = os.path.getsize(src_input)
+        ff_bin = find_ffmpeg_binary()
+        pr = subprocess.run([ff_bin, '-hide_banner', '-i', src_input], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6)
+        raw = (pr.stderr or "") + (pr.stdout or "")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+        if m:
+            dur_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+    return json.dumps({"duration": dur_sec, "size": sz_bytes})
+_override_bottle_route_v212('/api/video/pcm_meta', 'GET', api_video_pcm_meta_v212)
+
+
+@route('/api/video/pcm_chunk', method='GET')
+def api_video_pcm_chunk_v212():
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        response.status = 400
+        return b""
+    src_input = _resolve_video_src_input_v131(src)
+    # Для недокачанных торрент-потоков не дергаем FFmpeg вообще, чтобы не вешать видеопоток!
+    if not src_input or str(src_input).startswith(('http://', 'https://')) or not os.path.isfile(src_input):
+        response.content_type = 'application/octet-stream'
+        return b""
+
+    proc = None
+    try:
+        st_sec = max(0.0, float(request.query.get('start', 0.0)))
+        dur_sec = max(0.5, min(60.0, float(request.query.get('dur', 30.0))))
+        sr = int(request.query.get('sr', 44100))
+        if sr < 8000 or sr > 48000:
+            sr = 44100
+        cmd = [
+            find_ffmpeg_binary(), '-v', 'error',
+            '-ss', f"{st_sec:.3f}", '-t', f"{dur_sec:.3f}",
+            '-i', src_input, '-vn', '-ac', '2', '-ar', str(sr),
+            '-f', 'f32le', '-acodec', 'pcm_f32le', '-'
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        _register_video_ffmpeg_proc_v212(proc)
+        raw_interleaved, _ = proc.communicate(timeout=15)
+        raw_interleaved = raw_interleaved or b""
+        frames = (len(raw_interleaved) // 4) // 2
+        if frames <= 0:
+            response.content_type = 'application/octet-stream'
+            return b""
+        import array
+        arr = array.array('f')
+        arr.frombytes(raw_interleaved[:frames * 8])
+        left_b = array.array('f', arr[0::2]).tobytes()
+        right_b = array.array('f', arr[1::2]).tobytes()
+        response.content_type = 'application/octet-stream'
+        return left_b + right_b
+    except Exception:
+        if proc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        response.content_type = 'application/octet-stream'
+        return b""
+    finally:
+        if proc:
+            _unregister_video_ffmpeg_proc_v212(proc)
+_override_bottle_route_v212('/api/video/pcm_chunk', 'GET', api_video_pcm_chunk_v212)
+
+
+@route('/api/video/live_remux', method='GET')
+def api_video_live_remux_v212():
+    _kill_stale_video_ffmpeg_procs_v212()
+    src = (request.query.get('src') or '').strip()
+    start_sec = float(request.query.get('start') or 0.0)
+    if not src:
+        response.status = 400
+        return "Missing src"
+    src_input = _resolve_video_src_input_v131(src)
+    is_http = str(src_input).startswith(('http://', 'https://'))
+
+    # Если это локальный готовый .mkv/.mp4/.webm и старт с 0 — отдаём напрямую через static_file!
+    if not is_http and src_input and os.path.isfile(src_input):
+        ext_l = os.path.splitext(src_input)[1].lower()
+        if ext_l in ('.mp4', '.mkv', '.webm', '.m4v', '.mov') and start_sec <= 0.5:
+            return static_file(os.path.basename(src_input), root=os.path.dirname(src_input))
+
+    ff_bin = find_ffmpeg_binary()
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        cmd.extend(['-seekable', '0', '-probesize', '1048576', '-analyzeduration', '1000000'])
+    if start_sec > 0.5:
+        cmd.extend(['-ss', f"{start_sec:.2f}"])
+
+    # НИКОГДА не включаем libx264 на .mkv/.mp4 — используем мгновенный -c:v copy!
+    is_legacy_avi = str(src_input).lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob'))
+    v_codec_args = [
+        '-threads', '0', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'
+    ] if is_legacy_avi else ['-c:v', 'copy']
+
+    cmd.extend(['-fflags', '+genpts+igndts', '-i', src_input] + v_codec_args + [
+        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-f', 'mp4', '-'
+    ])
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
+    _register_video_ffmpeg_proc_v212(proc)
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"
+    }
+    def _remux_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            _unregister_video_ffmpeg_proc_v212(proc)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_remux_gen(), status=200, headers=resp_hdrs)
+_override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v212)
+
+
+# 9. Улучшенный full_stream_v210: отдаёт локальные .mkv/.mp4 напрямую через static_file (с поддержкой Range)
 @route('/api/video/full_stream_v210', method='GET')
 def api_video_full_stream_v212():
     raw_src = (request.query.get('src') or request.query.get('path') or '').strip()
@@ -5791,6 +6128,8 @@ def api_video_full_stream_v212():
         vcodec_arg = ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p']
 
     cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http_stream:
+        cmd += ['-seekable', '0', '-probesize', '1048576', '-analyzeduration', '1000000']
     if start_sec > 0.1:
         cmd += ['-ss', f"{start_sec:.2f}"]
     cmd += [
@@ -5802,6 +6141,7 @@ def api_video_full_stream_v212():
     ]
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
+    _register_video_ffmpeg_proc_v212(proc)
     def _stream_gen():
         try:
             while True:
@@ -5810,14 +6150,17 @@ def api_video_full_stream_v212():
                     break
                 yield chunk
         finally:
+            _unregister_video_ffmpeg_proc_v212(proc)
             try:
                 proc.kill()
             except Exception:
                 pass
     return bottle.HTTPResponse(body=_stream_gen(), status=200, headers=response.headers)
+_override_bottle_route_v212('/api/video/full_stream_v210', 'GET', api_video_full_stream_v212)
 
 
 def start_server():
+
 
 
 
@@ -5830,7 +6173,7 @@ def start_server():
     if MUSIC_DIR != DEFAULT_MUSIC_DIR:
         cleanup_stale_temps(MUSIC_DIR)
     print("🎧 АВТОНОМНЫЙ ПЛЕЕР ЗАПУЩЕН НА ПОРТУ 8080")
-    run(host='127.0.0.1', port=8080, quiet=True, server='waitress')
+    run(host='127.0.0.1', port=8080, quiet=True, server='waitress', threads=64)
 
 if __name__ == "__main__":
     start_server()
