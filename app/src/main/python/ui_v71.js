@@ -10169,14 +10169,8 @@ clearTimeout(fb._hideT); fb._hideT = setTimeout(() => { fb.style.display = 'none
 };
 
 window.wakeVideoHudV130 = function(fromTapWake) {
-const hud = document.getElementById('v130HudOverlay');
-if (!hud) return;
-if (fromTapWake && hud.classList.contains('hud-hidden-v130')) window._vidStateV130.hudJustWokeUntil = performance.now() + 380;
-hud.classList.remove('hud-hidden-v130');
-clearTimeout(window._vidStateV130.controlsHideTimer);
-const vid = document.getElementById('jennyVideoElV130');
-if (vid && (!vid.paused || window.videoDeckV131.isReversed) && !window._vidStateV130.pipMode) {
-window._vidStateV130.controlsHideTimer = setTimeout(() => { hud.classList.add('hud-hidden-v130'); }, 3800);
+if (typeof window.setVideoHudHiddenUnifiedV214 === 'function') {
+window.setVideoHudHiddenUnifiedV214(false, Boolean(fromTapWake));
 }
 };
 
@@ -10483,7 +10477,7 @@ canStartPipDrag = false;
 if (gestureMode) { gestureMode = ''; return; }
 const hud = document.getElementById('v130HudOverlay');
 if (hud && hud.classList.contains('hud-hidden-v130')) { window.wakeVideoHudV130(true); return; }
-if (e.target.closest('button') || e.target.closest('input')) { window.wakeVideoHudV130(false); return; }
+if (e.target.closest('button') || e.target.closest('input') || e.target.closest('#jennyFenceWrapV173') || e.target.closest('#jennyTunerFloatWrapV208') || e.target.closest('#jennySplitPillWrapV209') || e.target.closest('#jenny120PillWrapV209') || e.target.closest('#jv168SplitLine')) { window.wakeVideoHudV130(false); return; }
 const now = Date.now(), st = window._vidStateV130;
 if (!st.pipMode && now - lastTapTs < 280) {
 const tapClientX = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientX : window.innerWidth / 2;
@@ -10495,7 +10489,11 @@ else window.toggleVideoPlayPauseV130();
 lastTapTs = 0; return;
 }
 lastTapTs = now;
-if (hud) { hud.classList.add('hud-hidden-v130'); clearTimeout(st.controlsHideTimer); }
+if (typeof window.setVideoHudHiddenUnifiedV214 === 'function') {
+window.setVideoHudHiddenUnifiedV214(true, false);
+} else if (hud) {
+hud.classList.add('hud-hidden-v130'); clearTimeout(st.controlsHideTimer);
+}
 }, { passive: true });
 };
 
@@ -10599,7 +10597,8 @@ const shield = document.getElementById('v132LockShieldOverlay');
 const unlockBtn = document.getElementById('v132FloatingUnlockBtn');
 
 if (st.isLocked) {
-if (hud) hud.classList.add('hud-hidden-v130');
+if (typeof window.setVideoHudHiddenUnifiedV214 === 'function') window.setVideoHudHiddenUnifiedV214(true, false);
+else if (hud) hud.classList.add('hud-hidden-v130');
 if (shield) shield.style.display = 'flex';
 if (unlockBtn) {
 unlockBtn.style.opacity = '1';
@@ -11025,19 +11024,10 @@ vid.play().catch(() => {});
 window.wakeVideoHudV130(false);
 };
 
-// Автоскрытие кнопок через 2.8с и в полном экране, и в мини-окне PiP (чтобы не висела кнопка поверх кадра)
+// Единое автоскрытие HUD и плавающих таблеток (основной плеер + мини-плеер PiP) V214
 window.wakeVideoHudV130 = function(fromTapWake) {
-const hud = document.getElementById('v130HudOverlay');
-if (!hud) return;
-if (fromTapWake && hud.classList.contains('hud-hidden-v130')) {
-window._vidStateV130.hudJustWokeUntil = performance.now() + 380;
-}
-hud.classList.remove('hud-hidden-v130');
-clearTimeout(window._vidStateV130.controlsHideTimer);
-if (window._vidPlayIntentV132) {
-window._vidStateV130.controlsHideTimer = setTimeout(() => {
-hud.classList.add('hud-hidden-v130');
-}, 2800);
+if (typeof window.setVideoHudHiddenUnifiedV214 === 'function') {
+window.setVideoHudHiddenUnifiedV214(false, Boolean(fromTapWake));
 }
 };
 
@@ -15743,11 +15733,22 @@ let vsyncTicks = 0;
         try { localStorage.setItem('jenny_lab_flags_v208', JSON.stringify(window._jennyLabFlagsV208)); } catch (e) {}
     };
 
-    // 1. ПОЛНЫЕ ЛОКАЛЬНЫЕ ФИЛЬМЫ БЕЗ ТОРРЕНТ-НАРЕЗКИ И БЕЗ ЛИМИТА 0:10
+    // 1. ПОЛНЫЕ ЛОКАЛЬНЫЕ ФИЛЬМЫ БЕЗ ПЕРЕХВАТА ТОРРЕНТ-СТРИМОВ (V214)
     window.isLocalFileFullyDownloadedV210 = function(src) {
-        if (!src) return true;
+        if (!src) return false;
+        var st = window._vidStateV130;
+        if (st && (st.torHash || st.isTorrentStream) && !st.isReadyLocalV212) return false;
         var s = String(src).toLowerCase();
-        if (s.indexOf('.part') !== -1 || s.indexOf('torrent_stream') !== -1 || s.indexOf('omni_stream') !== -1) return false;
+        if (
+            s.indexOf('.part') !== -1 ||
+            s.indexOf('/api/torrent/stream') !== -1 ||
+            s.indexOf('/api/video/live_remux') !== -1 ||
+            s.indexOf('/api/video/remux') !== -1 ||
+            s.indexOf('torrent_stream') !== -1 ||
+            s.indexOf('omni_stream') !== -1
+        ) {
+            return false;
+        }
         return true;
     };
 
@@ -15761,26 +15762,32 @@ let vsyncTicks = 0;
         var vEl = document.getElementById('jennyVideoElV130');
         if (!vEl || !st || !st.active) return;
 
-        var rawSrc = st.rawPath || st.src || vEl.currentSrc || vEl.src || '';
-        if (window.isLocalFileFullyDownloadedV210(rawSrc)) {
-            if (vd && vd.studioBuffer) {
-                if (vd.studioBuffer._pollTimerV72) {
-                    clearInterval(vd.studioBuffer._pollTimerV72);
-                    vd.studioBuffer._pollTimerV72 = null;
-                }
-                /* V211: keep vd.studioBuffer._pieceMapV72 intact for 4-buffer RAM audio! */
-            }
-            var btnPieces = document.getElementById('v130BtnPieces') || document.querySelector('[onclick*="toggleVideoPieces"]');
-            if (btnPieces) btnPieces.style.setProperty('display', 'none', 'important');
+        var rawSrc = st.currentUrl || st.rawPath || st.src || vEl.currentSrc || vEl.src || '';
+        var curUrl = String(vEl.currentSrc || vEl.src || '');
+
+        // Никогда не вмешиваемся в активный торрент-стрим или live_remux!
+        if (
+            (st.torHash && !st.isReadyLocalV212) ||
+            st.usingRemux ||
+            !window.isLocalFileFullyDownloadedV210(rawSrc) ||
+            !window.isLocalFileFullyDownloadedV210(curUrl)
+        ) {
+            return;
         }
+
+        if (vd && vd.studioBuffer && vd.studioBuffer._pollTimerV72) {
+            clearInterval(vd.studioBuffer._pollTimerV72);
+            vd.studioBuffer._pollTimerV72 = null;
+        }
+        var btnPieces = document.getElementById('v130BtnPieces') || document.querySelector('[onclick*="toggleVideoPieces"]');
+        if (btnPieces) btnPieces.style.setProperty('display', 'none', 'important');
 
         if (!rawSrc || rawSrc.indexOf('/api/video/full_stream_v210') !== -1) return;
 
         var probeDur = (window._vcoreLastProbeV166 && window._vcoreLastProbeV166.duration_sec) || window._jennyFullMovieDurationSecV210 || 0;
         var vidDur = vEl.duration;
-        var curUrl = String(vEl.currentSrc || vEl.src || '');
         var lowerSrc = rawSrc.toLowerCase();
-        var isAviOrMkv = (lowerSrc.indexOf('.avi') !== -1);
+        var isAvi = (lowerSrc.indexOf('.avi') !== -1);
 
         if (curUrl.indexOf('blob:') === 0 && window.isLocalFileFullyDownloadedV210(rawSrc)) {
             var directUrl = rawSrc.indexOf('/api/') === 0 ? rawSrc : ('/api/media/' + encodeURIComponent(rawSrc.replace(/^\/+/, '')));
@@ -15792,10 +15799,10 @@ let vsyncTicks = 0;
             return;
         }
 
-        var isTruncated10s = (Number.isFinite(vidDur) && vidDur > 0.5 && vidDur <= 12.5 && (probeDur > 25.0 || isAviOrMkv));
+        var isTruncated10s = (Number.isFinite(vidDur) && vidDur > 0.5 && vidDur <= 12.5 && (probeDur > 25.0 || isAvi));
         var hasVideoError = Boolean(vEl.error);
 
-        if ((isTruncated10s || hasVideoError || (isAviOrMkv && vEl.readyState === 0 && vEl.networkState === 3)) && fullStreamFallbackAppliedSrc !== rawSrc) {
+        if ((isTruncated10s || hasVideoError || (isAvi && vEl.readyState === 0 && vEl.networkState === 3)) && fullStreamFallbackAppliedSrc !== rawSrc) {
             fullStreamFallbackAppliedSrc = rawSrc;
             fullStreamSeekOffsetSec = 0.0;
             var cleanPath = rawSrc;
@@ -15804,12 +15811,12 @@ let vsyncTicks = 0;
                     cleanPath = decodeURIComponent(cleanPath.split('/api/media/')[1].split('?')[0]);
                 }
             } catch (e) {}
+            if (cleanPath.indexOf('http://') === 0 || cleanPath.indexOf('https://') === 0 || cleanPath.indexOf('/api/torrent/') !== -1) {
+                return;
+            }
             vEl.src = '/api/video/full_stream_v210?src=' + encodeURIComponent(cleanPath) + '&start=0';
             vEl.load();
             vEl.play().catch(function(){});
-            if (typeof window.showToast === 'function') {
-                window.showToast('🎬 Включён полный поток фильма');
-            }
         }
     }
 
@@ -16059,19 +16066,27 @@ let vsyncTicks = 0;
     }
     setTimeout(hookSpeedAndDeckBControlsV210, 250);
 
-    // 3. ТОЧНЫЙ ТАЙМЕР АВТОСКРЫТИЯ UI (ОСНОВНОЙ ПЛЕЕР + МИНИ-ПЛЕЕР PiP)
+    // 3. ЕДИНЫЙ АВТОСКРЫВАТЕЛЬ UI И ПЛАВАЮЩИХ ТАБЛЕТОК (ОСНОВНОЙ ПЛЕЕР + МИНИ-ПЛЕЕР PiP) V214
     var lastVideoInteractionTsV210 = performance.now();
+    window._lastVideoInteractionTsV214 = lastVideoInteractionTsV210;
     var hudCurrentlyHiddenV210 = false;
+
+    window.getVideoRootElV214 = function() {
+        return document.getElementById('jennyVideoStudioRootV130') || document.getElementById('jennyVideoOverlayV130');
+    };
 
     window.isVideoInPipOrMiniModeV210 = function(ov) {
         var st = window._vidStateV130;
-        if (st && (st.mini || st.isMini || st.pip || st.isPip || st.mode === 'mini')) return true;
-        if (!ov) ov = document.getElementById('jennyVideoOverlayV130');
+        if (st && (st.pipMode || st.desktopOverlay || st.mini || st.isMini || st.pip || st.isPip || st.mode === 'mini')) return true;
+        if (!ov) ov = window.getVideoRootElV214();
         if (!ov) return false;
         var cls = (ov.className || '').toLowerCase();
-        if (cls.indexOf('mini') !== -1 || cls.indexOf('pip') !== -1) return true;
-        var r = ov.getBoundingClientRect();
-        if (r.width > 40 && r.width < window.innerWidth * 0.85 && r.height < window.innerHeight * 0.65) return true;
+        if (cls.indexOf('mini') !== -1 || cls.indexOf('pip') !== -1 || cls.indexOf('desktop-overlay') !== -1) return true;
+        var stage = document.getElementById('jennyVideoStageV130');
+        if (stage) {
+            var sCls = (stage.className || '').toLowerCase();
+            if (sCls.indexOf('pip') !== -1 || sCls.indexOf('mini') !== -1) return true;
+        }
         return false;
     };
 
@@ -16080,51 +16095,21 @@ let vsyncTicks = 0;
         var fl = window._jennyLabFlagsV208 || {};
         var enabled = isPip ? Boolean(fl.stub2) : Boolean(fl.stub1);
         if (!enabled) return 86400000;
-        var sec = isPip ? (window._jennyAutoHideSecV209.pip || 2.5) : (window._jennyAutoHideSecV209.main || 4.0);
-        return Math.round(sec * 1000);
+        var cfg = window._jennyAutoHideSecV209 || { main: 4.0, pip: 2.5 };
+        var sec = isPip ? (Number(cfg.pip) || 2.5) : (Number(cfg.main) || 4.0);
+        return Math.max(300, Math.round(sec * 1000));
     };
 
-    function enforceHudVisibilityStateV210(shouldHide, isPip) {
-        var ov = document.getElementById('jennyVideoOverlayV130');
-        if (!ov) return;
-        hudCurrentlyHiddenV210 = Boolean(shouldHide);
-
-        var st = window._vidStateV130;
-        if (st) {
-            if (st.hudTimer) { clearTimeout(st.hudTimer); st.hudTimer = null; }
-            if (st.miniHudTimer) { clearTimeout(st.miniHudTimer); st.miniHudTimer = null; }
-            st.hudVisible = !shouldHide;
-        }
-
-        if (shouldHide) {
-            ov.classList.add('jv210-controls-hidden');
-        } else {
-            ov.classList.remove('jv210-controls-hidden');
-            ov.classList.remove('hud-hidden-v130');
-        }
-
-        var stage = document.getElementById('jennyVideoStageV130');
-        var keepAlwaysVisible = {
-            'jennyVideoStageV130': true,
-            'jennyVideoElV130': true,
-            'jv166InterpCanvas': true,
-            'jv168SplitLine': true
-        };
-
-        var allNodes = Array.from(ov.children);
-        if (stage) allNodes = allNodes.concat(Array.from(stage.children));
-
-        for (var i = 0; i < allNodes.length; i++) {
-            var el = allNodes[i];
-            if (!el || el.tagName === 'VIDEO' || el.tagName === 'STYLE') continue;
-            if (el.id && keepAlwaysVisible[el.id]) continue;
-
-            // В полном плеере оставляем развёрнутый лог или крутилки, а в мини-плеере (PiP) прячем вообще все кнопки
-            if (!isPip) {
-                if (el.id === 'jennyFenceWrapV173' && !isLogCollapsed) continue;
-                if (el.id === 'jennyTunerFloatWrapV208' && !isTunerCollapsed) continue;
-            }
-
+    function syncFloatingPillsVisibilityV214(shouldHide) {
+        var pillIds = [
+            'jennyFenceWrapV173',
+            'jennyTunerFloatWrapV208',
+            'jennySplitPillWrapV209',
+            'jenny120PillWrapV209'
+        ];
+        for (var i = 0; i < pillIds.length; i++) {
+            var el = document.getElementById(pillIds[i]);
+            if (!el) continue;
             if (shouldHide) {
                 el.style.transition = 'opacity 0.18s ease';
                 el.style.setProperty('opacity', '0', 'important');
@@ -16134,52 +16119,136 @@ let vsyncTicks = 0;
                 el.classList.remove('jv210-hidden-node');
                 el.style.removeProperty('opacity');
                 el.style.removeProperty('pointer-events');
-                if (!isPip && (el.id === 'v130TopBar' || el.id === 'v130BottomBar' || el.id === 'v130CenterControls')) {
-                    el.style.opacity = '1';
-                    el.style.pointerEvents = 'auto';
-                    if (el.style.display === 'none') el.style.display = 'flex';
-                }
+                el.style.opacity = '1';
+                el.style.pointerEvents = 'auto';
             }
         }
     }
 
-    window.wakeVideoHudControlsV209 = function() {
-        lastVideoInteractionTsV210 = performance.now();
-        var ov = document.getElementById('jennyVideoOverlayV130');
+    function enforceHudVisibilityStateV210(shouldHide, isPip) {
+        var ov = window.getVideoRootElV214();
+        var hud = document.getElementById('v130HudOverlay');
+        hudCurrentlyHiddenV210 = Boolean(shouldHide);
+
+        var st = window._vidStateV130;
+        if (st) {
+            if (st.hudTimer) { clearTimeout(st.hudTimer); st.hudTimer = null; }
+            if (st.miniHudTimer) { clearTimeout(st.miniHudTimer); st.miniHudTimer = null; }
+            st.hudVisible = !shouldHide;
+        }
+
+        if (ov) {
+            if (shouldHide) ov.classList.add('jv210-controls-hidden');
+            else ov.classList.remove('jv210-controls-hidden');
+        }
+
+        if (hud) {
+            if (shouldHide) {
+                hud.classList.add('hud-hidden-v130');
+            } else {
+                hud.classList.remove('hud-hidden-v130');
+            }
+        }
+
+        // Плавающие таблетки (Лог, Крутилки, Сплит, 120Hz) скрываются и появляются синхронно с HUD!
+        syncFloatingPillsVisibilityV214(shouldHide);
+    }
+
+    window.setVideoHudHiddenUnifiedV214 = function(shouldHide, fromTapWake) {
+        var st = window._vidStateV130 || {};
+        var hud = document.getElementById('v130HudOverlay');
+        var ov = window.getVideoRootElV214();
         var isPip = window.isVideoInPipOrMiniModeV210(ov);
-        enforceHudVisibilityStateV210(false, isPip);
+
+        if (st.controlsHideTimer) {
+            clearTimeout(st.controlsHideTimer);
+            st.controlsHideTimer = null;
+        }
+
+        if (!shouldHide && fromTapWake && hud && hud.classList.contains('hud-hidden-v130')) {
+            st.hudJustWokeUntil = performance.now() + 380;
+        }
+
+        if (shouldHide) {
+            lastVideoInteractionTsV210 = -1e9;
+            window._lastVideoInteractionTsV214 = -1e9;
+            enforceHudVisibilityStateV210(true, isPip);
+        } else {
+            var now = performance.now();
+            lastVideoInteractionTsV210 = now;
+            window._lastVideoInteractionTsV214 = now;
+            enforceHudVisibilityStateV210(false, isPip);
+
+            var timeoutMs = window.getCustomHudTimeoutMsV210();
+            if (timeoutMs < 80000000) {
+                st.controlsHideTimer = setTimeout(function() {
+                    if (!activeDragMode) {
+                        window.setVideoHudHiddenUnifiedV214(true, false);
+                    }
+                }, timeoutMs);
+            }
+        }
     };
 
-    ['touchstart', 'touchmove', 'mousedown', 'click'].forEach(function(evName) {
+    window.wakeVideoHudControlsV209 = function() {
+        window.setVideoHudHiddenUnifiedV214(false, false);
+    };
+
+    // Продлеваем видимость HUD при взаимодействии с кнопками, ползунками и плавающими таблетками
+    ['touchstart', 'touchmove', 'mousedown', 'input'].forEach(function(evName) {
         window.addEventListener(evName, function(e) {
-            var ov = document.getElementById('jennyVideoOverlayV130');
-            if (ov && ov.style.display !== 'none' && ov.contains(e.target)) {
-                window.wakeVideoHudControlsV209();
+            var ov = window.getVideoRootElV214();
+            if (!ov || !ov.classList.contains('active') || !ov.contains(e.target)) return;
+            var hud = document.getElementById('v130HudOverlay');
+            var isHidden = Boolean(hud && hud.classList.contains('hud-hidden-v130'));
+            if (isHidden) return;
+            var t = e.target;
+            if (t && t.closest && t.closest('.v130-hud-bar, .v130-btn, .v130-center-controls, button, input, #jennyFenceWrapV173, #jennyTunerFloatWrapV208, #jennySplitPillWrapV209, #jenny120PillWrapV209, #jv168SplitLine')) {
+                var now = performance.now();
+                lastVideoInteractionTsV210 = now;
+                window._lastVideoInteractionTsV214 = now;
             }
         }, { capture: true, passive: true });
     });
 
     function checkAutoHideTickV210() {
-        var ov = document.getElementById('jennyVideoOverlayV130');
+        var ov = window.getVideoRootElV214();
         var vEl = document.getElementById('jennyVideoElV130');
-        if (!ov || ov.style.display === 'none' || !vEl) {
+        var st = window._vidStateV130;
+        if (!ov || !ov.classList.contains('active') || !vEl) {
             hudCurrentlyHiddenV210 = false;
             return;
         }
-        var fl = window._jennyLabFlagsV208 || {};
+        var hud = document.getElementById('v130HudOverlay');
         var isPip = window.isVideoInPipOrMiniModeV210(ov);
-        var enabled = isPip ? Boolean(fl.stub2) : Boolean(fl.stub1);
 
-        if (!enabled || activeDragMode) {
+        // Если экран заблокирован замком или HUD уже скрыт тапом — держим таблетки синхронно скрытыми
+        if ((st && st.isLocked) || (hud && hud.classList.contains('hud-hidden-v130'))) {
+            enforceHudVisibilityStateV210(true, isPip);
+            return;
+        }
+
+        if (activeDragMode) {
+            var now = performance.now();
+            lastVideoInteractionTsV210 = now;
+            window._lastVideoInteractionTsV214 = now;
             enforceHudVisibilityStateV210(false, isPip);
             return;
         }
 
-        var delaySec = isPip ? (window._jennyAutoHideSecV209.pip || 2.5) : (window._jennyAutoHideSecV209.main || 4.0);
+        var fl = window._jennyLabFlagsV208 || {};
+        var enabled = isPip ? Boolean(fl.stub2) : Boolean(fl.stub1);
+        if (!enabled) {
+            enforceHudVisibilityStateV210(false, isPip);
+            return;
+        }
+
+        var cfg = window._jennyAutoHideSecV209 || { main: 4.0, pip: 2.5 };
+        var delaySec = isPip ? (Number(cfg.pip) || 2.5) : (Number(cfg.main) || 4.0);
         var elapsedSec = (performance.now() - lastVideoInteractionTsV210) / 1000.0;
 
         if (elapsedSec >= delaySec) {
-            enforceHudVisibilityStateV210(true, isPip);
+            window.setVideoHudHiddenUnifiedV214(true, false);
         } else {
             enforceHudVisibilityStateV210(false, isPip);
         }
@@ -17206,15 +17275,12 @@ let vsyncTicks = 0;
         var d = window._jennyDualDeckV211;
         var isVideoBtn = (whichDeck === 'video' || whichDeck === 'B');
 
+        // 1 клик = мгновенное независимое включение/выключение нажатой деки!
         if (isVideoBtn) {
-            if (!d.deckB) {
-                d.deckB = true;
-                d.uiFocus = 'video';
-            } else if (d.uiFocus !== 'video' && d.deckA) {
-                // Если обе деки включены, но фокус настроек был на Музыке — переводим фокус настроек на Видео без выключения
+            d.deckB = !d.deckB;
+            if (d.deckB) {
                 d.uiFocus = 'video';
             } else {
-                d.deckB = false;
                 var vEl = document.getElementById('jennyVideoElV130');
                 if (vEl && !vEl.paused) { try { vEl.pause(); } catch (e) {} }
                 if (window.videoDeckV131 && window.videoDeckV131.sourceNode) {
@@ -17223,13 +17289,10 @@ let vsyncTicks = 0;
                 if (d.deckA) d.uiFocus = 'music';
             }
         } else {
-            if (!d.deckA) {
-                d.deckA = true;
-                d.uiFocus = 'music';
-            } else if (d.uiFocus !== 'music' && d.deckB) {
+            d.deckA = !d.deckA;
+            if (d.deckA) {
                 d.uiFocus = 'music';
             } else {
-                d.deckA = false;
                 var aEl = document.getElementById('audioPlayer');
                 if (aEl && !aEl.paused) { try { aEl.pause(); } catch (e) {} }
                 if (window.studioSourceNode) {
@@ -18538,20 +18601,6 @@ let vsyncTicks = 0;
             ? Math.max(0, Math.min(Math.max(0, dur - 0.35), targetSec))
             : Math.max(0, targetSec);
 
-        // Если это недокачанный торрент-поток (P2P < 100%), не даём прыгнуть дальше уже скачанной части,
-        // чтобы плеер не зависал на ⏳ в нескачанной области!
-        if (st.torHash && !st.isReadyLocalV212 && dur > 0) {
-            var maxKey = String(st.torHash).toLowerCase() + '_' + Number(st.torFileIdx || 0);
-            var rec = window._torMaxProgressMapV212[maxKey];
-            var pct = rec ? Number(rec.percent || 0) : 100;
-            if (pct > 0 && pct < 98) {
-                var safeMaxSec = Math.max(0, ((pct - 1.5) / 100.0) * dur);
-                if (cleanSec > safeMaxSec) {
-                    cleanSec = safeMaxSec;
-                }
-            }
-        }
-
         st._pendingSeekSecV167 = cleanSec;
         st._pendingSeekTsV167 = performance.now();
 
@@ -18582,12 +18631,21 @@ let vsyncTicks = 0;
             window._v130LastLiveVideoSeekTsV212 = now;
         }
 
-        if (st.usingRemux && !isLiveDrag) {
+        // Если это торрент-поток и пользователь отпустил ползунок — приоритизируем куски в точке перемотки!
+        if (!isLiveDrag && st.torHash && dur > 0) {
+            var seekRatio = Math.max(0, Math.min(0.995, cleanSec / dur));
+            fetch('/api/torrent/seek_boost?hash=' + encodeURIComponent(st.torHash) + '&index=' + encodeURIComponent(st.torFileIdx || 0) + '&ratio=' + seekRatio.toFixed(4)).catch(function(){});
+        }
+
+        var isMkvOrAviTor = Boolean(st.torHash && !st.isReadyLocalV212 && /\.(mkv|avi|webm|ts|m2ts|wmv|flv)$/i.test(st.currentTitle || st.currentUrl || ''));
+        if ((st.usingRemux || isMkvOrAviTor) && !isLiveDrag) {
+            st.usingRemux = true;
             st.remuxBaseOffset = cleanSec;
             var tcFlag = /\.avi$/i.test(st.currentTitle || '') ? '1' : '0';
-            vid.src = '/api/video/live_remux?src=' + encodeURIComponent(st.currentUrl) + '&start=' + cleanSec.toFixed(2) + '&transcode=' + tcFlag + '&t=' + Date.now();
+            var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl;
+            vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) + '&start=' + cleanSec.toFixed(2) + '&transcode=' + tcFlag + '&t=' + Date.now();
             if (!st.userPaused) vid.play().catch(function(){});
-        } else {
+        } else if (!st.usingRemux) {
             st.remuxBaseOffset = 0;
             try { vid.currentTime = cleanSec; } catch (e) {}
             if (!isLiveDrag && !st.userPaused && (vid.paused || vid.ended) && !isRev) {
@@ -18829,14 +18887,13 @@ let vsyncTicks = 0;
         window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
             opts = Object.assign({}, opts || {});
             window._v130UserDraggingSeekV212 = false;
+            var rawInputUrl = String(streamUrl || '');
             var check = window.resolveReadyLocalVideoInfoV212(streamUrl, titleStr, opts);
             if (check.isReadyLocal) {
                 streamUrl = check.url;
                 opts.torHash = '';
                 opts.torFileIdx = -1;
             } else {
-                // Для недокачанного торрент-стрима очищаем сохранённую секунду в середине файла,
-                // чтобы он мгновенно стартовал с 0:00 (0 байта), а не зависал на ⏳ на 8:30!
                 try {
                     var rMap = window.loadVideoResumeMapV135 ? window.loadVideoResumeMapV135() : {};
                     var rKey = window.getVideoResumeKeyV135 ? window.getVideoResumeKeyV135(titleStr, streamUrl) : '';
@@ -18863,8 +18920,8 @@ let vsyncTicks = 0;
                     window.syncVideoPlayBtnIconV132();
                 }
                 var subEl = document.getElementById('v130VideoSubTelemetry');
-                if (subEl) {
-                    subEl.innerText = '🎬 Локальный файл готов • Прямой старт без буферизации';
+                if (subEl && subEl.innerText && subEl.innerText.indexOf('Локальный файл готов') !== -1) {
+                    subEl.innerText = '';
                 }
                 var btnHub = document.getElementById('v130BtnTorHub');
                 var btnSave = document.getElementById('v130BtnSaveVideo');
@@ -18873,8 +18930,26 @@ let vsyncTicks = 0;
             } else {
                 if (st) {
                     st.isReadyLocalV212 = false;
+                    st.isTorrentStream = true;
+                    st.rawTorStreamUrlV214 = rawInputUrl;
                     st.remuxBaseOffset = 0;
                     st._pendingSeekSecV167 = undefined;
+
+                    // Для недокачанных .mkv / .avi / .ts торрент-потоков сразу запускаем live_remux (-seekable 0),
+                    // чтобы не ждать 25 секунд ошибки встроенного декодера WebView!
+                    var isMkvOrAvi = /\.(mkv|avi|webm|ts|m2ts|wmv|flv)(\?|$)/i.test(String(titleStr || '') + ' ' + rawInputUrl);
+                    if (isMkvOrAvi && vid) {
+                        var isAvi = /\.avi(\?|$)/i.test(String(titleStr || '') + ' ' + rawInputUrl);
+                        st.usingRemux = true;
+                        st.remuxBaseOffset = 0;
+                        vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawInputUrl) + '&start=0&transcode=' + (isAvi ? '1' : '0') + '&t=' + Date.now();
+                        vid.play().catch(function(){});
+                    }
+                    if (typeof window.probeTorrentVideoDurationV214 === 'function') {
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 600);
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 2000);
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 4500);
+                    }
                 }
                 if (vid) {
                     vid._pendingResumeSecV135 = 0;
@@ -18927,17 +19002,40 @@ let vsyncTicks = 0;
         bindUnifiedVideoPlayerSeekSliderV212();
     }, 300);
 
-    // 6. Фикс отката прогресса (764.3 -> 763.3 МБ, 1% -> 0%) и вечного "Перенос в плеер (0/1)..."
+    // 6. Фикс отката прогресса без залипания "P2P:50%" после остановки/сброса (V214)
+    window.clearTorMonotonicCacheV214 = function(hash) {
+        if (!window._torMaxProgressMapV212) return;
+        if (!hash) {
+            window._torMaxProgressMapV212 = {};
+            return;
+        }
+        var prefix = String(hash).toLowerCase() + '_';
+        Object.keys(window._torMaxProgressMapV212).forEach(function(k) {
+            if (k.indexOf(prefix) === 0) delete window._torMaxProgressMapV212[k];
+        });
+    };
+
     window.clampTorrentFileMonotonicV212 = function(hash, fObj) {
         if (!fObj) return fObj;
         var h = String(hash || '').toLowerCase();
         var idx = Number(fObj.index || 0);
         var key = h + '_' + idx;
-        var prev = window._torMaxProgressMapV212[key] || { completed: 0, percent: 0, done: false, xflac_file: '' };
-
+        var rawComp = Number(fObj.completed || 0);
         var len = Number(fObj.length || fObj.size || 0);
-        var comp = Math.max(prev.completed, Number(fObj.completed || 0));
-        var isDone = Boolean(prev.done || fObj.done || fObj.xflac_file || (len > 0 && comp >= len));
+        var rawDone = Boolean(fObj.done || fObj.xflac_file || (len > 0 && rawComp >= len));
+
+        // Если торрент остановлен/сброшен и на диске 0 байт — не рисуем фантомные 50%!
+        if (rawComp <= 0 && !rawDone) {
+            delete window._torMaxProgressMapV212[key];
+            fObj.completed = 0;
+            fObj.percent = 0;
+            fObj.done = false;
+            return fObj;
+        }
+
+        var prev = window._torMaxProgressMapV212[key] || { completed: 0, percent: 0, done: false, xflac_file: '' };
+        var comp = Math.max(prev.completed, rawComp);
+        var isDone = Boolean(prev.done || rawDone || (len > 0 && comp >= len));
         if (isDone && len > 0) comp = len;
 
         var pct = isDone ? 100 : (len > 0 ? Math.min(99, Math.floor((comp * 100) / len)) : 0);
@@ -19259,25 +19357,12 @@ let vsyncTicks = 0;
     };
 
     function mountBgShieldButtonsV212() {
-        var torHdr = document.querySelector('#jennyTorrentModalV91 .jenny-modal-hdr-v71');
-        if (torHdr && !document.getElementById('btnTorBgShieldV212')) {
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.id = 'btnTorBgShieldV212';
-            btn.onclick = function(e) { window.requestBackgroundUnrestrictedV212(e); };
-            btn.style.cssText = 'padding:4px 7px;font-size:10.5px;border-radius:7px;background:rgba(63,185,80,0.16);border:1px solid #3fb950;color:#3fb950;font-weight:900;flex-shrink:0;cursor:pointer;';
-            btn.innerText = '🛡️ Фон 24/7';
-            torHdr.appendChild(btn);
-        }
-
-        var deckBar = document.getElementById('deckSwitchBarSettingsV131');
-        if (deckBar && !document.getElementById('btnSettingsBgShieldV212')) {
-            var wrap = document.createElement('div');
-            wrap.style.cssText = 'margin:4px 0 8px 0;display:flex;width:100%;';
-            wrap.innerHTML = '<button type="button" id="btnSettingsBgShieldV212" onclick="window.requestBackgroundUnrestrictedV212(event)" class="jenny-deck-pill-v211 active-a" style="width:100%;padding:8px 12px;font-size:11.5px;"></button>';
-            deckBar.insertAdjacentElement('afterend', wrap);
-        }
-        window.updateBgShieldButtonsUIV212();
+        // V214: Кнопка '🛡️ Фон 24/7' перенесена в Шаг 2 стартового гида (Onboarding V165),
+        // чтобы не загромождать шапку Торрент-студии и окно Настроек.
+        var b1 = document.getElementById('btnTorBgShieldV212');
+        if (b1) b1.remove();
+        var b2 = document.getElementById('btnSettingsBgShieldV212');
+        if (b2 && b2.parentElement) b2.parentElement.remove();
     }
 
     setInterval(function() {
@@ -19296,3 +19381,309 @@ let vsyncTicks = 0;
     }, 500);
 })();
 /* ================= END JENNY V212 ================= */
+
+
+/* ================= JENNY_V214_UNIFIED_PATCH: HEADER OVERFLOW FIX, ONBOARDING BG 24/7, SEARCH/YEAR/FORMAT TAGS, LIVE_REMUX PROBE & 93 TRACKS ================= */
+(function() {
+    if (window._jennyV214Installed) return;
+    window._jennyV214Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. СТИЛИ V214: ШАПКА ТОРРЕНТ-СТУДИИ БЕЗ ВЫЛЕЗАНИЯ ТЕКСТА + ПЕРЕНОС ЧИПОВ ФОРМАТОВ
+    // -------------------------------------------------------------------------
+    var styleV214 = document.createElement('style');
+    styleV214.id = 'jennyStyleV214';
+    styleV214.textContent = [
+        /* Фикс вылезания текста из центральной кнопки #btnTorHeaderHubMenuV128 на логотип и кнопку В фон */
+        '#btnTorHeaderHubMenuV128 {',
+        '  overflow: hidden !important;',
+        '  text-overflow: ellipsis !important;',
+        '  white-space: nowrap !important;',
+        '  max-width: 100% !important;',
+        '  min-width: 0 !important;',
+        '  padding: 4px 8px !important;',
+        '  font-size: 10.5px !important;',
+        '  box-sizing: border-box !important;',
+        '  justify-content: center !important;',
+        '}',
+        '#lblTorHeaderHubMenuV128 {',
+        '  overflow: hidden !important;',
+        '  text-overflow: ellipsis !important;',
+        '  white-space: nowrap !important;',
+        '  display: inline-block !important;',
+        '  max-width: 100% !important;',
+        '  min-width: 0 !important;',
+        '}',
+        '#btnTorBgShieldV212, #btnSettingsBgShieldV212 { display: none !important; }',
+        '.jv210-hidden-node {',
+        '  opacity: 0 !important;',
+        '  visibility: hidden !important;',
+        '  pointer-events: none !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(styleV214);
+
+    // -------------------------------------------------------------------------
+    // 2. ОЧИСТКА КЭША P2P:50% ПРИ СТОПЕ / УДАЛЕНИИ / СБРОСЕ ТОРРЕНТА
+    // -------------------------------------------------------------------------
+    ['stopCurrentOpenTorrentV143', 'deleteCurrentOpenTorrentV143', 'nukeAllTorrentsV142', 'cleanupActiveTorrentStreamV143', 'resetOpenTorrentScreenUI_V143'].forEach(function(fnName) {
+        var origFn = window[fnName];
+        if (typeof origFn === 'function' && !origFn._v214Wrapped) {
+            var wrapped = async function() {
+                var curHash = (window._torStateV96 && window._torStateV96.currentHash) || '';
+                if (typeof window.clearTorMonotonicCacheV214 === 'function') {
+                    window.clearTorMonotonicCacheV214(fnName === 'nukeAllTorrentsV142' ? '' : curHash);
+                }
+                return await origFn.apply(this, arguments);
+            };
+            wrapped._v214Wrapped = true;
+            window[fnName] = wrapped;
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // 3. ВСТРАИВАНИЕ РАЗРЕШЕНИЯ "🛡️ ФОН 24/7" В ШАГ 2 ОНБОРДИНГА (renderOnboardingPageV165)
+    // -------------------------------------------------------------------------
+    var origRenderOnbV165 = window.renderOnboardingPageV165;
+    if (typeof origRenderOnbV165 === 'function' && !origRenderOnbV165._v214Wrapped) {
+        window.renderOnboardingPageV165 = function(pageIdx) {
+            var res = origRenderOnbV165.apply(this, arguments);
+            var p = Math.max(0, Math.min(3, Number(pageIdx) || 0));
+            if (p === 1) {
+                var bodyEl = document.getElementById('onbPageBodyV165');
+                if (bodyEl && !document.getElementById('onbBgUnrestrictedBtnV214')) {
+                    var okBg = Boolean(window._bgUnrestrictedGrantedV212);
+                    var wrap = document.createElement('div');
+                    wrap.style.cssText = 'padding-top:4px;';
+                    wrap.innerHTML =
+                        '<button type="button" id="onbBgUnrestrictedBtnV214" onclick="window.requestBackgroundUnrestrictedV212(event)" style="width:100%;padding:12px 14px;border-radius:11px;border:1px solid ' + (okBg ? '#3fb950' : '#58a6ff') + ';background:' + (okBg ? 'rgba(63,185,80,0.16)' : 'rgba(88,166,255,0.16)') + ';color:' + (okBg ? '#3fb950' : '#58a6ff') + ';font-size:13px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">' +
+                            (okBg ? '🛡️ Фон 24/7 без ограничений батареи: АКТИВЕН' : '🛡️ Разрешить работу в фоне 24/7 (Без сна батареи)') +
+                        '</button>';
+                    bodyEl.appendChild(wrap);
+                }
+            }
+            return res;
+        };
+        window.renderOnboardingPageV165._v214Wrapped = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. ФИКС ПОЛЯ ПОИСКА #torMagnetInpV91 (БЕЗ АВТОЗАПОЛНЕНИЯ ПОЧТЫ И СБРОСА КЛАВИАТУРЫ),
+    //    ПЕРЕНОС ПОЛЯ "📅 ГОД" (#torYearInpV125) НА СТРОКУ НИЖЕ + ВСЕ 11 ЧИПОВ ФОРМАТОВ
+    // -------------------------------------------------------------------------
+    var FULL_TORRENT_FORMAT_TAGS_V214 = [
+        { id: 'all',   label: '🌐 ВСЕ',   color: '#58a6ff' },
+        { id: 'flac',  label: '💎 FLAC',  color: '#3fb950' },
+        { id: 'wav',   label: '🌊 WAV',   color: '#39c5cf' },
+        { id: 'mp3',   label: '🎵 MP3',   color: '#d2a8ff' },
+        { id: 'm4a',   label: '🍏 M4A',   color: '#a371f7' },
+        { id: 'video', label: '🎬 ВИДЕО', color: '#ff7b72' },
+        { id: 'mkv',   label: '📽️ MKV',   color: '#ffa657' },
+        { id: 'mp4',   label: '🎞️ MP4',   color: '#e3b341' },
+        { id: 'avi',   label: '📼 AVI',   color: '#f0883e' },
+        { id: '1080p', label: '📽️ 1080p', color: '#79c0ff' },
+        { id: '4k',    label: '🔥 4K',    color: '#ff7b72' }
+    ];
+
+    window.TORRENT_FORMAT_TAGS_V101 = FULL_TORRENT_FORMAT_TAGS_V214.slice();
+
+    window.fixTorrentSearchInputAutofillV214 = function() {
+        var inp = document.getElementById('torMagnetInpV91');
+        if (!inp || inp._v214AutofillFixed) return;
+        inp._v214AutofillFixed = true;
+        inp.setAttribute('type', 'search');
+        inp.setAttribute('name', 'jenny_tor_q_' + Math.floor(Math.random() * 100000));
+        inp.setAttribute('autocomplete', 'off');
+        inp.setAttribute('autocorrect', 'off');
+        inp.setAttribute('autocapitalize', 'none');
+        inp.setAttribute('spellcheck', 'false');
+        inp.setAttribute('inputmode', 'search');
+        inp.setAttribute('data-lpignore', 'true');
+        inp.setAttribute('data-form-type', 'other');
+
+        // Держим readOnly до реального касания, чтобы Android Autofill не предлагал dmitry.m136@gmail.com
+        inp.readOnly = true;
+        var unlock = function() {
+            if (inp.readOnly) inp.readOnly = false;
+        };
+        inp.addEventListener('touchstart', unlock, { passive: true });
+        inp.addEventListener('mousedown', unlock, { passive: true });
+        inp.addEventListener('focus', unlock, { passive: true });
+    };
+
+    // Переопределяем ensureTorrentYearInputV125: поле "📅 Год" размещается в строке фильтров под поиском!
+    window.ensureTorrentYearInputV125 = function() {
+        window.fixTorrentSearchInputAutofillV214();
+        var topRow = document.getElementById('torTopFilterRowV214');
+        var yInp = document.getElementById('torYearInpV125');
+        if (!yInp) {
+            yInp = document.createElement('input');
+            yInp.type = 'search';
+            yInp.id = 'torYearInpV125';
+            yInp.setAttribute('name', 'jenny_tor_yr_v214');
+            yInp.setAttribute('autocomplete', 'off');
+            yInp.setAttribute('inputmode', 'numeric');
+            yInp.setAttribute('maxlength', '4');
+            yInp.placeholder = '📅 Год';
+            yInp.value = (window._torStateV96 && window._torStateV96.yearFilter) ? window._torStateV96.yearFilter : '';
+            yInp.oninput = function() {
+                this.value = this.value.replace(/[^0-9]/g, '').slice(0, 4);
+                if (window._torStateV96) window._torStateV96.yearFilter = this.value;
+                this.style.borderColor = this.value.length === 4 ? '#58a6ff' : '#30363d';
+            };
+            yInp.onkeydown = function(ev) {
+                if (ev.key === 'Enter' && typeof window.runTorrentActionV96 === 'function') {
+                    window.runTorrentActionV96(true);
+                }
+            };
+        }
+        yInp.style.cssText = 'width:62px;flex-shrink:0;padding:4px 5px;font-size:10.5px;background:#06080b !important;color:#58a6ff !important;border:1px solid #30363d !important;border-radius:8px;text-align:center !important;font-weight:bold;';
+        if (topRow && yInp.parentNode !== topRow) {
+            topRow.appendChild(yInp);
+        }
+    };
+
+    // Переопределяем renderTorrentFilterBarV99:
+    // - Первая строка под поиском: 🎯 Точный | 👥 >=2 | 🚫 >0 | 📅 Год
+    // - Вторая область (с переносом flex-wrap): ВСЕ 11 аудио и видео форматов видны сразу!
+    window.renderTorrentFilterBarV99 = function() {
+        window.fixTorrentSearchInputAutofillV214();
+        var m = document.getElementById('jennyTorrentModalV91');
+        if (!m) return;
+        var bar = document.getElementById('torFilterPillsBarV99');
+        if (!bar) {
+            var stLine = document.getElementById('torStatusLineV96');
+            if (!stLine || !stLine.parentNode) return;
+            bar = document.createElement('div');
+            bar.id = 'torFilterPillsBarV99';
+            bar.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin:2px 0;';
+            stLine.parentNode.insertBefore(bar, stLine);
+        }
+        var ts = window._torStateV96 || {};
+        window.TORRENT_FORMAT_TAGS_V101 = FULL_TORRENT_FORMAT_TAGS_V214.slice();
+
+        var mkCheck = function(k, icon, label, activeColor) {
+            var on = Boolean(ts[k]);
+            return '<button type="button" onclick="window.toggleTorrentFilterPillV99(\'' + k + '\')" style="flex:1;min-width:0;padding:4px 4px;font-size:10px;border-radius:8px;font-weight:bold;white-space:nowrap;background:' + (on ? 'rgba(63,185,80,0.18)' : '#11161f') + ';border:1px solid ' + (on ? activeColor : '#30363d') + ';color:' + (on ? activeColor : '#8b949e') + ';display:inline-flex;align-items:center;justify-content:center;gap:3px;"><span>' + (on ? '☑️' : '⬜') + '</span><span>' + icon + ' ' + label + '</span></button>';
+        };
+
+        var curTag = ts.formatTag || 'all';
+        var tagsHtml = FULL_TORRENT_FORMAT_TAGS_V214.map(function(t) {
+            var act = (curTag === t.id);
+            return '<button type="button" onclick="window.selectTorrentFormatTagV101(\'' + t.id + '\')" style="padding:4px 8px;font-size:10.5px;border-radius:9px;font-weight:900;flex:0 0 auto;background:' + (act ? 'rgba(88,166,255,0.22)' : '#0d1117') + ';border:1.5px solid ' + (act ? t.color : '#262c36') + ';color:' + (act ? t.color : '#8b949e') + ';box-shadow:' + (act ? '0 0 8px rgba(88,166,255,0.25)' : 'none') + ';">' + t.label + '</button>';
+        }).join('');
+
+        bar.innerHTML =
+            '<div id="torTopFilterRowV214" style="display:flex;gap:4px;width:100%;align-items:center;">' +
+                mkCheck('exactSearch', '🎯', 'Точно', '#58a6ff') +
+                mkCheck('minTwoSeeds', '👥', '>=2 сид', '#e3b341') +
+                mkCheck('hideZeroSeeds', '🚫', 'Без 0', '#3fb950') +
+            '</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:4px;padding-bottom:2px;">' +
+                tagsHtml +
+            '</div>';
+
+        window.ensureTorrentYearInputV125();
+    };
+
+    // Живая фильтрация при нажатии на чип формата (и в поиске раздач, и внутри открытой раздачи!)
+    window.matchesFileOrResultFormatTagV214 = function(textStr, tagId) {
+        var t = String(textStr || '').toLowerCase();
+        var tag = String(tagId || 'all').toLowerCase().trim();
+        if (!tag || tag === 'all') return true;
+        if (tag === 'flac') return /\b(flac|alac|ape|wv|lossless)\b/i.test(t) || /\.flac\b/i.test(t);
+        if (tag === 'wav')  return /\b(wav|pcm|dsd|dsf|dff)\b/i.test(t) || /\.wav\b/i.test(t);
+        if (tag === 'mp3')  return /\b(mp3|320\s*kbps)\b/i.test(t) || /\.mp3\b/i.test(t);
+        if (tag === 'm4a')  return /\b(m4a|aac|ogg|opus)\b/i.test(t) || /\.(m4a|aac|ogg|opus)\b/i.test(t);
+        if (tag === 'mkv')  return /\b(mkv|matroska|bdremux|remux)\b/i.test(t) || /\.mkv\b/i.test(t);
+        if (tag === 'mp4')  return /\b(mp4|m4v|h264|x264|avc)\b/i.test(t) || /\.(mp4|m4v)\b/i.test(t);
+        if (tag === 'avi')  return /\b(avi|xvid|divx|dvdrip|hdrip)\b/i.test(t) || /\.avi\b/i.test(t);
+        if (tag === '1080p') return /\b(1080p|1080i|fhd|fullhd)\b/i.test(t);
+        if (tag === '4k')   return /\b(2160p|4k|uhd)\b/i.test(t);
+        if (tag === 'video') return /\b(mkv|mp4|avi|mov|wmv|ts|m2ts|webm|bdrip|web-dl|webrip|hdrip|dvdrip|1080p|2160p|720p|4k|сезон|серии|серия)\b/i.test(t);
+        return t.indexOf(tag) !== -1;
+    };
+
+    window.selectTorrentFormatTagV101 = function(tagId) {
+        if (!window._torStateV96) window._torStateV96 = {};
+        window._torStateV96.formatTag = tagId || 'all';
+        window.renderTorrentFilterBarV99();
+
+        // Если открыт список файлов внутри торрента — фильтруем строки файлов на лету
+        if (window._torScreenModeV112 === 'files') {
+            var rows = document.querySelectorAll('#torBodyListV96 [id^="torFileRowV96_"]');
+            rows.forEach(function(r) {
+                var ok = window.matchesFileOrResultFormatTagV214(r.textContent || '', tagId);
+                r.style.display = ok ? '' : 'none';
+            });
+            return;
+        }
+
+        // Если в поле поиска есть запрос — перезапускаем поиск с выбранным форматом
+        var inp = document.getElementById('torMagnetInpV91');
+        if (inp && inp.value.trim() && !inp.value.trim().toLowerCase().startsWith('magnet:?')) {
+            if (typeof window.runTorrentActionV96 === 'function') {
+                window.runTorrentActionV96(true);
+            }
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 5. БЫСТРЫЙ ПРОБИНГ ДЛИТЕЛЬНОСТИ ТОРРЕНТ-СТРИМА ДЛЯ ПОЛЗУНКА ПЕРЕМОТКИ
+    // -------------------------------------------------------------------------
+    window.probeTorrentVideoDurationV214 = function(streamUrl) {
+        var st = window._vidStateV130;
+        if (!st || !st.active || !streamUrl) return;
+        fetch('/api/video/probe?src=' + encodeURIComponent(streamUrl))
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var dur = Number(d && d.duration_sec) || 0;
+                if (dur > 1) {
+                    st.trueDuration = dur;
+                    window._jennyFullMovieDurationSecV210 = dur;
+                    if (!window._vcoreLastProbeV166) window._vcoreLastProbeV166 = {};
+                    window._vcoreLastProbeV166.duration_sec = dur;
+                    var vid = document.getElementById('jennyVideoElV130');
+                    var cur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : 0;
+                    if (typeof window.syncInternalVideoSliderUIV212 === 'function') {
+                        window.syncInternalVideoSliderUIV212(cur, dur);
+                    }
+                    if (typeof window.updateProgressUIDeckB === 'function') {
+                        window.updateProgressUIDeckB(cur, dur, Boolean(window.isReversedDeckB));
+                    }
+                }
+            })
+            .catch(function(){});
+    };
+
+    // -------------------------------------------------------------------------
+    // 6. АВТОЗАГРУЗКА ВСЕХ 93 АУДИОТРЕКОВ ПРИ СТАРТЕ В ВКЛАДКУ "🎵 ВСЕ 93"
+    // -------------------------------------------------------------------------
+    async function autoRefreshAllAudioOnStartupV214() {
+        try {
+            if (typeof window.ensureDualDeckFormatSlotsV150 === 'function') {
+                window.ensureDualDeckFormatSlotsV150();
+            }
+            if (typeof window.fetchData === 'function') {
+                await window.fetchData();
+            }
+            if (typeof window.renderPlaylistStripChipsV71 === 'function') {
+                window.renderPlaylistStripChipsV71();
+            }
+            if (typeof window.renderActivePlaylistTracksV71 === 'function' && window.activePlaylistTabV71 !== 'videos') {
+                window.renderActivePlaylistTracksV71(false);
+            }
+            var cntEl = document.getElementById('tracksCount');
+            if (cntEl && window.activePlaylistTabV71 !== 'videos' && Array.isArray(window.viewedFullTabListV73)) {
+                cntEl.innerText = window.viewedFullTabListV73.length;
+            }
+        } catch (e) {}
+    }
+
+    setTimeout(autoRefreshAllAudioOnStartupV214, 450);
+    setTimeout(autoRefreshAllAudioOnStartupV214, 1600);
+    setTimeout(function() {
+        window.fixTorrentSearchInputAutofillV214();
+        window.renderTorrentFilterBarV99();
+    }, 600);
+})();

@@ -41,15 +41,17 @@ OMNI_TORRENT_CONFIG = {
 
     # Список кнопок форматов в панели Торрент-студии (можно закомментировать ненужные или раскомментировать видео-теги):
     "format_tags": [
-        {"id": "all",  "label": "🌐 ВСЕ",  "color": "#58a6ff"},
-        {"id": "flac", "label": "💎 FLAC", "color": "#d2a8ff"},
-        {"id": "wav",  "label": "🌊 WAV",  "color": "#39c5cf"},
-        {"id": "mp3",  "label": "🎵 MP3",  "color": "#3fb950"},
-        {"id": "m4a",  "label": "🍏 M4A",  "color": "#e3b341"},
-        # {"id": "ogg",   "label": "🔥 OGG/OPUS", "color": "#f0883e"},
-        {"id": "video", "label": "🎬 ВИДЕО", "color": "#ff7b72"},
-        {"id": "1080p", "label": "📽️ 1080p", "color": "#ffa657"},
-        {"id": "2160p", "label": "🔥 4K",    "color": "#f0883e"},
+        {"id": "all",   "label": "🌐 ВСЕ",    "color": "#58a6ff"},
+        {"id": "video", "label": "🎬 ВИДЕО",  "color": "#ff7b72"},
+        {"id": "mkv",   "label": "📽️ MKV",    "color": "#ffa657"},
+        {"id": "mp4",   "label": "🎞️ MP4",    "color": "#f0883e"},
+        {"id": "avi",   "label": "📼 AVI",    "color": "#e3b341"},
+        {"id": "1080p", "label": "📽️ 1080p",  "color": "#ff7b72"},
+        {"id": "2160p", "label": "🔥 4K",     "color": "#f0883e"},
+        {"id": "flac",  "label": "💎 FLAC",   "color": "#d2a8ff"},
+        {"id": "wav",   "label": "🌊 WAV",    "color": "#39c5cf"},
+        {"id": "mp3",   "label": "🎵 MP3",    "color": "#3fb950"},
+        {"id": "m4a",   "label": "🍏 M4A",    "color": "#e3b341"},
     ],
 
     # --- 3. ПОЛЕ ФИЛЬТРАЦИИ ПО ГОДУ ВЫПУСКА ---
@@ -4722,7 +4724,7 @@ def _stop_and_clean_stream_data_v143(h: str, file_idx=None) -> dict:
 
     # Если у торрента НЕТ активных скачиваний через ⬇️ — полностью гасим торрент и чистим его временные данные с диска!
     if not pending_explicit:
-        freed_mb = _delete_torrent_files_from_disk_v142(h, nuke_all=False)
+        freed_mb = _delete_torrent_files_from_disk_v142(h, nuke_all=False, keep_torrent_meta=True)
         try:
             req = urllib.request.Request(
                 f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
@@ -6157,6 +6159,938 @@ def api_video_full_stream_v212():
                 pass
     return bottle.HTTPResponse(body=_stream_gen(), status=200, headers=response.headers)
 _override_bottle_route_v212('/api/video/full_stream_v210', 'GET', api_video_full_stream_v212)
+
+
+
+
+# ==============================================================================
+# 🚀🎬 JENNY V214 (#308): INSTANT TORRENT VIDEO STREAM & REMUX, STREAM PRIORITY
+# OVER BACKGROUND TORRENTS, STRICT FORMAT FILTERING & HONEST P2P PROGRESS
+# ==============================================================================
+_TORRENT_HEAD_TAIL_BOOSTED_V214 = set()
+_ACTIVE_REMUX_PROCS_BY_KEY_V214 = {}  # stream_key -> [(start_ts, proc), ...]
+_BG_PAUSED_BY_PRIORITY_V214 = set()
+_BG_RESUME_TIMER_V214 = None
+_BG_PRIORITY_LOCK_V214 = threading.Lock()
+_CURRENTLY_ADDING_HASHES_V214 = set()
+
+_VIDEO_SEARCH_RE_V214 = re.compile(
+    r"(?i)(\bweb-?dl\b|\bwebrip\b|\bbdrip\b|\bbdremux\b|\bhdrip\b|\bdvdrip\b|\bhdtv\b|\btvrip\b|\bsatrip\b|"
+    r"\b1080[pi]\b|\b720p\b|\b2160p\b|\b4k\b|\buhd\b|\bmkv\b|\bmp4\b|\bavi\b|\bmov\b|\bwebm\b|"
+    r"\bx264\b|\bx265\b|\bh\.?264\b|\bh\.?265\b|\bhevc\b|\bavc\b|\bxvid\b|\bdivx\b|"
+    r"\bсезон\b|\bсерии\b|\bсерия\b|\bs\d{1,2}\b|\bs\d{1,2}e\d{1,2}\b|\bфильм\b|\bсериал\b)"
+)
+_AUDIO_ONLY_RE_V214 = re.compile(
+    r"(?i)\b(flac|mp3|wav|lossless|alac|m4a|aac|ape|wv|ogg|opus|320\s*kbps|320kbps|24bit|hi-?res|discography|дискография|ost|soundtrack|саундтрек)\b"
+)
+
+def _matches_torrent_format_tag_v214(title: str, fmt_tag: str) -> bool:
+    tag = (fmt_tag or "all").strip().lower()
+    if not tag or tag == "all":
+        return True
+    t = (title or "").lower()
+    is_vid = bool(_VIDEO_SEARCH_RE_V214.search(t))
+    is_aud = bool(_AUDIO_ONLY_RE_V214.search(t))
+
+    if tag == "video":
+        return is_vid
+    if tag == "mkv":
+        return any(k in t for k in ("mkv", "matroska", "bdremux", "web-dl", "bdrip", "hevc", "x265")) or (is_vid and "avi" not in t and "mp4" not in t)
+    if tag == "mp4":
+        return any(k in t for k in ("mp4", "m4v", "webrip", "web-dl", "x264", "avc", "h264", "h.264")) and "avi" not in t
+    if tag == "avi":
+        return any(k in t for k in ("avi", "xvid", "divx", "dvdrip", "hdrip", "tvrip", "satrip"))
+    if tag == "1080p":
+        return any(k in t for k in ("1080p", "1080i", "fhd", "fullhd"))
+    if tag in ("2160p", "4k"):
+        return any(k in t for k in ("2160p", "4k", "uhd"))
+    if tag == "flac":
+        return any(k in t for k in ("flac", "lossless", "24bit", "hi-res", "ape", "wv")) and (not is_vid or is_aud)
+    if tag == "wav":
+        return any(k in t for k in ("wav", "pcm")) and (not is_vid or is_aud)
+    if tag == "mp3":
+        return any(k in t for k in ("mp3", "320", "cbr", "vbr", "mpeg")) and (not is_vid or "mp3" in t)
+    if tag in ("m4a", "aac"):
+        return any(k in t for k in ("m4a", "aac", "alac")) and (not is_vid or "aac" in t or "m4a" in t)
+    if tag == "ogg":
+        return any(k in t for k in ("ogg", "vorbis", "opus"))
+    return tag in t
+
+
+@post('/api/torrent/search')
+def api_torrent_search_v214():
+    response.content_type = 'application/json'
+    try:
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        q = (req.get("query") or "").strip()
+        if not q:
+            return json.dumps({"status": "error", "error": "Пустой запрос"})
+
+        ensure_omnitorrent_daemon_v124()
+        cfg = globals().get("OMNI_TORRENT_CONFIG", {})
+        fmt_tag = (req.get("format_tag") or cfg.get("default_format_tag", "all")).strip().lower()
+        year_val = str(req.get("year") if req.get("year") is not None else cfg.get("default_year", "")).strip()
+        year_clean = "".join(ch for ch in year_val if ch.isdigit())[:4]
+
+        # Запрашиваем у Go-демона с format_tag="all", чтобы его внутренний фоллбэк на FLAC/MP3 не подменял фильтр,
+        # а затем выполняем точную фильтрацию по выбранному аудио/видео тегу!
+        is_video_tag = fmt_tag in ("video", "mkv", "mp4", "avi", "1080p", "2160p", "4k")
+        eff_profile = "omni" if (fmt_tag == "all" or is_video_tag) else str(req.get("profile") or cfg.get("profile", "omni")).strip().lower()
+
+        payload = json.dumps({
+            "query": q,
+            "force_new": bool(req.get("force_new", False)),
+            "format_tag": "all",
+            "year": year_clean,
+            "profile": eff_profile,
+            "enable_phonetic": bool(req.get("enable_phonetic", cfg.get("enable_phonetic", True))),
+            "enable_catalog": bool(req.get("enable_catalog", cfg.get("enable_catalog", True))),
+            "enable_udp": bool(req.get("enable_udp", cfg.get("enable_udp", True))),
+            "exact": bool(req.get("exact", False)),
+            "hide_zero": bool(req.get("hide_zero", True)),
+            "min_two_seeds": bool(req.get("min_two_seeds", False)),
+            "max_results": 80,
+            "timeout_ms": int(req.get("timeout_ms") or cfg.get("timeout_ms", 10000))
+        }, ensure_ascii=False).encode("utf-8")
+
+        http_req = urllib.request.Request(
+            f"{_OMNI_URL_V124}/search",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        http_timeout = float(cfg.get("http_timeout_sec", 20.0))
+        with urllib.request.urlopen(http_req, timeout=http_timeout) as r:
+            raw_json = r.read().decode("utf-8", errors="replace")
+
+        parsed = json.loads(raw_json)
+        parsed = _enrich_omni_response_trackers_v124(parsed)
+
+        if fmt_tag and fmt_tag != "all":
+            orig_results = parsed.get("results") or []
+            parsed["results"] = [it for it in orig_results if _matches_torrent_format_tag_v214(it.get("title", ""), fmt_tag)]
+            if isinstance(parsed.get("groups"), list):
+                new_groups = []
+                for g in parsed["groups"]:
+                    g_res = [it for it in (g.get("results") or []) if _matches_torrent_format_tag_v214(it.get("title", ""), fmt_tag)]
+                    if g_res:
+                        g_copy = dict(g)
+                        g_copy["results"] = g_res
+                        new_groups.append(g_copy)
+                parsed["groups"] = new_groups
+
+        return json.dumps(parsed, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+_override_bottle_route_v212('/api/torrent/search', 'POST', api_torrent_search_v214)
+
+
+def _temporarily_prioritize_torrent_v214(focus_hash: str, duration_sec: float = 14.0):
+    """Временно ставит на паузу другие фоновые раздачи во время открытия оглавления или буферизации видеопотока."""
+    global _BG_RESUME_TIMER_V214
+    focus_h = (focus_hash or "").strip().lower()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.0) as r:
+            st = json.loads(r.read().decode("utf-8", "ignore"))
+        for tor in (st.get("torrents") or []):
+            th = (tor.get("hash") or "").strip().lower()
+            if not th or th == focus_h:
+                continue
+            # Если это мёртвая раздача без метаданных (0 кусков / 0 файлов) и сейчас не добавляется — сразу удаляем её из демона
+            t_files = tor.get("files") or tor.get("all_files") or []
+            if len(t_files) == 0 and int(tor.get("num_pieces") or 0) == 0 and th not in _CURRENTLY_ADDING_HASHES_V214:
+                try:
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                        data=json.dumps({"hash": th, "action": "drop"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    ), timeout=0.8).read()
+                except Exception:
+                    pass
+                continue
+            if not tor.get("paused"):
+                with _BG_PRIORITY_LOCK_V214:
+                    _BG_PAUSED_BY_PRIORITY_V214.add(th)
+                try:
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                        data=json.dumps({"hash": th, "action": "pause"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    ), timeout=0.8).read()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    def _resume_later():
+        with _BG_PRIORITY_LOCK_V214:
+            to_res = list(_BG_PAUSED_BY_PRIORITY_V214)
+            _BG_PAUSED_BY_PRIORITY_V214.clear()
+        persisted = _load_persisted_dl_state_v143() if '_load_persisted_dl_state_v143' in globals() else {}
+        for th in to_res:
+            # Возобновляем только те раздачи, где есть реальные незавершённые закачки пользователя
+            entry = persisted.get(th) or {}
+            exp = set(int(x) for x in (entry.get("explicit_files") or []))
+            comp = set(int(x) for x in (entry.get("completed_files") or []))
+            if exp - comp:
+                try:
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                        data=json.dumps({"hash": th, "action": "resume"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    ), timeout=0.8).read()
+                except Exception:
+                    pass
+
+    with _BG_PRIORITY_LOCK_V214:
+        if _BG_RESUME_TIMER_V214 is not None:
+            try:
+                _BG_RESUME_TIMER_V214.cancel()
+            except Exception:
+                pass
+        _BG_RESUME_TIMER_V214 = threading.Timer(duration_sec, _resume_later)
+        _BG_RESUME_TIMER_V214.daemon = True
+        _BG_RESUME_TIMER_V214.start()
+
+
+@post('/api/torrent/add')
+def api_torrent_add_v214():
+    response.content_type = 'application/json'
+    btih = ""
+    try:
+        if not ensure_jtorrent_daemon_v96():
+            return json.dumps({"status": "error", "error": "Не удалось запустить демон libjtorrent.so"})
+        raw_body = request.body.read().decode("utf-8") or "{}"
+        req_obj = json.loads(raw_body)
+        mag = (req_obj.get("magnet") or "").strip()
+        m_hash = re.search(r"btih:([a-fA-F0-9]{40})", mag)
+        if m_hash:
+            btih = m_hash.group(1).lower()
+
+        cached_trs, _, _ = _load_trackers_state_v110()
+
+        # 1. Если раздача уже есть в демоне с готовым списком файлов — возвращаем за 0.01с без ожидания!
+        if btih:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.0) as sr:
+                    st_data = json.loads(sr.read().decode("utf-8", "ignore"))
+                for tor in (st_data.get("torrents") or []):
+                    if (tor.get("hash") or "").strip().lower() == btih:
+                        all_f = tor.get("all_files") or tor.get("files") or []
+                        if len(all_f) > 0:
+                            _KNOWN_TORRENT_META_V143[btih] = {"magnet": mag, "name": tor.get("name") or "Torrent"}
+                            return json.dumps({
+                                "status": "ok",
+                                "hash": btih,
+                                "name": tor.get("name") or "Torrent",
+                                "files": all_f
+                            }, ensure_ascii=False)
+            except Exception:
+                pass
+
+            # 2. Если на диске сохранён .torrent файл этой раздачи — открываем с диска мгновенно!
+            saved_tor = os.path.join(MUSIC_DIR, "torrents_tmp", f"{btih}.torrent")
+            if os.path.isfile(saved_tor):
+                req_obj["torrent_path"] = saved_tor
+
+        if mag:
+            req_obj["magnet"] = enrich_magnet_with_cached_trackers_v109(mag)
+        req_obj["trackers"] = list(cached_trs or [])
+
+        if btih:
+            _CURRENTLY_ADDING_HASHES_V214.add(btih)
+            _temporarily_prioritize_torrent_v214(btih, duration_sec=16.0)
+
+        out_body = json.dumps(req_obj).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add",
+            data=out_body,
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            res_str = r.read().decode("utf-8")
+
+        d_obj = json.loads(res_str)
+        if d_obj.get("status") == "ok" and d_obj.get("hash"):
+            h_ok = d_obj["hash"].lower()
+            _KNOWN_TORRENT_META_V143[h_ok] = {
+                "magnet": mag,
+                "name": d_obj.get("name") or "Torrent"
+            }
+            return res_str
+        else:
+            # Если метаданные не получены — удаляем пустую запись из демона, чтобы она не висела как 0.0/0.0 МБ (335 пиров)!
+            if btih:
+                try:
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                        data=json.dumps({"hash": btih, "action": "drop"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    ), timeout=1.0).read()
+                except Exception:
+                    pass
+            return res_str
+    except Exception as e:
+        if btih:
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                    data=json.dumps({"hash": btih, "action": "drop"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                ), timeout=1.0).read()
+            except Exception:
+                pass
+        return json.dumps({"status": "error", "error": str(e)})
+    finally:
+        if btih:
+            _CURRENTLY_ADDING_HASHES_V214.discard(btih)
+_override_bottle_route_v212('/api/torrent/add', 'POST', api_torrent_add_v214)
+
+
+# Обновляем _stop_and_clean_stream_data_v143:
+# - Очищаем _TORRENT_MAX_PROGRESS_V212 (чтобы после Стоп не залипало P2P:50%!)
+# - Сохраняем .torrent метаданные и ставим на pause вместо drop, чтобы переключение серий внутри раздачи занимало 0.01с!
+def _stop_and_clean_stream_data_v143(h: str, file_idx=None) -> dict:
+    h = (h or "").strip().lower()
+    if not h:
+        return {"status": "ok", "cleaned_mb": 0.0, "dropped_torrent": False}
+
+    if file_idx is not None:
+        _TORRENT_MAX_PROGRESS_V212.pop(f"{h}_{int(file_idx)}", None)
+    else:
+        for k in [k for k in list(_TORRENT_MAX_PROGRESS_V212.keys()) if k.startswith(h + "_")]:
+            _TORRENT_MAX_PROGRESS_V212.pop(k, None)
+    _TORRENT_STATUS_CACHE_V212["data"] = None
+
+    st = _load_persisted_dl_state_v143()
+    entry = st.get(h) or {}
+    explicit_set = set(int(x) for x in entry.get("explicit_files", []))
+    comp_set = set(int(x) for x in entry.get("completed_files", []))
+    pending_explicit = explicit_set - comp_set
+
+    if file_idx is not None:
+        f_i = int(file_idx)
+        if h in _STREAM_ONLY_ACTIVE_V143:
+            _STREAM_ONLY_ACTIVE_V143[h].discard(f_i)
+        if h in _JTORRENT_ACTIVE_FILES_V106 and f_i not in explicit_set:
+            _JTORRENT_ACTIVE_FILES_V106[h].discard(f_i)
+    else:
+        _STREAM_ONLY_ACTIVE_V143.pop(h, None)
+
+    if not pending_explicit:
+        for k in [k for k in list(_TORRENT_MAX_PROGRESS_V212.keys()) if k.startswith(h + "_")]:
+            _TORRENT_MAX_PROGRESS_V212.pop(k, None)
+        freed_mb = _delete_torrent_files_from_disk_v142(h, nuke_all=False, keep_torrent_meta=True)
+        try:
+            # Ставим раздачу на паузу (не удаляя оглавление из RAM демона!), чтобы следующая серия открылась за 0.01с!
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                data=json.dumps({"hash": h, "action": "pause"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(req, timeout=2.0).read()
+        except Exception:
+            pass
+        return {"status": "ok", "cleaned_mb": freed_mb, "dropped_torrent": True}
+
+    freed_mb = 0.0
+    if file_idx is not None and int(file_idx) not in explicit_set:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.0) as r:
+                d_st = json.loads(r.read().decode("utf-8", "ignore"))
+                for tor in (d_st.get("torrents") or []):
+                    if (tor.get("hash") or "").strip().lower() == h:
+                        for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                            if int(fobj.get("index", -1)) == int(file_idx):
+                                fp = fobj.get("full_path") or os.path.join(MUSIC_DIR, "torrents_tmp", (fobj.get("path") or "").lstrip("/"))
+                                if fp and os.path.isfile(fp):
+                                    freed_mb = round(os.path.getsize(fp) / (1024.0 * 1024.0), 1)
+                                    os.remove(fp)
+        except Exception:
+            pass
+        try:
+            cached_trs, _, _ = _load_trackers_state_v110()
+            dl_req = urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                data=json.dumps({"hash": h, "files": sorted(list(pending_explicit)), "trackers": list(cached_trs or [])}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(dl_req, timeout=2.5).read()
+        except Exception:
+            pass
+
+    return {"status": "ok", "cleaned_mb": freed_mb, "dropped_torrent": False}
+
+
+# Обновляем /api/torrent/status:
+# - Автоматически убираем зависшие 0.0/0.0 МБ раздачи без метаданных
+# - Если raw_comp == 0 и файл не готов, НИКОГДА не подставляем старые проценты (50%) из кэша!
+@route('/api/torrent/status', method='GET')
+def api_torrent_status_v214():
+    response.content_type = 'application/json'
+    now = time.time()
+    if _TORRENT_STATUS_CACHE_V212["data"] is not None and (now - _TORRENT_STATUS_CACHE_V212["ts"] < 0.30):
+        return _TORRENT_STATUS_CACHE_V212["data"]
+
+    if not ensure_jtorrent_daemon_v96():
+        return json.dumps({"status": "error", "torrents": []})
+
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status")
+        with urllib.request.urlopen(req, timeout=2.5) as r:
+            data = json.loads(r.read().decode("utf-8", errors="replace"))
+
+        persisted_st = _load_persisted_dl_state_v143() if '_load_persisted_dl_state_v143' in globals() else {}
+        clean_torrents = []
+
+        for t in data.get("torrents", []):
+            th = (t.get("hash") or "").lower()
+            t_files = t.get("files") or []
+            t_all_files = t.get("all_files") or []
+            # Отсекаем и гасим мёртвые пустые раздачи 0.0/0.0 МБ, оставшиеся после таймаута метаданных
+            if len(t_files) == 0 and len(t_all_files) == 0 and int(t.get("num_pieces") or 0) == 0:
+                if th and th not in _CURRENTLY_ADDING_HASHES_V214:
+                    def _drop_dead(dead_h):
+                        try:
+                            urllib.request.urlopen(urllib.request.Request(
+                                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                data=json.dumps({"hash": dead_h, "action": "drop"}).encode("utf-8"),
+                                headers={"Content-Type": "application/json"}
+                            ), timeout=0.8).read()
+                        except Exception:
+                            pass
+                    threading.Thread(target=_drop_dead, args=(th,), daemon=True).start()
+                continue
+
+            t_name = (t.get("name") or "Torrent").strip()
+            act_set = _JTORRENT_ACTIVE_FILES_V106.get(th, set())
+            exp_list = set(int(x) for x in persisted_st.get(th, {}).get("explicit_files", []))
+            stream_set = _STREAM_ONLY_ACTIVE_V143.get(th, set()) if '_STREAM_ONLY_ACTIVE_V143' in globals() else set()
+            p_map_str = t.get("pieces_map") or ""
+
+            for f in t_files:
+                f_idx = int(f.get("index", 0))
+                key = f"{th}_{f_idx}"
+                f_len = int(f.get("length") or f.get("size") or 0)
+                raw_comp = int(f.get("completed") or 0)
+                raw_done = bool(f.get("done")) or (f_len > 0 and raw_comp >= f_len)
+
+                prev_rec = _TORRENT_MAX_PROGRESS_V212.get(key)
+                if prev_rec:
+                    if prev_rec.get("done") and _JTORRENT_CONVERTED_V96.get(key):
+                        raw_done = True
+                        raw_comp = f_len if f_len > 0 else max(raw_comp, prev_rec.get("completed", 0))
+                    elif raw_comp > 0:
+                        # Монотонная защита применяется ТОЛЬКО когда на диске реально идёт закачка (raw_comp > 0)
+                        raw_comp = max(raw_comp, prev_rec.get("completed", 0))
+                        if f_len > 0 and raw_comp >= f_len:
+                            raw_done = True
+                    else:
+                        # Если демон сообщает 0 байт (файл очищен или ещё не начат) — сбрасываем старый кэш!
+                        _TORRENT_MAX_PROGRESS_V212.pop(key, None)
+                        prev_rec = None
+
+                if raw_done and f_len > 0:
+                    raw_comp = f_len
+
+                eff_pct = 100 if raw_done else (min(99, int((raw_comp * 100) // f_len)) if f_len > 0 else 0)
+                if prev_rec and not raw_done and raw_comp > 0:
+                    eff_pct = max(eff_pct, min(99, int(prev_rec.get("percent", 0))))
+
+                _TORRENT_MAX_PROGRESS_V212[key] = {
+                    "completed": raw_comp,
+                    "percent": eff_pct,
+                    "done": raw_done,
+                    "length": f_len
+                }
+
+                f["completed"] = raw_comp
+                f["percent"] = eff_pct
+                f["done"] = raw_done
+
+                is_exp = (f_idx in exp_list) or (f_idx in act_set and f_idx not in stream_set)
+                f["is_selected"] = (f_idx in act_set) or is_exp
+                f["is_explicit_dl"] = is_exp
+                f["is_stream_only"] = (f_idx in stream_set) and not is_exp
+
+                f_path = f.get("full_path") or f.get("path") or ""
+                if raw_done and not _JTORRENT_CONVERTED_V96.get(key):
+                    ext_f = os.path.splitext(f_path)[1].lower()
+                    if ext_f in _VIDEO_EXTS_V134 or (is_exp and ext_f in ('.mp3', '.m4a', '.ogg', '.opus', '.aac')):
+                        _instant_import_completed_file_v212(th, f_idx, f.get("full_path") or "", f.get("path") or "", t_name)
+
+                f["xflac_file"] = _JTORRENT_CONVERTED_V96.get(key, "")
+
+                if not raw_done and (f.get("is_lead") or is_exp) and eff_pct >= 94 and p_map_str:
+                    last_b = _TORRENT_ENDGAME_BOOST_TS_V212.get(key, 0.0)
+                    if now - last_b >= 4.0:
+                        _TORRENT_ENDGAME_BOOST_TS_V212[key] = now
+                        beg_p = max(0, int(f.get("begin_piece") or 0))
+                        end_p = min(len(p_map_str), int(f.get("end_piece") or len(p_map_str)))
+                        missing_p = [p_i for p_i in range(beg_p, end_p) if p_map_str[p_i] != '4'][:3]
+                        if missing_p:
+                            def _boost_tail(h_target, p_list, f_target):
+                                try:
+                                    urllib.request.urlopen(urllib.request.Request(
+                                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                        data=json.dumps({"hash": h_target, "action": "boost_file", "file_index": f_target}).encode("utf-8"),
+                                        headers={"Content-Type": "application/json"}
+                                    ), timeout=1.0).read()
+                                    for mp in p_list:
+                                        urllib.request.urlopen(urllib.request.Request(
+                                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                            data=json.dumps({"hash": h_target, "action": "boost_piece", "piece_index": mp}).encode("utf-8"),
+                                            headers={"Content-Type": "application/json"}
+                                        ), timeout=1.0).read()
+                                except Exception:
+                                    pass
+                            threading.Thread(target=_boost_tail, args=(th, missing_p, f_idx), daemon=True).start()
+
+            clean_torrents.append(t)
+
+        data["torrents"] = clean_torrents
+        out_json = json.dumps(data, ensure_ascii=False)
+        _TORRENT_STATUS_CACHE_V212["ts"] = now
+        _TORRENT_STATUS_CACHE_V212["data"] = out_json
+        return out_json
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+_override_bottle_route_v212('/api/torrent/status', 'GET', api_torrent_status_v214)
+
+
+# Умное разрешение пути к видео (поддерживает и относительные /api/..., и полные http://127.0.0.1:8080/api/... из vEl.currentSrc!)
+def _resolve_video_src_input_v131(src: str) -> str:
+    src = (src or "").strip()
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith('/api/torrent/stream/'):
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            key = f"{h_low}_{f_idx}"
+            conv_fn = _JTORRENT_CONVERTED_V96.get(key)
+            if conv_fn:
+                local_p = resolve_track_full_path_v71(conv_fn)
+                if local_p and os.path.isfile(local_p):
+                    return local_p
+            ensure_jtorrent_daemon_v96()
+            return f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}"
+    elif src.startswith('/api/media/'):
+        fn = urllib.parse.unquote(src[len('/api/media/'):].split('?')[0])
+        return resolve_track_full_path_v71(fn)
+    return resolve_track_full_path_v71(src)
+
+
+def _boost_torrent_file_and_pieces_v214(h_low: str, f_idx: int, ratio: float = -1.0, byte_offset: int = -1, sync_start: bool = False):
+    """Активирует строго нужный файл потока в libjtorrent, временно приглушает фоновые торренты и бустит куски начала, конца и точки перемотки."""
+    h_low = (h_low or "").strip().lower()
+    if not h_low:
+        return
+    f_idx = int(f_idx)
+    if '_ensure_torrent_registered_in_daemon_v145' in globals():
+        _ensure_torrent_registered_in_daemon_v145(h_low)
+
+    # Приоритезируем раздачу потока над другими фоновыми закачками
+    _temporarily_prioritize_torrent_v214(h_low, duration_sec=15.0)
+
+    persisted_st = _load_persisted_dl_state_v143() if '_load_persisted_dl_state_v143' in globals() else {}
+    exp_files = set(int(x) for x in (persisted_st.get(h_low, {}).get("explicit_files") or []))
+    comp_files = set(int(x) for x in (persisted_st.get(h_low, {}).get("completed_files") or []))
+    pending_exp = exp_files - comp_files
+
+    # КРИТИЧЕСКИЙ ФИКС: если в этой раздаче нет других явно качаемых файлов (пользователь просто нажал ▶ Поток на серии f_idx),
+    # передаём в /download СТРОГО [f_idx], чтобы демон не тратил скорость на скачивание 1-й серии вместо выбранной 2-й!
+    if pending_exp:
+        active_files = sorted(list(pending_exp | {f_idx}))
+    else:
+        active_files = [f_idx]
+
+    _STREAM_ONLY_ACTIVE_V143.setdefault(h_low, set()).add(f_idx)
+    _JTORRENT_ACTIVE_FILES_V106[h_low] = set(active_files)
+    _TORRENT_STATUS_CACHE_V212["data"] = None
+
+    def _do_boost():
+        try:
+            cached_trs, _, _ = _load_trackers_state_v110()
+            # Снимаем с паузы, если раздача была поставлена на паузу
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                    data=json.dumps({"hash": h_low, "action": "resume"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                ), timeout=1.2).read()
+            except Exception:
+                pass
+
+            urllib.request.urlopen(urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                data=json.dumps({"hash": h_low, "files": active_files, "trackers": list(cached_trs or [])}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            ), timeout=2.5).read()
+
+            urllib.request.urlopen(urllib.request.Request(
+                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                data=json.dumps({"hash": h_low, "action": "boost_file", "file_index": f_idx}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            ), timeout=1.5).read()
+
+            beg_p, end_p, f_len = 0, 0, 0
+            p_map_str = ""
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.5) as sr:
+                st_obj = json.loads(sr.read().decode("utf-8", "ignore"))
+                for tor in (st_obj.get("torrents") or []):
+                    if (tor.get("hash") or "").strip().lower() == h_low:
+                        p_map_str = tor.get("pieces_map") or ""
+                        for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                            if int(fobj.get("index", -1)) == f_idx:
+                                beg_p = int(fobj.get("begin_piece") or 0)
+                                end_p = int(fobj.get("end_piece") or 0)
+                                f_len = int(fobj.get("length") or fobj.get("size") or 0)
+                                break
+                        break
+
+            if end_p > beg_p:
+                pieces_to_boost = []
+                # Всегда бустим первые 6 кусков начала файла (для мгновенного старта с 0:00)
+                for hp in range(beg_p, min(end_p, beg_p + 6)):
+                    pieces_to_boost.append(hp)
+                # И последние 2 куска (Cues / moov для MKV / MP4)
+                for tp in range(max(beg_p, end_p - 2), end_p):
+                    if tp not in pieces_to_boost:
+                        pieces_to_boost.append(tp)
+
+                calc_ratio = ratio
+                if calc_ratio < 0.0 and byte_offset > 0 and f_len > 0:
+                    calc_ratio = float(byte_offset) / float(f_len)
+
+                if 0.0 < calc_ratio <= 1.0:
+                    span = max(1, end_p - beg_p)
+                    center_p = max(beg_p, min(end_p - 1, beg_p + int(calc_ratio * span)))
+                    seek_pieces = []
+                    for sp in range(max(beg_p, center_p - 1), min(end_p, center_p + 6)):
+                        seek_pieces.append(sp)
+                    if (end_p - 1) not in seek_pieces:
+                        seek_pieces.append(end_p - 1)
+                    for sp in reversed(seek_pieces):
+                        if sp in pieces_to_boost:
+                            pieces_to_boost.remove(sp)
+                        pieces_to_boost.insert(0, sp)
+
+                for p_idx in pieces_to_boost[:12]:
+                    if p_map_str and 0 <= p_idx < len(p_map_str) and p_map_str[p_idx] == '4':
+                        continue
+                    try:
+                        urllib.request.urlopen(urllib.request.Request(
+                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                            data=json.dumps({"hash": h_low, "action": "boost_piece", "piece_index": int(p_idx)}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        ), timeout=0.6).read()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    if sync_start:
+        _do_boost()
+    else:
+        threading.Thread(target=_do_boost, daemon=True).start()
+
+
+@post('/api/torrent/seek_boost')
+def api_torrent_seek_boost_v214():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        req = json.loads(request.body.read().decode("utf-8") or "{}")
+        h_low = (req.get("hash") or "").strip().lower()
+        f_idx = int(req.get("file_index") or 0)
+        ratio = float(req.get("ratio") if req.get("ratio") is not None else -1.0)
+        if h_low:
+            ensure_jtorrent_daemon_v96()
+            _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=False)
+        return json.dumps({"status": "ok", "hash": h_low, "file_index": f_idx, "ratio": ratio})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+_override_bottle_route_v212('/api/torrent/seek_boost', 'POST', api_torrent_seek_boost_v214)
+
+
+@route('/api/torrent/stream/<hash_str>/<file_idx:int>', method='GET')
+def api_torrent_stream_proxy_v214(hash_str, file_idx):
+    # ВНИМАНИЕ: НЕ вызываем здесь _kill_stale_video_ffmpeg_procs_v212(), чтобы не убивать живой FFmpeg ремуксер!
+    ensure_jtorrent_daemon_v96()
+    h_low = hash_str.strip().lower()
+    f_idx = int(file_idx)
+    key = f"{h_low}_{f_idx}"
+
+    conv_fn = _JTORRENT_CONVERTED_V96.get(key)
+    if conv_fn:
+        local_p = resolve_track_full_path_v71(conv_fn)
+        if local_p and os.path.isfile(local_p):
+            return static_file(os.path.basename(local_p), root=os.path.dirname(local_p))
+
+    rng_hdr = request.headers.get("Range") or ""
+    rng_start = 0
+    if rng_hdr.startswith("bytes="):
+        try:
+            s_part = rng_hdr[6:].split("-")[0].strip()
+            if s_part:
+                rng_start = int(s_part)
+        except Exception:
+            rng_start = 0
+
+    cur_set = _JTORRENT_ACTIVE_FILES_V106.get(h_low, set())
+    is_first_open = (f_idx not in cur_set)
+
+    _boost_torrent_file_and_pieces_v214(
+        h_low,
+        f_idx,
+        ratio=-1.0,
+        byte_offset=rng_start,
+        sync_start=is_first_open
+    )
+
+    u = f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}"
+    hdrs = {"Range": rng_hdr} if rng_hdr else {}
+
+    r = None
+    last_err = None
+    for attempt in range(4):
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(u, headers=hdrs), timeout=30)
+            break
+        except Exception as e:
+            last_err = e
+            time.sleep(0.25)
+            _boost_torrent_file_and_pieces_v214(h_low, f_idx, byte_offset=rng_start, sync_start=True)
+
+    if r is None:
+        response.status = 503
+        return f"Stream busy: {last_err}"
+
+    resp_hdrs = {
+        "Cache-Control": "no-store",
+        "Accept-Ranges": "bytes"
+    }
+    ctype = r.headers.get("Content-Type") or "video/mp4"
+    resp_hdrs["Content-Type"] = ctype
+
+    for k in ("Content-Length", "Accept-Ranges", "Content-Range"):
+        if r.headers.get(k):
+            resp_hdrs[k] = r.headers.get(k)
+
+    status_code = r.status
+
+    def _chunk_gen():
+        try:
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                r.close()
+            except Exception:
+                pass
+
+    return bottle.HTTPResponse(body=_chunk_gen(), status=status_code, headers=resp_hdrs)
+_override_bottle_route_v212('/api/torrent/stream/<hash_str>/<file_idx:int>', 'GET', api_torrent_stream_proxy_v214)
+
+
+@route('/api/video/live_remux', method='GET')
+def api_video_live_remux_v214():
+    raw_src = (request.query.get('src') or '').strip()
+    start_sec = float(request.query.get('start') or 0.0)
+    dur_sec = float(request.query.get('dur') or 0.0)
+    if not raw_src:
+        response.status = 400
+        return "Missing src"
+
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+
+    # Убиваем только старые FFmpeg-процессы от ДРУГИХ файлов или ДРУГИХ точек перемотки,
+    # НЕ убивая параллельный пробный запрос Android WebView к тому же самому (src, start_sec)!
+    req_key = f"{src}::{round(start_sec, 1)}"
+    now_ts = time.time()
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            if k_existing != req_key:
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+            else:
+                kept = []
+                for ts_started, p_same in plist:
+                    if now_ts - ts_started > 8.0 and p_same.poll() is not None:
+                        continue
+                    kept.append((ts_started, p_same))
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    if src.startswith('/api/torrent/stream/'):
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
+            _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=True)
+
+    src_input = _resolve_video_src_input_v131(src)
+    is_http = str(src_input).startswith(('http://', 'https://'))
+
+    if not is_http and src_input and os.path.isfile(src_input):
+        ext_l = os.path.splitext(src_input)[1].lower()
+        if ext_l in ('.mp4', '.webm', '.m4v', '.mov') and start_sec <= 0.5 and request.query.get('transcode') != '1':
+            return static_file(os.path.basename(src_input), root=os.path.dirname(src_input))
+
+    ff_bin = find_ffmpeg_binary()
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        if start_sec > 0.5:
+            # При перемотке используем HTTP Range (seekable 1), чтобы FFmpeg прыгнул в нужный кусок
+            cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '1048576', '-analyzeduration', '1000000'])
+        else:
+            # При старте с 0:00 используем seekable 0, чтобы FFmpeg НЕ прыгал в конец 800 МБ .mkv файла за Cues,
+            # а мгновенно отдавал первые кадры из 0-го куска!
+            cmd.extend(['-seekable', '0', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '1048576', '-analyzeduration', '1000000'])
+
+    if start_sec > 0.5:
+        cmd.extend(['-ss', f"{start_sec:.2f}"])
+
+    is_legacy_avi = str(src_input).lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob')) or (request.query.get('transcode') == '1' and '.avi' in src.lower())
+    v_codec_args = [
+        '-threads', '0', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'
+    ] if is_legacy_avi else ['-c:v', 'copy']
+
+    cmd.extend([
+        '-fflags', '+genpts+igndts+nobuffer',
+        '-i', src_input,
+        '-map', '0:v:0', '-map', '0:a:0?', '-sn', '-dn',
+        *v_codec_args,
+        '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-frag_duration', '200000',
+        '-f', 'mp4', '-'
+    ])
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none"
+    }
+    def _remux_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_remux_gen(), status=200, headers=resp_hdrs)
+_override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v214)
+
+
+# Быстрое чтение длительности (23:15) из первого скачанного куска файла в torrents_tmp без блокировки HTTP-потока!
+def _probe_torrent_partial_file_duration_v214(raw_src: str) -> float:
+    src = (raw_src or "").strip()
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+    if not src.startswith('/api/torrent/stream/'):
+        return 0.0
+    parts = src.strip('/').split('/')
+    if len(parts) < 5:
+        return 0.0
+    h_low = parts[3].lower()
+    try:
+        f_idx = int(parts[4].split('?')[0])
+    except Exception:
+        f_idx = 0
+    try:
+        local_p, _, _, _ = _locate_downloaded_p2p_file_v163("", h_low, f_idx)
+        if local_p and os.path.isfile(local_p) and os.path.getsize(local_p) >= 65536:
+            ff_bin = find_ffmpeg_binary()
+            pr = subprocess.run([ff_bin, '-hide_banner', '-i', local_p], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2.0)
+            raw = (pr.stderr or "") + (pr.stdout or "")
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+            if m:
+                return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+    return 0.0
+
+
+@post('/api/video/vcore_probe')
+def api_vcore_probe_v214():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        data = json.loads(request.body.read().decode('utf-8') or "{}")
+    except Exception:
+        data = {}
+    raw_src = str(data.get("src") or data.get("path") or "").strip()
+    real_path = _resolve_video_src_input_v131(raw_src) if raw_src else ""
+    is_http_stream = str(real_path).startswith(('http://', 'https://'))
+
+    if is_http_stream or not real_path or not os.path.isfile(real_path):
+        dur_partial = _probe_torrent_partial_file_duration_v214(raw_src)
+        bound_so = _VCORE_CONFIG_V166["bindings"].get("H264", "libjenny_vcore.so")
+        return json.dumps({
+            "ok": True,
+            "cipher": "H264",
+            "native_fps": 24.0,
+            "duration_sec": dur_partial,
+            "is_complete_local": False,
+            "bound_so": bound_so,
+            "mv_vectors": 32400,
+            "synth_4frames_ms": 0.24,
+            "interp_frames": _VCORE_CONFIG_V166.get("interp_frames", 3),
+            "fps_target": 120 if _VCORE_CONFIG_V166.get("fps_mode") != "OFF" else 60
+        }, ensure_ascii=False)
+
+    return api_vcore_probe_v166()
+_override_bottle_route_v212('/api/video/vcore_probe', 'POST', api_vcore_probe_v214)
+
+
+@route('/api/video/pcm_meta', method='GET')
+def api_video_pcm_meta_v214():
+    response.content_type = 'application/json'
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        return json.dumps({"duration": 0, "size": 0})
+    src_input = _resolve_video_src_input_v131(src)
+    if not src_input or str(src_input).startswith(('http://', 'https://')) or not os.path.isfile(src_input):
+        dur_partial = _probe_torrent_partial_file_duration_v214(src)
+        return json.dumps({"duration": dur_partial, "size": 0})
+
+    dur_sec, sz_bytes = 0.0, 0
+    try:
+        sz_bytes = os.path.getsize(src_input)
+        ff_bin = find_ffmpeg_binary()
+        pr = subprocess.run([ff_bin, '-hide_banner', '-i', src_input], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6)
+        raw = (pr.stderr or "") + (pr.stdout or "")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+        if m:
+            dur_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:
+        pass
+    return json.dumps({"duration": dur_sec, "size": sz_bytes})
+_override_bottle_route_v212('/api/video/pcm_meta', 'GET', api_video_pcm_meta_v214)
 
 
 def start_server():
