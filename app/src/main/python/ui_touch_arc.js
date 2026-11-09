@@ -144,12 +144,11 @@ window.setupSeekZone = function() {
 
         // Строим плавную дугу вокруг опорной точки (от середины экрана через край вниз к доку)
         // и параметризуем её по длине дуги, чтобы расстояние между кружками было идеально равным!
-        const startDeg = -104;
-        const endDeg   = -168;
-        const R        = Math.min(W * 0.74, H * 0.34);
-        const rTop     = R;
-        const rMid     = R;
-        const rBot     = R;
+        const startDeg = -108; // Верхний кружок (ниже поиска, правее центра)
+        const endDeg   = -204; // Нижний кружок (внизу у панели навигации)
+        const rTop     = Math.min(W * 0.76, H * 0.35);
+        const rMid     = Math.min(W * 0.78, H * 0.36);
+        const rBot     = Math.min(W * 0.58, H * 0.26);
 
         function sampleCurvePoint(u) {
             const deg = startDeg + u * (endDeg - startDeg);

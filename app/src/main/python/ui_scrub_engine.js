@@ -41,7 +41,7 @@ window.startScrub = function(side, speed) {
         window.syncMasterPlaybackEngineV59(true);
     }
 
-    if (player.paused && !window._userPausedV75_2 && window.isStudioPlaying) player.play().catch(e => {});
+    if (player.paused) player.play().catch(e => {});
 };
 
 window.stopScrub = function(keepLockedSpeed = false) {
@@ -85,6 +85,6 @@ window.stopScrub = function(keepLockedSpeed = false) {
         if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
             window.syncMasterPlaybackEngineV59(false);
         }
-        if (player.paused && !window._userPausedV75_2 && window.isStudioPlaying) player.play().catch(e => {});
+        if (player.paused) player.play().catch(e => {});
     }
 };
