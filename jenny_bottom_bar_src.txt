@@ -1,0 +1,1833 @@
+=== FILE: app/src/main/python/index.html (472 lines) ===
+1: <!DOCTYPE html>
+2: <html lang="ru">
+3: <head>
+4:     <meta charset="UTF-8">
+5:     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+6:     <title>🎧🅹🅴🅽🅽🆈́🆂 🅿🅻🅰🆈🅴🆁🎧</title>
+7:     <link rel="stylesheet" href="/style.css?v=165">
+8: </head>
+9: <body>
+10: 
+11:     <input type="file" id="systemFolderPicker" webkitdirectory directory multiple style="display: none;">
+12: 
+13:     <div id="scrubOverlay"></div>
+14:     <div id="speedArcContainer"></div>
+15: 
+16:     <div class="sticky-top">
+17:         <div class="container">
+18:             <div class="capsule" id="topHeaderCapsule" style="justify-content:space-between;padding:0 8px;margin-bottom:6px;height:46px;">
+19:                 <div id="jennyLogoWrap" style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+20:                     <svg viewBox="0 0 118 34" width="114" height="32" style="overflow:visible;filter:drop-shadow(0 0 6px rgba(88,166,255,0.35));">
+21:                         <defs>
+22:                             <linearGradient id="jpGradTop" x1="0%" y1="0%" x2="100%" y2="0%">
+23:                                 <stop offset="0%" stop-color="#3fb950"/>
+24:                                 <stop offset="100%" stop-color="#58a6ff"/>
+25:                             </linearGradient>
+26:                             <linearGradient id="jpGradBox" x1="0%" y1="0%" x2="100%" y2="100%">
+27:                                 <stop offset="0%" stop-color="#7341be"/>
+28:                                 <stop offset="100%" stop-color="#1f6feb"/>
+29:                             </linearGradient>
+30:                         </defs>
+31:                         <rect x="1" y="3" width="28" height="28" rx="7" fill="url(#jpGradBox)" stroke="#58a6ff" stroke-width="1"/>
+32:                         <path d="M6 17h3l2.5-7 4 14 3.5-10 2 3h3" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+33:                         <text x="35" y="15" fill="url(#jpGradTop)" font-family="monospace" font-weight="900" font-size="13.5" letter-spacing="2">JENNY</text>
+34:                         <rect x="90" y="5" width="25" height="11" rx="3" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+35:                         <text x="102.5" y="13" fill="#8b949e" font-family="monospace" font-weight="bold" font-size="7.5" text-anchor="middle">v1.1</text>
+36:                         <line x1="35" y1="19" x2="115" y2="19" stroke="rgba(163,113,247,0.45)" stroke-width="1"/>
+37:                         <text x="35" y="29" fill="#d2a8ff" font-family="monospace" font-weight="900" font-size="10.5" letter-spacing="3.2">PLAYER</text>
+38:                     </svg>
+39:                 </div>
+40:                 <div style="display:flex;align-items:center;gap:8px;">
+41:                     <button type="button" id="btnKhinsiderOstV88" class="jenny-icon-pill" onclick="if(window.openKhinsiderModalV88) window.openKhinsiderModalV88(event)" title="Скачать саундтреки игр (KHInsider -> xFLAC)" style="width:auto;padding:0 10px;border-radius:18px;font-size:11.5px;font-weight:900;gap:5px;color:#3fb950 !important;border-color:rgba(63,185,80,0.55) !important;">
+42:                         <span>🎮</span><span>OST</span>
+43:                     </button>
+44:                 <button id="btn-settingsModal" class="jenny-icon-pill" onclick="window.toggleModal('settingsModal')" title="Настройки">
+45:                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+46:                 </button>
+47:                 </div>
+48:             </div>
+49:             <div style="padding-top:2px;">
+50:                 <input type="text" id="trackSearchInput" onkeyup="if(window.filterTracks) window.filterTracks(this.value)"
+51:                        placeholder="🔍 Поиск по названию..."
+52:                        style="width:100%;background:var(--bg-setting-box);color:#c9d1d9;border:1px solid #30363d;padding:8px 12px;border-radius:8px;font-size:13px;outline:none;box-sizing:border-box;">
+53:             </div>
+54:             <audio id="audioPlayer" crossorigin="anonymous"></audio>
+55:         </div>
+56:     </div>
+57: 
+58:     <div class="sticky-bottom" id="bottomPlayerDock">
+59:         <div class="container">
+60:             <!-- Ряд над плеером: RU/EN на дальнем краю, а Счётчик, Спектр, Избранное и Эквалайзер под ближайшим пальцем -->
+61:             <div id="subDockBar" class="ergo-row" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">
+62:                 <div id="langSlotWrap" style="display:flex;align-items:center;min-width:68px;"></div>
+63:                 <div id="quickModalsGroup" style="display:flex;align-items:center;gap:8px;">
+64:                     <button type="button" class="jenny-icon-pill" onclick="window.fetchData()" title="Обновить список треков" style="width:auto;padding:0 10px;gap:6px;">
+65:                         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+66:                         <span id="tracksCount" style="color:#58a6ff;font-weight:bold;font-size:12px;">0</span>
+67:                     </button>
+68:                     <button type="button" id="btn-specModal" class="jenny-icon-pill" onclick="if(window.openSpectrumModalV62) window.openSpectrumModalV62()" title="Анализатор спектра">
+69:                         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="20" x2="4" y2="14"/><line x1="9" y1="20" x2="9" y2="8"/><line x1="14" y1="20" x2="14" y2="4"/><line x1="19" y1="20" x2="19" y2="11"/></svg>
+70:                     </button>
+71:                     <button type="button" id="btn-favModal" class="jenny-icon-pill" onclick="window.toggleModal('favModal')" title="Избранное">
+72:                         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+73:                     </button>
+74:                     <button type="button" id="btn-eqModal" class="jenny-icon-pill" onclick="window.toggleModal('eqModal')" title="Эквалайзер">
+75:                         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+76:                     </button>
+77:                 </div>
+78:             </div>
+79: 
+80:             <!-- Полоса перемотки и боковые таймеры -->
+81:             <div style="display:flex;gap:4px;height:48px;margin-bottom:8px;width:100%;">
+82:                 <div id="leftTimeBlock" style="width:15%;min-width:54px;background:#000;border:1px solid var(--border-uniform);border-radius:50px 6px 6px 50px;display:flex;justify-content:center;align-items:center;cursor:pointer;touch-action:none;">
+83:                     <span id="currentTime" class="time-display" style="color:#58a6ff;font-size:12.5px;">0:00</span>
+84:                 </div>
+85:                 <div id="seekZone" style="flex-grow:1;background:#000;border:1px solid var(--border-uniform);border-radius:6px;display:flex;flex-direction:column;justify-content:center;position:relative;overflow:hidden;cursor:pointer;">
+86:                     <div id="progressFill" style="position:absolute;left:0;top:0;height:100%;width:0%;background:rgba(115,65,190,0.4);pointer-events:none;transition:width 0.1s linear;"></div>
+87:                     <div style="position:relative;z-index:2;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 12px;">
+88:                         <span id="durationTime" class="time-display" style="color:#8b949e;margin-bottom:1px;">0:00</span>
+89:                         <div class="track-title" id="nowPlaying" style="font-weight:normal;color:#e6edf3;width:100%;font-size:12.5px;">Выбери трек</div>
+90:                         <div id="speedLockIndicator" style="display:none;color:#e3b341;font-size:10.5px;font-weight:bold;margin-top:1px;">🔒 ⏩ x2.0</div>
+91:                     </div>
+92:                 </div>
+93:                 <div id="rightTimeBlock" style="width:15%;min-width:54px;background:#000;border:1px solid var(--border-uniform);border-radius:6px 50px 50px 6px;display:flex;justify-content:center;align-items:center;cursor:pointer;touch-action:none;">
+94:                     <span id="remainingTime" class="time-display" style="color:#e3b341;font-size:12.5px;">-0:00</span>
+95:                 </div>
+96:             </div>
+97: 
+98:             <!-- Нижний транспортный ряд: для правшей справа [Prev Play Next], левее [Export], левее [Volume], левее [Folder] -->
+99:             <div id="mainTransportBar" class="ergo-row" style="display:flex;justify-content:space-between;align-items:center;padding:0 4px;">
+100:                 <div id="auxControlsGroup" class="ergo-aux-row" style="display:flex;align-items:center;gap:10px;">
+101:                     <button type="button" id="folderIconTrigger" class="jenny-icon-pill" onclick="window.openFolderManagerModalV62(event)" title="Менеджер папок">
+102:                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+103:                     </button>
+104:                     <div id="volUIWrapper" style="position:relative;display:flex;align-items:center;">
+105:                         <button type="button" id="volIconTrigger" class="jenny-icon-pill" onclick="if(window.toggleVolumePopup) window.toggleVolumePopup(event)" title="Громкость">
+106:                             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+107:                         </button>
+108:                         <div id="volumePopup" class="vol-popup">
+109:                             <span id="volIconText" style="color:#8b949e;font-size:10px;font-weight:bold;">100%</span>
+110:                             <input type="range" id="volumeBar" class="vt-slider" min="0" max="10" step="1" value="10" oninput="if(window.changeVolume) window.changeVolume()">
+111:                         </div>
+112:                     </div>
+113:                     <button type="button" id="btnExport" class="jenny-icon-pill" onclick="if(window.exportCurrentTrack) window.exportCurrentTrack()" title="Экспорт трека">
+114:                         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+115:                     </button>
+116:                 </div>
+117: 
+118:                 <div id="transportCluster" style="display:flex;align-items:center;gap:14px;">
+119:                     <button type="button" id="btnPrev" class="play-pause-btn round-skip-btn" onclick="if(window.playPreviousTrack) window.playPreviousTrack()">
+120:                         <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+121:                     </button>
+122:                     <button type="button" id="playPauseBtn" class="play-pause-btn" onclick="if(window.togglePlay) window.togglePlay()" style="width:46px;height:46px;">
+123:                         <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+124:                     </button>
+125:                     <button type="button" id="btnNext" class="play-pause-btn round-skip-btn" onclick="if(window.playNextTrack) window.playNextTrack()">
+126:                         <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+127:                     </button>
+128:                 </div>
+129:             </div>
+130:         </div>
+131:     </div>
+132: 
+133:     <div class="middle-list-container">
+134:         <div class="container">
+135:             <div id="unifiedList" style="margin-bottom: 30px;">
+136:                 <div style="padding:10px; color:#8b949e; text-align: center;">Загрузка...</div>
+137:             </div>
+138:         </div>
+139:     </div>
+140: 
+141:     <div id="favModal" class="modal-overlay">
+142:         <div class="container">
+143:             <div id="favList"></div>
+144:         </div>
+145:     </div>
+146:     
+147:     <div id="settingsModal" class="modal-overlay">
+148:         <div class="container">
+149:             <div style="display:flex; gap:10px; margin-bottom: 15px;">
+150:                 <button onclick="if(window.loadConfigFromDisk) window.loadConfigFromDisk()" style="flex:1; background:#1f6feb; color:#fff; font-weight:bold; border:none; padding:12px; border-radius: 8px;">📥 ЗАГРУЗИТЬ ВСЁ</button>
+151:                 <button onclick="if(window.saveConfigToDisk) window.saveConfigToDisk()" style="flex:1; background:#3fb950; color:#000; font-weight:bold; border:none; padding:12px; border-radius: 8px;">💾 СОХРАНИТЬ ВСЁ</button>
+152:             </div>
+153:             
+154:             <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #3fb950;">
+155:                 <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
+156:                     <input type="checkbox" id="cfg_studioMode" onchange="if(window.updateSettings) window.updateSettings()"> Студийный движок (RAM)
+157:                 </label>
+158:             </div>
+159: 
+160:             <details class="setting-group" open style="border-left: 3px solid #e3b341;">
+161:                 <summary>⚡ Интеллектуальный Скраббинг</summary>
+162:                 <div class="group-content">
+163:                     <div class="setting-row" style="border:none; padding: 5px 0;">
+164:                         <label class="toggle-label" style="color:#e6edf3;">
+165:                             <input type="checkbox" id="cfg_leftHandedMode" onchange="if(window.updateSettings) window.updateSettings()"> 
+166:                             🖐️ Режим "Левша" (Зеркальная дуга)
+167:                         </label>
+168:                     </div>
+169:                     <div class="setting-row" style="border:none; padding: 5px 0;">
+170:                         <label class="toggle-label" style="color:#e3b341;">
+171:                             <input type="checkbox" id="cfg_pitchLock" onchange="if(window.updateSettings) window.updateSettings()"> 
+172:                             🎵 Сохранять темп (Pitch Lock)
+173:                         </label>
+174:                     </div>
+175: 
+176:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+177:                         <label class="toggle-label" style="color:#e3b341;">
+178:                             <input type="checkbox" id="cfg_xNormalSpeed" onchange="if(window.updateSettings) window.updateSettings()"> 
+179:                             🚀 Кастомная скорость (Base)
+180:                         </label>
+181:                         <div style="display:flex; gap:4px; align-items: center;">
+182:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('main', 'normalPlaybackSpeed', 'cfg_normalPlaybackSpeed')">📥</button>
+183:                             <input type="number" id="cfg_normalPlaybackSpeed" oninput="if(window.updateSettings) window.updateSettings()" step="0.01" style="width: 50px;" placeholder="0.97">
+184:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('main', 'normalPlaybackSpeed', 'cfg_normalPlaybackSpeed')">💾</button>
+185:                         </div>
+186:                     </div>
+187:                     
+188:                     <div class="setting-row" style="border:none; padding: 0 0 10px 20px;">
+189:                         <label class="toggle-label" style="color:#8b949e; font-size:12px;">
+190:                             <input type="checkbox" id="cfg_autoSaveBase" onchange="if(window.toggleAutoSave) window.toggleAutoSave('base', event)"> 
+191:                             ↳ Писать выбор дуги сюда
+192:                         </label>
+193:                     </div>
+194: 
+195:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+196:                         <span style="color:#8b949e; font-size:13px;">Дефолтная скорость дуги:</span>
+197:                         <div style="display:flex; gap:4px; align-items: center;">
+198:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('main', 'defaultScrubSpeed', 'cfg_defaultScrubSpeed')">📥</button>
+199:                             <input type="number" id="cfg_defaultScrubSpeed" oninput="if(window.updateSettings) window.updateSettings()" step="0.1" style="width: 50px;">
+200:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('main', 'defaultScrubSpeed', 'cfg_defaultScrubSpeed')">💾</button>
+201:                         </div>
+202:                     </div>
+203: 
+204:                     <div class="setting-row" style="border:none; padding: 0 0 10px 20px;">
+205:                         <label class="toggle-label" style="color:#8b949e; font-size:12px;">
+206:                             <input type="checkbox" id="cfg_autoSaveScrub" onchange="if(window.toggleAutoSave) window.toggleAutoSave('scrub', event)"> 
+207:                             ↳ Писать выбор дуги сюда
+208:                         </label>
+209:                     </div>
+210: 
+211:                     <div style="border-top: 1px solid #30363d; margin-top: 10px; padding-top: 10px;">
+212:                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+213:                             <span style="color:#8b949e; font-size:12px; font-weight:bold;">Кастомные радиальные зоны:</span>
+214:                             <button onclick="if(window.resetScrubZones) window.resetScrubZones()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+215:                         </div>
+216:                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+217:                             <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+218:                                 <input type="checkbox" id="cfg_z1_en" onchange="if(window.checkZones) window.checkZones(1)">
+219:                                 <input type="number" id="cfg_z1_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+220:                             </div>
+221:                             <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+222:                                 <input type="checkbox" id="cfg_z2_en" onchange="if(window.checkZones) window.checkZones(2)">
+223:                                 <input type="number" id="cfg_z2_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+224:                             </div>
+225:                             <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+226:                                 <input type="checkbox" id="cfg_z3_en" onchange="if(window.checkZones) window.checkZones(3)">
+227:                                 <input type="number" id="cfg_z3_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+228:                             </div>
+229:                             <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+230:                                 <input type="checkbox" id="cfg_z4_en" onchange="if(window.checkZones) window.checkZones(4)">
+231:                                 <input type="number" id="cfg_z4_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+232:                             </div>
+233:                             <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+234:                                 <input type="checkbox" id="cfg_z5_en" onchange="if(window.checkZones) window.checkZones(5)">
+235:                                 <input type="number" id="cfg_z5_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+236:                             </div>
+237:                             <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+238:                                 <input type="checkbox" id="cfg_z6_en" onchange="if(window.checkZones) window.checkZones(6)">
+239:                                 <input type="number" id="cfg_z6_val" oninput="if(window.saveZonesToConfig) window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+240:                             </div>
+241:                         </div>
+242:                     </div>
+243:                 </div>
+244:             </details>
+245: 
+246:             <!-- FORMAT_SLOTS_START -->
+247:             <details id="customFormatsSection" class="setting-group" open style="border-left: 3px solid #58a6ff;">
+248:                 <summary style="display:flex;align-items:center;justify-content:space-between;">
+249:                     <span>🎵 Форматы файлов (Аудио + MP4)</span>
+250:                 </summary>
+251:                 <div class="group-content">
+252:                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom: 8px;gap:6px;">
+253:                         <span style="color:#8b949e; font-size:12px; font-weight:bold;">Активные расширения в папке:</span>
+254:                         <div style="display:flex;gap:6px;">
+255:                             <button type="button" onclick="if(window.addNewFormatSlotV85) window.addNewFormatSlotV85(event)" style="font-size:11px; padding:3px 8px; border:1px solid #3fb950; color:#3fb950; background:#0d1117; border-radius:6px; font-weight:bold;">➕ Формат</button>
+256:                             <button type="button" onclick="if(window.resetFormatSlots) window.resetFormatSlots(event)" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+257:                         </div>
+258:                     </div>
+259:                     <div id="formatSlotsGrid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+260:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+261:                             <input type="checkbox" id="cfg_fmt_1_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+262:                             <input type="text" id="cfg_fmt_1_val" value=".mp3" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+263:                         </div>
+264:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+265:                             <input type="checkbox" id="cfg_fmt_2_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+266:                             <input type="text" id="cfg_fmt_2_val" value=".opus" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+267:                         </div>
+268:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+269:                             <input type="checkbox" id="cfg_fmt_3_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+270:                             <input type="text" id="cfg_fmt_3_val" value=".m4a" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+271:                         </div>
+272:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+273:                             <input type="checkbox" id="cfg_fmt_4_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+274:                             <input type="text" id="cfg_fmt_4_val" value=".flac" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+275:                         </div>
+276:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+277:                             <input type="checkbox" id="cfg_fmt_5_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+278:                             <input type="text" id="cfg_fmt_5_val" value=".wav" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+279:                         </div>
+280:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+281:                             <input type="checkbox" id="cfg_fmt_6_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+282:                             <input type="text" id="cfg_fmt_6_val" value=".ogg" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+283:                         </div>
+284:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+285:                             <input type="checkbox" id="cfg_fmt_7_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+286:                             <input type="text" id="cfg_fmt_7_val" value=".mp4" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+287:                         </div>
+288:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+289:                             <input type="checkbox" id="cfg_fmt_8_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+290:                             <input type="text" id="cfg_fmt_8_val" value=".aac" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none; font-family:monospace;">
+291:                         </div>
+292:                         <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+293:                             <input type="checkbox" id="cfg_fmt_9_en" checked onchange="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)">
+294:                             <input type="text" id="cfg_fmt_9_val" value=".xflac" oninput="if(window.saveFormatSlotsToConfig) window.saveFormatSlotsToConfig(true)" style="width:60px; font-size:12px; font-weight:bold; padding:2px; text-align:center; background:transparent; color:#3fb950; border:none; outline:none; font-family:monospace;">
+295:                         </div>
+296:                     </div>
+297:                 </div>
+298:             </details>
+299:             <!-- FORMAT_SLOTS_END -->
+300: 
+301:             <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #e3b341;">
+302:                 <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
+303:                     <input type="checkbox" id="cfg_amoledMode" onchange="if(window.updateSettings) window.updateSettings()"> 🖤 Режим AMOLED
+304:                 </label>
+305:             </div>
+306: 
+307:             <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #7341be;">
+308:                 <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
+309:                     <input type="checkbox" id="cfg_volSlider" onchange="if(window.updateSettings) window.updateSettings(); if(window.toggleVolUI) window.toggleVolUI();"> 🔊 Показывать ползунок громкости
+310:                 </label>
+311:             </div>
+312: 
+313:             <details class="setting-group" open>
+314:                 <summary>✨ FIR-Сатуратор (Ламповый окрас)</summary>
+315:                 <div class="group-content">
+316:                     <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+317:                         <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_firEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Включить FIR</label>
+318:                         <button onclick="if(window.resetFIR) window.resetFIR()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+319:                     </div>
+320:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+321:                         <span style="color:#8b949e; font-size:13px;">Усиление (Gain):</span>
+322:                         <div style="display:flex; gap:4px; align-items: center;">
+323:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('firSettings', 'gain', 'cfg_fir_gain')">📥</button>
+324:                             <input type="number" id="cfg_fir_gain" oninput="if(window.updateSettings) window.updateSettings()" step="0.1" style="width: 50px;">
+325:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('firSettings', 'gain', 'cfg_fir_gain')">💾</button>
+326:                         </div>
+327:                     </div>
+328:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+329:                         <span style="color:#8b949e; font-size:13px;">Импульс (ms):</span>
+330:                         <div style="display:flex; gap:4px; align-items: center;">
+331:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('firSettings', 'decay', 'cfg_fir_decay')">📥</button>
+332:                             <input type="number" id="cfg_fir_decay" oninput="if(window.updateSettings) window.updateSettings()" step="0.01" style="width: 50px;">
+333:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('firSettings', 'decay', 'cfg_fir_decay')">💾</button>
+334:                         </div>
+335:                     </div>
+336:                 </div>
+337:             </details>
+338: 
+339:             <details class="setting-group" open>
+340:                 <summary>🎚️ Многополосный кроссовер (3-Band)</summary>
+341:                 <div class="group-content">
+342:                     <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+343:                         <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_multiBandEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Разделение частот</label>
+344:                         <button onclick="if(window.resetMultiBand) window.resetMultiBand()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+345:                     </div>
+346:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+347:                         <span style="color:#8b949e; font-size:13px;">Отсечка Баса (Hz):</span>
+348:                         <div style="display:flex; gap:4px; align-items: center;">
+349:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('multiBandSettings', 'low', 'cfg_mb_low')">📥</button>
+350:                             <input type="number" id="cfg_mb_low" oninput="if(window.updateSettings) window.updateSettings()" step="10" style="width: 50px;">
+351:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('multiBandSettings', 'low', 'cfg_mb_low')">💾</button>
+352:                         </div>
+353:                     </div>
+354:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+355:                         <span style="color:#8b949e; font-size:13px;">Отсечка Верх (Hz):</span>
+356:                         <div style="display:flex; gap:4px; align-items: center;">
+357:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('multiBandSettings', 'high', 'cfg_mb_high')">📥</button>
+358:                             <input type="number" id="cfg_mb_high" oninput="if(window.updateSettings) window.updateSettings()" step="100" style="width: 50px;">
+359:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('multiBandSettings', 'high', 'cfg_mb_high')">💾</button>
+360:                         </div>
+361:                     </div>
+362:                 </div>
+363:             </details>
+364: 
+365:             <details class="setting-group" open>
+366:                 <summary>🗜️ Лимитер (Soft Clipper)</summary>
+367:                 <div class="group-content">
+368:                     <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+369:                         <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_limiterEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Включить лимитер</label>
+370:                         <button onclick="if(window.resetLimiter) window.resetLimiter()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+371:                     </div>
+372:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+373:                         <span style="color:#8b949e; font-size:13px;">Порог (dB):</span>
+374:                         <div style="display:flex; gap:4px; align-items: center;">
+375:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'threshold', 'cfg_lim_threshold')">📥</button>
+376:                             <input type="number" id="cfg_lim_threshold" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+377:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'threshold', 'cfg_lim_threshold')">💾</button>
+378:                         </div>
+379:                     </div>
+380:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+381:                         <span style="color:#8b949e; font-size:13px;">Смягчение (Knee):</span>
+382:                         <div style="display:flex; gap:4px; align-items: center;">
+383:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'knee', 'cfg_lim_knee')">📥</button>
+384:                             <input type="number" id="cfg_lim_knee" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+385:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'knee', 'cfg_lim_knee')">💾</button>
+386:                         </div>
+387:                     </div>
+388:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+389:                         <span style="color:#8b949e; font-size:13px;">Сжатие (Ratio):</span>
+390:                         <div style="display:flex; gap:4px; align-items: center;">
+391:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'ratio', 'cfg_lim_ratio')">📥</button>
+392:                             <input type="number" id="cfg_lim_ratio" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+393:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'ratio', 'cfg_lim_ratio')">💾</button>
+394:                         </div>
+395:                     </div>
+396:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+397:                         <span style="color:#8b949e; font-size:13px;">Атака (ms):</span>
+398:                         <div style="display:flex; gap:4px; align-items: center;">
+399:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'attack', 'cfg_lim_attack')">📥</button>
+400:                             <input type="number" id="cfg_lim_attack" oninput="if(window.updateSettings) window.updateSettings()" step="1" style="width: 50px;">
+401:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'attack', 'cfg_lim_attack')">💾</button>
+402:                         </div>
+403:                     </div>
+404:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+405:                         <span style="color:#8b949e; font-size:13px;">Спад (ms):</span>
+406:                         <div style="display:flex; gap:4px; align-items: center;">
+407:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('limiterSettings', 'release', 'cfg_lim_release')">📥</button>
+408:                             <input type="number" id="cfg_lim_release" oninput="if(window.updateSettings) window.updateSettings()" step="10" style="width: 50px;">
+409:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('limiterSettings', 'release', 'cfg_lim_release')">💾</button>
+410:                         </div>
+411:                     </div>
+412:                 </div>
+413:             </details>
+414: 
+415:             <details class="setting-group" open>
+416:                 <summary>🎛️ Эквалайзер (EQ IIR)</summary>
+417:                 <div class="group-content">
+418:                     <div class="setting-row" style="border:none; padding: 5px 0;">
+419:                         <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_eqEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Активировать EQ</label>
+420:                     </div>
+421:                 </div>
+422:             </details>
+423: 
+424:             <details class="setting-group" open>
+425:                 <summary>🚀 Усилитель (Овердрайв)</summary>
+426:                 <div class="group-content">
+427:                     <div class="setting-row" style="border:none; padding: 5px 0;">
+428:                         <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_boosterEnabled" onchange="if(window.updateSettings) window.updateSettings()"> Активировать Овердрайв</label>
+429:                     </div>
+430:                     <div class="setting-row" style="border:none; padding: 4px 0;">
+431:                         <span style="color:#8b949e; font-size:13px;">Мощность (1-20):</span>
+432:                         <div style="display:flex; gap:4px; align-items: center;">
+433:                             <button class="io-btn" onclick="if(window.loadSingle) window.loadSingle('main', 'boosterPower', 'cfg_boosterPower')">📥</button>
+434:                             <input type="number" id="cfg_boosterPower" oninput="if(window.updateSettings) window.updateSettings()" min="1" max="20" style="width: 50px;">
+435:                             <button class="io-btn" onclick="if(window.saveSingle) window.saveSingle('main', 'boosterPower', 'cfg_boosterPower')">💾</button>
+436:                         </div>
+437:                     </div>
+438:                 </div>
+439:             </details>
+440:         </div>
+441:     </div>
+442:     
+443:     <div id="eqModal" class="modal-overlay">
+444:         <div class="container">
+445:             <div class="setting-row" style="flex-direction: column; align-items: stretch; gap: 20px; border: none; padding-top:20px;">
+446:                 <input type="range" class="hz-slider" id="eq_60" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+447:                 <input type="range" class="hz-slider" id="eq_230" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+448:                 <input type="range" class="hz-slider" id="eq_910" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+449:                 <input type="range" class="hz-slider" id="eq_3600" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+450:                 <input type="range" class="hz-slider" id="eq_14000" min="-12" max="12" step="1" value="0" oninput="if(window.changeEQ) window.changeEQ()">
+451:             </div>
+452:         </div>
+453:     </div>
+454: 
+455:     <!-- ПОДКЛЮЧЕНИЕ РОДНЫХ СКРИПТОВ -->
+456:     <script src="/engine_audio.js?v=165"></script>
+457:     <script src="/engine_heads.js?v=165"></script>
+458:     <script src="/engine_fav.js?v=165"></script>
+459:     <script src="/ui_init.js?v=165"></script>
+460:     <script src="/ui_config.js?v=165"></script>
+461:     <script src="/ui_render.js?v=165"></script>
+462:     <script src="/ui_playback.js?v=165"></script>
+463:     <script src="/ui_scrub_engine.js?v=165"></script>
+464:     <script src="/ui_touch_arc.js?v=165"></script>
+465:     <script src="/ui_controls.js?v=165"></script>
+466:     <script src="/ui_export.js?v=165"></script>
+467:     <script src="/ui_help.js?v=165"></script>
+468:     <script src="/ui_v71.js?v=165"></script>
+469:     <script src="/ui_playlists.js?v=165"></script>
+470: 
+471: </body>
+472: </html>
+=== FILE: app/src/main/python/ui_controls.js (248 lines) ===
+1: // =========================================================================
+2: // 🕹️ UI_CONTROLS.JS (БОКОВЫЕ ТАЙМЕРЫ, ПРОГРЕСС И ПАРАНОИДАЛЬНЫЕ КНОПКИ)
+3: // =========================================================================
+4: 
+5: window.toggleReverseMode = function(targetReversed) {
+6:     if (!window.appConfig.studioMode || !window.studioBuffer) return;
+7:     const player = document.getElementById('audioPlayer');
+8:     const wasReversedNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+9: 
+10:     if (!targetReversed) {
+11:         if (!wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
+12:         window.isReversed = false;
+13:         if (window.scrubState) {
+14:             window.scrubState.active = false;
+15:             window.scrubState.locked = false;
+16:             window.scrubState.side = null;
+17:             window.scrubState.isPhysicallyReversed = false;
+18:         }
+19:         window.persistedPlaybackSpeed = null;
+20:         window.persistedPlaybackSide = 'right';
+21:         const lockEl = document.getElementById('speedLockIndicator');
+22:         if (lockEl) lockEl.style.display = 'none';
+23: 
+24:         if (wasReversedNow && player && isFinite(player.duration)) {
+25:             const _d = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0); if (_d > 0) { const _flipped = Math.max(0, Math.min(_d - 0.02, _d - player.currentTime)); if (typeof window.setExactPlaybackPositionV75 === 'function') window.setExactPlaybackPositionV75(_flipped); else player.currentTime = _flipped; }
+26:         }
+27:         const baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+28:         if (player) player.playbackRate = baseSpd;
+29:         if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+30:             window.syncMasterPlaybackEngineV59(false);
+31:         }
+32:         if (player && isFinite(player.duration) && typeof window.updateProgressUI === 'function') {
+33:             window.updateProgressUI(player.currentTime, player.duration, false);
+34:         }
+35:         return;
+36:     }
+37: 
+38:     if (!window.reversedStudioBuffer && !window.studioBuffer) return;
+39:     if (wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
+40: 
+41:     if (window.scrubState && (window.scrubState.active || window.scrubState.locked)) {
+42:         window.scrubState.active = false;
+43:         window.scrubState.locked = false;
+44:         window.scrubState.side = null;
+45:         window.scrubState.isPhysicallyReversed = false;
+46:         window.persistedPlaybackSpeed = null;
+47:         window.persistedPlaybackSide = 'right';
+48:         const lockEl = document.getElementById('speedLockIndicator');
+49:         if (lockEl) lockEl.style.display = 'none';
+50:     }
+51: 
+52:     window.isReversed = true;
+53:     if (!wasReversedNow && player && isFinite(player.duration)) {
+54:         const _d = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0); if (_d > 0) { const _flipped = Math.max(0, Math.min(_d - 0.02, _d - player.currentTime)); if (typeof window.setExactPlaybackPositionV75 === 'function') window.setExactPlaybackPositionV75(_flipped); else player.currentTime = _flipped; }
+55:     }
+56:     const baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+57:     if (player) player.playbackRate = baseSpd;
+58: 
+59:     if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+60:         window.syncMasterPlaybackEngineV59(false);
+61:     }
+62:     if (player && isFinite(player.duration) && typeof window.updateProgressUI === 'function') {
+63:         window.updateProgressUI(player.currentTime, player.duration, true);
+64:     }
+65: };
+66: 
+67: window.setupTimeBlockControls = function() {
+68:     const leftBlock = document.getElementById('leftTimeBlock');
+69:     const rightBlock = document.getElementById('rightTimeBlock');
+70:     const player = document.getElementById('audioPlayer');
+71:     if (!leftBlock || !rightBlock) return;
+72: 
+73:     let pressTimer = null;
+74:     let isLongPress = false;
+75:     let jumpInterval = null;
+76:     let wasPlayingBeforeJump = false;
+77: 
+78:     const startSilent10xSeek = (dirSign) => {
+79:         if (!player) return;
+80:         wasPlayingBeforeJump = !player.paused;
+81:         player.pause();
+82:         if (jumpInterval) clearInterval(jumpInterval);
+83:         jumpInterval = setInterval(() => {
+84:             if (!isFinite(player.duration) || player.duration <= 0) return;
+85:             const isVisualReverse = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+86:             const bufferStep = isVisualReverse ? (-dirSign * 1.0) : (dirSign * 1.0);
+87:             player.currentTime = Math.max(0, Math.min(player.duration - 0.05, player.currentTime + bufferStep));
+88:             if (typeof window.updateProgressUI === 'function') {
+89:                 window.updateProgressUI(player.currentTime, player.duration, isVisualReverse);
+90:             }
+91:         }, 100);
+92:     };
+93: 
+94:     const stopSilent10xSeek = () => {
+95:         if (jumpInterval) {
+96:             clearInterval(jumpInterval);
+97:             jumpInterval = null;
+98:         }
+99:         if (player && wasPlayingBeforeJump) {
+100:             player.play().then(() => {
+101:                 if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+102:                     window.syncMasterPlaybackEngineV59(false);
+103:                 }
+104:             }).catch(() => {});
+105:         } else if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+106:             window.syncMasterPlaybackEngineV59(false);
+107:         }
+108:     };
+109: 
+110:     leftBlock.addEventListener('touchstart', (e) => {
+111:         isLongPress = false;
+112:         clearTimeout(pressTimer);
+113:         pressTimer = setTimeout(() => {
+114:             isLongPress = true;
+115:             try { navigator.vibrate(30); } catch(e){}
+116:             startSilent10xSeek(-1);
+117:         }, 420);
+118:     }, {passive: true});
+119: 
+120:     leftBlock.addEventListener('touchend', () => {
+121:         clearTimeout(pressTimer);
+122:         if (isLongPress) {
+123:             stopSilent10xSeek();
+124:         } else {
+125:             window.toggleReverseMode(true);
+126:         }
+127:     });
+128: 
+129:     leftBlock.addEventListener('touchcancel', () => {
+130:         clearTimeout(pressTimer);
+131:         if (isLongPress) stopSilent10xSeek();
+132:     });
+133: 
+134:     rightBlock.addEventListener('touchstart', (e) => {
+135:         isLongPress = false;
+136:         clearTimeout(pressTimer);
+137:         pressTimer = setTimeout(() => {
+138:             isLongPress = true;
+139:             try { navigator.vibrate(30); } catch(e){}
+140:             startSilent10xSeek(+1);
+141:         }, 420);
+142:     }, {passive: true});
+143: 
+144:     rightBlock.addEventListener('touchend', () => {
+145:         clearTimeout(pressTimer);
+146:         if (isLongPress) {
+147:             stopSilent10xSeek();
+148:         } else {
+149:             window.toggleReverseMode(false);
+150:         }
+151:     });
+152: 
+153:     rightBlock.addEventListener('touchcancel', () => {
+154:         clearTimeout(pressTimer);
+155:         if (isLongPress) stopSilent10xSeek();
+156:     });
+157: };
+158: 
+159: window.updateProgressUI = function(currentTime, duration, isReverseVisual) {
+160:     let pFill = document.getElementById('progressFill');
+161:     let cTime = document.getElementById('currentTime');
+162:     let rTime = document.getElementById('remainingTime');
+163:     
+164:     if (pFill && isFinite(duration) && duration > 0) {
+165:         let perc = (currentTime / duration) * 100;
+166:         if (isReverseVisual) {
+167:             pFill.style.left = 'auto';
+168:             pFill.style.right = '0';
+169:         } else {
+170:             pFill.style.right = 'auto';
+171:             pFill.style.left = '0';
+172:         }
+173:         pFill.style.width = perc + '%';
+174:     }
+175:     
+176:     if (isFinite(duration)) {
+177:         if (isReverseVisual) {
+178:             if (cTime) cTime.innerText = '-' + window.formatTime(duration - currentTime);
+179:             if (rTime) rTime.innerText = window.formatTime(currentTime);
+180:         } else {
+181:             if (cTime) cTime.innerText = window.formatTime(currentTime);
+182:             if (rTime) rTime.innerText = '-' + window.formatTime(duration - currentTime);
+183:         }
+184:     }
+185: };
+186: 
+187: window.formatTime = function(seconds) { 
+188:     let min = Math.floor(seconds / 60); 
+189:     let sec = Math.floor(seconds % 60); 
+190:     return min + ':' + (sec < 10 ? '0' + sec : sec); 
+191: };
+192: 
+193: document.addEventListener("DOMContentLoaded", () => {
+194:     const ppBtn = document.getElementById('playPauseBtn');
+195:     
+196:     if (ppBtn) {
+197:         ppBtn.removeAttribute('onclick'); 
+198:         let ppTimer = null;
+199:         let ppFired = false;
+200:         
+201:         ppBtn.addEventListener('touchstart', (e) => {
+202:             ppFired = false;
+203:             ppTimer = setTimeout(() => {
+204:                 ppFired = true;
+205:                 try { navigator.vibrate(50); } catch(err){}
+206:                 
+207:                 ['settingsModal', 'favModal', 'eqModal'].forEach(m => {
+208:                     let el = document.getElementById(m);
+209:                     if (el) el.classList.remove('open');
+210:                     let btn = document.getElementById('btn-' + m);
+211:                     if (btn) btn.style.color = '#58a6ff';
+212:                 });
+213:                 
+214:                 if (!window.currentPlayingTrack) return;
+215:                 
+216:                 let isFav = (window.currentListContext === 'fav');
+217:                 if (isFav) {
+218:                     document.getElementById('favModal').classList.add('open');
+219:                     let b = document.getElementById('btn-favModal');
+220:                     if (b) b.style.color = '#fff';
+221:                 }
+222:                 
+223:                 let safeId = encodeURIComponent(window.currentPlayingTrack).replace(/[^a-zA-Z0-9]/g, '');
+224:                 let targetId = isFav ? `track-fav-${safeId}` : `track-main-${safeId}`;
+225:                 
+226:                 setTimeout(() => {
+227:                     let el = document.getElementById(targetId);
+228:                     if (el) {
+229:                         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+230:                         el.style.transition = 'transform 0.3s';
+231:                         el.style.transform = 'scale(1.03)';
+232:                         setTimeout(() => el.style.transform = 'scale(1)', 300);
+233:                     }
+234:                 }, 100);
+235:             }, 500); 
+236:         }, {passive: true});
+237:         
+238:         ppBtn.addEventListener('touchmove', () => clearTimeout(ppTimer), {passive: true});
+239:         
+240:         ppBtn.addEventListener('touchend', (e) => {
+241:             clearTimeout(ppTimer);
+242:             if (!ppFired) {
+243:                 if (typeof window.togglePlay === 'function') window.togglePlay();
+244:             }
+245:             if (e.cancelable) e.preventDefault(); 
+246:         }, {passive: false});
+247:     }
+248: });
+=== FILE: app/src/main/python/ui_playback.js (608 lines) ===
+1: window._hugeRamCacheV71 = { name: null, buf: null, complete: false };
+2: window._pieceAbortCtrlV72 = null;
+3: 
+4: // Проверяет по торрент-карте, загружен ли в RAM интервал [startSec .. startSec + spanSec]
+5: window.isRamRangeReadyV72 = function(buf, startSec, spanSec, isRev, refDur) {
+6:     if (!buf) return false;
+7:     if (!buf._pieceMapV72) return true; // Обычный короткий трек целиком в RAM
+8:     const pSec = buf._pieceSecV72 || 30;
+9:     const map = buf._pieceMapV72;
+10:     const totalP = map.length;
+11:     const dur = buf.duration;
+12: 
+13:     if (!isRev) {
+14:         const p0 = Math.max(0, Math.min(totalP - 1, Math.floor(startSec / pSec)));
+15:         const p1 = Math.max(0, Math.min(totalP - 1, Math.floor(Math.min(dur - 0.1, startSec + spanSec) / pSec)));
+16:         for (let p = p0; p <= p1; p++) {
+17:             if (map[p] !== 2) return false;
+18:         }
+19:         return true;
+20:     } else {
+21:         const rDur = (refDur && isFinite(refDur) && refDur > 0) ? refDur : dur;
+22:         const fwdEnd = Math.max(0.2, Math.min(dur, rDur - startSec));
+23:         const fwdStart = Math.max(0, fwdEnd - spanSec);
+24:         const p0 = Math.max(0, Math.min(totalP - 1, Math.floor(fwdStart / pSec)));
+25:         const p1 = Math.max(0, Math.min(totalP - 1, Math.floor(Math.max(0, fwdEnd - 0.05) / pSec)));
+26:         for (let p = p0; p <= p1; p++) {
+27:             if (map[p] !== 2) return false;
+28:         }
+29:         return true;
+30:     }
+31: };
+32: 
+33: // Вызывается при любом клике по таймлайну или переключении Реверса: прерывает старый кусок и качает кусок под курсором!
+34: window.prioritizeRamPieceAtCursorV72 = function() {
+35:     const buf = window.studioBuffer;
+36:     if (!buf || !buf._pieceMapV72 || buf._allPiecesLoadedV72) return;
+37:     if (window._pieceAbortCtrlV72) {
+38:         try { window._pieceAbortCtrlV72.abort(); } catch (e) {}
+39:     }
+40: };
+41: 
+42: window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMeta) {
+43:     if (window._hugeRamCacheV71.name === filename && window._hugeRamCacheV71.buf && window._hugeRamCacheV71.complete) {
+44:         window.studioBuffer = window._hugeRamCacheV71.buf;
+45:         return window.studioBuffer;
+46:     }
+47: 
+48:     let dur = (preMeta && preMeta.duration) ? parseFloat(preMeta.duration) : 0;
+49:     if (!dur) {
+50:         try {
+51:             const mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
+52:             const md = await mr.json();
+53:             dur = parseFloat(md.duration) || 0;
+54:         } catch (e) {}
+55:     }
+56:     if (!dur && window.lastData && window.lastData.track_meta && window.lastData.track_meta[filename]) {
+57:         dur = parseFloat(window.lastData.track_meta[filename].dur) || 0;
+58:     }
+59:     if (!dur && player) {
+60:         for (let w = 0; w < 25; w++) {
+61:             if (isFinite(player.duration) && player.duration > 0) { dur = player.duration; break; }
+62:             await new Promise(r => setTimeout(r, 100));
+63:         }
+64:     }
+65:     if (dur <= 0) return null;
+66: 
+67:     // Подбираем частоту дискретизации так, чтобы 3-4 часовой буфер гарантированно поместился в память Android WebView
+68:     const srCandidates = (dur > 5400) ? [16000, 12000, 8000] : ((dur > 2400) ? [24000, 16000, 12000] : [44100, 32000, 24000]);
+69:     let sr = srCandidates[0];
+70:     let totalFrames = Math.floor(dur * sr);
+71:     let audioBuf = null;
+72:     for (const candSr of srCandidates) {
+73:         try {
+74:             sr = candSr;
+75:             totalFrames = Math.floor(dur * sr);
+76:             audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
+77:             if (audioBuf) break;
+78:         } catch (allocErr) {}
+79:     }
+80:     if (!audioBuf) return null;
+81:     const chL = audioBuf.getChannelData(0);
+82:     const chR = audioBuf.getChannelData(1);
+83: 
+84:     const PIECE_SEC = 30;
+85:     const numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
+86:     const pieceMap = new Uint8Array(numPieces); // 0 = пусто, 1 = качается, 2 = готов в RAM
+87: 
+88:     audioBuf._pieceSecV72 = PIECE_SEC;
+89:     audioBuf._pieceMapV72 = pieceMap;
+90:     audioBuf._loadedCountV72 = 0;
+91:     audioBuf._allPiecesLoadedV72 = false;
+92:     audioBuf._trueDurationV72 = dur;
+93: 
+94:     window._hugeRamCacheV71 = { name: filename, buf: audioBuf, complete: false };
+95:     let pieceFailCounts = new Uint8Array(numPieces);
+96: 
+97:     const fetchPiece = async (pIdx) => {
+98:         if (pIdx < 0 || pIdx >= numPieces || pieceMap[pIdx] === 2) return true;
+99:         pieceMap[pIdx] = 1;
+100:         const stSec = pIdx * PIECE_SEC;
+101:         const dSec = Math.min(PIECE_SEC, dur - stSec);
+102:         const ctrl = new AbortController();
+103:         window._pieceAbortCtrlV72 = ctrl;
+104:         try {
+105:             const url = `/api/pcm_chunk_v71/${encodeURIComponent(filename)}?start=${stSec}&dur=${dSec}&sr=${sr}`;
+106:             const res = await fetch(url, { signal: ctrl.signal });
+107:             if (!res.ok) { pieceMap[pIdx] = 0; return false; }
+108:             const ab = await res.arrayBuffer();
+109:             const totalFloats = Math.floor(ab.byteLength / 4);
+110:             const frames = Math.floor(totalFloats / 2);
+111:             if (frames > 0) {
+112:                 const startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
+113:                 const maxCopy = Math.min(frames, totalFrames - startFrame);
+114:                 if (maxCopy > 0) {
+115:                     const leftArr = new Float32Array(ab, 0, frames);
+116:                     const rightArr = new Float32Array(ab, frames * 4, frames);
+117:                     chL.set(leftArr.subarray(0, maxCopy), startFrame);
+118:                     chR.set(rightArr.subarray(0, maxCopy), startFrame);
+119:                 }
+120:             }
+121:             pieceMap[pIdx] = 2;
+122:             audioBuf._loadedCountV72++;
+123:             if (audioBuf._loadedCountV72 === 1 && window.appConfig && window.appConfig.opt_autoRms) {
+124:                 // Фиксируем эталонную громкость по первому же загруженному куску и обновляем граф!
+125:                 window.computeBufferAutoGain(audioBuf, window.appConfig.val_autoRms);
+126:                 if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph(true);
+127:             }
+128:             return true;
+129:         } catch (err) {
+130:             pieceMap[pIdx] = 0;
+131:             return false;
+132:         }
+133:     };
+134: 
+135:     // Торрент-планировщик: всегда в первую очередь проверяет, загружен ли кусок прямо под курсором плеера (и соседний по направлению игры)!
+136:     while (audioBuf._loadedCountV72 < numPieces) {
+137:         if (window.currentPlayingTrack !== filename) return null;
+138: 
+139:         const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+140:         const curTime = (player && isFinite(player.currentTime)) ? player.currentTime : 0;
+141:         const rDur = (player && isFinite(player.duration) && player.duration > 0) ? player.duration : dur;
+142:         const fwdPosSec = isRev ? Math.max(0, Math.min(dur - 0.1, rDur - curTime)) : Math.max(0, Math.min(dur - 0.1, curTime));
+143:         const curPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(fwdPosSec / PIECE_SEC)));
+144: 
+145:         let nextPiece = -1;
+146:         let urgentCursorFetch = false;
+147: 
+148:         // Приоритет №1: кусок прямо под курсором и следующий за ним (вперёд или назад при реверсе)
+149:         const stepDir = isRev ? -1 : 1;
+150:         for (let look = 0; look < 3; look++) {
+151:             const cand = curPiece + look * stepDir;
+152:             if (cand >= 0 && cand < numPieces && pieceMap[cand] !== 2) {
+153:                 nextPiece = cand;
+154:                 if (look <= 1) urgentCursorFetch = true;
+155:                 break;
+156:             }
+157:         }
+158: 
+159:         // Приоритет №2: идём от курсора в сторону воспроизведения до конца
+160:         if (nextPiece === -1) {
+161:             for (let offset = 1; offset < numPieces; offset++) {
+162:                 const cand = curPiece + offset * stepDir;
+163:                 if (cand >= 0 && cand < numPieces && pieceMap[cand] !== 2) {
+164:                     nextPiece = cand;
+165:                     break;
+166:                 }
+167:             }
+168:         }
+169: 
+170:         // Приоритет №3: добиваем оставшиеся незагруженные куски с начала файла
+171:         if (nextPiece === -1) {
+172:             for (let i = 0; i < numPieces; i++) {
+173:                 if (pieceMap[i] !== 2) { nextPiece = i; break; }
+174:             }
+175:         }
+176: 
+177:         if (nextPiece === -1) break;
+178: 
+179:         const pct = Math.min(99, Math.round((audioBuf._loadedCountV72 / numPieces) * 100));
+180:         if (titleEl) {
+181:             titleEl.innerText = `${urgentCursorFetch ? '⚡' : '🧩'} RAM [${pct}% | ${audioBuf._loadedCountV72}/${numPieces}]: ` + filename;
+182:         }
+183: 
+184:         const ok = await fetchPiece(nextPiece);
+185:         if (window.currentPlayingTrack !== filename) return null;
+186: 
+187:         if (ok) {
+188:             window.studioBuffer = audioBuf;
+189:             if (urgentCursorFetch && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+190:                 window.syncMasterPlaybackEngineV59(false);
+191:             }
+192:             await new Promise(r => setTimeout(r, 8));
+193:         } else {
+194:             pieceFailCounts[nextPiece] = (pieceFailCounts[nextPiece] || 0) + 1;
+195:             if (pieceFailCounts[nextPiece] >= 3) {
+196:                 if (titleEl) titleEl.innerText = "❌ Ошибка декодирования: " + filename;
+197:                 return null;
+198:             }
+199:             await new Promise(r => setTimeout(r, 250));
+200:         }
+201:     }
+202: 
+203:     audioBuf._allPiecesLoadedV72 = true;
+204:     window._hugeRamCacheV71.complete = true;
+205:     return audioBuf;
+206: };
+207: window.smoothStudioFadeIn = function() {
+208:     if (window.audioCtx && window.inputMixer) {
+209:         let now = window.audioCtx.currentTime;
+210:         window.inputMixer.gain.cancelScheduledValues(now);
+211:         window.inputMixer.gain.setValueAtTime(0.0001, now);
+212:         window.inputMixer.gain.linearRampToValueAtTime(1.0, now + 0.014);
+213:     }
+214: };
+215: 
+216: window.formatTimeMMSS = function(sec) {
+217:     if (!isFinite(sec) || sec < 0) sec = 0;
+218:     let totalSec = Math.floor(sec);
+219:     let m = Math.floor(totalSec / 60);
+220:     let s = totalSec % 60;
+221:     return m + ":" + (s < 10 ? "0" + s : s);
+222: };
+223: 
+224: window.updateCenterCurrentTime = function(curSec, durSec, isVisualReverse) {
+225:     const centerTimeEl = document.getElementById('durationTime');
+226:     if (!centerTimeEl) return;
+227:     if (!isFinite(durSec) || durSec <= 0) {
+228:         centerTimeEl.innerText = "0:00";
+229:         return;
+230:     }
+231:     let realElapsed = isVisualReverse ? Math.max(0, durSec - curSec) : Math.max(0, curSec);
+232:     centerTimeEl.innerText = window.formatTimeMMSS(realElapsed);
+233:     centerTimeEl.style.color = "#c9d1d9";
+234: };
+235: 
+236: window.getTargetPlaybackSpeed = function() {
+237:     const player = document.getElementById('audioPlayer');
+238:     if (window.scrubState && (window.scrubState.locked || window.scrubState.active) && window.scrubState.speed) {
+239:         return parseFloat(window.scrubState.speed) || 1.0;
+240:     }
+241:     if (window.persistedPlaybackSpeed && window.persistedPlaybackSpeed !== 10.0) {
+242:         return parseFloat(window.persistedPlaybackSpeed) || 1.0;
+243:     }
+244:     if (player && player.playbackRate && player.playbackRate !== 1.0 && player.playbackRate !== 10.0) {
+245:         return player.playbackRate;
+246:     }
+247:     return typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+248: };
+249: 
+250: window.playNextTrack = function() {
+251:     if (!window.currentTrackList || window.currentTrackList.length === 0) return;
+252:     if (!window.currentPlayingTrack) return;
+253: 
+254:     let currentIndex = window.currentTrackList.indexOf(window.currentPlayingTrack);
+255:     if (currentIndex !== -1 && currentIndex + 1 < window.currentTrackList.length) {
+256:         let nextTrack = window.currentTrackList[currentIndex + 1];
+257:         let ctx = (window.currentTrackList === window.favorites) ? 'fav' : 'main';
+258:         window.playTrack(nextTrack, ctx);
+259:     }
+260: };
+261: 
+262: window.playPreviousTrack = function() {
+263:     if (!window.currentTrackList || window.currentTrackList.length === 0) return;
+264:     if (!window.currentPlayingTrack) return;
+265: 
+266:     let currentIndex = window.currentTrackList.indexOf(window.currentPlayingTrack);
+267:     if (currentIndex > 0) {
+268:         let prevTrack = window.currentTrackList[currentIndex - 1];
+269:         let ctx = (window.currentTrackList === window.favorites) ? 'fav' : 'main';
+270:         window.playTrack(prevTrack, ctx);
+271:     }
+272: };
+273: 
+274: window.cloneAndReverseBuffer = async function(originalBuffer) {
+275:     if (!originalBuffer) return null;
+276:     let newBuffer = window.audioCtx.createBuffer(
+277:         originalBuffer.numberOfChannels,
+278:         originalBuffer.length,
+279:         originalBuffer.sampleRate
+280:     );
+281:     for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
+282:         let oldData = originalBuffer.getChannelData(channel);
+283:         let newData = newBuffer.getChannelData(channel);
+284:         for (let i = 0; i < originalBuffer.length; i++) {
+285:             newData[i] = oldData[originalBuffer.length - 1 - i];
+286:         }
+287:     }
+288:     return newBuffer;
+289: };
+290: 
+291: window.playTrack = async function(filename, listContext = 'main') {
+292:     if(typeof window.initAudioBoost === 'function') window.initAudioBoost();
+293:     if(typeof window.applyEQSettings === 'function') window.applyEQSettings();
+294:     if(typeof window.changeVolume === 'function') window.changeVolume();
+295: 
+296:     let targetSpeed = window.getTargetPlaybackSpeed();
+297:     let keepLocked = Boolean((window.scrubState && window.scrubState.locked) || (window.persistedPlaybackSpeed && window.persistedPlaybackSpeed !== 1.0));
+298:     let activeSide = (window.scrubState && window.scrubState.side) || window.persistedPlaybackSide || 'right';
+299: 
+300:     window.currentPlayingTrack = filename;
+301:     window.currentListContext = listContext;
+302:     if(typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+303: 
+304:     if (listContext === 'fav') {
+305:         window.currentTrackList = window.favorites;
+306:     } else if (listContext === 'main' && window.lastData) {
+307:         window.currentTrackList = window.isShowingAllTracks ? (window.lastData.all_tracks || []) : (window.lastData.session_tracks || []);
+308:     }
+309: 
+310:     const player = document.getElementById('audioPlayer');
+311:     const titleEl = document.getElementById('nowPlaying');
+312: 
+313:     if(player) { player.pause(); player.removeAttribute('src'); try { player.load(); } catch(e){} }
+314:     if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} }
+315:     window.isStudioPlaying = false;
+316:     window.studioBuffer = null;
+317:     window.reversedStudioBuffer = null;
+318:     window.reconstructedMasterBufferV67 = null;
+319:     window.reconstructedReversedBufferV67 = null;
+320:     window.currentTrackRevMapV67 = null;
+321: 
+322:     if (keepLocked) {
+323:         window.scrubState.locked = true;
+324:         window.scrubState.active = false;
+325:         window.scrubState.speed = targetSpeed;
+326:         window.scrubState.side = activeSide;
+327:         window.scrubState.isPhysicallyReversed = (activeSide === 'left');
+328:         let lockEl = document.getElementById('speedLockIndicator');
+329:         if (lockEl) {
+330:             lockEl.style.display = 'block';
+331:             lockEl.innerText = `🔒 ${activeSide === 'left' ? '⏪' : '⏩'} x${targetSpeed}`;
+332:         }
+333:     } else if (window.scrubState && window.scrubState.active) {
+334:         if(typeof window.stopScrub === 'function') window.stopScrub(false);
+335:     }
+336: 
+337:     let isRevMode = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+338:     if(typeof window.updateProgressUI === 'function') window.updateProgressUI(0, 0, isRevMode);
+339:     window.updateCenterCurrentTime(0, 0, isRevMode);
+340: 
+341:     if ('mediaSession' in navigator) {
+342:         let cleanFileName = filename.replace(/\.(opus|m4a|mp3)$/i, '');
+343:         navigator.mediaSession.metadata = new MediaMetadata({ title: cleanFileName, artist: "🔥 HACKED BY JENNY 🔥" });
+344: 
+345:         navigator.mediaSession.setActionHandler('play', () => window.togglePlay());
+346:         navigator.mediaSession.setActionHandler('pause', () => window.togglePlay());
+347:         navigator.mediaSession.setActionHandler('previoustrack', () => window.playPreviousTrack());
+348:         navigator.mediaSession.setActionHandler('nexttrack', () => window.playNextTrack());
+349:     }
+350: 
+351:     try {
+352:         if (titleEl) titleEl.innerText = "⏳ Загрузка: " + filename;
+353: 
+354:         let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
+355:         let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig.pitchLock === true);
+356:         let decodedBuffer = null;
+357: 
+358:         window._ramTrackHistoryV71 = window._ramTrackHistoryV71 || [];
+359:         let cachedEntry = window._ramTrackHistoryV71.find(x => x.name === filename && x.buf);
+360: 
+361:         if (cachedEntry) {
+362:             decodedBuffer = cachedEntry.buf;
+363:             if (player) {
+364:                 player.src = cachedEntry.blobUrl || ('/api/media/' + encodeURIComponent(filename));
+365:                 player.currentTime = 0;
+366:                 try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch(e) {}
+367:                 player.preservesPitch = true;
+368:                 player.play().catch(e => {});
+369:             }
+370:         } else {
+371:             let metaCheck = { duration: 0, size: 0 };
+372:             try {
+373:                 const mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
+374:                 if (mr.ok) metaCheck = await mr.json();
+375:             } catch (e) {}
+376: 
+377:             if (!metaCheck.size || metaCheck.size <= 115 * 1024 * 1024) {
+378:                 const response = await fetch('/api/media/' + encodeURIComponent(filename));
+379:                 if (!response.ok) {
+380:                     const errTxt = await response.text().catch(() => "HTTP " + response.status);
+381:                     if (typeof window.showToast === 'function') window.showToast("❌ " + errTxt);
+382:                     throw new Error(errTxt);
+383:                 }
+384:                 const blob = await response.blob();
+385:                 if (window.currentPlayingTrack !== filename) return;
+386:                 const blobUrl = URL.createObjectURL(blob);
+387:                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
+388:                 if (player) {
+389:                     player.src = blobUrl;
+390:                     player.currentTime = 0;
+391:                     try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch(e) {}
+392:                     player.preservesPitch = true;
+393:                     player.play().catch(e => {});
+394:                 }
+395:                 if (window.appConfig.studioMode && titleEl) {
+396:                     titleEl.innerText = "⏳ RAM (пока играет сжатый): " + filename;
+397:                 }
+398:                 try {
+399:                     let arrayBuffer = await blob.arrayBuffer();
+400:                     decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
+401:                     if (decodedBuffer) {
+402:                         window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(x => x.name !== filename).slice(0, 1);
+403:                         window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: blobUrl });
+404:                     }
+405:                 } catch (decErr) {
+406:                     decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+407:                 }
+408:             } else {
+409:                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
+410:                 if (player) {
+411:                     player.src = '/api/media/' + encodeURIComponent(filename);
+412:                     player.currentTime = 0;
+413:                     try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch(e) {}
+414:                     player.preservesPitch = true;
+415:                     player.play().catch(e => {});
+416:                 }
+417:                 decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+418:                 if (decodedBuffer) {
+419:                     window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(x => x.name !== filename).slice(0, 1);
+420:                     window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: null });
+421:                 }
+422:             }
+423:         }
+424: 
+425:         if (!decodedBuffer) {
+426:             if (window.currentPlayingTrack === filename) {
+427:                 if (window.htmlGain) window.htmlGain.gain.value = 1.0;
+428:                 if (player && player.paused) player.play().catch(e => {});
+429:                 if (titleEl) titleEl.innerText = filename;
+430:                 if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+431:             }
+432:             return;
+433:         }
+434: 
+435:         if (window.currentPlayingTrack === filename) {
+436:             window.studioBuffer = decodedBuffer;
+437:             if (typeof window.loadTrackReversibleDataV67 === 'function') {
+438:                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
+439:             }
+440:                         let nowRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+441:             let isHugeTrack = (decodedBuffer.duration > 900);
+442:             if (nowRev && !isHugeTrack) {
+443:                 window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
+444:             } else if (!isHugeTrack) {
+445:                 setTimeout(async () => {
+446:                     if (window.currentPlayingTrack === filename && !window.reversedStudioBuffer) {
+447:                         window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
+448:                     }
+449:                 }, 50);
+450:             }
+451: 
+452:             if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+453:                 window.syncMasterPlaybackEngineV59(false);
+454:             }
+455:             if (titleEl) {
+456:                 titleEl.innerText = (window.appConfig && window.appConfig.studioMode ? "RAM 🚀: " : "") + filename;
+457:             }
+458:         }
+459:         if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+460:     } catch(error) {
+461:         if(window.currentPlayingTrack === filename && titleEl) titleEl.innerText = "❌ Ошибка загрузки";
+462:     }
+463: };
+464: 
+465: window.togglePlay = function() {
+466:     const player = document.getElementById('audioPlayer');
+467:     if (!player || !player.src) { if (window.topTrack) window.playTrack(window.topTrack, 'main'); return; }
+468:     if(typeof window.initAudioBoost === 'function') window.initAudioBoost();
+469: 
+470:     if (player.paused) player.play();
+471:     else player.pause();
+472: };
+473: 
+474: document.addEventListener("DOMContentLoaded", () => {
+475:     const player = document.getElementById('audioPlayer');
+476: 
+477:     if (typeof window.updateProgressUI === 'function' && !window._progressUIWrapped) {
+478:         const origUpdateProgress = window.updateProgressUI;
+479:         window.updateProgressUI = function(cur, dur, isRev) {
+480:             origUpdateProgress(cur, dur, isRev);
+481:             window.updateCenterCurrentTime(cur, dur, isRev);
+482:         };
+483:         window._progressUIWrapped = true;
+484:     }
+485: 
+486:     if(player) {
+487:         player.onplay = () => {
+488:             let btn = document.getElementById('playPauseBtn');
+489:             if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+490:             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
+491: 
+492:             let targetSpd = window.getTargetPlaybackSpeed();
+493:             if (Math.abs(player.playbackRate - targetSpd) > 0.001 && player.playbackRate !== 10.0) {
+494:                 player.playbackRate = targetSpd;
+495:             }
+496: 
+497:             if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
+498: 
+499:             if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0 && !(window.appConfig && window.appConfig.elasticHoseMode)) {
+500:                 let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+501:                 window.studioSourceNode = window.audioCtx.createBufferSource();
+502:                 window.studioSourceNode.buffer = isVisualReverse ? window.reversedStudioBuffer : window.studioBuffer;
+503:                 window.studioSourceNode.playbackRate.value = player.playbackRate;
+504:                 window.studioSourceNode.connect(window.inputMixer);
+505:                 window.studioSourceNode.start(0, player.currentTime);
+506:                 window.isStudioPlaying = true;
+507:             }
+508:             if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+509:         };
+510: 
+511:         player.onpause = () => {
+512:             let btn = document.getElementById('playPauseBtn');
+513:             if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+514:             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
+515: 
+516:             if (window.studioSourceNode) {
+517:                 window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){}
+518:                 window.isStudioPlaying = false;
+519:             }
+520:             if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+521:         };
+522: 
+523:         player.onseeking = () => {};
+524: 
+525:         player.onseeked = () => {
+526:             if (!player.paused && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+527:                 window.syncMasterPlaybackEngineV59(false);
+528:             }
+529:         };
+530: 
+531:         player.onratechange = () => {
+532:             if (window.studioSourceNode) {
+533:                 const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+534:                 if (gKey === 'jbuf-lock' || window.studioSourceNode._isHoseSpliced) {
+535:                     window.studioSourceNode.playbackRate.value = 1.0;
+536:                 } else if (player.playbackRate !== 10.0) {
+537:                     window.studioSourceNode.playbackRate.value = player.playbackRate;
+538:                 }
+539:             }
+540:         };
+541: 
+542:         player.onended = () => {
+543:             let wasReversed = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+544: 
+545:             if (window.scrubState && window.scrubState.active && !window.scrubState.locked) {
+546:                 if(typeof window.stopScrub === 'function') window.stopScrub(true);
+547:             }
+548: 
+549:             if (wasReversed) {
+550:                 window.playPreviousTrack();
+551:             } else {
+552:                 window.playNextTrack();
+553:             }
+554:         };
+555: 
+556:         player.ontimeupdate = () => {
+557:             let effDur = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
+558:             if (effDur > 0) {
+559:                 let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+560:                 if(typeof window.updateProgressUI === 'function') window.updateProgressUI(player.currentTime, effDur, isVisualReverse);
+561:                 window.updateCenterCurrentTime(player.currentTime, effDur, isVisualReverse);
+562:             }
+563:         };
+564:     }
+565: });
+566: 
+567: window.lastNotifSync = 0;
+568: 
+569: window.syncAndroidNotification = function(force) {
+570:     if (!window.AndroidBridge || typeof window.AndroidBridge.updateMediaState !== 'function') return;
+571:     const now = Date.now();
+572:     if (!force && now - window.lastNotifSync < 1000) return;
+573:     window.lastNotifSync = now;
+574: 
+575:     const player = document.getElementById('audioPlayer');
+576:     if (!player || !window.currentPlayingTrack) return;
+577: 
+578:     let cleanTitle = window.currentPlayingTrack.replace(/\.(opus|m4a|mp3|wav|flac|ogg)$/i, '');
+579:     let dur = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
+580:     let cur = isFinite(player.currentTime) ? player.currentTime : 0;
+581:     let isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+582:     let displayPos = (isRev && dur > 0) ? Math.max(0, dur - cur) : cur;
+583:     let spd = player.playbackRate || 1.0;
+584: 
+585:     try {
+586:         window.AndroidBridge.updateMediaState(cleanTitle, !player.paused, displayPos, dur, spd);
+587:     } catch (e) {}
+588: };
+589: 
+590: window.seekFromNotification = function(targetSec) {
+591:     const player = document.getElementById('audioPlayer');
+592:     if (!player || !isFinite(player.duration) || player.duration <= 0) return;
+593:     let isRev = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+594:     let realTarget = isRev ? (player.duration - targetSec) : targetSec;
+595:     player.currentTime = Math.max(0, Math.min(player.duration, realTarget));
+596:     window.syncAndroidNotification(true);
+597: };
+598: 
+599: document.addEventListener("DOMContentLoaded", () => {
+600:     const player = document.getElementById('audioPlayer');
+601:     if (player) {
+602:         player.addEventListener('play', () => window.syncAndroidNotification(true));
+603:         player.addEventListener('pause', () => window.syncAndroidNotification(true));
+604:         player.addEventListener('seeked', () => window.syncAndroidNotification(true));
+605:         player.addEventListener('loadedmetadata', () => window.syncAndroidNotification(true));
+606:         player.addEventListener('timeupdate', () => window.syncAndroidNotification(false));
+607:     }
+608: });
+=== FILE: app/src/main/python/ui_scrub_engine.js (90 lines) ===
+1: window.persistedPlaybackSpeed = null;
+2: window.persistedPlaybackSide = 'right';
+3: 
+4: window.startScrub = function(side, speed) {
+5:     const player = document.getElementById('audioPlayer');
+6:     if (!player) return;
+7: 
+8:     const wasReversedNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+9:     const wantReverseNow = (side === 'left');
+10: 
+11:     window.scrubState.active = true;
+12:     window.scrubState.side = side;
+13:     window.scrubState.speed = speed;
+14:     window.scrubState.isPhysicallyReversed = wantReverseNow;
+15:     if (!wantReverseNow) {
+16:         window.isReversed = false;
+17:     }
+18: 
+19:     window.persistedPlaybackSpeed = speed;
+20:     window.persistedPlaybackSide = side;
+21: 
+22:     let lockEl = document.getElementById('speedLockIndicator');
+23:     if (lockEl) {
+24:         lockEl.style.display = 'block';
+25:         lockEl.innerText = `${window.scrubState.locked ? '🔒' : '🔄'} ${wantReverseNow ? '⏪' : '⏩'} x${speed}`;
+26:     }
+27: 
+28:     if (wasReversedNow !== wantReverseNow && isFinite(player.duration) && player.duration > 0) {
+29:         let flippedPos = player.duration - player.currentTime;
+30:         if (!isFinite(flippedPos) || flippedPos < 0) flippedPos = 0;
+31:         player.currentTime = Math.min(player.duration, flippedPos);
+32:     }
+33: 
+34:     let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
+35:     let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig && window.appConfig.pitchLock);
+36: 
+37:     try { player.playbackRate = Math.max(0.1, Math.min(16.0, speed)); } catch(e) {}
+38:     player.preservesPitch = Boolean(isPitchLocked && !wantReverseNow && !(window.appConfig && window.appConfig.elasticHoseMode));
+39: 
+40:     if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+41:         window.syncMasterPlaybackEngineV59(true);
+42:     }
+43: 
+44:     if (player.paused) player.play().catch(e => {});
+45: };
+46: 
+47: window.stopScrub = function(keepLockedSpeed = false) {
+48:     const player = document.getElementById('audioPlayer');
+49:     if (!window.scrubState.active && !window.scrubState.locked && !window.isReversed) return;
+50: 
+51:     const wasReversedNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+52: 
+53:     if (!keepLockedSpeed) {
+54:         window.scrubState.active = false;
+55:         window.scrubState.locked = false;
+56:         window.scrubState.side = null;
+57:         window.scrubState.speed = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+58:         window.scrubState.isPhysicallyReversed = false;
+59:         window.persistedPlaybackSpeed = null;
+60:         window.persistedPlaybackSide = 'right';
+61: 
+62:         let lockEl = document.getElementById('speedLockIndicator');
+63:         if (lockEl) lockEl.style.display = 'none';
+64:     } else {
+65:         window.scrubState.active = false;
+66:     }
+67: 
+68:     const nowReversed = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+69: 
+70:     if (player) {
+71:         let baseSpd = (keepLockedSpeed && window.persistedPlaybackSpeed)
+72:             ? window.persistedPlaybackSpeed
+73:             : (typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0);
+74: 
+75:         if (wasReversedNow !== nowReversed && isFinite(player.duration) && player.duration > 0) {
+76:             player.currentTime = Math.max(0, Math.min(player.duration, player.duration - player.currentTime));
+77:         }
+78: 
+79:         let pitchLockCheckbox = document.getElementById('cfg_pitchLock');
+80:         let isPitchLocked = pitchLockCheckbox ? pitchLockCheckbox.checked : (window.appConfig && window.appConfig.pitchLock);
+81: 
+82:         player.playbackRate = baseSpd;
+83:         player.preservesPitch = Boolean(isPitchLocked && !nowReversed && !(window.appConfig && window.appConfig.elasticHoseMode));
+84: 
+85:         if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+86:             window.syncMasterPlaybackEngineV59(false);
+87:         }
+88:         if (player.paused) player.play().catch(e => {});
+89:     }
+90: };
+=== FILE: app/src/main/python/ui_touch_arc.js (410 lines) ===
+1: // =========================================================================
+2: // 🎛️ UI_TOUCH_ARC.JS (ВИЗУАЛЬНАЯ ДУГА И ОБРАБОТКА СВАЙПОВ)
+3: // =========================================================================
+4: 
+5: window.setupSeekZone = function() {
+6:     const zone = document.getElementById('seekZone');
+7:     const arcContainer = document.getElementById('speedArcContainer');
+8:     const overlay = document.getElementById('scrubOverlay');
+9:     if (!zone || !arcContainer || !overlay) return;
+10: 
+11:     let debugCanvas = document.getElementById('debugZoneCanvas');
+12:     if (!debugCanvas) {
+13:         debugCanvas = document.createElement('canvas');
+14:         debugCanvas.id = 'debugZoneCanvas';
+15:         debugCanvas.style.position = 'absolute';
+16:         debugCanvas.style.top = '0';
+17:         debugCanvas.style.left = '0';
+18:         debugCanvas.style.pointerEvents = 'none'; 
+19:         debugCanvas.style.width = '100%';
+20:         debugCanvas.style.height = '100%';
+21:         debugCanvas.style.zIndex = '5998'; 
+22:         overlay.appendChild(debugCanvas);
+23:     }
+24: 
+25:     let startY = 0;
+26:     let isPullingDown = false;
+27:     let isScrubbing = false;
+28:     let isSeekingAllowed = true; 
+29:     let scrubSide = null;
+30:     let currentTempSpeed = null;
+31:     let arcItems = [];
+32:     let circleAngles = []; 
+33:     let currentAnchor = {x: 0, y: 0};
+34:     let pressTimer = null;
+35: 
+36:     function getX(e) {
+37:         if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientX;
+38:         if (e.touches && e.touches.length > 0) return e.touches[0].clientX;
+39:         return e.clientX;
+40:     }
+41:     function getY(e) {
+42:         if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientY;
+43:         if (e.touches && e.touches.length > 0) return e.touches[0].clientY;
+44:         return e.clientY;
+45:     }
+46: 
+47:     function handleTapSeek(x) {
+48:         if (x === undefined || isNaN(x)) return;
+49:         const rect = zone.getBoundingClientRect();
+50:         let perc = (x - rect.left) / rect.width;
+51:         perc = Math.max(0, Math.min(1, perc));
+52:         const player = document.getElementById('audioPlayer');
+53:         if (player && isFinite(player.duration) && player.duration > 0) {
+54:             let isVisualReverse = window.isReversed || window.scrubState.isPhysicallyReversed;
+55:             if (isVisualReverse) perc = 1.0 - perc; 
+56:             
+57:             player.currentTime = perc * player.duration;
+58:             
+59:             if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+60:                 window.syncMasterPlaybackEngineV59(false);
+61:             }
+62:         }
+63:     }
+64: 
+65:     function angleDiffSigned(a, b) {
+66:         return ((a - b) % 360 + 540) % 360 - 180;
+67:     }
+68: 
+69:     function drawDebugWheel(anchorX, anchorY, angles) {
+70:         debugCanvas.width = window.innerWidth;
+71:         debugCanvas.height = window.innerHeight;
+72:         let ctx = debugCanvas.getContext('2d');
+73:         ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+74: 
+75:         // Стильное неоновое ядро в опорной точке
+76:         let coreGrad = ctx.createRadialGradient(anchorX, anchorY, 2, anchorX, anchorY, 24);
+77:         coreGrad.addColorStop(0, 'rgba(227, 179, 65, 0.95)');
+78:         coreGrad.addColorStop(0.5, 'rgba(163, 113, 247, 0.45)');
+79:         coreGrad.addColorStop(1, 'rgba(115, 65, 190, 0)');
+80:         ctx.beginPath();
+81:         ctx.arc(anchorX, anchorY, 24, 0, 2 * Math.PI);
+82:         ctx.fillStyle = coreGrad;
+83:         ctx.fill();
+84: 
+85:         ctx.beginPath();
+86:         ctx.arc(anchorX, anchorY, 6, 0, 2 * Math.PI);
+87:         ctx.fillStyle = '#e3b341';
+88:         ctx.fill();
+89: 
+90:         let radius = Math.max(window.innerWidth, window.innerHeight) * 0.95;
+91:         ctx.lineWidth = 1.6;
+92:         ctx.setLineDash([7, 8]);
+93: 
+94:         for (let i = 0; i < angles.length - 1; i++) {
+95:             let delta = angleDiffSigned(angles[i + 1], angles[i]);
+96:             let midAngle = angles[i] + delta / 2;
+97:             let rad = midAngle * Math.PI / 180;
+98: 
+99:             let endX = anchorX + radius * Math.cos(rad);
+100:             let endY = anchorY + radius * Math.sin(rad);
+101: 
+102:             let lineGrad = ctx.createLinearGradient(anchorX, anchorY, endX, endY);
+103:             lineGrad.addColorStop(0, 'rgba(227, 179, 65, 0.65)');
+104:             lineGrad.addColorStop(0.55, 'rgba(163, 113, 247, 0.35)');
+105:             lineGrad.addColorStop(1, 'rgba(88, 166, 255, 0.0)');
+106: 
+107:             ctx.strokeStyle = lineGrad;
+108:             ctx.beginPath();
+109:             ctx.moveTo(anchorX, anchorY);
+110:             ctx.lineTo(endX, endY);
+111:             ctx.stroke();
+112:         }
+113:         ctx.setLineDash([]);
+114:     }
+115: 
+116:     function generateArc() {
+117:         arcContainer.innerHTML = '';
+118:         arcItems = [];
+119:         circleAngles = [];
+120: 
+121:         let activeZones = [];
+122:         for (let i = 1; i <= 6; i++) {
+123:             let en = document.getElementById('cfg_z' + i + '_en');
+124:             let val = document.getElementById('cfg_z' + i + '_val');
+125:             if (en && en.checked && val) {
+126:                 activeZones.push(parseFloat(val.value) || 1.0);
+127:             }
+128:         }
+129:         if (activeZones.length === 0) activeZones = [1.0];
+130: 
+131:         let isLeftHanded = Boolean(window.appConfig && window.appConfig.leftHandedMode);
+132:         const W = window.innerWidth;
+133:         const H = window.innerHeight;
+134: 
+135:         const eqBtn = document.getElementById('btn-eqModal');
+136:         if (eqBtn) {
+137:             const eqRect = eqBtn.getBoundingClientRect();
+138:             currentAnchor.x = eqRect.left + eqRect.width / 2;
+139:             currentAnchor.y = eqRect.top + eqRect.height / 2;
+140:         } else {
+141:             currentAnchor.y = H - 135;
+142:             currentAnchor.x = isLeftHanded ? 31 : (W - 31);
+143:         }
+144: 
+145:         // Строим плавную дугу вокруг опорной точки (от середины экрана через край вниз к доку)
+146:         // и параметризуем её по длине дуги, чтобы расстояние между кружками было идеально равным!
+147:         const startDeg = -108; // Верхний кружок (ниже поиска, правее центра)
+148:         const endDeg   = -204; // Нижний кружок (внизу у панели навигации)
+149:         const rTop     = Math.min(W * 0.76, H * 0.35);
+150:         const rMid     = Math.min(W * 0.78, H * 0.36);
+151:         const rBot     = Math.min(W * 0.58, H * 0.26);
+152: 
+153:         function sampleCurvePoint(u) {
+154:             const deg = startDeg + u * (endDeg - startDeg);
+155:             const rad = deg * Math.PI / 180;
+156:             // Плавный профиль радиуса: широкий изгиб посередине и аккуратный заход вниз
+157:             const r = (1 - u) * (1 - u) * rTop + 2 * (1 - u) * u * rMid + u * u * rBot;
+158:             const dxRH = r * Math.cos(rad);
+159:             const dy = r * Math.sin(rad);
+160:             const x = currentAnchor.x + (isLeftHanded ? -dxRH : dxRH);
+161:             const y = currentAnchor.y + dy;
+162:             return {
+163:                 x: Math.max(30, Math.min(W - 30, x)),
+164:                 y: Math.max(150, Math.min(H - 32, y))
+165:             };
+166:         }
+167: 
+168:         const STEPS = 240;
+169:         const samples = [];
+170:         let totalLen = 0;
+171:         for (let k = 0; k <= STEPS; k++) {
+172:             const pt = sampleCurvePoint(k / STEPS);
+173:             if (k > 0) {
+174:                 totalLen += Math.hypot(pt.x - samples[k - 1].x, pt.y - samples[k - 1].y);
+175:             }
+176:             samples.push({ x: pt.x, y: pt.y, s: totalLen });
+177:         }
+178: 
+179:         const count = activeZones.length;
+180:         const positions = [];
+181:         for (let i = 0; i < count; i++) {
+182:             const targetS = count === 1 ? (totalLen * 0.5) : (totalLen * (i / (count - 1)));
+183:             let best = samples[0];
+184:             for (let k = 0; k < samples.length; k++) {
+185:                 if (samples[k].s >= targetS) {
+186:                     best = samples[k];
+187:                     break;
+188:                 }
+189:             }
+190:             positions.push(best);
+191:         }
+192: 
+193:         activeZones.forEach((val, index) => {
+194:             if (index >= positions.length) return;
+195: 
+196:             let el = document.createElement('div');
+197:             el.className = 'arc-item';
+198:             el.innerText = 'x' + (val % 1 === 0 ? val.toFixed(1) : val.toString());
+199:             el.dataset.val = val;
+200: 
+201:             el.style.left = `${positions[index].x - 24}px`;
+202:             el.style.top = `${positions[index].y - 24}px`;
+203: 
+204:             let angle = Math.atan2(positions[index].y - currentAnchor.y, positions[index].x - currentAnchor.x) * 180 / Math.PI;
+205:             circleAngles.push(angle);
+206: 
+207:             arcContainer.appendChild(el);
+208:             arcItems.push(el);
+209:         });
+210: 
+211:         arcContainer.style.display = 'block';
+212:         setTimeout(() => { arcContainer.style.opacity = '1'; }, 10);
+213: 
+214:         drawDebugWheel(currentAnchor.x, currentAnchor.y, circleAngles);
+215:     }
+216: 
+217:     zone.addEventListener('touchstart', (e) => {
+218:         let startX = getX(e);
+219:         startY = getY(e);
+220:         let rect = zone.getBoundingClientRect();
+221:         let perc = (startX - rect.left) / rect.width;
+222: 
+223:         if (perc < 0.33) scrubSide = 'left';
+224:         else if (perc > 0.66) scrubSide = 'right';
+225:         else scrubSide = 'center';
+226: 
+227:         isPullingDown = false;
+228:         currentTempSpeed = null;
+229:         isScrubbing = false;
+230:         isSeekingAllowed = true; 
+231: 
+232:         if (scrubSide === 'center') {
+233:             pressTimer = setTimeout(() => {
+234:                 pressTimer = null;
+235:                 isSeekingAllowed = false; 
+236:                 try { navigator.vibrate(50); } catch(err){}
+237:                 
+238:                 if (window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed)) {
+239:                     if (typeof window.toggleReverseMode === 'function') window.toggleReverseMode(false);
+240:                 } else if (window.scrubState.active || window.scrubState.locked) {
+241:                     if (typeof window.stopScrub === 'function') window.stopScrub(false);
+242:                 }
+243:                 let baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+244:                 const player = document.getElementById('audioPlayer');
+245:                 if (player) player.playbackRate = baseSpd;
+246:                 if (typeof window.syncMasterPlaybackEngineV59 === 'function') window.syncMasterPlaybackEngineV59(false);
+247:                 
+248:                 // Показываем визуальное подтверждение на 1 секунду
+249:                 let lockEl = document.getElementById('speedLockIndicator');
+250:                 if (lockEl) {
+251:                     lockEl.style.display = 'block';
+252:                     lockEl.innerText = `✅ Норм: x${baseSpd}`;
+253:                     setTimeout(() => { 
+254:                         if (!window.scrubState.active && !window.scrubState.locked) {
+255:                             lockEl.style.display = 'none'; 
+256:                         }
+257:                     }, 1000);
+258:                 }
+259:             }, 160); 
+260:         } else {
+261:             pressTimer = setTimeout(() => {
+262:                 pressTimer = null;
+263:                 isScrubbing = true;
+264: 
+265:                 if (window.scrubState.locked) {
+266:                     window.scrubState.locked = false;
+267:                     try { navigator.vibrate(50); } catch(err){}
+268:                 } else {
+269:                     try { navigator.vibrate(30); } catch(err){}
+270:                 }
+271:                 
+272:                 let defSpeed = parseFloat(window.appConfig.defaultScrubSpeed) || 2.0;
+273:                 if (typeof window.startScrub === 'function') window.startScrub(scrubSide, defSpeed);
+274: 
+275:             }, 250); 
+276:         }
+277: 
+278:     }, {passive: true});
+279: 
+280:     function handleTouchMove(e) {
+281:         let curX = getX(e);
+282:         let curY = getY(e);
+283:         let deltaY = curY - startY;
+284: 
+285:         if (scrubSide === 'center') {
+286:             if (Math.abs(deltaY) > 15 && pressTimer) {
+287:                 clearTimeout(pressTimer);
+288:                 pressTimer = null;
+289:             }
+290:             return;
+291:         }
+292: 
+293:         let threshold = window.innerHeight * 0.05; 
+294: 
+295:         if (Math.abs(deltaY) > threshold || isScrubbing) {
+296:             isSeekingAllowed = false; 
+297:             if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+298: 
+299:             if (!isScrubbing) {
+300:                 isScrubbing = true;
+301:                 if (window.scrubState.locked) window.scrubState.locked = false;
+302:             }
+303: 
+304:             if (!isPullingDown) {
+305:                 isPullingDown = true;
+306:                 overlay.style.display = 'block'; 
+307:                 generateArc(); 
+308:                 let defSpeed = parseFloat(window.appConfig.defaultScrubSpeed) || 2.0;
+309:                 if (typeof window.startScrub === 'function') window.startScrub(scrubSide, defSpeed);
+310:             }
+311:             
+312:             let dx = curX - currentAnchor.x;
+313:             let dy = curY - currentAnchor.y;
+314:             let fingerAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+315: 
+316:             let minDiff = Infinity;
+317:             let idx = 0;
+318:             
+319:             circleAngles.forEach((ang, i) => {
+320:                 let diff = Math.abs(angleDiffSigned(fingerAngle, ang));
+321:                 if (diff < minDiff) {
+322:                     minDiff = diff;
+323:                     idx = i;
+324:                 }
+325:             });
+326: 
+327:             if (!arcItems[idx].classList.contains('active')) {
+328:                 arcItems.forEach(el => el.classList.remove('active'));
+329:                 arcItems[idx].classList.add('active');
+330:                 currentTempSpeed = parseFloat(arcItems[idx].dataset.val);
+331:                 if (typeof window.startScrub === 'function') window.startScrub(scrubSide, currentTempSpeed);
+332:                 try { navigator.vibrate(15); } catch(err){}
+333:             }
+334:         }
+335:     }
+336: 
+337:     zone.addEventListener('touchmove', handleTouchMove, {passive: true});
+338:     overlay.addEventListener('touchmove', handleTouchMove, {passive: false}); 
+339: 
+340:     function handleTouchEnd(e) {
+341:         if (pressTimer) {
+342:             clearTimeout(pressTimer);
+343:             pressTimer = null;
+344:             if (isSeekingAllowed) handleTapSeek(getX(e));
+345:         } else if (isScrubbing) {
+346:             arcContainer.style.opacity = '0';
+347:             setTimeout(() => { arcContainer.style.display = 'none'; }, 150);
+348: 
+349:             if (isPullingDown) {
+350:                 window.scrubState.locked = true;
+351:                 if (typeof window.startScrub === 'function') window.startScrub(scrubSide, currentTempSpeed); 
+352:                 
+353:                 let needsSave = false;
+354:                 if (window.appConfig.autoSaveScrub) {
+355:                     window.appConfig.defaultScrubSpeed = currentTempSpeed;
+356:                     let inputEl = document.getElementById('cfg_defaultScrubSpeed');
+357:                     if (inputEl) inputEl.value = currentTempSpeed;
+358:                     needsSave = true;
+359:                 }
+360:                 if (window.appConfig.autoSaveBase) {
+361:                     window.appConfig.normalPlaybackSpeed = currentTempSpeed;
+362:                     let inputEl = document.getElementById('cfg_normalPlaybackSpeed');
+363:                     if (inputEl) inputEl.value = currentTempSpeed;
+364:                     needsSave = true;
+365:                     
+366:                     let baseCheck = document.getElementById('cfg_xNormalSpeed');
+367:                     if (baseCheck && !baseCheck.checked) {
+368:                         baseCheck.checked = true;
+369:                         window.appConfig.xNormalSpeed = true;
+370:                     }
+371:                 }
+372:                 if (needsSave) {
+373:                     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+374:                 }
+375:             } else {
+376:                 if (!window.scrubState.locked) {
+377:                     if (typeof window.stopScrub === 'function') window.stopScrub();
+378:                 }
+379:             }
+380:         }
+381:         
+382:         overlay.style.display = 'none'; 
+383:         isPullingDown = false;
+384:         isScrubbing = false;
+385:         scrubSide = null;
+386:         
+387:         let ctx = debugCanvas.getContext('2d');
+388:         ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+389:     }
+390: 
+391:     zone.addEventListener('touchend', handleTouchEnd);
+392:     overlay.addEventListener('touchend', handleTouchEnd);
+393: 
+394:     function handleTouchCancel() {
+395:         if (pressTimer) clearTimeout(pressTimer);
+396:         arcContainer.style.display = 'none';
+397:         overlay.style.display = 'none';
+398:         if (!window.scrubState.locked) {
+399:             if (typeof window.stopScrub === 'function') window.stopScrub();
+400:         }
+401:         isPullingDown = false;
+402:         isScrubbing = false;
+403:         
+404:         let ctx = debugCanvas.getContext('2d');
+405:         ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+406:     }
+407: 
+408:     zone.addEventListener('touchcancel', handleTouchCancel);
+409:     overlay.addEventListener('touchcancel', handleTouchCancel);
+410: };
