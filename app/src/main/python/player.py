@@ -8806,6 +8806,329 @@ _override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux
 # ================= END JENNY V218 SERVER PATCH =================
 
 
+
+
+
+# ==============================================================================
+# 🚀 JENNY V219 (#313): AUDIO-ONLY (-vn) FRAG_DURATION STREAMING FIX &
+#    SMOOTH 30/60 FPS HARDWARE VIDEO+AUDIO REVERSE REMUX (/api/video/reverse_remux)
+# ==============================================================================
+
+@route('/api/video/live_remux', method='GET')
+def api_video_live_remux_v219():
+    _cancel_stream_hold_release_v216()
+    raw_src = (request.query.get('src') or '').strip()
+    start_sec = float(request.query.get('start') or 0.0)
+    dur_sec = float(request.query.get('dur') or 0.0)
+    no_audio = (request.query.get('no_audio') == '1')
+    audio_only = (request.query.get('audio_only') == '1')
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+
+    if not raw_src:
+        response.status = 400
+        return "Missing src"
+
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+
+    mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
+    req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
+    now_ts = time.time()
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            if k_existing != req_key:
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+            else:
+                kept = []
+                for ts_started, p_same in plist:
+                    if now_ts - ts_started > 6.0 and p_same.poll() is not None:
+                        continue
+                    kept.append((ts_started, p_same))
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    is_tor_stream = src.startswith('/api/torrent/stream/')
+    src_input = ""
+    if is_tor_stream:
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            if dur_sec <= 0:
+                dur_sec, _, _ = _probe_torrent_partial_file_duration_v218(src)
+            ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
+            _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
+
+            try:
+                local_p, is_comp, f_len, f_done = _locate_downloaded_p2p_file_v163("", h_low, f_idx)
+                if local_p and os.path.isfile(local_p) and (is_comp or (f_len > 0 and f_done >= f_len)):
+                    src_input = local_p
+            except Exception:
+                pass
+
+            if not src_input and start_sec > 0.5 and ratio > 0.0:
+                wait_deadline = time.time() + 4.0
+                while time.time() < wait_deadline:
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.6) as sr:
+                            st_obj = json.loads(_safe_decode_bytes_v218(sr.read()))
+                        piece_ready = False
+                        for tor in (st_obj.get("torrents") or []):
+                            if (tor.get("hash") or "").strip().lower() == h_low:
+                                p_map = tor.get("pieces_map") or ""
+                                for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                                    if int(fobj.get("index", -1)) == f_idx:
+                                        beg_p = int(fobj.get("begin_piece") or 0)
+                                        end_p = int(fobj.get("end_piece") or 0)
+                                        f_l = int(fobj.get("length") or 0)
+                                        f_c = int(fobj.get("completed") or 0)
+                                        if f_l > 0 and f_c >= f_l:
+                                            piece_ready = True
+                                        elif end_p > beg_p and p_map:
+                                            t_p = max(beg_p, min(end_p - 1, beg_p + int(ratio * (end_p - beg_p))))
+                                            if 0 <= t_p < len(p_map) and p_map[t_p] == '4':
+                                                piece_ready = True
+                                        break
+                                break
+                        if piece_ready:
+                            break
+                    except Exception:
+                        break
+                    time.sleep(0.28)
+
+            if not src_input:
+                src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+        else:
+            src_input = _resolve_any_media_path_v218(src)
+    else:
+        src_input = _resolve_any_media_path_v218(src)
+
+    is_http = str(src_input).startswith(('http://', 'https://'))
+
+    if not is_http and src_input and os.path.isfile(src_input) and audio_idx > 0:
+        try:
+            _, a_cnt_check, _ = _probe_torrent_partial_file_duration_v218(src_input)
+            if a_cnt_check > 0:
+                audio_idx = audio_idx % a_cnt_check
+        except Exception:
+            pass
+
+    if not is_http and src_input and os.path.isfile(src_input) and not no_audio and not audio_only:
+        ext_l = os.path.splitext(src_input)[1].lower()
+        if ext_l in ('.mp4', '.webm', '.m4v', '.mov') and start_sec <= 0.5 and request.query.get('transcode') != '1' and audio_idx == 0:
+            return static_file(os.path.basename(src_input), root=os.path.dirname(src_input))
+
+    ff_bin = find_ffmpeg_binary()
+    ff_threads = str(max(1, min(8, int(_THREAD_CFG_V216.get("videoFfmpegThreads", 3)))))
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        if start_sec > 0.5:
+            cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
+        else:
+            cmd.extend(['-seekable', '0', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '262144', '-analyzeduration', '300000'])
+
+    if start_sec > 0.5:
+        cmd.extend(['-ss', f"{start_sec:.2f}"])
+
+    is_legacy_avi = str(src_input).lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob')) or (request.query.get('transcode') == '1') or ('.avi' in src.lower())
+    v_codec_args = [
+        '-threads', ff_threads, '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '24', '-pix_fmt', 'yuv420p', '-g', '30'
+    ] if is_legacy_avi else ['-c:v', 'copy']
+
+    if audio_only:
+        # КРИТИЧЕСКИЙ ФИКС V219 ДЛЯ РЕЖИМА "А" (ТОЛЬКО АУДИО):
+        # Без видеопотока (-vn) флаг frag_keyframe не сбрасывает фрагменты MP4!
+        # Используем -frag_duration 200000 (каждые 0.2 сек), чтобы аудио в режиме "А" играло мгновенно и без остановок!
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-vn', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+            '-threads', ff_threads,
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            '-movflags', 'empty_moov+default_base_moof',
+            '-frag_duration', '200000',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+    elif no_audio:
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-map', '0:v:0', '-an', '-sn', '-dn',
+            *v_codec_args,
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+    else:
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-map', '0:v:0', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+            *v_codec_args,
+            '-threads', ff_threads,
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none"
+    }
+    def _remux_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_remux_gen(), status=200, headers=resp_hdrs)
+
+_override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v219)
+
+
+# --- Гладкий аппаратный реверс видео + аудио (30/60 FPS без слайд-шоу через FFmpeg -vf reverse -af areverse) ---
+@route('/api/video/reverse_remux', method='GET')
+def api_video_reverse_remux_v219():
+    _cancel_stream_hold_release_v216()
+    raw_src = (request.query.get('src') or '').strip()
+    anchor_sec = float(request.query.get('pos') or 0.0)
+    win_sec = max(4.0, min(24.0, float(request.query.get('win') or 14.0)))
+    no_audio = (request.query.get('no_audio') == '1')
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+
+    if not raw_src or anchor_sec <= 0.1:
+        response.status = 400
+        return "Invalid reverse params"
+
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+
+    seg_start = max(0.0, anchor_sec - win_sec)
+    seg_dur = max(0.5, anchor_sec - seg_start)
+
+    req_key = f"REV::{src}::{round(anchor_sec, 1)}::{round(win_sec, 1)}::{audio_idx}"
+    now_ts = time.time()
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            if k_existing != req_key:
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+
+    is_tor_stream = src.startswith('/api/torrent/stream/')
+    src_input = ""
+    if is_tor_stream:
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            try:
+                local_p, is_comp, f_len, f_done = _locate_downloaded_p2p_file_v163("", h_low, f_idx)
+                if local_p and os.path.isfile(local_p) and (is_comp or (f_len > 0 and f_done >= f_len)):
+                    src_input = local_p
+            except Exception:
+                pass
+            if not src_input:
+                dur_est, _, _ = _probe_torrent_partial_file_duration_v218(src)
+                ratio = (seg_start / dur_est) if (dur_est > 0 and seg_start > 0) else 0.0
+                _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
+                src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+        else:
+            src_input = _resolve_any_media_path_v218(src)
+    else:
+        src_input = _resolve_any_media_path_v218(src)
+
+    is_http = str(src_input).startswith(('http://', 'https://'))
+    ff_bin = find_ffmpeg_binary()
+    ff_threads = str(max(2, min(8, int(_THREAD_CFG_V216.get("videoFfmpegThreads", 3)))))
+
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
+
+    cmd.extend([
+        '-ss', f"{seg_start:.3f}",
+        '-t', f"{seg_dur:.3f}",
+        '-i', src_input,
+        '-map', '0:v:0'
+    ])
+    if no_audio:
+        cmd.extend(['-an'])
+    else:
+        cmd.extend(['-map', f'0:a:{audio_idx}?', '-af', 'areverse', '-c:a', 'aac', '-b:a', '192k', '-ac', '2'])
+
+    # Кодируем развёрнутый назад участок в ультрабыстрый поток H.264, который аппаратный декодер телефона играет идеально плавно (30/60 FPS)!
+    cmd.extend([
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,reverse',
+        '-threads', ff_threads,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+        '-crf', '25', '-pix_fmt', 'yuv420p', '-g', '15',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-flush_packets', '1',
+        '-f', 'mp4', '-'
+    ])
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none"
+    }
+    def _rev_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_rev_gen(), status=200, headers=resp_hdrs)
+
+_override_bottle_route_v212('/api/video/reverse_remux', 'GET', api_video_reverse_remux_v219)
+# ================= END JENNY V219 SERVER PATCH =================
+
+
 def start_server():
 
 
