@@ -9129,6 +9129,355 @@ _override_bottle_route_v212('/api/video/reverse_remux', 'GET', api_video_reverse
 # ================= END JENNY V219 SERVER PATCH =================
 
 
+# ================= JENNY V220 SERVER PATCH (#314): FAST MICRO-CHUNK + BACKGROUND TRACK PRE-CACHING HARDWARE REVERSE & MULTI-TRACK PCM =================
+import hashlib as _hashlib_v220
+
+_REV_CACHE_DIR_V220 = "/tmp/jenny_rev_cache_v220"
+try:
+    os.makedirs(_REV_CACHE_DIR_V220, exist_ok=True)
+except Exception:
+    pass
+
+_REV_PRECACHE_LOCK_V220 = threading.Lock()
+_REV_PRECACHE_JOBS_V220 = {}  # key -> {"path": str, "proc": Popen, "done": bool, "ts": float}
+
+
+def _get_rev_cache_key_and_path_v220(src_str, seg_start, seg_dur, audio_idx, no_audio):
+    raw_k = f"{src_str}|s={seg_start:.2f}|d={seg_dur:.2f}|a={int(audio_idx)}|na={int(bool(no_audio))}"
+    h = _hashlib_v220.md5(raw_k.encode("utf-8", errors="ignore")).hexdigest()[:20]
+    fpath = os.path.join(_REV_CACHE_DIR_V220, f"rev_{h}.mp4")
+    return raw_k, fpath
+
+
+def _cleanup_old_rev_cache_v220(keep_src=None, keep_aidx=None):
+    now_ts = time.time()
+    with _REV_PRECACHE_LOCK_V220:
+        for k, info in list(_REV_PRECACHE_JOBS_V220.items()):
+            # Если сменился трек или видео — убиваем неактуальные фоновые пре-рендеры
+            mismatch = False
+            if keep_src is not None and not k.startswith(str(keep_src) + "|"):
+                mismatch = True
+            if keep_aidx is not None and f"|a={int(keep_aidx)}|" not in k:
+                mismatch = True
+            if mismatch or (now_ts - info.get("ts", 0) > 120.0):
+                p = info.get("proc")
+                if p and not info.get("done"):
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+                fp = info.get("path", "")
+                if fp and os.path.isfile(fp):
+                    try:
+                        os.remove(fp)
+                    except Exception:
+                        pass
+                _REV_PRECACHE_JOBS_V220.pop(k, None)
+
+
+def _resolve_rev_src_input_v220(src, seg_start):
+    is_tor_stream = src.startswith('/api/torrent/stream/')
+    src_input = ""
+    if is_tor_stream:
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            try:
+                local_p, is_comp, f_len, f_done = _locate_downloaded_p2p_file_v163("", h_low, f_idx)
+                if local_p and os.path.isfile(local_p) and (is_comp or (f_len > 0 and f_done >= f_len)):
+                    src_input = local_p
+            except Exception:
+                pass
+            if not src_input:
+                dur_est, _, _ = _probe_torrent_partial_file_duration_v218(src)
+                ratio = (seg_start / dur_est) if (dur_est > 0 and seg_start > 0) else 0.0
+                _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
+                src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+        else:
+            src_input = _resolve_any_media_path_v218(src)
+    else:
+        src_input = _resolve_any_media_path_v218(src)
+    return src_input
+
+
+def _build_reverse_ffmpeg_cmd_v220(src_input, seg_start, seg_dur, audio_idx, no_audio, out_target="-"):
+    is_http = str(src_input).startswith(('http://', 'https://'))
+    ff_bin = find_ffmpeg_binary()
+    ff_threads = str(max(2, min(8, int(_THREAD_CFG_V216.get("videoFfmpegThreads", 4)))))
+
+    cmd = [ff_bin, '-y', '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
+
+    cmd.extend([
+        '-ss', f"{seg_start:.3f}",
+        '-t', f"{seg_dur:.3f}",
+        '-i', src_input,
+        '-map', '0:v:0'
+    ])
+    if no_audio:
+        cmd.extend(['-an'])
+    else:
+        # Строго выбираем запрошенную звуковую дорожку (0:a:{audio_idx}) и разворачиваем её через areverse!
+        cmd.extend(['-map', f'0:a:{int(audio_idx)}', '-af', 'areverse', '-c:a', 'aac', '-b:a', '160k', '-ac', '2'])
+
+    # Ограничиваем высоту реверс-потока до 720p (если исходник 1080p/4K), чтобы буферизация и разворот кадров шли в 3 раза быстрее!
+    cmd.extend([
+        '-vf', "scale=-2:'min(720,trunc(ih/2)*2)',reverse",
+        '-threads', ff_threads,
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+        '-crf', '26', '-pix_fmt', 'yuv420p', '-g', '15',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+        '-frag_duration', '150000',
+        '-flush_packets', '1',
+        '-f', 'mp4', out_target
+    ])
+    return cmd
+
+
+def _start_precache_reverse_segment_v220(src, pos_sec, win_sec, audio_idx, no_audio):
+    seg_end = max(0.2, float(pos_sec))
+    seg_dur = max(1.0, min(16.0, float(win_sec), seg_end))
+    seg_start = max(0.0, seg_end - seg_dur)
+    raw_k, out_path = _get_rev_cache_key_and_path_v220(src, seg_start, seg_dur, audio_idx, no_audio)
+
+    with _REV_PRECACHE_LOCK_V220:
+        existing = _REV_PRECACHE_JOBS_V220.get(raw_k)
+        if existing:
+            if existing.get("done") and os.path.isfile(out_path) and os.path.getsize(out_path) > 1024:
+                existing["ts"] = time.time()
+                return raw_k, out_path
+            p_ex = existing.get("proc")
+            if p_ex and p_ex.poll() is None:
+                existing["ts"] = time.time()
+                return raw_k, out_path
+
+    src_input = _resolve_rev_src_input_v220(src, seg_start)
+    if not src_input:
+        return None, None
+
+    tmp_path = out_path + ".part"
+    cmd = _build_reverse_ffmpeg_cmd_v220(src_input, seg_start, seg_dur, audio_idx, no_audio, out_target=tmp_path)
+
+    def _runner():
+        proc = None
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with _REV_PRECACHE_LOCK_V220:
+                _REV_PRECACHE_JOBS_V220[raw_k] = {
+                    "path": out_path,
+                    "proc": proc,
+                    "done": False,
+                    "ts": time.time()
+                }
+            proc.wait(timeout=35)
+            # Если на выбранной дорожке (например aidx > 0) произошла ошибка маппинга, пробуем с 0:a:0?
+            if (not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) < 1024) and int(audio_idx) > 0:
+                cmd_fb = _build_reverse_ffmpeg_cmd_v220(src_input, seg_start, seg_dur, 0, no_audio, out_target=tmp_path)
+                proc2 = subprocess.Popen(cmd_fb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                proc2.wait(timeout=35)
+            if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) >= 1024:
+                os.replace(tmp_path, out_path)
+                with _REV_PRECACHE_LOCK_V220:
+                    if raw_k in _REV_PRECACHE_JOBS_V220:
+                        _REV_PRECACHE_JOBS_V220[raw_k]["done"] = True
+                        _REV_PRECACHE_JOBS_V220[raw_k]["ts"] = time.time()
+        except Exception:
+            if proc:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        finally:
+            if os.path.isfile(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+
+    threading.Thread(target=_runner, daemon=True).start()
+    return raw_k, out_path
+
+
+@route('/api/video/reverse_precache', method='GET')
+def api_video_reverse_precache_v220():
+    response.content_type = 'application/json; charset=utf-8'
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        return json.dumps({"ok": False})
+    try:
+        pos_sec = float(request.query.get('pos') or 10.0)
+    except Exception:
+        pos_sec = 10.0
+    try:
+        win_sec = float(request.query.get('win') or 10.0)
+    except Exception:
+        win_sec = 10.0
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+    no_audio = str(request.query.get('no_audio') or '0') == '1'
+
+    _cleanup_old_rev_cache_v220(keep_src=src, keep_aidx=audio_idx)
+    raw_k, out_p = _start_precache_reverse_segment_v220(src, pos_sec, win_sec, audio_idx, no_audio)
+    return json.dumps({"ok": bool(raw_k), "key": raw_k or ""})
+
+_override_bottle_route_v212('/api/video/reverse_precache', 'GET', api_video_reverse_precache_v220)
+
+
+def api_video_reverse_remux_v220():
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        response.status = 400
+        return "Missing src"
+    try:
+        pos_sec = float(request.query.get('pos') or 10.0)
+    except Exception:
+        pos_sec = 10.0
+    try:
+        win_sec = float(request.query.get('win') or 4.0)
+    except Exception:
+        win_sec = 4.0
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+    no_audio = str(request.query.get('no_audio') or '0') == '1'
+
+    seg_end = max(0.2, pos_sec)
+    seg_dur = max(1.0, min(16.0, win_sec, seg_end))
+    seg_start = max(0.0, seg_end - seg_dur)
+
+    _cleanup_old_rev_cache_v220(keep_src=src, keep_aidx=audio_idx)
+    raw_k, cached_path = _get_rev_cache_key_and_path_v220(src, seg_start, seg_dur, audio_idx, no_audio)
+
+    # 1. Если этот участок уже предзагружен в /tmp (или заканчивает рендериться прямо сейчас) — отдаём готовый файл за 1 мс!
+    wait_Existing = None
+    with _REV_PRECACHE_LOCK_V220:
+        wait_Existing = _REV_PRECACHE_JOBS_V220.get(raw_k)
+
+    if wait_Existing and not wait_Existing.get("done"):
+        p_wait = wait_Existing.get("proc")
+        if p_wait and p_wait.poll() is None:
+            try:
+                p_wait.wait(timeout=4.5)
+            except Exception:
+                pass
+
+    if os.path.isfile(cached_path) and os.path.getsize(cached_path) >= 1024:
+        # Параллельно запускаем фоновый пре-рендер следующего куска этой же дорожки!
+        if seg_start > 0.4:
+            next_win = min(11.0, seg_start)
+            _start_precache_reverse_segment_v220(src, seg_start, next_win, audio_idx, no_audio)
+        return static_file(os.path.basename(cached_path), root=_REV_CACHE_DIR_V220, mimetype="video/mp4")
+
+    # 2. Иначе запускаем быстрый потоковый реверс-ремукс выбранной дорожки (и параллельно ставим следующий кусок в пре-кэш)
+    if seg_start > 0.4:
+        next_win = min(10.0, seg_start)
+        _start_precache_reverse_segment_v220(src, seg_start, next_win, audio_idx, no_audio)
+
+    src_input = _resolve_rev_src_input_v220(src, seg_start)
+    cmd = _build_reverse_ffmpeg_cmd_v220(src_input, seg_start, seg_dur, audio_idx, no_audio, out_target="-")
+
+    now_ts = time.time()
+    req_key = f"rev_live_{src}"
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            for _, p_old in plist:
+                try:
+                    p_old.kill()
+                except Exception:
+                    pass
+            _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none"
+    }
+
+    def _rev_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    return bottle.HTTPResponse(body=_rev_gen(), status=200, headers=resp_hdrs)
+
+_override_bottle_route_v212('/api/video/reverse_remux', 'GET', api_video_reverse_remux_v220)
+
+
+# Также добавляем поддержку &aidx= в /api/video/pcm_chunk, чтобы любая PCM-выгрузка брала выбранную дорожку
+def api_video_pcm_chunk_v220():
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        response.status = 400
+        return b""
+    src_input = _resolve_video_src_input_v131(src)
+    if not src_input or str(src_input).startswith(('http://', 'https://')) or not os.path.isfile(src_input):
+        response.content_type = 'application/octet-stream'
+        return b""
+
+    proc = None
+    try:
+        st_sec = max(0.0, float(request.query.get('start', 0.0)))
+        dur_sec = max(0.5, min(60.0, float(request.query.get('dur', 30.0))))
+        sr = int(request.query.get('sr', 44100))
+        if sr < 8000 or sr > 48000:
+            sr = 44100
+        try:
+            aidx = max(0, int(request.query.get('aidx') or 0))
+        except Exception:
+            aidx = 0
+        cmd = [
+            find_ffmpeg_binary(), '-v', 'error',
+            '-ss', f"{st_sec:.3f}", '-t', f"{dur_sec:.3f}",
+            '-i', src_input,
+            '-map', f'0:a:{aidx}?',
+            '-vn', '-ac', '2', '-ar', str(sr),
+            '-f', 'f32le', '-acodec', 'pcm_f32le', '-'
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        _register_video_ffmpeg_proc_v212(proc)
+        raw_interleaved, _ = proc.communicate(timeout=15)
+        raw_interleaved = raw_interleaved or b""
+        frames = (len(raw_interleaved) // 4) // 2
+        if frames <= 0:
+            response.content_type = 'application/octet-stream'
+            return b""
+        import array
+        arr = array.array('f')
+        arr.frombytes(raw_interleaved[:frames * 8])
+        out_bytes = arr[0::2].tobytes() + arr[1::2].tobytes()
+        response.content_type = 'application/octet-stream'
+        return out_bytes
+    except Exception:
+        response.content_type = 'application/octet-stream'
+        return b""
+    finally:
+        if proc:
+            _unregister_video_ffmpeg_proc_v212(proc)
+
+_override_bottle_route_v212('/api/video/pcm_chunk', 'GET', api_video_pcm_chunk_v220)
+# ================= END JENNY V220 SERVER PATCH =================
+
+
 def start_server():
 
 

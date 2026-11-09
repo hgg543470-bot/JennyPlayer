@@ -42,9 +42,12 @@ public class MainActivity extends AppCompatActivity {
     private static boolean isPageLoaded = false;
     private static String pendingTorrentPayload = null;
     private static String pendingTorrentName = null;
+    // === JENNY_V220_JAVA_PATCH ===
     private static boolean isVideoFullscreenV132 = false;
     private static boolean isVideoLockedV132 = false;
     private static boolean isVideoActiveV132 = false;
+    private static boolean isVideoAudioOnlyModeV220 = false;
+    private static float videoAspectRatioV220 = 16.0f / 9.0f;
     private static boolean isDesktopOverlayActiveV132 = false;
     private static boolean pendingOverlayAfterGrantV147 = false;
     private static boolean waitingForPermScreenV148 = false;
@@ -230,18 +233,26 @@ public class MainActivity extends AppCompatActivity {
     private void enterDesktopOverlayInternalV133() {
         runOnUiThread(() -> {
             try {
+                if (isVideoAudioOnlyModeV220) {
+                    return;
+                }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
                     return;
                 }
                 if (isDesktopOverlayActiveV132 || webView == null) return;
                 wmV132 = (android.view.WindowManager) getApplicationContext().getSystemService(WINDOW_SERVICE);
                 android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-                float density = dm.density;
-                final int maxHwW = Math.max(1080, dm.widthPixels);
-                final int maxHwH = Math.max(1920, dm.heightPixels);
+                final float density = dm.density;
+                final int screenW = Math.max(720, dm.widthPixels);
+                final int screenH = Math.max(1280, dm.heightPixels);
+                final int minWinW = Math.round(190 * density);
+                final int maxWinW = Math.round(Math.max(screenW, screenH) * 1.45f);
 
-                int wPx = (savedOverlayW > 48) ? Math.min(maxHwW, savedOverlayW) : Math.round(300 * density);
-                int hPx = (savedOverlayH > 32) ? Math.min(maxHwH, savedOverlayH) : Math.round(176 * density);
+                float aspect = (videoAspectRatioV220 > 0.35f && videoAspectRatioV220 < 3.6f) ? videoAspectRatioV220 : (16.0f / 9.0f);
+                int wPx = (savedOverlayW >= minWinW) ? Math.min(maxWinW, savedOverlayW) : Math.round(300 * density);
+                int hPx = Math.max(Math.round(105 * density), Math.round(wPx / aspect));
+                savedOverlayW = wPx;
+                savedOverlayH = hPx;
 
                 int type = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                         ? android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -261,6 +272,8 @@ public class MainActivity extends AppCompatActivity {
                 if (webView.getParent() instanceof android.view.ViewGroup) {
                     ((android.view.ViewGroup) webView.getParent()).removeView(webView);
                 }
+                webView.setPivotX(0f);
+                webView.setPivotY(0f);
                 webView.setScaleX(1.0f);
                 webView.setScaleY(1.0f);
 
@@ -270,7 +283,7 @@ public class MainActivity extends AppCompatActivity {
                     private boolean isDragging = false;
                     private boolean isPinching = false;
                     private float initSpan = 1f, initFocusX = 0f, initFocusY = 0f;
-                    private int pinchStartW = 0, pinchStartH = 0, pinchStartX = 0, pinchStartY = 0;
+                    private int pinchStartW = wPx, pinchStartH = hPx, pinchStartX = 0, pinchStartY = 0;
                     private int virtualW = wPx, virtualH = hPx;
                     private long lastLayoutUpdateMs = 0L;
 
@@ -296,34 +309,37 @@ public class MainActivity extends AppCompatActivity {
                     }
 
                     private void applyVirtualSizeAndPos(int targetW, int targetH, int targetX, int targetY, boolean forceSync) {
-                        virtualW = Math.max(48, Math.min(maxHwW * 3, targetW));
-                        virtualH = Math.max(32, Math.min(maxHwH * 3, targetH));
+                        float curAspect = (videoAspectRatioV220 > 0.35f && videoAspectRatioV220 < 3.6f) ? videoAspectRatioV220 : (16.0f / 9.0f);
+                        virtualW = Math.max(minWinW, Math.min(maxWinW, targetW));
+                        virtualH = Math.max(Math.round(96 * density), Math.round(virtualW / curAspect));
 
-                        // Ограничиваем физический буфер SurfaceFlinger размером экрана, а все что больше — дожимаем GPU-масштабом WebView!
-                        int hwW = Math.min(maxHwW, virtualW);
-                        int hwH = Math.min(maxHwH, virtualH);
-                        float extraScaleX = (float) virtualW / Math.max(1, hwW);
-                        float extraScaleY = (float) virtualH / Math.max(1, hwH);
-
+                        // Держим WebView строго 1:1 с окном overlayContainerV132 (scaleX=1.0, scaleY=1.0),
+                        // чтобы кнопки управления и крестик ✕ ВСЕГДА находились строго по краям самого окна
+                        // без обрезания и без чёрных полос сверху и снизу!
                         if (webView != null) {
                             webView.setPivotX(0f);
                             webView.setPivotY(0f);
-                            webView.setScaleX(extraScaleX);
-                            webView.setScaleY(extraScaleY);
+                            webView.setScaleX(1.0f);
+                            webView.setScaleY(1.0f);
                         }
 
-                        overlayParamsV132.x = targetX;
-                        overlayParamsV132.y = targetY;
-                        savedOverlayX = targetX;
-                        savedOverlayY = targetY;
+                        // Оставляем хотя бы 72px окна в пределах экрана, чтобы окно всегда можно было ухватить пальцем и передвинуть
+                        int minVisiblePx = Math.round(72 * density);
+                        int clampedX = Math.max(minVisiblePx - virtualW, Math.min(screenW - minVisiblePx, targetX));
+                        int clampedY = Math.max(0, Math.min(screenH - minVisiblePx, targetY));
+
+                        overlayParamsV132.x = clampedX;
+                        overlayParamsV132.y = clampedY;
+                        savedOverlayX = clampedX;
+                        savedOverlayY = clampedY;
 
                         long now = android.os.SystemClock.uptimeMillis();
-                        boolean sizeChanged = (Math.abs(hwW - overlayParamsV132.width) >= 6) || (Math.abs(hwH - overlayParamsV132.height) >= 6);
-                        if (forceSync || !sizeChanged || (now - lastLayoutUpdateMs >= 28L)) {
-                            overlayParamsV132.width = hwW;
-                            overlayParamsV132.height = hwH;
-                            savedOverlayW = hwW;
-                            savedOverlayH = hwH;
+                        boolean sizeChanged = (Math.abs(virtualW - overlayParamsV132.width) >= 2) || (Math.abs(virtualH - overlayParamsV132.height) >= 2);
+                        if (forceSync || !sizeChanged || (now - lastLayoutUpdateMs >= 16L)) {
+                            overlayParamsV132.width = virtualW;
+                            overlayParamsV132.height = virtualH;
+                            savedOverlayW = virtualW;
+                            savedOverlayH = virtualH;
                             if (sizeChanged) lastLayoutUpdateMs = now;
                             try {
                                 wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
@@ -343,8 +359,8 @@ public class MainActivity extends AppCompatActivity {
                             downRawY = getRawYSafe(ev, 0);
                             startWinX = overlayParamsV132.x;
                             startWinY = overlayParamsV132.y;
-                            if (virtualW < 48) virtualW = overlayParamsV132.width;
-                            if (virtualH < 32) virtualH = overlayParamsV132.height;
+                            virtualW = Math.max(minWinW, overlayParamsV132.width);
+                            virtualH = Math.max(Math.round(96 * density), overlayParamsV132.height);
                             isDragging = false;
                             isPinching = false;
                             return super.dispatchTouchEvent(ev);
@@ -363,8 +379,9 @@ public class MainActivity extends AppCompatActivity {
                             initSpan = (float) Math.max(12.0, Math.hypot(rx1 - rx0, ry1 - ry0));
                             initFocusX = (rx0 + rx1) * 0.5f;
                             initFocusY = (ry0 + ry1) * 0.5f;
-                            pinchStartW = Math.max(48, virtualW);
-                            pinchStartH = Math.max(32, virtualH);
+                            float curAspect = (videoAspectRatioV220 > 0.35f && videoAspectRatioV220 < 3.6f) ? videoAspectRatioV220 : (16.0f / 9.0f);
+                            pinchStartW = Math.max(minWinW, overlayParamsV132.width);
+                            pinchStartH = Math.max(Math.round(96 * density), Math.round(pinchStartW / curAspect));
                             pinchStartX = overlayParamsV132.x;
                             pinchStartY = overlayParamsV132.y;
                             return true;
@@ -381,13 +398,13 @@ public class MainActivity extends AppCompatActivity {
                                 float curFocusY = (ry0 + ry1) * 0.5f;
                                 float scale = curSpan / initSpan;
 
-                                int newW = Math.max(48, Math.round(pinchStartW * scale));
-                                int newH = Math.max(32, Math.round(pinchStartH * scale));
-                                float actualScaleX = (float) newW / Math.max(1, pinchStartW);
-                                float actualScaleY = (float) newH / Math.max(1, pinchStartH);
+                                float curAspect = (videoAspectRatioV220 > 0.35f && videoAspectRatioV220 < 3.6f) ? videoAspectRatioV220 : (16.0f / 9.0f);
+                                int newW = Math.max(minWinW, Math.min(maxWinW, Math.round(pinchStartW * scale)));
+                                int newH = Math.max(Math.round(96 * density), Math.round(newW / curAspect));
+                                float actualScale = (float) newW / Math.max(1, pinchStartW);
 
-                                int newX = Math.round(curFocusX - (initFocusX - pinchStartX) * actualScaleX);
-                                int newY = Math.round(curFocusY - (initFocusY - pinchStartY) * actualScaleY);
+                                int newX = Math.round(curFocusX - (initFocusX - pinchStartX) * actualScale);
+                                int newY = Math.round(curFocusY - (initFocusY - pinchStartY) * actualScale);
                                 applyVirtualSizeAndPos(newW, newH, newX, newY, false);
                                 return true;
                             } else if (!isPinching && ev.getPointerCount() == 1) {
@@ -398,13 +415,9 @@ public class MainActivity extends AppCompatActivity {
                                     cancelWebViewTouch(ev);
                                 }
                                 if (isDragging) {
-                                    overlayParamsV132.x = Math.round(startWinX + dx);
-                                    overlayParamsV132.y = Math.round(startWinY + dy);
-                                    savedOverlayX = overlayParamsV132.x;
-                                    savedOverlayY = overlayParamsV132.y;
-                                    try {
-                                        wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
-                                    } catch (Exception ignored) {}
+                                    int targetX = Math.round(startWinX + dx);
+                                    int targetY = Math.round(startWinY + dy);
+                                    applyVirtualSizeAndPos(overlayParamsV132.width, overlayParamsV132.height, targetX, targetY, true);
                                     return true;
                                 }
                             }
@@ -633,7 +646,7 @@ public class MainActivity extends AppCompatActivity {
                     waitingForPermScreenV148 = false;
                     permFlowLockUntilMsV152 = 0L;
 
-                    boolean shouldGoToDesktopOverlay = pendingOverlayAfterGrantV147 && isVideoActiveV132;
+                    boolean shouldGoToDesktopOverlay = pendingOverlayAfterGrantV147 && isVideoActiveV132 && !isVideoAudioOnlyModeV220;
                     pendingOverlayAfterGrantV147 = false;
 
                     try {
@@ -793,7 +806,7 @@ public class MainActivity extends AppCompatActivity {
         if (isOpeningSettingsV146 || waitingForPermScreenV148 || android.os.SystemClock.uptimeMillis() < permFlowLockUntilMsV152) {
             return;
         }
-        if (isVideoActiveV132 && !isDesktopOverlayActiveV132) {
+        if (isVideoActiveV132 && !isVideoAudioOnlyModeV220 && !isDesktopOverlayActiveV132) {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && !Settings.canDrawOverlays(MainActivity.this)) {
                 launchOverlayPermissionWithAutoWatchV147(true);
             } else {
@@ -1066,6 +1079,34 @@ public class MainActivity extends AppCompatActivity {
                     }
                 } catch (Throwable ignored) {}
             });
+        }
+
+        @JavascriptInterface
+        public void setVideoAspectRatio(float ratio) {
+            if (ratio > 0.35f && ratio < 3.6f) {
+                videoAspectRatioV220 = ratio;
+                runOnUiThread(() -> {
+                    try {
+                        if (isDesktopOverlayActiveV132 && wmV132 != null && overlayContainerV132 != null && overlayParamsV132 != null) {
+                            int curW = Math.max(200, overlayParamsV132.width);
+                            int newH = Math.max(110, Math.round(curW / videoAspectRatioV220));
+                            if (Math.abs(newH - overlayParamsV132.height) >= 3) {
+                                overlayParamsV132.height = newH;
+                                savedOverlayH = newH;
+                                wmV132.updateViewLayout(overlayContainerV132, overlayParamsV132);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                });
+            }
+        }
+
+        @JavascriptInterface
+        public void setVideoAudioOnlyMode(boolean audioOnly) {
+            isVideoAudioOnlyModeV220 = audioOnly;
+            if (audioOnly && isDesktopOverlayActiveV132) {
+                restoreWebViewToActivityV135(false);
+            }
         }
 
         @JavascriptInterface
@@ -1381,7 +1422,7 @@ public class MainActivity extends AppCompatActivity {
         subSettingsLaunchedV154 = false;
         permFlowLockUntilMsV152 = 0L;
 
-        if (wasPermSettings && wantAutoOverlay && granted && isVideoActiveV132 && !isDesktopOverlayActiveV132) {
+        if (wasPermSettings && wantAutoOverlay && granted && isVideoActiveV132 && !isVideoAudioOnlyModeV220 && !isDesktopOverlayActiveV132) {
             overlayGrantProtectionUntilMsV153 = android.os.SystemClock.uptimeMillis() + 3000L;
             enterDesktopOverlayInternalV133();
             evalJs("if(window.ensureVideoPlayingInOverlayV147) window.ensureVideoPlayingInOverlayV147();");
