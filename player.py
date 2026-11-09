@@ -9235,13 +9235,15 @@ def _build_reverse_ffmpeg_cmd_v223(src_input, seg_start, seg_dur, audio_idx, no_
     if no_audio:
         cmd.extend(['-an'])
     else:
-        cmd.extend(['-map', f'0:a:{int(audio_idx)}?', '-af', 'areverse', '-c:a', 'aac', '-b:a', '128k', '-ac', '2'])
+        cmd.extend(['-map', f'0:a:{int(audio_idx)}?', '-af', 'areverse,apad', '-shortest', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100'])
 
     vf_str = f"scale=-2:'min({max_h},trunc(ih/2)*2)':flags=fast_bilinear,fps={encode_fps},reverse"
     cmd.extend([
         '-vf', vf_str,
         '-threads', ff_threads,
         '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+        '-profile:v', 'baseline', '-level', '3.1',
+        '-video_track_timescale', '90000',
         '-crf', '27', '-pix_fmt', 'yuv420p', '-g', '18',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
         '-frag_duration', '120000',
@@ -9351,6 +9353,16 @@ def api_video_reverse_precache_blob_v223():
 
     mp4_bytes = _render_reverse_segment_in_ram_v223(src, pos_sec, win_sec, audio_idx, no_audio, spd=spd)
     if mp4_bytes and len(mp4_bytes) >= 1024:
+        # Автоматически запускаем фоновый рендер СЛЕДУЮЩЕГО по плану чанка в RAM на сервере заранее!
+        next_pos_pre = round(pos_sec - win_sec, 1)
+        if next_pos_pre > 0.4:
+            next_win_pre = round(min(next_pos_pre, max(18.0, min(55.0, 16.0 * max(1.0, spd)))), 1)
+            def _bg_prewarm():
+                try:
+                    _render_reverse_segment_in_ram_v223(src, next_pos_pre, next_win_pre, audio_idx, no_audio, spd=spd)
+                except Exception:
+                    pass
+            threading.Thread(target=_bg_prewarm, daemon=True).start()
         resp_hdrs = {
             "Content-Type": "video/mp4",
             "Content-Length": str(len(mp4_bytes)),

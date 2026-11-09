@@ -27310,3 +27310,416 @@ let vsyncTicks = 0;
     }, 100);
 })();
 /* ================= END JENNY_V224_HUD_AND_HEADER_STABILITY_PATCH ================= */
+
+/* ================= JENNY_V225_MSE_CONTINUOUS_REVERSE_STREAM_PATCH (#319):
+   SEAMLESS IN-RAM CHUNK STITCHING VIA MEDIASOURCE (SourceBuffer mode='sequence')
+   SO <video> PLAYS ONE UNBROKEN STREAM IN RAM WITHOUT EVER RELOADING vid.src OR FIRING pause/play/playing!
+================= */
+(function() {
+    if (window._jennyV225Installed) return;
+    window._jennyV225Installed = true;
+
+    // Авто-определение точного кодека (avc1.XXYYZZ и наличия аудио mp4a.40.2) прямо из заголовка moov первого чанка в RAM
+    window.detectMp4MimeCodecsFromBufferV225 = function(arrayBuf) {
+        if (!arrayBuf || !arrayBuf.byteLength) return 'video/mp4; codecs="avc1.42C01F, mp4a.40.2"';
+        var bytes = new Uint8Array(arrayBuf, 0, Math.min(arrayBuf.byteLength, 8192));
+        var avcCodec = 'avc1.42C01F';
+        var hasAudio = false;
+        for (var i = 0; i < bytes.length - 8; i++) {
+            // 'avcC' = 0x61, 0x76, 0x63, 0x43
+            if (bytes[i] === 0x61 && bytes[i + 1] === 0x76 && bytes[i + 2] === 0x63 && bytes[i + 3] === 0x43) {
+                var p = bytes[i + 5].toString(16).toUpperCase();
+                if (p.length < 2) p = '0' + p;
+                var c = bytes[i + 6].toString(16).toUpperCase();
+                if (c.length < 2) c = '0' + c;
+                var l = bytes[i + 7].toString(16).toUpperCase();
+                if (l.length < 2) l = '0' + l;
+                avcCodec = 'avc1.' + p + c + l;
+            }
+            // 'mp4a' = 0x6D, 0x70, 0x34, 0x61
+            if (bytes[i] === 0x6D && bytes[i + 1] === 0x70 && bytes[i + 2] === 0x34 && bytes[i + 3] === 0x61) {
+                hasAudio = true;
+            }
+        }
+        return hasAudio
+            ? ('video/mp4; codecs="' + avcCodec + ', mp4a.40.2"')
+            : ('video/mp4; codecs="' + avcCodec + '"');
+    };
+
+    // Полная очистка MSE-потока и очередей в RAM при выходе из реверса или новом сике
+    window.cleanupMseReverseStreamV225 = function() {
+        var st = window._vidStateV130 || {};
+        if (st._mseFetchAbortCtrlV225) {
+            try { st._mseFetchAbortCtrlV225.abort(); } catch (e) {}
+            st._mseFetchAbortCtrlV225 = null;
+        }
+        st._msePumpBusyV225 = false;
+        st._mseActiveV225 = false;
+        st._msePendingBuffersV225 = [];
+        if (st._activeMseSourceBufferV225) {
+            try {
+                st._activeMseSourceBufferV225.onupdateend = null;
+                st._activeMseSourceBufferV225.onerror = null;
+            } catch (e) {}
+            st._activeMseSourceBufferV225 = null;
+        }
+        if (st._activeMseObjV225) {
+            try {
+                if (st._activeMseObjV225.readyState === 'open') {
+                    st._activeMseObjV225.endOfStream();
+                }
+            } catch (e) {}
+            st._activeMseObjV225 = null;
+        }
+        if (st._activeMseUrlV225) {
+            try { URL.revokeObjectURL(st._activeMseUrlV225); } catch (e) {}
+            st._activeMseUrlV225 = null;
+        }
+        if (typeof window.cleanupRevBlobQueueV223 === 'function') {
+            window.cleanupRevBlobQueueV223();
+        }
+    };
+
+    // Функция бесшовного доклеивания следующих чанков из RAM прямо в единый открытый SourceBuffer (mode = 'sequence')
+    window.pumpMseReverseStreamV225 = function(sessionId) {
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!vid || !st.active || !vd.isReversed || st.userPaused || !st._mseActiveV225 || st._revTrackSessionIdV220 !== sessionId) {
+            return;
+        }
+
+        var ms = st._activeMseObjV225;
+        var sb = st._activeMseSourceBufferV225;
+        if (!ms || !sb || ms.readyState !== 'open') return;
+        if (sb.updating) return;
+
+        // 1. Если в RAM-очереди уже лежит скачанный ArrayBuffer — мгновенно приклеиваем его в конец потока!
+        if (Array.isArray(st._msePendingBuffersV225) && st._msePendingBuffersV225.length > 0) {
+            var nextItem = st._msePendingBuffersV225.shift();
+            if (nextItem && nextItem.buffer && nextItem.buffer.byteLength > 1024) {
+                try {
+                    sb.appendBuffer(nextItem.buffer);
+                    st._mseAppendedMediaDurV225 = (st._mseAppendedMediaDurV225 || 0) + nextItem.winLen;
+                    return;
+                } catch (e) {
+                    // Если буфер переполнен на длинном фильме — очищаем уже проигранный хвост позади курсора
+                    try {
+                        if (vid.currentTime > 25 && !sb.updating) {
+                            sb.remove(0, vid.currentTime - 10);
+                            st._msePendingBuffersV225.unshift(nextItem);
+                            return;
+                        }
+                    } catch (e2) {}
+                }
+            }
+        }
+
+        // 2. Если дошли до самого начала видео (0:00) — закрываем единый поток endOfStream()
+        var nextPosSec = Number((st._mseNextAnchorSecV225 !== undefined ? st._mseNextAnchorSecV225 : 0).toFixed(1));
+        if (nextPosSec <= 0.25) {
+            if (!st._mseEndedSignaledV225 && !sb.updating && ms.readyState === 'open') {
+                st._mseEndedSignaledV225 = true;
+                try { ms.endOfStream(); } catch (e) {}
+            }
+            return;
+        }
+
+        // 3. Проверяем, сколько секунд уже склеено впереди текущей позиции плеера:
+        //    держим впереди от 45 до 85 секунд непрерывного склеенного потока в RAM!
+        var bufferedAheadSec = (st._mseAppendedMediaDurV225 || 0) - (vid.currentTime || 0);
+        var curSpd = Number(vd.speed || window._lastRevVideoSpeedV217 || 1.0);
+        var targetAheadSec = Math.max(45.0, Math.min(95.0, 36.0 * curSpd));
+        if (bufferedAheadSec >= targetAheadSec) {
+            return;
+        }
+
+        if (st._msePumpBusyV225) return;
+        st._msePumpBusyV225 = true;
+
+        var stepIdx = st._mseStepIdxV225 || 1;
+        var baseSpdForEnc = st._mseSessionBaseSpdV225 || curSpd;
+        var desiredWin = window.computeAdaptiveReverseWindowSecV223
+            ? window.computeAdaptiveReverseWindowSecV223(stepIdx, curSpd)
+            : 20.0;
+        var winLen = Number(Math.min(desiredWin, Math.max(1.2, nextPosSec)).toFixed(1));
+        var aIdx = st.audioTrackIdxV216 || 0;
+        var noAud = (st.videoStreamModeV217 === 'v_only') ? '1' : '0';
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+
+        var ctrl = new AbortController();
+        st._mseFetchAbortCtrlV225 = ctrl;
+
+        var url = '/api/video/reverse_precache_blob?src=' + encodeURIComponent(rawBaseUrl) +
+            '&pos=' + nextPosSec.toFixed(1) +
+            '&win=' + winLen.toFixed(1) +
+            '&aidx=' + aIdx +
+            '&spd=' + baseSpdForEnc.toFixed(2) +
+            '&no_audio=' + noAud +
+            '&t=' + Date.now();
+
+        fetch(url, { signal: ctrl.signal })
+            .then(function(res) {
+                if (!res.ok) throw new Error('MSE chunk HTTP ' + res.status);
+                return res.arrayBuffer();
+            })
+            .then(function(ab) {
+                st._msePumpBusyV225 = false;
+                if (!ab || ab.byteLength < 1024) return;
+                if (!st.active || !vd.isReversed || !st._mseActiveV225 || st._revTrackSessionIdV220 !== sessionId) return;
+
+                st._mseNextAnchorSecV225 = Number(Math.max(0, nextPosSec - winLen).toFixed(1));
+                st._mseStepIdxV225 = stepIdx + 1;
+
+                if (!Array.isArray(st._msePendingBuffersV225)) st._msePendingBuffersV225 = [];
+                st._msePendingBuffersV225.push({
+                    buffer: ab,
+                    anchorPos: nextPosSec,
+                    winLen: winLen
+                });
+
+                // Сразу приклеиваем скачанный чанк к текущему потоку в SourceBuffer!
+                window.pumpMseReverseStreamV225(sessionId);
+            })
+            .catch(function() {
+                st._msePumpBusyV225 = false;
+            });
+    };
+
+    var _fallbackBlobReverseEngineV223 = window.startImmediateVideoReverseEngineV217;
+
+    window.startImmediateVideoReverseEngineV217 = function(revSpd, forceReloadTrackOrSeek, explicitStartSec) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        if (!vid || !st || !st.active || !vd) return;
+
+        var spd = Math.max(0.1, Math.min(8.0, Number(revSpd) || window._lastRevVideoSpeedV217 || 0.95));
+        window._lastRevVideoSpeedV217 = spd;
+
+        var wasAlreadyRev = Boolean(vd.isReversed || window.isReversedDeckB);
+        var curMediaSec = (explicitStartSec !== undefined && isFinite(explicitStartSec))
+            ? Number(explicitStartSec)
+            : (window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0));
+
+        window.isReversedDeckB = true;
+        vd.isReversed = true;
+        vd.speed = spd;
+        window._jennyVideoSpeedV170 = spd;
+
+        if (st.userPaused) {
+            window.syncVideoPlayerButtonsUIV217();
+            return;
+        }
+
+        window._vidPlayIntentV132 = true;
+        window._vidIsBufferingV132 = false;
+
+        // Если мы уже играем единый склеенный MSE-поток (или Blob-поток) на этой же дорожке и пользователь просто переключил скорость —
+        // меняем playbackRate мгновенно на лету БЕЗ пересоздания потока!
+        if (!forceReloadTrackOrSeek && wasAlreadyRev && st._playingHardwareRevStreamV219 && !vid.paused && !vid.ended && st._revActiveAudioIdxV220 === (st.audioTrackIdxV216 || 0)) {
+            try {
+                vid.defaultPlaybackRate = spd;
+                vid.playbackRate = spd;
+            } catch (e) {}
+            window.syncVideoPlayerButtonsUIV217();
+            if (st._mseActiveV225) {
+                window.pumpMseReverseStreamV225(st._revTrackSessionIdV220);
+            }
+            return;
+        }
+
+        // Если MediaSource не поддерживается — используем резервный RAM Blob-движок V223
+        if (typeof window.MediaSource === 'undefined') {
+            return _fallbackBlobReverseEngineV223.apply(this, arguments);
+        }
+
+        window.stopHardwareReverseTimerV220();
+        window.cleanupMseReverseStreamV225();
+
+        if (curMediaSec <= 0.25) {
+            window.restoreNormalVideoPlaybackV217();
+            return;
+        }
+
+        st._revTrackSessionIdV220 = (st._revTrackSessionIdV220 || 0) + 1;
+        var myRevSession = st._revTrackSessionIdV220;
+
+        window.captureAndHoldVideoFrameV220(3000);
+        window._vidPlayIntentV132 = true;
+
+        var aIdx = st.audioTrackIdxV216 || 0;
+        var noAud = (st.videoStreamModeV217 === 'v_only') ? '1' : '0';
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        var cleanAnchor = Number(curMediaSec.toFixed(1));
+        var win0 = window.computeAdaptiveReverseWindowSecV223
+            ? window.computeAdaptiveReverseWindowSecV223(0, spd)
+            : 6.0;
+        win0 = Number(Math.min(win0, Math.max(1.2, cleanAnchor)).toFixed(1));
+
+        st._playingHardwareRevStreamV219 = true;
+        st._revAnchorSecV219 = cleanAnchor;
+        st._revWinLenV219 = cleanAnchor; // Весь склеенный MSE-поток идёт от cleanAnchor до 0:00!
+        st._revActiveAudioIdxV220 = aIdx;
+        st._revLaunchWallTsV220 = performance.now();
+        st._revStreamStartedPlayingV220 = false;
+        st.usingRemux = true;
+
+        if (vd.sourceNode) {
+            vd.sourceNode.onended = null;
+            try { vd.sourceNode.stop(); } catch (e) {}
+            try { vd.sourceNode.disconnect(); } catch (e) {}
+            vd.sourceNode = null;
+        }
+        vd.isStudioPlaying = false;
+
+        var ctrl0 = new AbortController();
+        st._mseFetchAbortCtrlV225 = ctrl0;
+
+        var url0 = '/api/video/reverse_precache_blob?src=' + encodeURIComponent(rawBaseUrl) +
+            '&pos=' + cleanAnchor.toFixed(1) +
+            '&win=' + win0.toFixed(1) +
+            '&aidx=' + aIdx +
+            '&spd=' + spd.toFixed(2) +
+            '&no_audio=' + noAud +
+            '&t=' + Date.now();
+
+        fetch(url0, { signal: ctrl0.signal })
+            .then(function(res) {
+                if (!res.ok) throw new Error('Initial MSE HTTP ' + res.status);
+                return res.arrayBuffer();
+            })
+            .then(function(ab0) {
+                if (!st.active || !vd.isReversed || st.userPaused || st._revTrackSessionIdV220 !== myRevSession) return;
+                if (!ab0 || ab0.byteLength < 1024) {
+                    throw new Error('Empty initial reverse buffer');
+                }
+
+                var mimeCodec = window.detectMp4MimeCodecsFromBufferV225(ab0);
+                if (!window.MediaSource.isTypeSupported(mimeCodec)) {
+                    throw new Error('MSE codec not supported: ' + mimeCodec);
+                }
+
+                var ms = new MediaSource();
+                var mseUrl = URL.createObjectURL(ms);
+
+                st._mseActiveV225 = true;
+                st._activeMseObjV225 = ms;
+                st._activeMseUrlV225 = mseUrl;
+                st._mseStartAnchorSecV225 = cleanAnchor;
+                st._mseAppendedMediaDurV225 = 0;
+                st._mseNextAnchorSecV225 = Number(Math.max(0, cleanAnchor - win0).toFixed(1));
+                st._mseStepIdxV225 = 1;
+                st._mseSessionBaseSpdV225 = spd;
+                st._mseEndedSignaledV225 = false;
+                st._msePendingBuffersV225 = [];
+
+                ms.addEventListener('sourceopen', function() {
+                    if (!st.active || !vd.isReversed || st._revTrackSessionIdV220 !== myRevSession || ms.readyState !== 'open') return;
+                    try {
+                        var sb = ms.addSourceBuffer(mimeCodec);
+                        // Режим 'sequence' автоматически стыкует каждый следующий чанк ровно в конец предыдущего в едином потоке!
+                        sb.mode = 'sequence';
+                        st._activeMseSourceBufferV225 = sb;
+
+                        sb.onupdateend = function() {
+                            if (!st.active || !vd.isReversed || st._revTrackSessionIdV220 !== myRevSession) return;
+                            if (!st._revStreamStartedPlayingV220) {
+                                st._revStreamStartedPlayingV220 = true;
+                                window._vidPlayIntentV132 = true;
+                                window._vidIsBufferingV132 = false;
+                                var activeSpd = vd.speed || spd;
+                                try {
+                                    vid.preservesPitch = true;
+                                    vid.webkitPreservesPitch = true;
+                                    vid.defaultPlaybackRate = activeSpd;
+                                    vid.playbackRate = activeSpd;
+                                } catch (e) {}
+                                if (!st.userPaused && vid.paused) {
+                                    st._internalRevPause = false;
+                                    vid.play().catch(function() {});
+                                }
+                                window.releaseHeldVideoFrameV220();
+                                if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+                            }
+                            // Как только чанк вклеен в поток — сразу подтягиваем и приклеиваем следующий по плану чанк в RAM!
+                            window.pumpMseReverseStreamV225(myRevSession);
+                        };
+
+                        st._mseAppendedMediaDurV225 = win0;
+                        sb.appendBuffer(ab0);
+                    } catch (errMse) {
+                        window.cleanupMseReverseStreamV225();
+                        _fallbackBlobReverseEngineV223.call(window, vd.speed || spd, true, cleanAnchor);
+                    }
+                }, { once: true });
+
+                vid.muted = (noAud === '1');
+                if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = (noAud === '1' || st.dspBypass) ? 0.0 : 1.0;
+                if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = (noAud === '1') ? 0.0 : (st.dspBypass ? 1.0 : 0.0);
+
+                vid.addEventListener('playing', function() {
+                    if (st._revTrackSessionIdV220 === myRevSession) {
+                        window.releaseHeldVideoFrameV220();
+                    }
+                }, { once: true });
+
+                st._internalRevPause = true;
+                vid.src = mseUrl;
+                try {
+                    vid.preservesPitch = true;
+                    vid.webkitPreservesPitch = true;
+                    vid.defaultPlaybackRate = vd.speed || spd;
+                    vid.playbackRate = vd.speed || spd;
+                } catch (e) {}
+            })
+            .catch(function(err) {
+                if (!st.active || !vd.isReversed || st._revTrackSessionIdV220 !== myRevSession) return;
+                window.cleanupMseReverseStreamV225();
+                _fallbackBlobReverseEngineV223.call(window, vd.speed || spd, true, cleanAnchor);
+            });
+
+        // Таймер плавного обновления шкалы прогресса и подкачки следующих чанков в единый MSE-буфер
+        st._hwRevTimerV220 = setInterval(function() {
+            if (!st.active || st.userPaused || !vd.isReversed || st._revTrackSessionIdV220 !== myRevSession) {
+                window.stopHardwareReverseTimerV220();
+                return;
+            }
+            window._vidPlayIntentV132 = true;
+            var startAnchor = Number(st._mseStartAnchorSecV225 !== undefined ? st._mseStartAnchorSecV225 : (st._revAnchorSecV219 || curMediaSec));
+            var progressed = st._revStreamStartedPlayingV220 ? Number(vid.currentTime || 0) : 0;
+            var effTime = Math.max(0, startAnchor - progressed);
+            var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : 0;
+
+            st._pendingSeekSecV167 = effTime;
+            st._pendingSeekTsV167 = performance.now();
+
+            if (typeof window.updateProgressUIDeckB === 'function') {
+                window.updateProgressUIDeckB(effTime, dur, true);
+            }
+            if (typeof window.syncInternalVideoSliderUIV212 === 'function') {
+                window.syncInternalVideoSliderUIV212(effTime, dur);
+            }
+
+            if (st._mseActiveV225) {
+                window.pumpMseReverseStreamV225(myRevSession);
+            }
+
+            if (effTime <= 0.15 || (st._mseEndedSignaledV225 && vid.ended)) {
+                window.restoreNormalVideoPlaybackV217();
+                return;
+            }
+        }, 45);
+
+        window.syncVideoPlayerButtonsUIV217();
+    };
+
+    var _prevRestoreNormalV224 = window.restoreNormalVideoPlaybackV217;
+    window.restoreNormalVideoPlaybackV217 = function(ev, customTargetFwdSpeed) {
+        window.cleanupMseReverseStreamV225();
+        if (typeof _prevRestoreNormalV224 === 'function') {
+            return _prevRestoreNormalV224.apply(this, arguments);
+        }
+    };
+})();
+/* ================= END JENNY_V225_MSE_CONTINUOUS_REVERSE_STREAM_PATCH ================= */
