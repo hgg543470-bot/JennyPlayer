@@ -30103,3 +30103,869 @@ let vsyncTicks = 0;
     };
 })();
 /* ================= END JENNY_V234_EXPORT_MODAL_FULLHEIGHT_COLLAPSIBLE_AND_XFLAC15_DEFAULT_PATCH ================= */
+
+/* ================= JENNY_V235_LANG_SEARCH_SLOT_REFRESH_SWAP_AND_PLAY_HOLD_LOCATE_PATCH (#334 / V235):
+   1) INITIAL PLACEMENT OF RU/EN (#mainLangToggleBtn) RIGHT NEXT TO SEARCH BAR (#trackSearchInput) (71999.jpg)
+   2) REDESIGNED ESCAPE TRAJECTORY FROM SEARCH BAR SLOT UP INTO SETTINGS GEAR (⚙️) + DOCKING INTO #jennyTopBarRow NEXT TO GUIDE/MANUAL:
+      - If never clicked (!window._langTouchedByUser): buzzes every 10s, then at 30s stands on legs (.runaway-actor), sprints along the search bar & flips into ⚙️
+      - If clicked at least once (window._langTouchedByUser): stops buzzing, then at 30s turns into a caterpillar (.crawler-actor), turns head up (-90°), crawls up to header & into ⚙️
+   3) ANIMATED SWAP OF REFRESH BUTTONS (🔄 30 & 🔄 887) WHEN RU/EN LEAVES + IMMEDIATE EXPANSION OF DECK TRANSPORT BUTTONS (71999.jpg & 72001.jpg):
+      - Old refresh buttons in Deck B (#btnRefreshDeckBV216) and Deck A (#btnRefreshDeckAV235) smoothly shrink & vanish from under the decks
+      - Transport buttons under both decks immediately expand to fill the vacated space:
+        60% of freed space goes to transport buttons -> Prev (+30% width), Play/Pause (+15% width), Next (+30% width)
+      - Refresh buttons pop with spring animation into the vacated slot right next to #trackSearchInput
+   4) LONG-PRESS (HOLD) ON MAIN PLAY/PAUSE BUTTONS UNDER DECK A (#playPauseBtn) & DECK B (#playPauseBtnDeckBV216):
+      - Opens the active playlist of the currently playing audio/video and highlights + scrolls to that track/video WITHOUT pausing it!
+================= */
+(function() {
+    if (window._jennyV235Installed) return;
+    window._jennyV235Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. CSS FOR SEARCH BAR RIGHT SLOT, ANIMATED REFRESH SWAP, DECK BUTTON EXPANSION & PLAYLIST LOCATE PULSE
+    // -------------------------------------------------------------------------
+    var stV235 = document.createElement('style');
+    stV235.id = 'jennyStyleV235';
+    stV235.textContent = [
+        /* Keep #trackSearchInput.parentElement as a single flex row so mountPlaylistStripDOMV71 inserts below it */
+        '.jenny-search-wrap-v73.jenny-search-flex-row-v235 {',
+        '  display: flex !important;',
+        '  align-items: center !important;',
+        '  gap: 6px !important;',
+        '  width: 100% !important;',
+        '  box-sizing: border-box !important;',
+        '  position: relative !important;',
+        '}',
+        '.jenny-search-wrap-v73.jenny-search-flex-row-v235 #trackSearchInput {',
+        '  flex: 1 1 auto !important;',
+        '  min-width: 0 !important;',
+        '  width: auto !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        '.jenny-search-wrap-v73.jenny-search-flex-row-v235 #btnClearTrackSearchV73 {',
+        '  position: relative !important;',
+        '  right: auto !important;',
+        '  top: auto !important;',
+        '  transform: none !important;',
+        '  margin-left: -32px !important;',
+        '  margin-right: 2px !important;',
+        '  z-index: 3 !important;',
+        '  flex-shrink: 0 !important;',
+        '}',
+        '#searchRightSlotV235 {',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: flex-end !important;',
+        '  gap: 5px !important;',
+        '  flex-shrink: 0 !important;',
+        '  min-height: 34px !important;',
+        '}',
+        '#searchRightSlotV235 #mainLangToggleBtn {',
+        '  height: 34px !important;',
+        '  padding: 0 10px !important;',
+        '  border-radius: 8px !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  white-space: nowrap !important;',
+        '  font-size: 11.5px !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+
+        /* Smooth width/flex transitions on all deck buttons so they expand fluidly when Refresh vacates */
+        '#mainTransportBar .jenny-sq-btn-v216,',
+        '#mainTransportBar #volUIWrapper,',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216,',
+        '#deckBControlsRowV216 #volUIWrapperDeckBV216 {',
+        '  transition: flex 0.42s cubic-bezier(0.22, 1, 0.36, 1), max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1), padding 0.35s ease, margin 0.35s ease, opacity 0.3s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1) !important;',
+        '}',
+
+        /* Base 9-button state (before RU/EN leaves): Play/Pause slightly accentuated */
+        '#mainTransportBar:not(.jenny-deck-row-expanded-v235) #playPauseBtn,',
+        '#deckBControlsRowV216:not(.jenny-deck-row-expanded-v235) #playPauseBtnDeckBV216 {',
+        '  flex: 1.14 1 0 !important;',
+        '}',
+
+        /* Animation for old Refresh buttons vanishing from bottom deck rows */
+        '.jenny-ref-btn-vacating-v235 {',
+        '  flex: 0 0 0px !important;',
+        '  max-width: 0px !important;',
+        '  min-width: 0px !important;',
+        '  width: 0px !important;',
+        '  padding: 0 !important;',
+        '  margin: 0 !important;',
+        '  border-width: 0 !important;',
+        '  opacity: 0 !important;',
+        '  transform: scale(0.15) translateY(-18px) !important;',
+        '  overflow: hidden !important;',
+        '  pointer-events: none !important;',
+        '}',
+
+        /* Expanded 8-button state under Deck A & Deck B after Refresh moves up to Search bar:
+           60% of the vacated space goes to Prev (+30%), Play/Pause (+15%), Next (+30%),
+           while the other 5 buttons smoothly share the remaining 40%! */
+        '#mainTransportBar.jenny-deck-row-expanded-v235,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 {',
+        '  gap: 4px !important;',
+        '}',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnPrev,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnNext,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnPrevDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnNextDeckBV216 {',
+        '  flex: 1.30 1 0 !important;',
+        '}',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #playPauseBtn,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #playPauseBtnDeckBV216 {',
+        '  flex: 1.32 1 0 !important;',
+        '}',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #volUIWrapper,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnExport,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-specModal,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-favModal,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-eqModal,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #volUIWrapperDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnExportDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnSpecDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnFavDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnEqDeckBV216 {',
+        '  flex: 1.08 1 0 !important;',
+        '}',
+
+        /* Pop-in animation & styling for Refresh buttons when they appear next to Search bar */
+        '@keyframes jennyRefPopInTopV235 {',
+        '  0%   { transform: translateY(16px) scale(0.22); opacity: 0; filter: drop-shadow(0 0 14px #58a6ff); }',
+        '  62%  { transform: translateY(-2px) scale(1.09); opacity: 1; }',
+        '  84%  { transform: translateY(1px) scale(0.97); opacity: 1; }',
+        '  100% { transform: translateY(0) scale(1); opacity: 1; }',
+        '}',
+        '#searchRightSlotV235 .jenny-top-ref-pill-v235 {',
+        '  height: 34px !important;',
+        '  padding: 0 9px !important;',
+        '  border-radius: 8px !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  gap: 4px !important;',
+        '  font-size: 11px !important;',
+        '  font-weight: 800 !important;',
+        '  cursor: pointer !important;',
+        '  user-select: none !important;',
+        '  white-space: nowrap !important;',
+        '  box-sizing: border-box !important;',
+        '  flex: 0 0 auto !important;',
+        '  width: auto !important;',
+        '  min-width: 48px !important;',
+        '  animation: jennyRefPopInTopV235 0.48s cubic-bezier(0.22, 1.35, 0.36, 1) forwards !important;',
+        '}',
+        '#searchRightSlotV235 .jenny-top-ref-pill-v235.ref-audio-v235 {',
+        '  background: rgba(24, 12, 46, 0.94) !important;',
+        '  border: 1.3px solid rgba(168, 85, 247, 0.75) !important;',
+        '  color: #c084fc !important;',
+        '  box-shadow: 0 2px 6px rgba(0,0,0,0.55), inset 0 1px 2px rgba(192,132,252,0.18) !important;',
+        '}',
+        '#searchRightSlotV235 .jenny-top-ref-pill-v235.ref-audio-v235 svg {',
+        '  stroke: #c084fc !important;',
+        '}',
+        '#searchRightSlotV235 .jenny-top-ref-pill-v235.ref-audio-v235 #tracksCount {',
+        '  color: #c084fc !important;',
+        '  font-size: 11px !important;',
+        '  font-weight: 800 !important;',
+        '}',
+        '#searchRightSlotV235 .jenny-top-ref-pill-v235.ref-video-v235 {',
+        '  background: rgba(11, 24, 54, 0.94) !important;',
+        '  border: 1.3px solid rgba(59, 130, 246, 0.78) !important;',
+        '  color: #60a5fa !important;',
+        '  box-shadow: 0 2px 6px rgba(0,0,0,0.55), inset 0 1px 2px rgba(96,165,250,0.18) !important;',
+        '}',
+        '#searchRightSlotV235 .jenny-top-ref-pill-v235.ref-video-v235 svg {',
+        '  stroke: #60a5fa !important;',
+        '}',
+        '#searchRightSlotV235 .jenny-top-ref-pill-v235.ref-video-v235 #tracksCountDeckBV216 {',
+        '  color: #60a5fa !important;',
+        '  font-size: 11px !important;',
+        '  font-weight: 800 !important;',
+        '}',
+
+        /* Vivid pulsing highlight when locating currently playing Audio or Video via Play/Pause Hold */
+        '@keyframes jennyLocateAudioPulseV235 {',
+        '  0%   { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.9), inset 0 0 18px rgba(63, 185, 80, 0.65); transform: scale(1.015); }',
+        '  50%  { box-shadow: 0 0 22px 4px rgba(168, 85, 247, 0.85), inset 0 0 22px rgba(168, 85, 247, 0.55); transform: scale(1.02); }',
+        '  100% { box-shadow: 0 0 12px rgba(115, 65, 190, 0.5); transform: scale(1); }',
+        '}',
+        '@keyframes jennyLocateVideoPulseV235 {',
+        '  0%   { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.95), inset 0 0 18px rgba(88, 166, 255, 0.65); transform: scale(1.015); }',
+        '  50%  { box-shadow: 0 0 22px 4px rgba(59, 130, 246, 0.88), inset 0 0 22px rgba(59, 130, 246, 0.55); transform: scale(1.02); }',
+        '  100% { box-shadow: 0 0 12px rgba(59, 130, 246, 0.5); transform: scale(1); }',
+        '}',
+        '.track-row-capsule.jenny-hold-locate-audio-v235 {',
+        '  border: 2px solid #c084fc !important;',
+        '  background: linear-gradient(90deg, rgba(126, 34, 206, 0.34), rgba(63, 185, 80, 0.18)) !important;',
+        '  animation: jennyLocateAudioPulseV235 0.85s ease-in-out 3 !important;',
+        '}',
+        '.track-row-capsule.jenny-hold-locate-video-v235 {',
+        '  border: 2px solid #60a5fa !important;',
+        '  background: linear-gradient(90deg, rgba(37, 99, 235, 0.36), rgba(56, 189, 248, 0.18)) !important;',
+        '  animation: jennyLocateVideoPulseV235 0.85s ease-in-out 3 !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(stV235);
+
+    // -------------------------------------------------------------------------
+    // 2. MOUNT #searchRightSlotV235 RIGHT NEXT TO #trackSearchInput AND PLACE #mainLangToggleBtn THERE
+    // -------------------------------------------------------------------------
+    window._refreshButtonsRelocatedToSearchV235 = false;
+
+    window.ensureSearchRightSlotAndLangBtnV235 = function() {
+        var sInp = document.getElementById('trackSearchInput');
+        if (!sInp || !sInp.parentElement) return null;
+
+        var outerWrap = sInp.parentElement;
+        outerWrap.classList.add('jenny-search-wrap-v73', 'jenny-search-flex-row-v235');
+
+        var rightSlot = document.getElementById('searchRightSlotV235');
+        if (!rightSlot) {
+            rightSlot = document.createElement('div');
+            rightSlot.id = 'searchRightSlotV235';
+            outerWrap.appendChild(rightSlot);
+        }
+
+        // Keep #btnClearTrackSearchV73 before #searchRightSlotV235 so it sits at the right edge of #trackSearchInput
+        var clrBtn = document.getElementById('btnClearTrackSearchV73');
+        if (clrBtn && clrBtn.parentElement === outerWrap && clrBtn.nextSibling !== rightSlot) {
+            outerWrap.insertBefore(clrBtn, rightSlot);
+        }
+
+        // Keep #topAutoCeilMonitor if present
+        var monEl = document.getElementById('topAutoCeilMonitor');
+        if (monEl && monEl.parentElement === outerWrap && outerWrap.lastElementChild !== monEl) {
+            outerWrap.appendChild(monEl);
+        }
+
+        // Ensure #mainLangToggleBtn exists and sits inside #searchRightSlotV235 until it runs/crawls away
+        var langBtn = document.getElementById('mainLangToggleBtn');
+        if (!langBtn) {
+            langBtn = document.createElement('button');
+            langBtn.id = 'mainLangToggleBtn';
+            langBtn.type = 'button';
+            langBtn.className = 'jenny-lang-btn';
+            langBtn.onclick = function(e) {
+                if (typeof window.toggleLanguage === 'function') window.toggleLanguage(e);
+            };
+        }
+        if (!window._hasLangRunAway) {
+            if (langBtn.parentElement !== rightSlot) {
+                rightSlot.appendChild(langBtn);
+            }
+            langBtn.style.display = 'inline-flex';
+            langBtn.style.opacity = '1';
+            langBtn.style.pointerEvents = 'auto';
+            langBtn.innerHTML = (typeof window.renderDualLangHTML === 'function')
+                ? window.renderDualLangHTML(false)
+                : 'RU / EN';
+        } else {
+            langBtn.style.display = 'none';
+        }
+
+        return rightSlot;
+    };
+
+    // Keep #searchRightSlotV235 visibility synced when modals open/close in updateTopSearchOrMonitorBar
+    var _origUpdateTopBarV235 = window.updateTopSearchOrMonitorBar;
+    if (typeof _origUpdateTopBarV235 === 'function') {
+        window.updateTopSearchOrMonitorBar = function() {
+            var res = _origUpdateTopBarV235.apply(this, arguments);
+            var sInp = document.getElementById('trackSearchInput');
+            var rightSlot = document.getElementById('searchRightSlotV235');
+            var isInpHidden = Boolean(sInp && sInp.style.display === 'none');
+            if (rightSlot) rightSlot.style.display = isInpHidden ? 'none' : 'inline-flex';
+            return res;
+        };
+    }
+
+    // Override applyStaticDOMTranslations so it always keeps #mainLangToggleBtn in #searchRightSlotV235
+    var _origApplyStaticTransV235 = window.applyStaticDOMTranslations;
+    if (typeof _origApplyStaticTransV235 === 'function') {
+        window.applyStaticDOMTranslations = function() {
+            var r = _origApplyStaticTransV235.apply(this, arguments);
+            window.ensureSearchRightSlotAndLangBtnV235();
+            return r;
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. ANIMATED RELOCATION OF REFRESH BUTTONS (🔄 30 & 🔄 887) FROM UNDER DECKS
+    //    TO #searchRightSlotV235 + 60% VACATED SPACE EXPANSION FOR PREV / PLAY / NEXT
+    // -------------------------------------------------------------------------
+    window.syncTopDockedRefreshVisibilityV235 = function() {
+        if (!window._refreshButtonsRelocatedToSearchV235) return;
+        var dState = window._jennyDualDeckV211 || { deckA: true, deckB: false };
+        var cntSpanA = document.getElementById('tracksCount');
+        var refBtnA = document.getElementById('btnRefreshDeckAV235') || (cntSpanA ? cntSpanA.closest('button') : null);
+        var refBtnB = document.getElementById('btnRefreshDeckBV216');
+
+        if (refBtnA) {
+            refBtnA.style.setProperty('display', dState.deckA ? 'inline-flex' : 'none', 'important');
+        }
+        if (refBtnB) {
+            refBtnB.style.setProperty('display', dState.deckB ? 'inline-flex' : 'none', 'important');
+        }
+    };
+
+    window.relocateRefreshButtonsToSearchSlotAnimatedV235 = function() {
+        if (window._refreshButtonsRelocatedToSearchV235) {
+            window.syncTopDockedRefreshVisibilityV235();
+            return;
+        }
+        window._refreshButtonsRelocatedToSearchV235 = true;
+
+        var rightSlot = window.ensureSearchRightSlotAndLangBtnV235();
+        var mainBar = document.getElementById('mainTransportBar');
+        var ctrlB = document.getElementById('deckBControlsRowV216');
+
+        var cntSpanA = document.getElementById('tracksCount');
+        var refBtnA = cntSpanA ? cntSpanA.closest('button') : null;
+        if (refBtnA) refBtnA.id = 'btnRefreshDeckAV235';
+        var refBtnB = document.getElementById('btnRefreshDeckBV216');
+
+        // Phase 1 (0..380ms): Old refresh buttons under Deck B and Deck A shrink & fly up,
+        // while Prev (+30%), Play/Pause (+15%), and Next (+30%) immediately expand to fill the freed space!
+        if (refBtnA) refBtnA.classList.add('jenny-ref-btn-vacating-v235');
+        if (refBtnB) refBtnB.classList.add('jenny-ref-btn-vacating-v235');
+        if (mainBar) mainBar.classList.add('jenny-deck-row-expanded-v235');
+        if (ctrlB) ctrlB.classList.add('jenny-deck-row-expanded-v235');
+
+        // Phase 2 (after 380ms): Move both refresh buttons into #searchRightSlotV235 and play spring pop-in animation!
+        setTimeout(function() {
+            if (!rightSlot) rightSlot = window.ensureSearchRightSlotAndLangBtnV235();
+            if (!rightSlot) return;
+
+            var langBtn = document.getElementById('mainLangToggleBtn');
+            if (langBtn) langBtn.style.display = 'none';
+
+            // Place Video Refresh (🔄 30) and Audio Refresh (🔄 887) into #searchRightSlotV235
+            if (refBtnB) {
+                refBtnB.classList.remove('jenny-ref-btn-vacating-v235', 'jenny-sq-btn-v216', 'deckb-accent-v216');
+                refBtnB.classList.add('jenny-top-ref-pill-v235', 'ref-video-v235');
+                refBtnB.style.cssText = '';
+                rightSlot.appendChild(refBtnB);
+            }
+            if (refBtnA) {
+                refBtnA.classList.remove('jenny-ref-btn-vacating-v235', 'jenny-sq-btn-v216');
+                refBtnA.classList.add('jenny-top-ref-pill-v235', 'ref-audio-v235');
+                refBtnA.style.cssText = '';
+                rightSlot.appendChild(refBtnA);
+            }
+            window.syncTopDockedRefreshVisibilityV235();
+            if (typeof window.syncDualDeckCountersV216 === 'function') {
+                window.syncDualDeckCountersV216();
+            }
+        }, 380);
+    };
+
+    // Hook ensureDual9ButtonBarsDOMV216 so toggling decks preserves top-docked refresh buttons
+    var _origEnsureDual9BarsV235 = window.ensureDual9ButtonBarsDOMV216;
+    if (typeof _origEnsureDual9BarsV235 === 'function') {
+        window.ensureDual9ButtonBarsDOMV216 = function() {
+            var r = _origEnsureDual9BarsV235.apply(this, arguments);
+            if (window._refreshButtonsRelocatedToSearchV235) {
+                var mainBar = document.getElementById('mainTransportBar');
+                var ctrlB = document.getElementById('deckBControlsRowV216');
+                if (mainBar) mainBar.classList.add('jenny-deck-row-expanded-v235');
+                if (ctrlB) ctrlB.classList.add('jenny-deck-row-expanded-v235');
+                window.syncTopDockedRefreshVisibilityV235();
+            }
+            return r;
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. REDESIGNED RU / EN ESCAPE TRAJECTORIES FROM SEARCH BAR SLOT UP TO ⚙️ SETTINGS
+    //    + DOCKING INTO #jennyTopBarRow NEXT TO GUIDE / MANUAL
+    // -------------------------------------------------------------------------
+    // SCENARIO 1: Never clicked for 30s -> Stands on legs (.runaway-actor), sprints along the search bar,
+    //             then leaps with a 540° somersault up into ⚙️ (#btn-settingsModal), while Refresh buttons take its place!
+    window.runAwayLangBadgeToSettings = function() {
+        window.ensureSearchRightSlotAndLangBtnV235();
+        var btn = document.getElementById('mainLangToggleBtn');
+        var gear = document.getElementById('btn-settingsModal');
+        if (!btn || !gear || window._hasLangRunAway) return;
+
+        var startRect = btn.getBoundingClientRect();
+        var gearRect = gear.getBoundingClientRect();
+        if (startRect.width <= 0 && startRect.height <= 0) {
+            var sInp = document.getElementById('trackSearchInput');
+            var sRect = sInp ? sInp.getBoundingClientRect() : { right: (window.innerWidth || 360) - 16, top: 58, width: 64, height: 34 };
+            startRect = { left: Math.max(16, sRect.right - 68), top: sRect.top, width: 64, height: 34 };
+        }
+
+        window._hasLangRunAway = true;
+        if (window._langBuzzInterval) {
+            clearInterval(window._langBuzzInterval);
+            window._langBuzzInterval = null;
+        }
+
+        btn.style.opacity = '0';
+        btn.style.pointerEvents = 'none';
+
+        var actor = document.createElement('div');
+        actor.className = 'runaway-actor';
+        actor.style.left = startRect.left + 'px';
+        actor.style.top = startRect.top + 'px';
+        actor.innerHTML =
+            '<div id="runawayBubble" style="font-size:10px;color:#e3b341;font-weight:bold;margin-bottom:2px;white-space:nowrap;">' + window.tr('💨 Адиос!', '💨 Adios!') + '</div>' +
+            '<div class="jenny-lang-btn" style="white-space:nowrap;padding:4px 8px;border-color:#3fb950;box-shadow:0 0 12px rgba(63,185,80,0.6);">' +
+                (window.renderDualLangHTML ? window.renderDualLangHTML(false) : 'RU / EN') +
+            '</div>' +
+            '<div class="runaway-legs-wrap">' +
+                '<div class="runaway-leg left"></div>' +
+                '<div class="runaway-leg right"></div>' +
+            '</div>';
+        document.body.appendChild(actor);
+        actor.classList.add('lang-buzz-active');
+        try { navigator.vibrate(25); } catch (e) {}
+
+        // Trigger the animated swap of Refresh buttons (🔄 30 & 🔄 887) into the vacated search slot + deck button expansion!
+        setTimeout(function() {
+            window.relocateRefreshButtonsToSearchSlotAnimatedV235();
+        }, 280);
+
+        // Step 1 (360ms): Sprint on legs along the search bar to take a running start
+        setTimeout(function() {
+            actor.classList.remove('lang-buzz-active');
+            var runStartX = Math.max(24, startRect.left - 135);
+            actor.style.transition = 'left 0.72s linear, top 0.72s ease-in-out';
+            actor.style.left = runStartX + 'px';
+            actor.style.top = (startRect.top - 3) + 'px';
+        }, 360);
+
+        // Step 2 (1100ms): Sprint back right toward the gear column
+        setTimeout(function() {
+            var preJumpX = Math.max(40, gearRect.left - 28);
+            actor.style.transition = 'left 0.62s linear, top 0.62s ease-in-out';
+            actor.style.left = preJumpX + 'px';
+            actor.style.top = (startRect.top - 6) + 'px';
+        }, 1100);
+
+        // Step 3 (1740ms): Shout "🤸 Вжух!" and somersault up into the Settings gear ⚙️!
+        setTimeout(function() {
+            var b = document.getElementById('runawayBubble');
+            if (b) b.innerText = window.tr('🤸 Вжух!', '🤸 Wheee!');
+            actor.style.transition = 'left 0.55s ease-in, top 0.55s cubic-bezier(0.2, -0.6, 0.3, 1), transform 0.55s ease-in, opacity 0.55s ease-in';
+            actor.style.left = (gearRect.left - 4) + 'px';
+            actor.style.top = (gearRect.top - 4) + 'px';
+            actor.style.transform = 'rotate(540deg) scale(0.15)';
+            actor.style.opacity = '0.2';
+        }, 1740);
+
+        // Step 4 (2310ms): Gear swallows the badge & docks it into Settings next to Guide/Manual
+        setTimeout(function() {
+            actor.remove();
+            btn.style.display = 'none';
+            gear.classList.add('gear-swallow-anim');
+            try { navigator.vibrate([20, 40, 30]); } catch (e) {}
+            setTimeout(function() { gear.classList.remove('gear-swallow-anim'); }, 650);
+            if (typeof window.dockLangBadgeIntoOpenSettingsV39 === 'function') {
+                window.dockLangBadgeIntoOpenSettingsV39();
+            }
+        }, 2310);
+    };
+
+    // SCENARIO 2: Clicked at least once -> Turns into caterpillar (.crawler-actor), crawls from Search bar up into ⚙️ Settings,
+    //             while Refresh buttons (🔄 30 & 🔄 887) animate into its place and Deck transport buttons expand!
+    window.crawlAwayLangBadgeToSettings = function() {
+        window.ensureSearchRightSlotAndLangBtnV235();
+        var btn = document.getElementById('mainLangToggleBtn');
+        var gear = document.getElementById('btn-settingsModal');
+        if (!btn || !gear || window._hasLangRunAway) return;
+
+        var startRect = btn.getBoundingClientRect();
+        var gearRect = gear.getBoundingClientRect();
+        if (startRect.width <= 0 && startRect.height <= 0) {
+            var sInp = document.getElementById('trackSearchInput');
+            var sRect = sInp ? sInp.getBoundingClientRect() : { right: (window.innerWidth || 360) - 16, top: 58, width: 64, height: 34 };
+            startRect = { left: Math.max(16, sRect.right - 68), top: sRect.top, width: 64, height: 34 };
+        }
+
+        window._hasLangRunAway = true;
+        if (window._langBuzzInterval) {
+            clearInterval(window._langBuzzInterval);
+            window._langBuzzInterval = null;
+        }
+
+        btn.style.opacity = '0';
+        btn.style.pointerEvents = 'none';
+
+        var legsHTML = '<span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span><span class="c-leg"></span>';
+        var crawler = document.createElement('div');
+        crawler.className = 'crawler-actor';
+        crawler.style.left = startRect.left + 'px';
+        crawler.style.top = startRect.top + 'px';
+        crawler.innerHTML =
+            '<div id="crawlerBubble" style="font-size:10px;color:#58a6ff;font-weight:bold;margin-bottom:8px;white-space:nowrap;">' + window.tr('🐛 Ползу в ⚙️...', '🐛 Crawling to ⚙️...') + '</div>' +
+            '<div id="crawlerRotator" class="crawler-rotator" style="transform: rotate(0deg);">' +
+                '<div class="crawler-spine">' +
+                    '<div class="crawler-legs-row side-a">' + legsHTML + '</div>' +
+                    '<div class="jenny-lang-btn" style="white-space:nowrap;padding:3px 7px;border-color:#58a6ff;box-shadow:0 0 10px rgba(88,166,255,0.45);">' +
+                        (window.renderDualLangHTML ? window.renderDualLangHTML(false) : 'RU / EN') +
+                    '</div>' +
+                    '<div class="crawler-legs-row side-b">' + legsHTML + '</div>' +
+                    '<div class="crawler-head-antennae"><span class="c-antenna top"></span><span class="c-antenna bot"></span></div>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(crawler);
+
+        var rotator = document.getElementById('crawlerRotator');
+        var topLaneY = Math.max(6, gearRect.top + 2);
+        var crawlLeftLaneX = Math.max(28, startRect.left - 75);
+
+        // Trigger the animated swap of Refresh buttons into the vacated search slot + deck button expansion!
+        setTimeout(function() {
+            window.relocateRefreshButtonsToSearchSlotAnimatedV235();
+        }, 320);
+
+        // Step 1 (30ms): Turn head with antennae left (180deg) and crawl slightly left along the search bar
+        setTimeout(function() {
+            if (rotator) rotator.style.transform = 'rotate(180deg)';
+        }, 30);
+
+        setTimeout(function() {
+            crawler.style.transition = 'left 0.85s linear';
+            crawler.style.left = crawlLeftLaneX + 'px';
+        }, 200);
+
+        // Step 2 (1080ms): Turn head straight UP (-90deg) and crawl up to the header row
+        setTimeout(function() {
+            if (rotator) rotator.style.transform = 'rotate(-90deg)';
+        }, 1080);
+
+        setTimeout(function() {
+            crawler.style.transition = 'top 1.05s linear';
+            crawler.style.top = topLaneY + 'px';
+        }, 1240);
+
+        // Step 3 (2320ms): Turn head right (0deg) toward the Settings gear ⚙️ and crawl into it
+        setTimeout(function() {
+            if (rotator) rotator.style.transform = 'rotate(0deg)';
+        }, 2320);
+
+        setTimeout(function() {
+            crawler.style.transition = 'left 0.85s linear';
+            crawler.style.left = (gearRect.left - 4) + 'px';
+        }, 2480);
+
+        // Step 4 (3350ms): Dive into Settings gear ⚙️
+        setTimeout(function() {
+            var b = document.getElementById('crawlerBubble');
+            if (b) b.innerText = window.tr('🫡 На месте!', '🫡 Tucked in!');
+            crawler.style.transition = 'left 0.38s ease-in, top 0.38s ease-in, transform 0.38s ease-in, opacity 0.38s ease-in';
+            crawler.style.left = (gearRect.left + 2) + 'px';
+            crawler.style.top = (gearRect.top + 2) + 'px';
+            crawler.style.transform = 'scale(0.12)';
+            crawler.style.opacity = '0.1';
+        }, 3350);
+
+        // Step 5 (3740ms): Gear accepts caterpillar & docks it into Settings next to Guide/Manual
+        setTimeout(function() {
+            crawler.remove();
+            btn.style.display = 'none';
+            gear.classList.add('gear-soft-anim');
+            setTimeout(function() { gear.classList.remove('gear-soft-anim'); }, 550);
+            if (typeof window.dockLangBadgeIntoOpenSettingsV39 === 'function') {
+                window.dockLangBadgeIntoOpenSettingsV39();
+            }
+        }, 3740);
+    };
+
+    // Ensure dockLangBadgeIntoOpenSettingsV39 leaps in from the screen edge right next to Guide / Manual (#jennyTopBarRow)
+    window.dockLangBadgeIntoOpenSettingsV39 = function() {
+        var sm = document.getElementById('settingsModal');
+        var gear = document.getElementById('btn-settingsModal');
+        var topRow = document.getElementById('jennyTopBarRow');
+
+        if (!sm || !sm.classList.contains('open') || !topRow || topRow.children.length < 2) {
+            if (typeof window.syncSettingsLangBtnVisibilityV39 === 'function') {
+                window.syncSettingsLangBtnVisibilityV39(true);
+            }
+            return;
+        }
+
+        var langBtnInSettings = document.getElementById('settingsDockedLangBtn') || topRow.lastElementChild;
+        langBtnInSettings.id = 'settingsDockedLangBtn';
+        langBtnInSettings.style.display = 'flex';
+        langBtnInSettings.style.opacity = '0';
+        langBtnInSettings.style.transition = 'none';
+        langBtnInSettings.innerHTML = window.renderDualLangHTML ? window.renderDualLangHTML(true) : '🌐 RU / EN';
+
+        setTimeout(function() {
+            var slotRect = langBtnInSettings.getBoundingClientRect();
+            var startX = (window.innerWidth || 360) + 12;
+            var startY = Math.max(12, slotRect.top - 28);
+
+            var flyer = document.createElement('div');
+            flyer.style.cssText = 'position:fixed;z-index:999999;pointer-events:none;left:' + startX + 'px;top:' + startY + 'px;transform:scale(0.45) rotate(-18deg);opacity:0.95;transition:all 0.46s cubic-bezier(0.22, 1.35, 0.36, 1);';
+            flyer.innerHTML = '<div class="jenny-lang-btn" style="padding:8px 12px;border-color:#3fb950;box-shadow:0 0 18px #3fb950;background:#0d1117;">' + (window.renderDualLangHTML ? window.renderDualLangHTML(true) : '🌐 RU / EN') + '</div>';
+            document.body.appendChild(flyer);
+
+            requestAnimationFrame(function() {
+                flyer.style.left = slotRect.left + 'px';
+                flyer.style.top = slotRect.top + 'px';
+                flyer.style.transform = 'scale(1) rotate(0deg)';
+            });
+
+            setTimeout(function() {
+                flyer.remove();
+                langBtnInSettings.style.opacity = '1';
+                langBtnInSettings.classList.remove('lang-docked-appear');
+                void langBtnInSettings.offsetWidth;
+                langBtnInSettings.classList.add('lang-docked-appear');
+            }, 460);
+        }, 50);
+    };
+
+    // -------------------------------------------------------------------------
+    // 5. LONG-PRESS (HOLD) ON MAIN PLAY/PAUSE BUTTONS (#playPauseBtn & #playPauseBtnDeckBV216):
+    //    OPENS THE PLAYING AUDIO/VIDEO PLAYLIST AND HIGHLIGHTS THE PLAYING TRACK/VIDEO WITHOUT PAUSING IT!
+    // -------------------------------------------------------------------------
+    window._suppressPlayPauseUntilV235 = 0;
+
+    // Guard both Audio Play/Pause and Video Play/Pause against firing when hold-to-locate just triggered
+    var _origTogglePlayV75_2_V235 = window.togglePlayV75_2;
+    if (typeof _origTogglePlayV75_2_V235 === 'function') {
+        window.togglePlayV75_2 = function(ev) {
+            if (Date.now() < (window._suppressPlayPauseUntilV235 || 0)) {
+                if (ev && ev.stopPropagation) ev.stopPropagation();
+                if (ev && ev.preventDefault) ev.preventDefault();
+                return;
+            }
+            return _origTogglePlayV75_2_V235.apply(this, arguments);
+        };
+        window.togglePlay = window.togglePlayV75_2;
+        window.togglePlayPause = window.togglePlayV75_2;
+    }
+
+    var _origTogglePlayDeckBV216_V235 = window.togglePlayDeckBV216;
+    if (typeof _origTogglePlayDeckBV216_V235 === 'function') {
+        window.togglePlayDeckBV216 = function(ev) {
+            if (Date.now() < (window._suppressPlayPauseUntilV235 || 0)) {
+                if (ev && ev.stopPropagation) ev.stopPropagation();
+                if (ev && ev.preventDefault) ev.preventDefault();
+                return;
+            }
+            return _origTogglePlayDeckBV216_V235.apply(this, arguments);
+        };
+    }
+
+    window.findTrackRowElementInListV235 = function(targetFilename) {
+        if (!targetFilename) return null;
+        var cleanTarget = String(targetFilename).trim();
+        var rows = document.querySelectorAll('#unifiedList .track-row-capsule');
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            var dt = String(r.getAttribute('data-track') || '').trim();
+            if (dt === cleanTarget) return r;
+        }
+        var lowerTarget = cleanTarget.toLowerCase();
+        for (var j = 0; j < rows.length; j++) {
+            var r2 = rows[j];
+            var dt2 = String(r2.getAttribute('data-track') || '').trim().toLowerCase();
+            if (dt2 === lowerTarget) return r2;
+        }
+        return null;
+    };
+
+    window.openAndHighlightPlayingPlaylistV235 = function(whichDeck, ev) {
+        var isVid = (whichDeck === 'video');
+        var targetFn = '';
+        if (isVid) {
+            var st = window._vidStateV130 || {};
+            targetFn = (st.currentTitle && st.currentTitle !== '🎬 Дека Б: Выбери видео')
+                ? String(st.currentTitle).trim()
+                : (window.getCurrentDeckTargetFilenameV218 ? window.getCurrentDeckTargetFilenameV218('video') : '');
+        } else {
+            targetFn = window.currentPlayingTrack
+                ? String(window.currentPlayingTrack).trim()
+                : (window.getCurrentDeckTargetFilenameV218 ? window.getCurrentDeckTargetFilenameV218('audio') : '');
+        }
+
+        if (!targetFn) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(isVid ? '🎬 В Деке Б сейчас не выбрано видео' : '🎵 В Деке А сейчас не выбран трек', ev);
+            }
+            return;
+        }
+
+        // 1. Close any open modals so the playlist is visible
+        ['settingsModal', 'favModal', 'eqModal', 'specModal', 'themeModal'].forEach(function(id) {
+            var m = document.getElementById(id);
+            if (m) m.classList.remove('open');
+        });
+        if (typeof window.closeAllV71Modals === 'function') {
+            try { window.closeAllV71Modals(); } catch (e) {}
+        }
+        // If full-screen in-app video player is covering the screen, switch it to PiP mini-window so playlist is visible
+        var vSt = window._vidStateV130 || {};
+        if (vSt.active && !vSt.pipMode && !vSt.desktopOverlay && typeof window.toggleVideoPipModeV130 === 'function') {
+            try { window.toggleVideoPipModeV130(); } catch (e) {}
+        }
+
+        // 2. Clear search filter if active so the target track/video isn't hidden
+        var sInp = document.getElementById('trackSearchInput');
+        if (sInp && sInp.value) {
+            sInp.value = '';
+            if (typeof window.filterTracks === 'function') window.filterTracks('');
+        }
+
+        // 3. Switch to the playlist tab where the playing audio or video belongs
+        if (isVid) {
+            var vidTab = window._activeVideoQueueContextV229 || 'videos';
+            var favArr = Array.isArray(window.favorites) ? window.favorites : [];
+            if (vidTab === 'fav' && favArr.indexOf(targetFn) !== -1) {
+                window._favSubTabV216 = 'video';
+                window._userExplicitFavSubTabV218 = true;
+                if (typeof window.selectPlaylistTabV71 === 'function') window.selectPlaylistTabV71('fav');
+            } else if (String(vidTab).indexOf('pl_') === 0) {
+                if (typeof window.selectPlaylistTabV71 === 'function') window.selectPlaylistTabV71(vidTab);
+            } else {
+                if (typeof window.selectPlaylistTabV71 === 'function') window.selectPlaylistTabV71('videos');
+            }
+
+            if (!window.findTrackRowElementInListV235(targetFn)) {
+                if (typeof window.selectPlaylistTabV71 === 'function') window.selectPlaylistTabV71('videos');
+            }
+        } else {
+            var qCtx = window.playingQueueContextV73 || {};
+            var audTab = qCtx.tabId || window.activePlaylistTabV71 || 'all';
+            if (audTab === 'videos') audTab = 'all';
+
+            if (audTab === 'fav') {
+                var favAudArr = Array.isArray(window.favorites) ? window.favorites : [];
+                if (favAudArr.indexOf(targetFn) !== -1) {
+                    window._favSubTabV216 = 'audio';
+                    window._userExplicitFavSubTabV218 = true;
+                } else {
+                    audTab = 'all';
+                }
+            } else if (audTab === 'artists' && qCtx.artist) {
+                window.selectedArtistV71 = qCtx.artist;
+            } else if (audTab === 'albums' && qCtx.album) {
+                window.selectedAlbumV71 = qCtx.album;
+            }
+
+            if (typeof window.selectPlaylistTabV71 === 'function') {
+                window.selectPlaylistTabV71(audTab);
+            }
+            if (!window.findTrackRowElementInListV235(targetFn) && audTab !== 'all') {
+                if (typeof window.selectPlaylistTabV71 === 'function') {
+                    window.selectPlaylistTabV71('all');
+                }
+            }
+        }
+
+        // 4. Scroll to & highlight the target row in #unifiedList
+        setTimeout(function() {
+            var row = window.findTrackRowElementInListV235(targetFn);
+            if (!row) return;
+
+            document.querySelectorAll('.jenny-hold-locate-audio-v235, .jenny-hold-locate-video-v235').forEach(function(el) {
+                el.classList.remove('jenny-hold-locate-audio-v235', 'jenny-hold-locate-video-v235');
+            });
+
+            var cls = isVid ? 'jenny-hold-locate-video-v235' : 'jenny-hold-locate-audio-v235';
+            row.classList.add(cls);
+            try {
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } catch (e) {
+                try { row.scrollIntoView(); } catch (e2) {}
+            }
+
+            if (typeof window.showToast === 'function') {
+                window.showToast((isVid ? '🎬 Видео в плейлисте: ' : '🎵 Трек в плейлисте: ') + targetFn, ev);
+            }
+
+            setTimeout(function() {
+                row.classList.remove(cls);
+            }, 2800);
+        }, 60);
+    };
+
+    // Global capture hold detector for #playPauseBtn (Deck A) and #playPauseBtnDeckBV216 (Deck B)
+    (function installPlayPauseHoldDetectorV235() {
+        var holdTimer = null;
+        var holdDeck = null;
+        var startX = 0;
+        var startY = 0;
+        var holdTriggered = false;
+
+        var clearHold = function() {
+            if (holdTimer) {
+                clearTimeout(holdTimer);
+                holdTimer = null;
+            }
+        };
+
+        document.addEventListener('pointerdown', function(e) {
+            if (!e || !e.target || !e.target.closest) return;
+            var btnA = e.target.closest('#playPauseBtn');
+            var btnB = e.target.closest('#playPauseBtnDeckBV216');
+            if (!btnA && !btnB) return;
+
+            clearHold();
+            holdDeck = btnB ? 'video' : 'audio';
+            startX = Number(e.clientX || 0);
+            startY = Number(e.clientY || 0);
+            holdTriggered = false;
+
+            holdTimer = setTimeout(function() {
+                holdTimer = null;
+                holdTriggered = true;
+                window._suppressPlayPauseUntilV235 = Date.now() + 1400;
+                try { navigator.vibrate(35); } catch (err) {}
+                window.openAndHighlightPlayingPlaylistV235(holdDeck, e);
+            }, 420);
+        }, true);
+
+        document.addEventListener('pointermove', function(e) {
+            if (!holdTimer) return;
+            var dx = Math.abs(Number(e.clientX || 0) - startX);
+            var dy = Math.abs(Number(e.clientY || 0) - startY);
+            if (dx > 18 || dy > 18) {
+                clearHold();
+            }
+        }, true);
+
+        var onEndOrCancel = function(e) {
+            clearHold();
+            if (holdTriggered) {
+                holdTriggered = false;
+                window._suppressPlayPauseUntilV235 = Date.now() + 900;
+                if (e && e.stopPropagation) e.stopPropagation();
+                if (e && e.preventDefault) e.preventDefault();
+            }
+        };
+
+        document.addEventListener('pointerup', onEndOrCancel, true);
+        document.addEventListener('pointercancel', onEndOrCancel, true);
+        document.addEventListener('contextmenu', function(e) {
+            if (e && e.target && e.target.closest && (e.target.closest('#playPauseBtn') || e.target.closest('#playPauseBtnDeckBV216'))) {
+                e.preventDefault();
+            }
+        }, true);
+    })();
+
+    // Initialize search bar right slot & start the 30-second RU/EN timer
+    var initV235 = function() {
+        window.ensureSearchRightSlotAndLangBtnV235();
+        if (!window._hasLangRunAway && typeof window.scheduleLangRunawayTimer === 'function') {
+            window.scheduleLangRunawayTimer();
+        }
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(initV235, 120);
+        });
+    } else {
+        setTimeout(initV235, 120);
+    }
+})();
+/* ================= END JENNY_V235_LANG_SEARCH_SLOT_REFRESH_SWAP_AND_PLAY_HOLD_LOCATE_PATCH ================= */
