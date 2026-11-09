@@ -7,7 +7,7 @@ window.executeTrackExportV69 = async function() {
     const btn = document.getElementById('btnExport');
     const oldBtnHtml = btn ? btn.innerHTML : "";
     if (btn) btn.innerText = "⏳";
-    const _activeBrToast = (window.appConfig && window.appConfig.pocketBitrateV77) || "48k";
+    const _activeBrToast = (window.appConfig && window.appConfig.pocketBitrateV77) || "xflac_ultra";
     if (typeof window.showToast === 'function') window.showToast(_activeBrToast.startsWith("xflac") ? "⏳ Рендеринг и сжатие в XFLAC..." : (_activeBrToast === "wav_pcm" ? "⏳ Сохранение в чистый WAV..." : "⏳ Рендеринг в OPUS..."));
 
     try {
@@ -605,7 +605,7 @@ window.exportCurrentTrack = function() {
     };
 
     renderGrid();
-    if (typeof window.selectExportBitrateV79 === 'function') window.selectExportBitrateV79((window.appConfig && window.appConfig.pocketBitrateV77) || 'xflac_psycho');
+    if (typeof window.selectExportBitrateV79 === 'function') window.selectExportBitrateV79((window.appConfig && window.appConfig.pocketBitrateV77) || 'xflac_ultra');
     if (typeof window.selectExportSampleRateV86 === 'function') window.selectExportSampleRateV86((window.appConfig && window.appConfig.exportSampleRateV86) || 'orig');
     if (typeof window.selectExportBitDepthV157 === 'function') window.selectExportBitDepthV157((window.appConfig && window.appConfig.exportBitDepthV157) || 'orig');
     if (typeof window.bindSrAndBdButtonsV161 === 'function') window.bindSrAndBdButtonsV161();
@@ -621,7 +621,7 @@ window.updateExportConfirmBtnLabelV79 = function() {
     const confirmBtn = document.getElementById('btnExpConfirmRunV69');
     if (!confirmBtn) return;
     const activeCards = document.querySelectorAll('#expModalGridV69 .exp-chk-card-v69.active-card-v69').length;
-    const br = (window.appConfig && window.appConfig.pocketBitrateV77) || '48k';
+    const br = (window.appConfig && window.appConfig.pocketBitrateV77) || 'xflac_ultra';
     const spd = parseFloat(window._forcedExportSpeedV79 || 0);
     const spdTxt = spd > 0 ? `x${spd}` : 'Тек.';
     confirmBtn.textContent = `💾 Экспорт (${activeCards}) • ${br} • ${spdTxt}`;

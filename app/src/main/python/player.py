@@ -10796,3 +10796,354 @@ def api_youtube_download_v230():
         except Exception:
             pass
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+# ==============================================================================
+# === 🧬🔍 JENNY V234 (#329): RESTORE FULL XFLAC (XFC3 + LZMA2) & JENNYV67 CAPSULE
+# ===      TELEMETRY + SOURCE TAG INHERITANCE IN CORE MEDIA INSPECTOR (71956.mp4) ===
+# ==============================================================================
+def _strip_exported_track_suffixes_v234(filename_no_ext: str) -> str:
+    base = re.sub(
+        r'(?:_x\\d+(?:[.,]\\d+)?(?:_[a-z0-9]+)*|_(?:slow|fast)(?:_[a-z0-9]+)*|_(?:jbuf90|jbuf_shift|jbuf|web_lock|web_shift|webapi|vinyl|neutral|pitchlock|bitperfect|psycho|ultra|hifi|restored)|_rev(?:ersed)?)+$',
+        '',
+        filename_no_ext,
+        flags=re.I
+    )
+    return (base or filename_no_ext).strip()
+
+
+def _resolve_inherited_tags_for_derived_track_v234(filename: str, full_path: str, current_tags: dict) -> dict:
+    tags = dict(current_tags or {})
+    has_meaningful = any(k in tags for k in ('TITLE', 'ARTIST', 'ALBUM', 'GENRE', 'DATE', 'YEAR'))
+    if has_meaningful:
+        return tags
+
+    raw_stem, ext = os.path.splitext(filename)
+    clean_stem = _strip_exported_track_suffixes_v234(raw_stem)
+    folder = os.path.dirname(full_path) if full_path else MUSIC_DIR
+
+    # 1. Check custom_tags_db_v74 for matching stem
+    try:
+        db = load_custom_tags_db_v74()
+        for cand_ext in ('', '.flac', '.mp3', '.wav', '.opus', '.m4a', '.ogg', '.aac', '.xflac'):
+            cand_name = clean_stem + cand_ext
+            if cand_name in db and isinstance(db[cand_name], dict) and db[cand_name]:
+                for k, v in db[cand_name].items():
+                    ks, vs = str(k).strip().upper(), str(v).strip()
+                    if ks and vs and ks != 'ENCODER' and ks not in tags:
+                        tags[ks] = vs
+                if tags:
+                    return tags
+    except Exception:
+        pass
+
+    # 2. Check sibling source audio file in the same folder via FFmpeg
+    try:
+        ff = find_ffmpeg_binary()
+        for cand_ext in ('.flac', '.mp3', '.m4a', '.opus', '.ogg', '.wav', '.aac'):
+            cand_path = os.path.join(folder, clean_stem + cand_ext)
+            if os.path.isfile(cand_path) and os.path.abspath(cand_path) != os.path.abspath(full_path):
+                _, out_s, err_s = _safe_run_cmd_text_v218([ff, '-hide_banner', '-i', cand_path], timeout_sec=3.5)
+                sib_tags = get_merged_track_tags_v74(os.path.basename(cand_path), err_s + out_s)
+                sib_tags.pop('ENCODER', None)
+                if sib_tags:
+                    for k, v in sib_tags.items():
+                        if k not in tags:
+                            tags[k] = v
+                    break
+    except Exception:
+        pass
+
+    # 3. Fallback: parse Artist - Title from clean_stem if still no tags and " - " is present
+    if not tags and ' - ' in clean_stem:
+        parts = clean_stem.split(' - ', 1)
+        left_p = re.sub(r'^\\d+[.\\s_-]+', '', parts[0]).strip()
+        right_p = parts[1].strip()
+        if left_p and right_p:
+            tags['ARTIST'] = left_p
+            tags['TITLE'] = right_p
+
+    return tags
+
+
+def _parse_xflac_and_jrev_inspector_v234(filename: str, full_path: str, size_bytes: int):
+    xflac_custom_meta = None
+    rev_capsule_str = "None (Standard stream)"
+    jrev_stats = None
+
+    # 1. Inspect JENNYV67 reversible trailer if present
+    trailer = None
+    try:
+        trailer = read_jenny_rev_trailer(full_path)
+    except Exception:
+        trailer = None
+
+    if trailer:
+        try:
+            jrev_stats = calc_jrev_audio_stats(full_path, trailer)
+        except Exception:
+            jrev_stats = None
+        try:
+            with open(full_path, 'rb') as rf:
+                rf.seek(trailer["map_offset"])
+                smap = json.loads(_safe_decode_bytes_v218(zlib.decompress(rf.read(trailer["map_len"]))))
+            seams_cnt = len(smap.get("seams", []))
+            spd_val = smap.get("spd", 1.0)
+            kb_total = (trailer["map_len"] + trailer["pocket_len"]) / 1024.0
+            pck_kb = trailer["pocket_len"] / 1024.0
+            rev_capsule_str = f"🧬 JENNYV67 (x{spd_val} | {seams_cnt} швов | {kb_total:.1f} KB, карман {pck_kb:.1f} KB)"
+        except Exception:
+            rev_capsule_str = "🧬 JENNYV67 Capsule"
+
+    # 2. Inspect XFLAC (XFC3 + LZMA2) header if present
+    if size_bytes > 25:
+        try:
+            with open(full_path, 'rb') as xff:
+                xhdr = xff.read(25)
+                if len(xhdr) >= 25 and xhdr[:4] == b'XFC3':
+                    x_flags, x_nf, x_rm_sz, x_cm_sz, x_rl_sz, x_rr_sz = struct.unpack('<BIIIII', xhdr[4:25])
+                    raw_hdr = b''
+                    try:
+                        comp_chunk = xff.read(min(int(x_cm_sz), 65536))
+                        if x_flags & 2:
+                            decomp = lzma.LZMADecompressor()
+                            raw_hdr = decomp.decompress(comp_chunk, max_length=512)
+                        else:
+                            raw_hdr = comp_chunk[:512]
+                    except Exception:
+                        pass
+                    x_sr, x_bits, x_ch = _extract_wav_meta_from_raw_hdr_v157(raw_hdr, x_flags)
+                    if x_sr < 8000 or x_sr > 384000:
+                        x_sr = 44100
+                    xf_audio_bytes = int(trailer["audio_end"]) if (trailer and trailer.get("audio_end")) else size_bytes
+                    wav_orig_bytes = int(x_nf) * x_ch * (x_bits // 8) + 44
+                    dur_s = float(x_nf) / float(x_sr) if x_sr > 0 else 0.0
+                    ratio_pct = (xf_audio_bytes * 100.0) / max(1, wav_orig_bytes)
+                    eff_kbps = int((xf_audio_bytes * 8) / max(0.1, dur_s * 1000))
+                    wav_eq_kbps = int((x_sr * x_ch * x_bits) / 1000)
+                    mm, ss = int(dur_s // 60), dur_s % 60
+                    hh, mm = int(mm // 60), int(mm % 60)
+
+                    fn_low = filename.lower()
+                    if '_ultra.xflac' in fn_low:
+                        gate_lbl = "Gate 15 Ultra • Pitch-OLS + Psycho-LSB"
+                    elif '_psycho.xflac' in fn_low:
+                        gate_lbl = "Gate 25 Psycho • Pitch-OLS + Soft-Shape"
+                    elif '_hifi.xflac' in fn_low:
+                        gate_lbl = "Gate 45 Hi-Fi • Pitch-OLS + Psycho-LSB"
+                    elif '_bitperfect.xflac' in fn_low:
+                        gate_lbl = "BitPerfect 1:1 Lossless • Pitch-OLS"
+                    else:
+                        gate_lbl = "21-tap Pitch-OLS + Psycho-LSB"
+
+                    xflac_custom_meta = {
+                        "container": f"XFLAC (XFC3 + LZMA2) [{ratio_pct:.1f}% от WAV {wav_orig_bytes/(1024*1024):.2f} MB]",
+                        "codec": f"libxflac C++17 ({x_bits}-bit {gate_lbl})",
+                        "sr": f"{x_sr} Hz",
+                        "ch": "mono (1 ch)" if x_ch == 1 else "stereo (2 ch)",
+                        "fmt": f"s{x_bits}p ({x_bits}-bit Direct Time-Domain Wave)",
+                        "dur_str": f"{hh:02d}:{mm:02d}:{ss:05.2f}",
+                        "dur_s": dur_s,
+                        "br": f"{eff_kbps} kb/s (WAV экв. {wav_eq_kbps} kb/s)",
+                        "samples": f"{x_nf:,}".replace(",", " ")
+                    }
+        except Exception:
+            pass
+
+    return xflac_custom_meta, rev_capsule_str, jrev_stats
+
+
+def get_track_meta_v234():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        req = json.loads(_safe_decode_bytes_v218(request.body.read()) or "{}")
+        fn = (req.get('filename') or '').strip()
+        fp = _resolve_any_media_path_v218(fn)
+        if not fn or not fp or not os.path.isfile(fp):
+            response.status = 404
+            return json.dumps({"status": "error", "error": "Файл не найден"}, ensure_ascii=False)
+        ff = find_ffmpeg_binary()
+        _, out_s, err_s = _safe_run_cmd_text_v218([ff, '-hide_banner', '-i', fp], timeout_sec=5.0)
+        raw = err_s + out_s
+        tags = get_merged_track_tags_v74(fn, raw)
+        tags.pop('ENCODER', None)
+        tags = _resolve_inherited_tags_for_derived_track_v234(fn, fp, tags)
+
+        tr = read_jenny_rev_trailer(fp)
+        rev = {"has_rev": False}
+        if tr:
+            try:
+                with open(fp, 'rb') as rf:
+                    rf.seek(tr["map_offset"])
+                    sm = json.loads(_safe_decode_bytes_v218(zlib.decompress(rf.read(tr["map_len"]))))
+                rev = {
+                    "has_rev": True,
+                    "map_bytes": tr["map_len"],
+                    "pocket_bytes": tr["pocket_len"],
+                    "spd": sm.get("spd", 1.0),
+                    "tension": sm.get("tension", 100),
+                    "seams_count": len(sm.get("seams", []))
+                }
+            except Exception:
+                rev = {"has_rev": True, "map_bytes": tr["map_len"], "pocket_bytes": tr["pocket_len"]}
+        return json.dumps({"status": "ok", "filename": fn, "tags": tags, "rev": rev}, ensure_ascii=False)
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+_override_bottle_route_v212('/api/track_meta_v71', 'POST', get_track_meta_v234)
+
+
+def get_track_info_v234():
+    import datetime
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        req = json.loads(_safe_decode_bytes_v218(request.body.read()) or "{}")
+        filename = (req.get('filename') or '').strip()
+        full_path = _resolve_any_media_path_v218(filename)
+        if not filename or not full_path or not os.path.isfile(full_path):
+            response.status = 404
+            return json.dumps({"status": "error", "error": "Файл не найден (или ещё качается в потоке)"}, ensure_ascii=False)
+
+        st = os.stat(full_path)
+        size_bytes = st.st_size
+        size_mb = f"{size_bytes / (1024 * 1024):.2f} MB ({size_bytes:,} B)".replace(",", " ")
+        mtime_str = datetime.datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        ext = os.path.splitext(filename)[1].lower().lstrip('.') or 'raw'
+
+        container_map = {
+            'xflac': 'XFLAC (XFC3 + LZMA2 Hybrid Studio Container)',
+            'opus': 'OGG / Opus Audio Container',
+            'm4a': 'MP4 / ISO Media (Apple Audio)',
+            'mp4': 'MPEG-4 Part 14 (Video/Audio Container)',
+            'mkv': 'Matroska Multimedia Container (MKV)',
+            'avi': 'RIFF Audio Video Interleave (AVI)',
+            'mov': 'Apple QuickTime Movie Container (MOV)',
+            'm4v': 'MPEG-4 Video Container (M4V)',
+            'ts': 'MPEG Transport Stream (TS)',
+            'm2ts': 'Blu-ray BDAV MPEG-2 Transport Stream',
+            'wmv': 'Windows Media Video (ASF/WMV)',
+            'flv': 'Flash Video Container (FLV)',
+            'mp3': 'MPEG-1/2 Audio Layer III',
+            'wav': 'RIFF WAVE (Uncompressed PCM)',
+            'flac': 'Free Lossless Audio Codec',
+            'ogg': 'OGG Vorbis Audio Container',
+            'aac': 'Advanced Audio Coding (ADTS)',
+            'webm': 'WebM Media Audio/Video Container'
+        }
+        container_desc = container_map.get(ext, f"{ext.upper()} Media Stream")
+
+        xflac_custom_meta, rev_capsule_str, jrev_stats = _parse_xflac_and_jrev_inspector_v234(filename, full_path, size_bytes)
+
+        ffmpeg_bin = find_ffmpeg_binary()
+        _, out_s, err_s = _safe_run_cmd_text_v218([ffmpeg_bin, '-hide_banner', '-i', full_path], timeout_sec=5.0)
+        raw_info = err_s + out_s
+
+        dur_match = re.search(r"Duration:\s*(\d+:\d+:\d+\.\d+)", raw_info)
+        duration_str = dur_match.group(1) if dur_match else "—"
+        dur_seconds = 0.0
+        if dur_match:
+            parts = duration_str.split(':')
+            dur_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        if dur_seconds <= 0 and not xflac_custom_meta:
+            try:
+                with open(full_path, 'rb') as hf:
+                    dur_seconds = _parse_header_duration_bytes_v218(hf.read(131072))
+                if dur_seconds > 0:
+                    hh = int(dur_seconds // 3600)
+                    mm = int((dur_seconds % 3600) // 60)
+                    ss = dur_seconds % 60
+                    duration_str = f"{hh:02d}:{mm:02d}:{ss:05.2f}"
+            except Exception:
+                pass
+
+        br_match = re.search(r"bitrate:\s*(\d+\s*kb/s)", raw_info)
+        bitrate_str = br_match.group(1) if br_match else (
+            f"{int((size_bytes * 8) / dur_seconds / 1000)} kb/s (CBR/VBR calc)" if dur_seconds > 0 else "—"
+        )
+
+        codec_str, sr_str, ch_str, fmt_str = ext.upper(), "48000 Hz", "stereo (2 ch)", "fltp (32-bit float)"
+        v_streams = re.findall(r"Stream #\d+:\d+.*?: Video:\s*([^\n]+)", raw_info)
+        a_streams = re.findall(r"Stream #\d+:\d+.*?: Audio:\s*([^\n]+)", raw_info)
+
+        if a_streams:
+            s_line = a_streams[0]
+            s_parts = [p.strip() for p in s_line.split(',')]
+            if len(s_parts) >= 1:
+                codec_str = s_parts[0]
+            for p in s_parts[1:]:
+                if 'Hz' in p:
+                    sr_str = p
+                elif any(k in p for k in ('stereo', 'mono', '5.1', '7.1', 'channels', 'ch')):
+                    ch_str = p
+                elif any(p.startswith(fp) for fp in ('fltp', 'flt', 's16', 's24', 's32', 'dblp', 'u8')):
+                    if '24 bit' in p or 'pcm_s24' in codec_str.lower():
+                        fmt_str = 's24le (24-bit Signed Integer PCM)'
+                    elif p.startswith('s16') or 'pcm_s16' in codec_str.lower():
+                        fmt_str = 's16le (16-bit Signed Integer PCM)'
+                    elif p.startswith('s32') or 'pcm_s32' in codec_str.lower():
+                        fmt_str = 's32le (32-bit Signed Integer PCM)'
+                    else:
+                        fmt_str = p
+            if len(a_streams) > 1:
+                codec_str = f"{codec_str} (Аудиодорожек: {len(a_streams)})"
+
+        if v_streams:
+            v_short = v_streams[0].split(',')[0].strip()
+            res_m = re.search(r"\b(\d{3,4}x\d{3,4})\b", v_streams[0])
+            res_s = f" [{res_m.group(1)}]" if res_m else ""
+            codec_str = f"🎬 {v_short}{res_s} + 🔊 {codec_str}"
+
+        sr_num = int(re.sub(r"\D", "", sr_str) or "48000")
+        total_samples = f"{int(dur_seconds * sr_num):,}".replace(",", " ") if dur_seconds > 0 else "—"
+
+        if jrev_stats and (dur_seconds <= 0 or duration_str == "—"):
+            dur_seconds, duration_str, bitrate_str, total_samples = jrev_stats
+
+        if xflac_custom_meta:
+            container_desc = xflac_custom_meta["container"]
+            codec_str = xflac_custom_meta["codec"]
+            sr_str = xflac_custom_meta["sr"]
+            ch_str = xflac_custom_meta["ch"]
+            fmt_str = xflac_custom_meta["fmt"]
+            duration_str = xflac_custom_meta["dur_str"]
+            bitrate_str = xflac_custom_meta["br"]
+            total_samples = xflac_custom_meta["samples"]
+            if not raw_info or "Invalid data found" in raw_info:
+                raw_info = (
+                    f"[XFLAC Native Inspector V234]\n"
+                    f"File: {filename}\n"
+                    f"Container: {container_desc}\n"
+                    f"Codec: {codec_str}\n"
+                    f"Stream #0:0: Audio: {sr_str}, {ch_str}, {fmt_str}\n"
+                    f"Duration: {duration_str}, bitrate: {bitrate_str}\n"
+                    f"Total PCM Samples: {total_samples}\n"
+                    f"Reversible DNA: {rev_capsule_str}\n"
+                )
+
+        tags = get_merged_track_tags_v74(filename, raw_info)
+        tags = _resolve_inherited_tags_for_derived_track_v234(filename, full_path, tags)
+
+        return json.dumps({
+            "status": "ok",
+            "rev_capsule": rev_capsule_str,
+            "filename": filename,
+            "full_path": full_path,
+            "folder": os.path.dirname(full_path),
+            "container": container_desc,
+            "size_str": size_mb,
+            "mtime": mtime_str,
+            "duration": duration_str,
+            "bitrate": bitrate_str,
+            "codec": codec_str,
+            "sample_rate": sr_str,
+            "channels": ch_str,
+            "sample_fmt": fmt_str,
+            "total_samples": total_samples,
+            "tags": tags,
+            "raw_ffmpeg": raw_info[:4000]
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+_override_bottle_route_v212('/api/track_info', 'POST', get_track_info_v234)
+
