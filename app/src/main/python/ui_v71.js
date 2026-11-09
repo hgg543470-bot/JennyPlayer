@@ -25861,7 +25861,6 @@ let vsyncTicks = 0;
     }, 300);
 })();
 /* ================= END JENNY_V219_UNIFIED_PATCH ================= */
-
 /* ================= JENNY_V221_UNIFIED_PATCH (#315):
    1) FIX DESKTOP OVERLAY & IN-APP PLAYER LAYOUT (CLEAR INLINE PIP HEIGHT/WIDTH, ISOLATE OVERLAY DOM, RESTORE ROT90 FULLSCREEN - 71535.mp4)
    2) DESKTOP OVERLAY & MINI-PLAYER PINCH-ZOOM ASPECT RATIO LOCK + STRICT WINDOW-BOUND CONTROLS (71530.mp4)
@@ -26726,55 +26725,91 @@ let vsyncTicks = 0;
 })();
 /* ================= END JENNY_V221_UNIFIED_PATCH ================= */
 
-/* ================= JENNY_V222_REVERSE_BLOB_PATCH (#316): ZERO-PAUSE PROGRESSIVE RAM-BLOB REVERSE ENGINE (71541.mp4) ================= */
+/* ================= JENNY_V223_REVERSE_RAM_QUEUE_PATCH (#317): PURE IN-RAM MULTI-SEGMENT QUEUE & SPEED-ADAPTIVE BUFFER SCALING (71545.mp4) ================= */
 (function() {
-    if (window._jennyV222Installed) return;
-    window._jennyV222Installed = true;
+    if (window._jennyV223Installed) return;
+    window._jennyV223Installed = true;
 
-    window.cleanupRevBlobQueueV222 = function() {
+    window.cleanupRevBlobQueueV223 = function() {
         var st = window._vidStateV130 || {};
-        if (st._revPreloadAbortCtrlV222) {
-            try { st._revPreloadAbortCtrlV222.abort(); } catch (e) {}
-            st._revPreloadAbortCtrlV222 = null;
+        if (st._revPreloadAbortCtrlV223) {
+            try { st._revPreloadAbortCtrlV223.abort(); } catch (e) {}
+            st._revPreloadAbortCtrlV223 = null;
         }
-        if (st._preloadedRevSegV222 && st._preloadedRevSegV222.blobUrl) {
-            try { URL.revokeObjectURL(st._preloadedRevSegV222.blobUrl); } catch (e) {}
+        st._revPreloadingBusyV223 = false;
+        if (Array.isArray(st._revBlobQueueV223)) {
+            st._revBlobQueueV223.forEach(function(item) {
+                if (item && item.blobUrl) {
+                    try { URL.revokeObjectURL(item.blobUrl); } catch (e) {}
+                }
+            });
         }
-        st._preloadedRevSegV222 = null;
-        if (st._activeRevBlobUrlV222) {
-            try { URL.revokeObjectURL(st._activeRevBlobUrlV222); } catch (e) {}
-            st._activeRevBlobUrlV222 = null;
+        st._revBlobQueueV223 = [];
+        if (st._activeRevBlobUrlV223) {
+            try { URL.revokeObjectURL(st._activeRevBlobUrlV223); } catch (e) {}
+            st._activeRevBlobUrlV223 = null;
         }
     };
 
-    // Фоновая предзагрузка следующего куска реверса (14 -> 20 -> 24 сек) прямо в оперативную память браузера (Blob URL)!
-    // Запускается СТРОГО ПОСЛЕ старта текущего куска, чтобы 2 FFmpeg никогда не конкурировали за процессор!
-    window.preloadNextReverseSegmentToRamBlobV222 = function(nextPosSec, chunkStepIndex, sessionId) {
+    // Вычисляет оптимальную длину куска реверса с учётом текущей скорости (1x, 1.5x, 2x, 4x и т.д.):
+    // Чем выше скорость реверса, тем пропорционально длиннее создаётся буфер в RAM!
+    window.computeAdaptiveReverseWindowSecV223 = function(stepIndex, spd) {
+        var effSpd = Math.max(1.0, Math.min(8.0, Number(spd) || 1.0));
+        if (stepIndex === 0) {
+            // Стартовый кусок: ~6 сек реального времени игры (чтобы за это время первый большой кусок гарантированно собрался в RAM)
+            return Number(Math.min(28.0, Math.max(6.0, 5.8 * effSpd)).toFixed(1));
+        }
+        if (stepIndex === 1) {
+            // 1-й предзагруженный кусок в RAM: ~16 сек реального времени игры (при 1.5x = 24 сек, при 2x = 32 сек, при 4x = 55 сек)
+            return Number(Math.min(55.0, Math.max(18.0, 16.0 * effSpd)).toFixed(1));
+        }
+        // 2-й, 3-й и последующие куски в RAM-очереди: ~24 сек реального времени игры (до 65 сек на один кусок!)
+        return Number(Math.min(65.0, Math.max(24.0, 22.0 * effSpd)).toFixed(1));
+    };
+
+    // Конвейерная докачка до 3 больших кусков реверса вперёд в оперативную память смартфона (st._revBlobQueueV223)
+    window.pumpReverseRamBlobQueueV223 = function(sessionId) {
         var st = window._vidStateV130 || {};
         var vd = window.videoDeckV131 || {};
-        if (!st.active || !vd.isReversed || st._revTrackSessionIdV220 !== sessionId) return;
+        if (!st.active || !vd.isReversed || st.userPaused || st._revTrackSessionIdV220 !== sessionId) return;
+        if (st._revPreloadingBusyV223) return;
+
+        if (!Array.isArray(st._revBlobQueueV223)) st._revBlobQueueV223 = [];
+        // Держим в оперативной памяти до 3 готовых больших сегментов вперёд (это 1.5–3 минуты непрерывного реверса в RAM!)
+        if (st._revBlobQueueV223.length >= 3) return;
+
+        var lastQueued = st._revBlobQueueV223.length > 0
+            ? st._revBlobQueueV223[st._revBlobQueueV223.length - 1]
+            : null;
+
+        var nextPosSec = lastQueued
+            ? Number(Math.max(0, lastQueued.anchorPos - lastQueued.winLen).toFixed(1))
+            : Number((st._revNextBoundarySecV223 || 0).toFixed(1));
+
+        var nextStepIdx = lastQueued
+            ? (lastQueued.stepIdx + 1)
+            : ((st._revCurrentStepIdxV223 || 0) + 1);
+
         if (nextPosSec <= 0.3) return;
 
         var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
         if (!rawBaseUrl) return;
 
-        // Прогрессивный размер буфера: 1-й предзагруженный кусок = 14 сек, 2-й = 20 сек, 3-й и далее = 24 сек!
-        var targetWin = (chunkStepIndex <= 1) ? 14.0 : ((chunkStepIndex === 2) ? 20.0 : 24.0);
-        var winLen = Number(Math.min(targetWin, Math.max(1.5, nextPosSec)).toFixed(1));
-        var posClean = Number(nextPosSec.toFixed(1));
+        var curSpd = Number(vd.speed || window._lastRevVideoSpeedV217 || 1.0);
+        var desiredWin = window.computeAdaptiveReverseWindowSecV223(nextStepIdx, curSpd);
+        var winLen = Number(Math.min(desiredWin, Math.max(1.5, nextPosSec)).toFixed(1));
         var aIdx = st.audioTrackIdxV216 || 0;
         var noAud = (st.videoStreamModeV217 === 'v_only') ? '1' : '0';
 
-        if (st._revPreloadAbortCtrlV222) {
-            try { st._revPreloadAbortCtrlV222.abort(); } catch (e) {}
-        }
+        st._revPreloadingBusyV223 = true;
         var ctrl = new AbortController();
-        st._revPreloadAbortCtrlV222 = ctrl;
+        st._revPreloadAbortCtrlV223 = ctrl;
 
         var url = '/api/video/reverse_precache_blob?src=' + encodeURIComponent(rawBaseUrl) +
-            '&pos=' + posClean.toFixed(1) +
+            '&pos=' + nextPosSec.toFixed(1) +
             '&win=' + winLen.toFixed(1) +
             '&aidx=' + aIdx +
+            '&spd=' + curSpd.toFixed(2) +
             '&no_audio=' + noAud +
             '&t=' + Date.now();
 
@@ -26784,21 +26819,27 @@ let vsyncTicks = 0;
                 return res.blob();
             })
             .then(function(blob) {
+                st._revPreloadingBusyV223 = false;
                 if (!blob || blob.size < 1024) return;
                 if (!st.active || !vd.isReversed || st._revTrackSessionIdV220 !== sessionId) return;
-                if (st._preloadedRevSegV222 && st._preloadedRevSegV222.blobUrl) {
-                    try { URL.revokeObjectURL(st._preloadedRevSegV222.blobUrl); } catch (e) {}
-                }
+
                 var bUrl = URL.createObjectURL(blob);
-                st._preloadedRevSegV222 = {
+                st._revBlobQueueV223.push({
                     blobUrl: bUrl,
-                    anchorPos: posClean,
+                    anchorPos: nextPosSec,
                     winLen: winLen,
                     aIdx: aIdx,
-                    stepIdx: chunkStepIndex
-                };
+                    stepIdx: nextStepIdx
+                });
+
+                // Сразу же запускаем предзагрузку СЛЕДУЮЩЕГО сегмента в очередь RAM!
+                setTimeout(function() {
+                    window.pumpReverseRamBlobQueueV223(sessionId);
+                }, 60);
             })
-            .catch(function() {});
+            .catch(function() {
+                st._revPreloadingBusyV223 = false;
+            });
     };
 
     window.startImmediateVideoReverseEngineV217 = function(revSpd, forceReloadTrackOrSeek, explicitStartSec) {
@@ -26828,6 +26869,8 @@ let vsyncTicks = 0;
         window._vidPlayIntentV132 = true;
         window._vidIsBufferingV132 = false;
 
+        // Если реверс уже активно играет эту же дорожку и пользователь просто поменял скорость (например скраббингом 1x -> 1.5x -> 2x) —
+        // меняем playbackRate на лету БЕЗ сброса уже накопленной в RAM очереди сегментов!
         if (!forceReloadTrackOrSeek && wasAlreadyRev && st._playingHardwareRevStreamV219 && !vid.paused && !vid.ended && st._revActiveAudioIdxV220 === (st.audioTrackIdxV216 || 0)) {
             try {
                 vid.defaultPlaybackRate = spd;
@@ -26838,12 +26881,11 @@ let vsyncTicks = 0;
         }
 
         window.stopHardwareReverseTimerV220();
-        window.cleanupRevBlobQueueV222();
+        window.cleanupRevBlobQueueV223();
         st._revTrackSessionIdV220 = (st._revTrackSessionIdV220 || 0) + 1;
         var myRevSession = st._revTrackSessionIdV220;
-        var currentStepIdx = 0;
 
-        var launchReverseWindow = function(anchorPosSec, isInitialMicroChunk) {
+        var launchReverseWindow = function(anchorPosSec, isInitialStart) {
             if (!st.active || !vd.isReversed || st.userPaused || st._revTrackSessionIdV220 !== myRevSession) return;
             if (anchorPosSec <= 0.2) {
                 window.restoreNormalVideoPlaybackV217();
@@ -26856,34 +26898,45 @@ let vsyncTicks = 0;
             var aIdx = st.audioTrackIdxV216 || 0;
             var noAud = (st.videoStreamModeV217 === 'v_only') ? '1' : '0';
             var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
-
-            // Проверяем: готов ли уже предзагруженный в RAM Blob кусок для этой границы!
-            var pre = st._preloadedRevSegV222;
-            var usePreloadedBlob = false;
-            var nextSrcUrl = '';
-            var winLen = 5.0;
+            var curSpdNow = Number(vd.speed || spd || 1.0);
             var cleanAnchor = Number(anchorPosSec.toFixed(1));
 
-            if (!isInitialMicroChunk && pre && pre.blobUrl && pre.aIdx === aIdx && Math.abs(pre.anchorPos - cleanAnchor) <= 1.2) {
-                usePreloadedBlob = true;
-                nextSrcUrl = pre.blobUrl;
-                cleanAnchor = pre.anchorPos;
-                winLen = pre.winLen;
-                currentStepIdx = pre.stepIdx;
-                st._preloadedRevSegV222 = null;
-                if (st._activeRevBlobUrlV222 && st._activeRevBlobUrlV222 !== nextSrcUrl) {
-                    try { URL.revokeObjectURL(st._activeRevBlobUrlV222); } catch (e) {}
+            // 1. Проверяем очередь готовых сегментов в оперативной памяти (st._revBlobQueueV223)
+            var matchedBlobItem = null;
+            if (!isInitialStart && Array.isArray(st._revBlobQueueV223) && st._revBlobQueueV223.length > 0) {
+                while (st._revBlobQueueV223.length > 0) {
+                    var candidate = st._revBlobQueueV223.shift();
+                    if (candidate && candidate.blobUrl && candidate.aIdx === aIdx && Math.abs(candidate.anchorPos - cleanAnchor) <= 1.5) {
+                        matchedBlobItem = candidate;
+                        break;
+                    } else if (candidate && candidate.blobUrl) {
+                        try { URL.revokeObjectURL(candidate.blobUrl); } catch (e) {}
+                    }
                 }
-                st._activeRevBlobUrlV222 = nextSrcUrl;
+            }
+
+            var nextSrcUrl = '';
+            var winLen = 6.0;
+            var stepIdx = 0;
+
+            if (matchedBlobItem) {
+                nextSrcUrl = matchedBlobItem.blobUrl;
+                cleanAnchor = matchedBlobItem.anchorPos;
+                winLen = matchedBlobItem.winLen;
+                stepIdx = matchedBlobItem.stepIdx;
+                if (st._activeRevBlobUrlV223 && st._activeRevBlobUrlV223 !== nextSrcUrl) {
+                    try { URL.revokeObjectURL(st._activeRevBlobUrlV223); } catch (e) {}
+                }
+                st._activeRevBlobUrlV223 = nextSrcUrl;
             } else {
-                // Стартовый кусок делаем 5.0 сек (при 1.5x это 3.3 сек реального времени — с запасом хватает, чтобы в фоне собрать 14-секундный Blob!)
-                currentStepIdx = isInitialMicroChunk ? 0 : (currentStepIdx + 1);
-                var desiredWin = isInitialMicroChunk ? 5.0 : 14.0;
+                stepIdx = isInitialStart ? 0 : ((st._revCurrentStepIdxV223 || 0) + 1);
+                var desiredWin = window.computeAdaptiveReverseWindowSecV223(stepIdx, curSpdNow);
                 winLen = Number(Math.min(desiredWin, Math.max(1.2, cleanAnchor)).toFixed(1));
                 nextSrcUrl = '/api/video/reverse_remux?src=' + encodeURIComponent(rawBaseUrl) +
                     '&pos=' + cleanAnchor.toFixed(1) +
                     '&win=' + winLen.toFixed(1) +
                     '&aidx=' + aIdx +
+                    '&spd=' + curSpdNow.toFixed(2) +
                     '&no_audio=' + noAud +
                     '&t=' + Date.now();
             }
@@ -26893,7 +26946,8 @@ let vsyncTicks = 0;
             st._playingHardwareRevStreamV219 = true;
             st._revAnchorSecV219 = cleanAnchor;
             st._revWinLenV219 = winLen;
-            st._revNextBoundarySecV222 = nextBoundarySec;
+            st._revNextBoundarySecV223 = nextBoundarySec;
+            st._revCurrentStepIdxV223 = stepIdx;
             st._revActiveAudioIdxV220 = aIdx;
             st._revLaunchWallTsV220 = performance.now();
             st._revStreamStartedPlayingV220 = false;
@@ -26910,7 +26964,7 @@ let vsyncTicks = 0;
             if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = (noAud === '1' || st.dspBypass) ? 0.0 : 1.0;
             if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = (noAud === '1') ? 0.0 : (st.dspBypass ? 1.0 : 0.0);
 
-            var preloaderTriggered = false;
+            var pumpTriggered = false;
             var onRevStreamReady = function() {
                 if (st._revTrackSessionIdV220 !== myRevSession) return;
                 st._revStreamStartedPlayingV220 = true;
@@ -26918,22 +26972,22 @@ let vsyncTicks = 0;
                 window._vidIsBufferingV132 = false;
                 window.releaseHeldVideoFrameV220();
 
-                var curSpdNow = vd.speed || spd;
+                var activeSpd = vd.speed || spd;
                 try {
                     vid.preservesPitch = true;
                     vid.webkitPreservesPitch = true;
-                    vid.defaultPlaybackRate = curSpdNow;
-                    vid.playbackRate = curSpdNow;
+                    vid.defaultPlaybackRate = activeSpd;
+                    vid.playbackRate = activeSpd;
                 } catch (e) {}
                 if (!st.userPaused && vid.paused) {
                     vid.play().catch(function(){});
                 }
                 if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
 
-                // КАК ТОЛЬКО текущий кусок реально пошёл играть — запускаем сборку следующего куска (14 -> 20 -> 24 сек) в RAM Blob!
-                if (!preloaderTriggered && nextBoundarySec > 0.3) {
-                    preloaderTriggered = true;
-                    window.preloadNextReverseSegmentToRamBlobV222(nextBoundarySec, currentStepIdx + 1, myRevSession);
+                // Как только текущий кусок пошёл играть — запускаем конвейер наполнения RAM-очереди (до 3 больших кусков вперёд!)
+                if (!pumpTriggered && nextBoundarySec > 0.3) {
+                    pumpTriggered = true;
+                    window.pumpReverseRamBlobQueueV223(myRevSession);
                 }
             };
 
@@ -26941,14 +26995,13 @@ let vsyncTicks = 0;
             vid.addEventListener('playing', onRevStreamReady, { once: true });
 
             vid.src = nextSrcUrl;
-            var curSpdInit = vd.speed || spd;
             try {
                 vid.preservesPitch = true;
                 vid.webkitPreservesPitch = true;
-                vid.defaultPlaybackRate = curSpdInit;
-                vid.playbackRate = curSpdInit;
+                vid.defaultPlaybackRate = curSpdNow;
+                vid.playbackRate = curSpdNow;
             } catch (e) {}
-            vid.play().catch(function(){
+            vid.play().catch(function() {
                 window._vidPlayIntentV132 = !st.userPaused;
             });
         };
@@ -26981,25 +27034,25 @@ let vsyncTicks = 0;
                 return;
             }
 
-            var winLen = Number(st._revWinLenV219 || 5.0);
+            var winLen = Number(st._revWinLenV219 || 6.0);
             var actualDur = (isFinite(vid.duration) && vid.duration > 0.5) ? Math.min(winLen, vid.duration) : winLen;
             var sinceLaunchMs = performance.now() - (st._revLaunchWallTsV220 || 0);
 
-            if (st._revStreamStartedPlayingV220 && (vid.ended || progressed >= actualDur - 0.12) && effTime > 0.25 && sinceLaunchMs > 350) {
-                var nextAnchor = (st._revNextBoundarySecV222 !== undefined) ? st._revNextBoundarySecV222 : effTime;
+            if (st._revStreamStartedPlayingV220 && (vid.ended || progressed >= actualDur - 0.10) && effTime > 0.25 && sinceLaunchMs > 300) {
+                var nextAnchor = (st._revNextBoundarySecV223 !== undefined) ? st._revNextBoundarySecV223 : effTime;
                 launchReverseWindow(nextAnchor, false);
             }
-        }, 50);
+        }, 45);
 
         window.syncVideoPlayerButtonsUIV217();
     };
 
-    var _prevRestoreNormalV221 = window.restoreNormalVideoPlaybackV217;
+    var _prevRestoreNormalV222 = window.restoreNormalVideoPlaybackV217;
     window.restoreNormalVideoPlaybackV217 = function(ev, customTargetFwdSpeed) {
-        window.cleanupRevBlobQueueV222();
-        if (typeof _prevRestoreNormalV221 === 'function') {
-            return _prevRestoreNormalV221.apply(this, arguments);
+        window.cleanupRevBlobQueueV223();
+        if (typeof _prevRestoreNormalV222 === 'function') {
+            return _prevRestoreNormalV222.apply(this, arguments);
         }
     };
 })();
-/* ================= END JENNY_V222_REVERSE_BLOB_PATCH ================= */
+/* ================= END JENNY_V223_REVERSE_RAM_QUEUE_PATCH ================= */
