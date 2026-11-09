@@ -262,3 +262,145 @@ double jv_neon_mv_pass(int w, int h, int* out_mv_cnt) {
 }
 
 } // extern "C"
+
+// JENNY YOUTUBE CORE V230 (libjenny_yt_core.so)
+// Hot-swappable C/C++ native stream policy selector, InnerTube payload builder & signature helper
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+extern "C" {
+
+// Bitmask flags for mode_flags:
+// 1 = Max quality up to ceiling (e.g. <= 1080p: if video max is 480p -> 480p, if 240p -> 240p, if 4K -> 1080p)
+// 2 = Specific quality for Wi-Fi
+// 4 = Specific quality for Mobile cellular network
+static int g_mode_flags      = 1;
+static int g_max_ceiling_h   = 1080;
+static int g_wifi_target_h   = 1080;
+static int g_mobile_target_h = 480;
+static int g_net_type        = 1; // 1 = Wi-Fi, 2 = Mobile, 0 = Auto
+static char g_active_profile[64] = "yt_v1_so";
+static char g_last_decision[256] = "init";
+
+const char* yt_core_get_version(void) {
+    return "1.0.230-arm64-innertube";
+}
+
+const char* yt_core_get_last_decision(void) {
+    return g_last_decision;
+}
+
+void yt_core_set_profile(const char* profile_id) {
+    if (!profile_id) return;
+    strncpy(g_active_profile, profile_id, sizeof(g_active_profile) - 1);
+    g_active_profile[sizeof(g_active_profile) - 1] = '\0';
+}
+
+const char* yt_core_get_profile(void) {
+    return g_active_profile;
+}
+
+void yt_core_set_policy(int mode_flags, int max_ceiling_h, int wifi_target_h, int mobile_target_h, int net_type) {
+    g_mode_flags      = mode_flags;
+    g_max_ceiling_h   = max_ceiling_h > 0 ? max_ceiling_h : 1080;
+    g_wifi_target_h   = wifi_target_h > 0 ? wifi_target_h : 1080;
+    g_mobile_target_h = mobile_target_h > 0 ? mobile_target_h : 480;
+    g_net_type        = net_type;
+}
+
+int yt_core_compute_effective_limit(int mode_flags, int max_ceiling_h, int wifi_target_h, int mobile_target_h, int net_type) {
+    int limit_h = (max_ceiling_h > 0) ? max_ceiling_h : 1080;
+
+    if (net_type == 1 && (mode_flags & 2)) {
+        limit_h = (wifi_target_h > 0) ? wifi_target_h : limit_h;
+        if ((mode_flags & 1) && max_ceiling_h > 0 && limit_h > max_ceiling_h) {
+            limit_h = max_ceiling_h;
+        }
+        return limit_h;
+    }
+
+    if (net_type == 2 && (mode_flags & 4)) {
+        limit_h = (mobile_target_h > 0) ? mobile_target_h : 480;
+        if ((mode_flags & 1) && max_ceiling_h > 0 && limit_h > max_ceiling_h) {
+            limit_h = max_ceiling_h;
+        }
+        return limit_h;
+    }
+
+    if (mode_flags & 1) {
+        return (max_ceiling_h > 0) ? max_ceiling_h : 1080;
+    }
+
+    return limit_h;
+}
+
+int yt_core_select_best_stream_index(
+    const int* heights,
+    const int* is_combined,
+    const int* bitrates,
+    int count,
+    int effective_limit_h,
+    int prefer_combined
+) {
+    if (!heights || count <= 0) return -1;
+    if (effective_limit_h <= 0) effective_limit_h = 1080;
+
+    int best_idx = -1;
+    int best_h = -1;
+    int best_comb = -1;
+    int best_br = -1;
+
+    int max_actual_h = 0;
+    for (int i = 0; i < count; i++) {
+        if (heights[i] > max_actual_h) max_actual_h = heights[i];
+        int h = heights[i];
+        if (h <= 0 || h > effective_limit_h) continue;
+
+        int comb = (is_combined && is_combined[i]) ? 1 : 0;
+        int br = bitrates ? bitrates[i] : 0;
+
+        int is_better = 0;
+        if (h > best_h) {
+            is_better = 1;
+        } else if (h == best_h) {
+            if (prefer_combined && comb > best_comb) {
+                is_better = 1;
+            } else if ((!prefer_combined || comb == best_comb) && br > best_br) {
+                is_better = 1;
+            }
+        }
+
+        if (is_better) {
+            best_idx = i;
+            best_h = h;
+            best_comb = comb;
+            best_br = br;
+        }
+    }
+
+    if (best_idx < 0) {
+        int min_h = 999999;
+        for (int i = 0; i < count; i++) {
+            if (heights[i] > 0 && heights[i] < min_h) {
+                min_h = heights[i];
+                best_idx = i;
+                best_h = heights[i];
+            }
+        }
+    }
+
+    snprintf(
+        g_last_decision,
+        sizeof(g_last_decision),
+        "selected_h=%dp (limit<=%dp, video_max=%dp, profile=%s)",
+        best_h > 0 ? best_h : 0,
+        effective_limit_h,
+        max_actual_h,
+        g_active_profile
+    );
+    return best_idx;
+}
+
+} // extern "C"
