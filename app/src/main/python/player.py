@@ -9536,11 +9536,17 @@ if __name__ == "__main__":
     start_server()
 
 # ==============================================================================
-# === ▶️🧠 JENNY V230 (#325): HOT-SWAPPABLE YOUTUBE .SO CORES & QUALITY POLICY ENGINE ===
+# === ▶️🧠 JENNY V230..V233 (#328): EMBEDDED YT-DLP + VISITORDATA INNERTUBE + LIVE MIRROR FALLBACK + .SO QUALITY ENGINE ===
 # ==============================================================================
 import ssl
+import zipfile
+import io
 
 _YT_CORE_LIB_V230 = None
+_YT_DLP_MODULE_V233 = None
+_YT_DLP_BOOTSTRAPPED_V233 = False
+_YT_VISITOR_DATA_CACHE_V233 = {"token": "", "ts": 0.0}
+
 _YT_CORES_STATE_V230 = {
     "active_core": "yt_v1_so",
     "policy": {
@@ -9557,9 +9563,82 @@ _YT_CORES_STATE_V230 = {
 
 _YT_CORE_REGISTRY_V230 = {}
 _YT_DOWNLOAD_JOBS_V230 = {}
+_YT_LAST_UA_V233 = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+
+def _yt_ssl_ctx_v230():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+def _ensure_yt_dlp_loaded_v233():
+    """
+    Loads yt_dlp baked into app/src/main/python/yt_dlp inside the APK.
+    If running on an older APK before rebuild, self-bootstraps the pure-Python yt_dlp wheel
+    into /data/user/0/com.jenny.player/files/py_yt_dlp with zero external tools.
+    """
+    global _YT_DLP_MODULE_V233, _YT_DLP_BOOTSTRAPPED_V233
+    if _YT_DLP_MODULE_V233 is not None:
+        return _YT_DLP_MODULE_V233
+
+    import sys
+    pkg_dirs = [
+        "/data/user/0/com.jenny.player/files/py_yt_dlp",
+        os.path.join(BASE_DIR, "py_yt_dlp"),
+        BASE_DIR,
+    ]
+    for pd in pkg_dirs:
+        if pd and os.path.isdir(pd) and pd not in sys.path:
+            sys.path.insert(0, pd)
+
+    try:
+        import yt_dlp
+        _YT_DLP_MODULE_V233 = yt_dlp
+        return _YT_DLP_MODULE_V233
+    except Exception:
+        pass
+
+    if _YT_DLP_BOOTSTRAPPED_V233:
+        return None
+    _YT_DLP_BOOTSTRAPPED_V233 = True
+
+    try:
+        target_dir = "/data/user/0/com.jenny.player/files/py_yt_dlp"
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+        except Exception:
+            target_dir = os.path.join(BASE_DIR, "py_yt_dlp")
+            os.makedirs(target_dir, exist_ok=True)
+
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/yt-dlp/json",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=8, context=_yt_ssl_ctx_v230()) as r:
+            meta = json.loads(r.read().decode("utf-8", "ignore"))
+        whl_url = ""
+        for u in (meta.get("urls") or []):
+            if str(u.get("filename") or "").endswith(".whl"):
+                whl_url = u.get("url") or ""
+                break
+        if whl_url:
+            wreq = urllib.request.Request(whl_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(wreq, timeout=20, context=_yt_ssl_ctx_v230()) as wr:
+                whl_bytes = wr.read()
+            with zipfile.ZipFile(io.BytesIO(whl_bytes)) as zf:
+                for member in zf.namelist():
+                    if member.startswith("yt_dlp/"):
+                        zf.extract(member, target_dir)
+            if target_dir not in sys.path:
+                sys.path.insert(0, target_dir)
+            import yt_dlp
+            _YT_DLP_MODULE_V233 = yt_dlp
+            return _YT_DLP_MODULE_V233
+    except Exception:
+        pass
+    return None
 
 def _try_autocompile_yt_core_so_v230():
-    """If clang++ or g++ is available on device/Termux and libjenny_yt_core.so is not yet built, compile it automatically."""
     try:
         src_cands = [
             os.path.join(BASE_DIR, "jenny_yt_core.cpp"),
@@ -9597,6 +9676,7 @@ def _get_yt_core_lib_v230():
     cands = []
     for d in (_get_native_lib_dirs_v140() if "_get_native_lib_dirs_v140" in globals() else []):
         cands.append(os.path.join(d, "libjenny_yt_core.so"))
+        cands.append(os.path.join(d, "libjenny_vcore.so"))
     cands.extend([
         "/data/user/0/com.jenny.player/files/cores/libjenny_yt_core.so",
         os.path.join(BASE_DIR, "libjenny_yt_core.so"),
@@ -9640,7 +9720,7 @@ def _get_yt_core_lib_v230():
 
 def _discover_yt_cores_v230():
     lib = _get_yt_core_lib_v230()
-    so_ver = "1.0.230-arm64"
+    so_ver = "1.0.233-arm64"
     if lib:
         try:
             so_ver = lib.yt_core_get_version().decode("utf-8", "ignore")
@@ -9650,7 +9730,7 @@ def _discover_yt_cores_v230():
     reg = {
         "yt_v1_so": {
             "id": "yt_v1_so",
-            "title": "⚡ YT Core v1.0-so (Android VR • Direct MP4)",
+            "title": "⚡ YT Core v1.0-so (yt-dlp + .so • Android VR)",
             "so_name": "libjenny_yt_core.so",
             "client_key": "ANDROID_VR",
             "version": so_ver,
@@ -9658,7 +9738,7 @@ def _discover_yt_cores_v230():
         },
         "yt_v2_ios": {
             "id": "yt_v2_ios",
-            "title": "🔥 YT Core v1.1-so (iOS High-Bitrate • MP4/HLS)",
+            "title": "🔥 YT Core v1.1-so (yt-dlp + .so • iOS High-Bitrate)",
             "so_name": "libjenny_yt_core.so",
             "client_key": "IOS",
             "version": so_ver,
@@ -9666,7 +9746,7 @@ def _discover_yt_cores_v230():
         },
         "yt_v3_tv": {
             "id": "yt_v3_tv",
-            "title": "📺 YT Core v1.2-so (SmartTV Embedded • 1080p/4K)",
+            "title": "📺 YT Core v1.2-so (yt-dlp + .so • SmartTV / Embed)",
             "so_name": "libjenny_yt_core.so",
             "client_key": "TV_EMBED",
             "version": so_ver,
@@ -9674,7 +9754,7 @@ def _discover_yt_cores_v230():
         },
         "yt_v4_mirror": {
             "id": "yt_v4_mirror",
-            "title": "🌐 YT Core v1.3-api (Piped / Invidious Multi-Node)",
+            "title": "🌐 YT Core v1.3-api (Piped / Invidious Live Mirror Pool)",
             "so_name": "libjenny_yt_core.so",
             "client_key": "PIPED_API",
             "version": so_ver,
@@ -9682,7 +9762,6 @@ def _discover_yt_cores_v230():
         }
     }
 
-    # Scan for any additional custom libjenny_yt_*.so dropped into jniLibs or cores/
     for d in (_get_native_lib_dirs_v140() if "_get_native_lib_dirs_v140" in globals() else []):
         try:
             for fn in sorted(os.listdir(d)):
@@ -9708,7 +9787,6 @@ def _discover_yt_cores_v230():
     return _YT_CORE_REGISTRY_V230
 
 def _detect_network_type_int_v230(client_hint="auto"):
-    """Returns 1 for Wi-Fi, 2 for Mobile cellular internet."""
     h = str(client_hint or "auto").lower().strip()
     if h == "wifi":
         return 1
@@ -9752,7 +9830,6 @@ def _compute_yt_effective_limit_v230(policy, client_net_hint="auto"):
         except Exception:
             pass
 
-    # Pure-Python mirror of libjenny_yt_core.so logic:
     limit_h = max_h if max_h > 0 else 1080
     if net_int == 1 and (mode_flags & 2):
         limit_h = wifi_h if wifi_h > 0 else limit_h
@@ -9767,12 +9844,6 @@ def _compute_yt_effective_limit_v230(policy, client_net_hint="auto"):
     return limit_h, net_int, mode_flags
 
 def _select_best_yt_stream_v230(candidates, effective_limit_h, prefer_combined=True):
-    """
-    Uses libjenny_yt_core.so (or exact Python mirror) to pick the best video stream:
-    - Picks highest available resolution <= effective_limit_h.
-    - E.g. if ceiling is 1080p (or 720p) and video's actual max is 480p -> selects 480p!
-    - If video's actual max is 240p -> selects 240p!
-    """
     if not candidates:
         return None, "no_streams"
 
@@ -9792,7 +9863,6 @@ def _select_best_yt_stream_v230(candidates, effective_limit_h, prefer_combined=T
         except Exception:
             pass
 
-    # Pure-Python fallback with identical rules:
     max_actual_h = max((int(c.get("height") or 0) for c in candidates), default=0)
     eligible = [c for c in candidates if 0 < int(c.get("height") or 0) <= int(effective_limit_h)]
     if eligible:
@@ -9823,12 +9893,6 @@ def _extract_youtube_id_v230(text_or_url):
         return m.group(1)
     return None
 
-def _yt_ssl_ctx_v230():
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
-
 def _yt_innertube_search_v230(query_str, max_results=20):
     payload = {
         "context": {
@@ -9853,6 +9917,15 @@ def _yt_innertube_search_v230(query_str, max_results=20):
     results = []
     with urllib.request.urlopen(req, timeout=8, context=_yt_ssl_ctx_v230()) as r:
         data = json.loads(r.read().decode("utf-8", "ignore"))
+
+    # Capture visitorData from search response if present!
+    try:
+        v_tok = ((data.get("responseContext") or {}).get("visitorData")) or ""
+        if v_tok:
+            _YT_VISITOR_DATA_CACHE_V233["token"] = v_tok
+            _YT_VISITOR_DATA_CACHE_V233["ts"] = time.time()
+    except Exception:
+        pass
 
     def _walk_renderers(obj):
         if isinstance(obj, dict):
@@ -9889,15 +9962,146 @@ def _yt_innertube_search_v230(query_str, max_results=20):
     _walk_renderers(data)
     return results
 
-def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
+def _get_fresh_visitor_data_v233(video_id=""):
+    now = time.time()
+    if _YT_VISITOR_DATA_CACHE_V233["token"] and (now - _YT_VISITOR_DATA_CACHE_V233["ts"] < 1800):
+        return _YT_VISITOR_DATA_CACHE_V233["token"]
+
+    urls = [
+        f"https://www.youtube.com/embed/{video_id}" if video_id else "https://www.youtube.com/sw.js_data",
+        "https://www.youtube.com/sw.js_data",
+    ]
+    for u in urls:
+        try:
+            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14) Chrome/126.0.0.0 Mobile"})
+            with urllib.request.urlopen(req, timeout=5, context=_yt_ssl_ctx_v230()) as r:
+                txt = r.read().decode("utf-8", "ignore")
+            m = re.search(r'"VISITOR_DATA"\s*:\s*"([^"]+)"', txt) or re.search(r'"visitorData"\s*:\s*"([^"]+)"', txt)
+            if m:
+                _YT_VISITOR_DATA_CACHE_V233["token"] = m.group(1)
+                _YT_VISITOR_DATA_CACHE_V233["ts"] = now
+                return m.group(1)
+        except Exception:
+            continue
+    return ""
+
+def _yt_extract_via_ytdlp_v233(video_id, preferred_core_id="yt_v1_so"):
     """
-    Queries YouTube InnerTube player endpoint across multiple client profiles (ANDROID_VR, IOS, TV_EMBED)
-    and returns (meta_dict, video_streams_list, best_audio_stream_dict).
+    STAGE 1: Embedded in-APK yt-dlp extractor (handles visitorData, poToken, signatureCipher, n-param).
     """
+    global _YT_LAST_UA_V233
+    yt_dlp_mod = _ensure_yt_dlp_loaded_v233()
+    if not yt_dlp_mod:
+        return None, [], None
+
+    client_map = {
+        "yt_v1_so": ["android_vr", "ios", "web_embedded", "tv", "mweb"],
+        "yt_v2_ios": ["ios", "android_vr", "web_safari", "tv", "mweb"],
+        "yt_v3_tv": ["tv", "web_embedded", "android_vr", "ios"],
+    }
+    clients = client_map.get(preferred_core_id, ["android_vr", "ios", "web_embedded", "tv", "mweb"])
+
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "nocheckcertificate": True,
+        "extract_flat": False,
+        "geo_bypass": True,
+        "socket_timeout": 10,
+        "extractor_args": {
+            "youtube": {
+                "player_client": clients,
+            }
+        }
+    }
+
+    meta = {"video_id": video_id, "title": video_id, "author": "YouTube", "duration_sec": 0}
+    video_streams = []
+    audio_streams = []
+
+    try:
+        with yt_dlp_mod.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+        if not info:
+            return None, [], None
+
+        meta["title"] = info.get("title") or video_id
+        meta["author"] = info.get("uploader") or info.get("channel") or "YouTube"
+        meta["duration_sec"] = int(info.get("duration") or 0)
+
+        for f in (info.get("formats") or []):
+            u = f.get("url")
+            if not u:
+                continue
+            ext = str(f.get("ext") or "").lower()
+            if ext in ("mhtml", "none") or "storyboard" in str(f.get("format_note") or "").lower():
+                continue
+            if f.get("has_drm"):
+                continue
+
+            vcodec = str(f.get("vcodec") or "none")
+            acodec = str(f.get("acodec") or "none")
+            h = int(f.get("height") or 0)
+            tbr = float(f.get("tbr") or f.get("vbr") or f.get("abr") or 0.0)
+            br = int(tbr * 1000) if tbr > 0 else int(f.get("filesize") or f.get("filesize_approx") or 0) // max(1, meta["duration_sec"] or 180)
+            proto = str(f.get("protocol") or "https")
+            hdrs = f.get("http_headers") or {}
+            if hdrs.get("User-Agent"):
+                _YT_LAST_UA_V233 = hdrs["User-Agent"]
+
+            is_hls = ("m3u8" in proto or "m3u8" in u)
+            has_video = (vcodec != "none" and h > 0)
+            has_audio = (acodec != "none" and not is_hls) or (is_hls and has_video)
+
+            if has_video:
+                is_comb = bool(has_audio or is_hls)
+                # Prefer direct HTTP/HTTPS MP4 over HLS and WebM for instant seek & hardware decode
+                bonus = 0
+                if not is_hls:
+                    bonus += 300000
+                if ext == "mp4" or "avc1" in vcodec:
+                    bonus += 200000
+                video_streams.append({
+                    "itag": int(f.get("format_id") if str(f.get("format_id", "")).isdigit() else 0),
+                    "height": h,
+                    "width": int(f.get("width") or 0),
+                    "fps": int(f.get("fps") or 30),
+                    "mime": f"video/{ext or 'mp4'}",
+                    "is_combined": is_comb,
+                    "is_hls": is_hls,
+                    "bitrate": br + bonus,
+                    "raw_bitrate": br,
+                    "url": u,
+                    "ua": hdrs.get("User-Agent") or _YT_LAST_UA_V233,
+                    "profile": f"yt-dlp ({f.get('format_note') or ext})"
+                })
+            elif acodec != "none" and vcodec == "none" and not is_hls:
+                a_bonus = 150000 if (ext in ("m4a", "mp4") or "mp4a" in acodec) else 0
+                audio_streams.append({
+                    "itag": int(f.get("format_id") if str(f.get("format_id", "")).isdigit() else 0),
+                    "mime": f"audio/{ext or 'm4a'}",
+                    "bitrate": br + a_bonus,
+                    "raw_bitrate": br,
+                    "url": u,
+                    "ua": hdrs.get("User-Agent") or _YT_LAST_UA_V233,
+                    "profile": "yt-dlp-audio"
+                })
+    except Exception:
+        return None, [], None
+
+    return meta, video_streams, audio_streams
+
+def _yt_extract_via_innertube_v233(video_id, preferred_core_id="yt_v1_so"):
+    """
+    STAGE 2: Direct InnerTube multi-client with fresh visitorData + embed thirdParty context.
+    """
+    visitor_data = _get_fresh_visitor_data_v233(video_id)
+
     client_profiles = [
         ("ANDROID_VR", {
             "clientName": "ANDROID_VR",
-            "clientVersion": "1.60.19",
+            "clientVersion": "1.61.48",
             "deviceMake": "Oculus",
             "deviceModel": "Quest 3",
             "androidSdkVersion": 32,
@@ -9905,7 +10109,7 @@ def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
             "osVersion": "12L",
             "hl": "ru",
             "gl": "UA"
-        }, "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"),
+        }, "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip", "28"),
         ("IOS", {
             "clientName": "IOS",
             "clientVersion": "19.45.4",
@@ -9915,8 +10119,14 @@ def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
             "osVersion": "18.1.0.22B83",
             "hl": "ru",
             "gl": "UA"
-        }, "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)"),
-        ("ANDROID_TESTSUITE", {
+        }, "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)", "5"),
+        ("TV_EMBED", {
+            "clientName": "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+            "clientVersion": "2.0",
+            "hl": "ru",
+            "gl": "UA"
+        }, "Mozilla/5.0 (PlayStation; PlayStation 5/2.26) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15", "85"),
+        ("ANDROID_VR_LEGACY", {
             "clientName": "ANDROID_TESTSUITE",
             "clientVersion": "1.9",
             "androidSdkVersion": 30,
@@ -9924,38 +10134,50 @@ def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
             "osVersion": "11",
             "hl": "ru",
             "gl": "UA"
-        }, "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip"),
+        }, "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip", "30"),
     ]
 
     if preferred_core_id == "yt_v2_ios":
         client_profiles.sort(key=lambda x: 0 if x[0] == "IOS" else 1)
     elif preferred_core_id == "yt_v3_tv":
-        client_profiles.sort(key=lambda x: 0 if x[0] == "ANDROID_TESTSUITE" else 1)
+        client_profiles.sort(key=lambda x: 0 if x[0] == "TV_EMBED" else 1)
 
     meta = {"video_id": video_id, "title": video_id, "author": "YouTube", "duration_sec": 0}
     video_streams = []
     audio_streams = []
 
-    for prof_name, client_ctx, ua in client_profiles:
+    for prof_name, client_ctx, ua, client_id_num in client_profiles:
         try:
+            ctx_copy = dict(client_ctx)
+            if visitor_data:
+                ctx_copy["visitorData"] = visitor_data
             body = {
-                "context": {"client": client_ctx},
+                "context": {
+                    "client": ctx_copy,
+                    "thirdParty": {"embedUrl": "https://www.youtube.com/"}
+                },
                 "videoId": video_id,
                 "contentCheckOk": True,
                 "racyCheckOk": True
             }
+            hdrs = {
+                "Content-Type": "application/json",
+                "User-Agent": ua,
+                "X-YouTube-Client-Name": client_id_num,
+                "X-YouTube-Client-Version": ctx_copy["clientVersion"],
+                "Origin": "https://www.youtube.com",
+                "Referer": f"https://www.youtube.com/watch?v={video_id}"
+            }
+            if visitor_data:
+                hdrs["X-Goog-Visitor-Id"] = visitor_data
+
             req = urllib.request.Request(
                 "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
                 data=json.dumps(body).encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json",
-                    "User-Agent": ua,
-                    "X-YouTube-Client-Name": "28" if prof_name == "ANDROID_VR" else ("5" if prof_name == "IOS" else "30"),
-                    "X-YouTube-Client-Version": client_ctx["clientVersion"]
-                },
+                headers=hdrs,
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=8, context=_yt_ssl_ctx_v230()) as r:
+            with urllib.request.urlopen(req, timeout=7, context=_yt_ssl_ctx_v230()) as r:
                 pdata = json.loads(r.read().decode("utf-8", "ignore"))
 
             vd = pdata.get("videoDetails") or {}
@@ -9978,6 +10200,15 @@ def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
             for f in raw_fmts:
                 u = f.get("url")
                 if not u:
+                    sc = f.get("signatureCipher") or f.get("cipher") or ""
+                    if sc:
+                        qs = urllib.parse.parse_qs(sc)
+                        base_u = (qs.get("url") or [""])[0]
+                        sig = (qs.get("s") or [""])[0]
+                        sp = (qs.get("sp") or ["sig"])[0]
+                        if base_u and not sig:
+                            u = base_u
+                if not u:
                     continue
                 mime = str(f.get("mimeType") or "")
                 h = int(f.get("height") or 0)
@@ -9986,7 +10217,6 @@ def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
                 is_comb = bool(f.get("_is_combined") or ("video/" in mime and "mp4a" in mime))
 
                 if mime.startswith("video/") and h > 0:
-                    # Prefer mp4/avc1 over webm/av01 for broadest hardware compatibility at same height
                     codec_bonus = 200000 if ("mp4" in mime and "avc1" in mime) else (100000 if "mp4" in mime else 0)
                     video_streams.append({
                         "itag": itag,
@@ -9998,6 +10228,7 @@ def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
                         "bitrate": br + codec_bonus,
                         "raw_bitrate": br,
                         "url": u,
+                        "ua": ua,
                         "profile": prof_name
                     })
                 elif mime.startswith("audio/"):
@@ -10008,6 +10239,7 @@ def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
                         "bitrate": br + a_bonus,
                         "raw_bitrate": br,
                         "url": u,
+                        "ua": ua,
                         "profile": prof_name
                     })
 
@@ -10016,7 +10248,201 @@ def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
         except Exception:
             continue
 
-    # Deduplicate by height + is_combined (keeping highest bitrate per height)
+    return meta, video_streams, audio_streams
+
+def _yt_extract_via_mirrors_v233(video_id):
+    """
+    STAGE 3: Live Mirror Fallback Pool (Piped & Invidious APIs) when YouTube blocks IP or VEVO cipher.
+    """
+    meta = {"video_id": video_id, "title": video_id, "author": "YouTube", "duration_sec": 0}
+    video_streams = []
+    audio_streams = []
+
+    piped_mirrors = [
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.leptons.xyz",
+        "https://pipedapi.nosebs.ru",
+        "https://pipedapi.ducks.party",
+        "https://api.piped.private.coffee",
+    ]
+    for base in piped_mirrors:
+        try:
+            req = urllib.request.Request(
+                f"{base}/streams/{video_id}",
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=5, context=_yt_ssl_ctx_v230()) as r:
+                d = json.loads(r.read().decode("utf-8", "ignore"))
+            if d.get("title"):
+                meta["title"] = d.get("title")
+                meta["author"] = d.get("uploader") or "YouTube"
+                meta["duration_sec"] = int(d.get("duration") or 0)
+
+            for vs in (d.get("videoStreams") or []):
+                u = vs.get("url")
+                if not u:
+                    continue
+                h = int(vs.get("height") or 0)
+                if h <= 0:
+                    m_q = re.search(r"(\d{3,4})p", str(vs.get("quality") or ""))
+                    if m_q:
+                        h = int(m_q.group(1))
+                if h <= 0:
+                    continue
+                is_comb = not bool(vs.get("videoOnly", True))
+                br = int(vs.get("bitrate") or (h * 1500))
+                mime = str(vs.get("mimeType") or "video/mp4")
+                bonus = 200000 if "mp4" in mime else 0
+                video_streams.append({
+                    "itag": int(vs.get("itag") or 0),
+                    "height": h,
+                    "width": int(vs.get("width") or 0),
+                    "fps": int(vs.get("fps") or 30),
+                    "mime": mime,
+                    "is_combined": is_comb,
+                    "bitrate": br + bonus,
+                    "raw_bitrate": br,
+                    "url": u,
+                    "ua": "Mozilla/5.0",
+                    "profile": f"Mirror ({base.split('//')[-1]})"
+                })
+
+            for aus in (d.get("audioStreams") or []):
+                u = aus.get("url")
+                if not u:
+                    continue
+                br = int(aus.get("bitrate") or 128000)
+                mime = str(aus.get("mimeType") or "audio/mp4")
+                audio_streams.append({
+                    "itag": int(aus.get("itag") or 0),
+                    "mime": mime,
+                    "bitrate": br + (100000 if "mp4" in mime else 0),
+                    "raw_bitrate": br,
+                    "url": u,
+                    "ua": "Mozilla/5.0",
+                    "profile": "Mirror-Audio"
+                })
+
+            if video_streams:
+                return meta, video_streams, audio_streams
+        except Exception:
+            continue
+
+    invidious_mirrors = [
+        "https://inv.nadeko.net",
+        "https://invidious.nerdvpn.de",
+        "https://yewtu.be",
+        "https://invidious.privacyredirect.com",
+    ]
+    for base in invidious_mirrors:
+        try:
+            req = urllib.request.Request(
+                f"{base}/api/v1/videos/{video_id}",
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=5, context=_yt_ssl_ctx_v230()) as r:
+                d = json.loads(r.read().decode("utf-8", "ignore"))
+            if d.get("title"):
+                meta["title"] = d.get("title")
+                meta["author"] = d.get("author") or "YouTube"
+                meta["duration_sec"] = int(d.get("lengthSeconds") or 0)
+
+            for fs in (d.get("formatStreams") or []):
+                u = fs.get("url")
+                if not u:
+                    continue
+                m_q = re.search(r"(\d{3,4})p", str(fs.get("qualityLabel") or fs.get("resolution") or "360p"))
+                h = int(m_q.group(1)) if m_q else 360
+                video_streams.append({
+                    "itag": int(fs.get("itag") or 18),
+                    "height": h,
+                    "width": 0,
+                    "fps": int(fs.get("fps") or 30),
+                    "mime": str(fs.get("type") or "video/mp4").split(";")[0],
+                    "is_combined": True,
+                    "bitrate": h * 2500 + 300000,
+                    "raw_bitrate": h * 2500,
+                    "url": u,
+                    "ua": "Mozilla/5.0",
+                    "profile": f"Invidious ({base.split('//')[-1]})"
+                })
+
+            for af in (d.get("adaptiveFormats") or []):
+                u = af.get("url")
+                if not u:
+                    continue
+                mime = str(af.get("type") or "")
+                br = int(af.get("bitrate") or 0)
+                if mime.startswith("video/"):
+                    m_q = re.search(r"(\d{3,4})p", str(af.get("qualityLabel") or af.get("resolution") or ""))
+                    h = int(m_q.group(1)) if m_q else 0
+                    if h > 0:
+                        video_streams.append({
+                            "itag": int(af.get("itag") or 0),
+                            "height": h,
+                            "width": 0,
+                            "fps": int(af.get("fps") or 30),
+                            "mime": mime.split(";")[0],
+                            "is_combined": False,
+                            "bitrate": br + (200000 if "mp4" in mime else 0),
+                            "raw_bitrate": br,
+                            "url": u,
+                            "ua": "Mozilla/5.0",
+                            "profile": f"Invidious ({base.split('//')[-1]})"
+                        })
+                elif mime.startswith("audio/"):
+                    audio_streams.append({
+                        "itag": int(af.get("itag") or 0),
+                        "mime": mime.split(";")[0],
+                        "bitrate": br + (100000 if "mp4" in mime else 0),
+                        "raw_bitrate": br,
+                        "url": u,
+                        "ua": "Mozilla/5.0",
+                        "profile": "Invidious-Audio"
+                    })
+
+            if video_streams:
+                return meta, video_streams, audio_streams
+        except Exception:
+            continue
+
+    return meta, video_streams, audio_streams
+
+def _yt_innertube_extract_streams_v230(video_id, preferred_core_id="yt_v1_so"):
+    """
+    Unified 3-Stage Stream Extractor (V233):
+    1) If preferred_core_id == 'yt_v4_mirror', tries Live Mirror Pool first, then yt-dlp, then InnerTube.
+    2) Otherwise tries Embedded yt-dlp first -> VisitorData InnerTube -> Live Mirror Pool fallback!
+    """
+    meta = {"video_id": video_id, "title": video_id, "author": "YouTube", "duration_sec": 0}
+    video_streams = []
+    audio_streams = []
+
+    if preferred_core_id == "yt_v4_mirror":
+        stages = [
+            lambda: _yt_extract_via_mirrors_v233(video_id),
+            lambda: _yt_extract_via_ytdlp_v233(video_id, preferred_core_id),
+            lambda: _yt_extract_via_innertube_v233(video_id, preferred_core_id),
+        ]
+    else:
+        stages = [
+            lambda: _yt_extract_via_ytdlp_v233(video_id, preferred_core_id),
+            lambda: _yt_extract_via_innertube_v233(video_id, preferred_core_id),
+            lambda: _yt_extract_via_mirrors_v233(video_id),
+        ]
+
+    for run_stage in stages:
+        try:
+            m, vs, aus = run_stage()
+            if m and m.get("title") and m.get("title") != video_id:
+                meta = m
+            if vs:
+                video_streams = vs
+                audio_streams = aus or []
+                break
+        except Exception:
+            continue
+
     best_by_key = {}
     for vs in video_streams:
         k = (vs["height"], vs["is_combined"])
@@ -10097,7 +10523,6 @@ def api_youtube_search_v230():
     if not q:
         return json.dumps({"status": "error", "error": "Пустой запрос"}, ensure_ascii=False)
 
-    # Check if user pasted a direct YouTube link or video ID:
     direct_id = _extract_youtube_id_v230(q)
     if direct_id:
         meta, v_streams, a_stream = _yt_innertube_extract_streams_v230(direct_id, _YT_CORES_STATE_V230.get("active_core", "yt_v1_so"))
@@ -10154,7 +10579,7 @@ def api_youtube_resolve_v230():
     if not v_streams:
         return json.dumps({
             "status": "error",
-            "error": "Не удалось извлечь видеопотоки для этого ролика (попробуй сменить ядро YouTube под поиском)"
+            "error": "Не удалось извлечь видеопотоки для этого ролика (проверь интернет или смени ядро YouTube)"
         }, ensure_ascii=False)
 
     chosen, decision_str = _select_best_yt_stream_v230(v_streams, eff_limit_h, prefer_combined=True)
@@ -10165,17 +10590,21 @@ def api_youtube_resolve_v230():
     max_video_h = max(avail_heights) if avail_heights else int(chosen.get("height") or 0)
     sel_h = int(chosen.get("height") or 0)
     is_comb = bool(chosen.get("is_combined"))
+    is_hls = bool(chosen.get("is_hls"))
     v_url = chosen.get("url") or ""
     a_url = (best_audio.get("url") if best_audio else "") if not is_comb else ""
+    ua_str = chosen.get("ua") or _YT_LAST_UA_V233
 
-    # If the chosen stream is progressive (video+audio combined), it can be played directly or via proxy;
-    # if it is adaptive (e.g. 1080p/2K/4K separate video + audio), /api/youtube/live_mux muxes video+audio via FFmpeg on the fly!
-    if is_comb or not a_url:
-        play_url = v_url
+    if is_comb and not is_hls:
+        play_url = (
+            "/api/youtube/stream_proxy?u=" + urllib.parse.quote(v_url, safe="") +
+            "&ua=" + urllib.parse.quote(ua_str, safe="")
+        )
     else:
         play_url = (
             "/api/youtube/live_mux?v=" + urllib.parse.quote(v_url, safe="") +
             "&a=" + urllib.parse.quote(a_url, safe="") +
+            "&ua=" + urllib.parse.quote(ua_str, safe="") +
             "&title=" + urllib.parse.quote(meta.get("title") or vid, safe="")
         )
 
@@ -10195,26 +10624,74 @@ def api_youtube_resolve_v230():
         "audio_url": a_url,
         "play_url": play_url,
         "core_id": _YT_CORES_STATE_V230.get("active_core"),
-        "core_profile": chosen.get("profile", "ANDROID_VR"),
+        "core_profile": chosen.get("profile", "yt-dlp"),
         "core_decision": decision_str,
         "detected_net": "wifi" if net_int == 1 else "mobile"
     }, ensure_ascii=False)
+
+@route('/api/youtube/stream_proxy', method=['GET', 'HEAD'])
+def api_youtube_stream_proxy_v233():
+    target_u = request.query.get("u") or ""
+    ua = request.query.get("ua") or _YT_LAST_UA_V233
+    if not target_u:
+        response.status = 400
+        return b"Missing stream URL"
+
+    req_hdrs = {"User-Agent": ua}
+    in_range = request.headers.get("Range")
+    if in_range:
+        req_hdrs["Range"] = in_range
+
+    try:
+        req = urllib.request.Request(target_u, headers=req_hdrs, method=request.method)
+        upstream = urllib.request.urlopen(req, timeout=15, context=_yt_ssl_ctx_v230())
+        response.status = getattr(upstream, "status", 200) or 200
+        for h_name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+            h_val = upstream.headers.get(h_name)
+            if h_val:
+                response.set_header(h_name, h_val)
+        if not upstream.headers.get("Content-Type"):
+            response.content_type = "video/mp4"
+        if request.method == "HEAD":
+            upstream.close()
+            return b""
+        def _pump():
+            try:
+                while True:
+                    chunk = upstream.read(131072)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                try:
+                    upstream.close()
+                except Exception:
+                    pass
+        return _pump()
+    except urllib.error.HTTPError as he:
+        response.status = he.code
+        return b""
+    except Exception:
+        response.status = 502
+        return b""
 
 @route('/api/youtube/live_mux', method='GET')
 def api_youtube_live_mux_v230():
     v_url = request.query.get("v") or ""
     a_url = request.query.get("a") or ""
+    ua = request.query.get("ua") or _YT_LAST_UA_V233
     start_s = float(request.query.get("start") or 0.0)
     if not v_url:
         response.status = 400
         return b"Missing video stream URL"
 
     ff_bin = _get_ffmpeg_bin_v131() if "_get_ffmpeg_bin_v131" in globals() else "ffmpeg"
-    cmd = [ff_bin, "-hide_banner", "-loglevel", "error"]
+    cmd = [ff_bin, "-hide_banner", "-loglevel", "error", "-user_agent", ua]
     if start_s > 0.5:
         cmd.extend(["-ss", f"{start_s:.2f}"])
     cmd.extend(["-i", v_url])
     if a_url:
+        cmd.extend(["-user_agent", ua])
         if start_s > 0.5:
             cmd.extend(["-ss", f"{start_s:.2f}"])
         cmd.extend(["-i", a_url, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"])
@@ -10290,11 +10767,12 @@ def api_youtube_download_v230():
 
     v_url = chosen.get("url") or ""
     a_url = (best_audio.get("url") if best_audio else "") if not chosen.get("is_combined") else ""
+    ua_str = chosen.get("ua") or _YT_LAST_UA_V233
 
     try:
-        if chosen.get("is_combined") or not a_url:
-            req = urllib.request.Request(v_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=25, context=_yt_ssl_ctx_v230()) as resp, open(tmp_path, "wb") as out_f:
+        if chosen.get("is_combined") and not chosen.get("is_hls") and not a_url:
+            req = urllib.request.Request(v_url, headers={"User-Agent": ua_str})
+            with urllib.request.urlopen(req, timeout=30, context=_yt_ssl_ctx_v230()) as resp, open(tmp_path, "wb") as out_f:
                 while True:
                     buf = resp.read(262144)
                     if not buf:
@@ -10303,15 +10781,13 @@ def api_youtube_download_v230():
             os.replace(tmp_path, out_path)
         else:
             ff_bin = _get_ffmpeg_bin_v131() if "_get_ffmpeg_bin_v131" in globals() else "ffmpeg"
-            cmd = [
-                ff_bin, "-y", "-hide_banner", "-loglevel", "error",
-                "-i", v_url, "-i", a_url,
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart",
-                tmp_path
-            ]
-            subprocess.run(cmd, check=True, timeout=600)
+            cmd = [ff_bin, "-y", "-hide_banner", "-loglevel", "error", "-user_agent", ua_str, "-i", v_url]
+            if a_url:
+                cmd.extend(["-user_agent", ua_str, "-i", a_url, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"])
+            else:
+                cmd.extend(["-c", "copy"])
+            cmd.extend(["-movflags", "+faststart", tmp_path])
+            subprocess.run(cmd, check=True, timeout=900)
             os.replace(tmp_path, out_path)
 
         sz_mb = round(os.path.getsize(out_path) / (1024 * 1024), 2) if os.path.isfile(out_path) else 0.0

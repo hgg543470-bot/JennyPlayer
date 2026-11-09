@@ -29089,12 +29089,11 @@ let vsyncTicks = 0;
 })();
 /* ================= END JENNY_V229_POLISH_PATCH ================= */
 
-/* ================= JENNY_V230_YOUTUBE_STUDIO_AND_SO_CORE_PATCH (#325): YOUTUBE IN SOURCES MENU, HOT-SWAPPABLE .SO CORE DROPDOWN, 3 QUALITY RULES (MAX<=CEILING, WIFI, MOBILE) & LINK EXTRACTOR (71575, 71577, 71581, 71582) ================= */
+/* ================= JENNY_V230_YOUTUBE_STUDIO_AND_SO_CORE_PATCH (#328 / V233): YOUTUBE IN SOURCES MENU, CUSTOM EXPANDABLE HTML DROPDOWNS (NO BROKEN WEBVIEW <SELECT>), YT-DLP + MIRROR POOL + .SO QUALITY ENGINE (71575, 71577, 71581, 71582, 71594, 71597) ================= */
 (function() {
     if (window._jennyV230Installed) return;
     window._jennyV230Installed = true;
 
-    // 1. Неоновая иконка YouTube и регистрация в каталоге источников «ВЫБЕРИ ИСТОЧНИК» (71577.jpg, 71581.jpg)
     window.JENNY_NEON_SVGS_V92 = window.JENNY_NEON_SVGS_V92 || {};
     window.JENNY_NEON_SVGS_V92.youtube =
         '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#ff5555" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(255,85,85,0.68));">' +
@@ -29111,7 +29110,6 @@ let vsyncTicks = 0;
         });
     }
 
-    // Разрешаем закреплять до 6 источников в шапке и один раз добавляем youtube в закреплённые по умолчанию (с возможностью выключать кнопкой ВКЛ / +)
     var _origGetPinnedV230 = window.getPinnedSourcesV91;
     window.getPinnedSourcesV91 = function() {
         window.appConfig = window.appConfig || {};
@@ -29142,7 +29140,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // 2. Состояние и настройки качества YouTube-ядра (сохраняются в localStorage и синхронизируются с libjenny_yt_core.so)
     window.YT_QUALITY_OPTIONS_V230 = [
         { h: 144,  label: '144p (Эконом)' },
         { h: 240,  label: '240p (Низкое)' },
@@ -29154,6 +29151,18 @@ let vsyncTicks = 0;
         { h: 2160, label: '2160p (4K UHD)' }
     ];
 
+    window.YT_NET_MODES_V233 = [
+        { id: 'auto',   label: '📡 Авто (Wi-Fi / Моб.)' },
+        { id: 'wifi',   label: '📶 Только Wi-Fi профиль' },
+        { id: 'mobile', label: '📱 Только Мобильная сеть' }
+    ];
+
+    window.getYtQualityLabelByHV233 = function(h) {
+        var num = Number(h) || 1080;
+        var found = window.YT_QUALITY_OPTIONS_V230.find(function(o) { return Number(o.h) === num; });
+        return found ? found.label : (num + 'p');
+    };
+
     window.loadYtStudioStateV230 = function() {
         var saved = {};
         try {
@@ -29162,10 +29171,10 @@ let vsyncTicks = 0;
         return {
             active_core: saved.active_core || 'yt_v1_so',
             cores: [
-                { id: 'yt_v1_so',     title: '⚡ YT Core v1.0-so (libjenny_yt_core.so • Android VR Direct)' },
-                { id: 'yt_v2_ios',    title: '🔥 YT Core v1.1-so (libjenny_yt_core.so • iOS High-Bitrate)' },
-                { id: 'yt_v3_tv',     title: '📺 YT Core v1.2-so (libjenny_yt_core.so • SmartTV 1080p/4K)' },
-                { id: 'yt_v4_mirror', title: '🌐 YT Core v1.3-api (Piped / Invidious Multi-Node)' }
+                { id: 'yt_v1_so',     title: '⚡ YT Core v1.0-so (yt-dlp + .so • Android VR)' },
+                { id: 'yt_v2_ios',    title: '🔥 YT Core v1.1-so (yt-dlp + .so • iOS High-Bitrate)' },
+                { id: 'yt_v3_tv',     title: '📺 YT Core v1.2-so (yt-dlp + .so • SmartTV / Embed)' },
+                { id: 'yt_v4_mirror', title: '🌐 YT Core v1.3-api (Piped / Invidious Live Mirror Pool)' }
             ],
             policy: {
                 use_max_ceiling: saved.use_max_ceiling !== undefined ? Boolean(saved.use_max_ceiling) : true,
@@ -29177,6 +29186,7 @@ let vsyncTicks = 0;
                 net_mode: saved.net_mode || 'auto'
             },
             qualityPanelOpen: saved.qualityPanelOpen !== undefined ? Boolean(saved.qualityPanelOpen) : true,
+            openDropdownId: null, // 'core', 'max', 'wifi', 'mob', 'net'
             effective_limit_h: 1080,
             detected_net: 'wifi',
             results: [],
@@ -29297,24 +29307,13 @@ let vsyncTicks = 0;
         var st = window._ytStudioStateV230;
         var p = st.policy;
 
-        var coreSel = document.getElementById('ytCoreSelectV230');
-        if (coreSel) st.active_core = coreSel.value;
-
         var chkMax = document.getElementById('ytChkMaxCeilingV230');
-        var selMax = document.getElementById('ytSelMaxCeilingV230');
         var chkWifi = document.getElementById('ytChkWifiQualityV230');
-        var selWifi = document.getElementById('ytSelWifiQualityV230');
         var chkMob = document.getElementById('ytChkMobileQualityV230');
-        var selMob = document.getElementById('ytSelMobileQualityV230');
-        var selNet = document.getElementById('ytSelNetModeV230');
 
         if (chkMax) p.use_max_ceiling = Boolean(chkMax.checked);
-        if (selMax) p.max_ceiling_h = parseInt(selMax.value, 10) || 1080;
         if (chkWifi) p.use_wifi_quality = Boolean(chkWifi.checked);
-        if (selWifi) p.wifi_target_h = parseInt(selWifi.value, 10) || 1080;
         if (chkMob) p.use_mobile_quality = Boolean(chkMob.checked);
-        if (selMob) p.mobile_target_h = parseInt(selMob.value, 10) || 480;
-        if (selNet) p.net_mode = selNet.value || 'auto';
 
         window.saveAndSyncYtPolicyV230();
     };
@@ -29322,15 +29321,73 @@ let vsyncTicks = 0;
     window.toggleYtQualitySubmenuV230 = function() {
         var st = window._ytStudioStateV230;
         st.qualityPanelOpen = !st.qualityPanelOpen;
+        if (!st.qualityPanelOpen) st.openDropdownId = null;
         window.renderYtCoreAndQualityPanelV230();
         window.saveAndSyncYtPolicyV230();
     };
 
-    window.buildQualityOptionsHtmlV230 = function(selectedH) {
-        return window.YT_QUALITY_OPTIONS_V230.map(function(opt) {
-            var sel = (Number(opt.h) === Number(selectedH)) ? ' selected' : '';
-            return '<option value="' + opt.h + '"' + sel + '>' + opt.label + '</option>';
-        }).join('');
+    // КАСТОМНЫЕ РАСКРЫВАЮЩИЕСЯ СПИСКИ ВНУТРИ МОДАЛКИ (100% РАБОТАЮТ В ANDROID WEBVIEW БЕЗ НАТИВНОГО <SELECT>!)
+    window.toggleYtCustomDropdownV233 = function(dropId, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._ytStudioStateV230;
+        st.openDropdownId = (st.openDropdownId === dropId) ? null : dropId;
+        window.renderYtCoreAndQualityPanelV230();
+    };
+
+    window.selectYtCoreOptionV233 = function(coreId, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._ytStudioStateV230;
+        st.active_core = coreId;
+        st.openDropdownId = null;
+        window.renderYtCoreAndQualityPanelV230();
+        window.saveAndSyncYtPolicyV230();
+        if (typeof window.showToast === 'function') {
+            var cObj = (st.cores || []).find(function(x) { return x.id === coreId; });
+            window.showToast('🧠 Выбрано ядро: ' + (cObj ? cObj.title : coreId));
+        }
+    };
+
+    window.selectYtQualityOptionV233 = function(ruleKey, heightVal, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._ytStudioStateV230;
+        var p = st.policy;
+        var h = parseInt(heightVal, 10) || 1080;
+
+        if (ruleKey === 'max') {
+            p.max_ceiling_h = h;
+            p.use_max_ceiling = true;
+        } else if (ruleKey === 'wifi') {
+            p.wifi_target_h = h;
+            p.use_wifi_quality = true;
+        } else if (ruleKey === 'mob') {
+            p.mobile_target_h = h;
+            p.use_mobile_quality = true;
+        }
+
+        st.openDropdownId = null;
+        window.renderYtCoreAndQualityPanelV230();
+        window.saveAndSyncYtPolicyV230();
+    };
+
+    window.selectYtNetModeOptionV233 = function(netMode, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._ytStudioStateV230;
+        st.policy.net_mode = netMode || 'auto';
+        st.openDropdownId = null;
+        window.renderYtCoreAndQualityPanelV230();
+        window.saveAndSyncYtPolicyV230();
+    };
+
+    window.buildCustomQualityGridHtmlV233 = function(ruleKey, currentH, accentColor) {
+        return '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:5px;padding:6px;background:#05080d;border:1px solid ' + accentColor + ';border-radius:8px;margin-top:4px;">' +
+            window.YT_QUALITY_OPTIONS_V230.map(function(opt) {
+                var isAct = (Number(opt.h) === Number(currentH));
+                return '<button type="button" onclick="window.selectYtQualityOptionV233(\'' + ruleKey + '\', ' + opt.h + ', event)" style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;font-size:11px;font-weight:' + (isAct ? '900' : '600') + ';border-radius:6px;background:' + (isAct ? 'rgba(63,185,80,0.22)' : '#0d131d') + ';color:' + (isAct ? '#3fb950' : '#e6edf3') + ';border:1px solid ' + (isAct ? '#3fb950' : '#262c36') + ';text-align:left;cursor:pointer;">' +
+                    '<span>' + opt.label + '</span>' +
+                    '<span>' + (isAct ? '✅' : '') + '</span>' +
+                '</button>';
+            }).join('') +
+        '</div>';
     };
 
     window.renderYtCoreAndQualityPanelV230 = function() {
@@ -29339,73 +29396,118 @@ let vsyncTicks = 0;
         var st = window._ytStudioStateV230;
         var p = st.policy;
         var eff = window.computeLocalEffectiveLimitV230();
+        var openId = st.openDropdownId;
 
-        var coreOptionsHtml = (st.cores || []).map(function(c) {
-            var sel = (c.id === st.active_core) ? ' selected' : '';
-            return '<option value="' + c.id + '"' + sel + '>' + c.title + '</option>';
-        }).join('');
+        var activeCoreObj = (st.cores || []).find(function(c) { return c.id === st.active_core; }) || (st.cores && st.cores[0]) || { id: 'yt_v1_so', title: '⚡ YT Core v1.0-so' };
+        var shortCoreTitle = String(activeCoreObj.title || '').replace(/\s*\(.*?\)\s*/g, '') || activeCoreObj.title;
+
+        var coreMenuHtml = (openId === 'core')
+            ? '<div style="display:flex;flex-direction:column;gap:5px;padding:7px;background:#05080d;border:1px solid #58a6ff;border-radius:8px;margin-top:2px;">' +
+                (st.cores || []).map(function(c) {
+                    var isAct = (c.id === st.active_core);
+                    return '<button type="button" onclick="window.selectYtCoreOptionV233(\'' + c.id + '\', event)" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;font-size:11px;font-weight:' + (isAct ? '900' : '600') + ';border-radius:7px;background:' + (isAct ? 'rgba(88,166,255,0.22)' : '#0d131d') + ';color:' + (isAct ? '#58a6ff' : '#e6edf3') + ';border:1px solid ' + (isAct ? '#58a6ff' : '#262c36') + ';text-align:left;cursor:pointer;">' +
+                        '<span style="flex:1;min-width:0;overflow-wrap:anywhere;">' + c.title + '</span>' +
+                        '<span>' + (isAct ? '✅' : '') + '</span>' +
+                    '</button>';
+                }).join('') +
+              '</div>'
+            : '';
+
+        var netLabel = (p.net_mode === 'wifi')
+            ? '📶 Wi-Fi'
+            : ((p.net_mode === 'mobile') ? '📱 Мобильная' : ('📡 Авто (' + (st.detected_net === 'mobile' ? 'Моб.' : 'Wi-Fi') + ')'));
+
+        var netMenuHtml = (openId === 'net')
+            ? '<div style="display:flex;flex-direction:column;gap:4px;padding:6px;background:#05080d;border:1px solid #58a6ff;border-radius:8px;margin-top:4px;">' +
+                window.YT_NET_MODES_V233.map(function(nm) {
+                    var isAct = (nm.id === p.net_mode);
+                    return '<button type="button" onclick="window.selectYtNetModeOptionV233(\'' + nm.id + '\', event)" style="display:flex;align-items:center;justify-content:space-between;padding:6px 9px;font-size:11px;font-weight:' + (isAct ? '900' : '600') + ';border-radius:6px;background:' + (isAct ? 'rgba(88,166,255,0.2)' : '#0d131d') + ';color:' + (isAct ? '#58a6ff' : '#e6edf3') + ';border:1px solid ' + (isAct ? '#58a6ff' : '#262c36') + ';cursor:pointer;">' +
+                        '<span>' + nm.label + '</span>' +
+                        '<span>' + (isAct ? '✅' : '') + '</span>' +
+                    '</button>';
+                }).join('') +
+              '</div>'
+            : '';
 
         wrap.innerHTML =
-            // Выпадающий список выбора .so ядра прямо под строкой поиска (по аналогии с ядрами P2P!)
-            '<div style="display:flex;align-items:center;gap:6px;background:#0d131d;border:1px solid #30363d;border-radius:8px;padding:6px 8px;">' +
-                '<span style="font-size:11px;color:#ff7b72;font-weight:bold;white-space:nowrap;">🧠 Ядро YT:</span>' +
-                '<select id="ytCoreSelectV230" onchange="window.onYtPolicyChangeV230()" style="flex:1;min-width:0;padding:4px 6px;font-size:11px;font-weight:bold;background:#06080b;color:#58a6ff;border:1px solid #30363d;border-radius:6px;outline:none;">' +
-                    coreOptionsHtml +
-                '</select>' +
-                '<button type="button" onclick="window.toggleYtQualitySubmenuV230()" style="padding:4px 8px;font-size:10.5px;font-weight:bold;border-radius:6px;background:rgba(88,166,255,0.16);border:1px solid #58a6ff;color:#58a6ff;white-space:nowrap;">' +
-                    '🎛️ Качество ' + (st.qualityPanelOpen ? '▴' : '▾') +
-                '</button>' +
+            // Строка выбора .so ядра под строкой поиска (кастомный раскрывающийся список!)
+            '<div style="display:flex;flex-direction:column;gap:4px;">' +
+                '<div style="display:flex;align-items:center;gap:6px;background:#0d131d;border:1px solid #30363d;border-radius:8px;padding:6px 8px;">' +
+                    '<span style="font-size:11px;color:#ff7b72;font-weight:bold;white-space:nowrap;">🧠 Ядро YT:</span>' +
+                    '<button type="button" onclick="window.toggleYtCustomDropdownV233(\'core\', event)" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 8px;font-size:11px;font-weight:bold;background:#06080b;color:#58a6ff;border:1px solid #58a6ff;border-radius:6px;cursor:pointer;text-align:left;">' +
+                        '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + shortCoreTitle + '</span>' +
+                        '<span style="flex-shrink:0;">' + (openId === 'core' ? '▴' : '▾') + '</span>' +
+                    '</button>' +
+                    '<button type="button" onclick="window.toggleYtQualitySubmenuV230()" style="padding:5px 8px;font-size:10.5px;font-weight:bold;border-radius:6px;background:rgba(88,166,255,0.16);border:1px solid #58a6ff;color:#58a6ff;white-space:nowrap;cursor:pointer;">' +
+                        '🎛️ Качество ' + (st.qualityPanelOpen ? '▴' : '▾') +
+                    '</button>' +
+                '</div>' +
+                coreMenuHtml +
             '</div>' +
 
-            // Подменю с 3 галочками и раскрывающимися списками разрешений (144p .. 4K)
+            // Подменю с 3 галочками и кастомными раскрывающимися списками разрешений (144p .. 4K)
             '<div id="ytQualitySubmenuBoxV230" style="display:' + (st.qualityPanelOpen ? 'flex' : 'none') + ';flex-direction:column;gap:6px;background:#0b1018;border:1px solid #262c36;border-radius:9px;padding:8px 10px;">' +
                 // Пункт 1: Максимальное, но не более [1080p ▾]
-                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">' +
-                    '<label style="display:flex;align-items:center;gap:7px;color:#e6edf3;font-size:11.5px;font-weight:bold;cursor:pointer;flex:1;min-width:170px;">' +
-                        '<input type="checkbox" id="ytChkMaxCeilingV230" ' + (p.use_max_ceiling ? 'checked' : '') + ' onchange="window.onYtPolicyChangeV230()">' +
-                        '<span>1. Максимальное, но не более:</span>' +
-                    '</label>' +
-                    '<select id="ytSelMaxCeilingV230" onchange="window.onYtPolicyChangeV230()" style="padding:4px 8px;font-size:11.5px;font-weight:bold;background:#06080b;color:#3fb950;border:1px solid #3fb950;border-radius:6px;outline:none;">' +
-                        window.buildQualityOptionsHtmlV230(p.max_ceiling_h) +
-                    '</select>' +
-                '</div>' +
-                '<div style="font-size:10px;color:#8b949e;line-height:1.3;padding-left:22px;margin-top:-2px;">' +
-                    'Если у видео макс. по факту 480p — скачает 480p; если 240p — 240p; если выше порога — ограничит выбранным (144p..4K).' +
+                '<div style="display:flex;flex-direction:column;gap:3px;">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">' +
+                        '<label style="display:flex;align-items:center;gap:7px;color:#e6edf3;font-size:11.5px;font-weight:bold;cursor:pointer;flex:1;min-width:160px;">' +
+                            '<input type="checkbox" id="ytChkMaxCeilingV230" ' + (p.use_max_ceiling ? 'checked' : '') + ' onchange="window.onYtPolicyChangeV230()" style="width:16px;height:16px;accent-color:#3fb950;">' +
+                            '<span>1. Максимальное, но не более:</span>' +
+                        '</label>' +
+                        '<button type="button" onclick="window.toggleYtCustomDropdownV233(\'max\', event)" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:136px;padding:5px 9px;font-size:11.5px;font-weight:bold;background:#06080b;color:#3fb950;border:1.5px solid #3fb950;border-radius:6px;cursor:pointer;">' +
+                            '<span>' + window.getYtQualityLabelByHV233(p.max_ceiling_h) + '</span>' +
+                            '<span>' + (openId === 'max' ? '▴' : '▾') + '</span>' +
+                        '</button>' +
+                    '</div>' +
+                    (openId === 'max' ? window.buildCustomQualityGridHtmlV233('max', p.max_ceiling_h, '#3fb950') : '') +
+                    '<div style="font-size:10px;color:#8b949e;line-height:1.3;padding-left:22px;">' +
+                        'Если у видео макс. по факту 480p — скачает 480p; если 240p — 240p; если выше порога — ограничит выбранным (144p..4K).' +
+                    '</div>' +
                 '</div>' +
 
                 // Пункт 2: Конкретное качество для Wi-Fi [1080p ▾]
-                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-top:4px;border-top:1px dashed #21262d;">' +
-                    '<label style="display:flex;align-items:center;gap:7px;color:#e6edf3;font-size:11.5px;font-weight:bold;cursor:pointer;flex:1;min-width:170px;">' +
-                        '<input type="checkbox" id="ytChkWifiQualityV230" ' + (p.use_wifi_quality ? 'checked' : '') + ' onchange="window.onYtPolicyChangeV230()">' +
-                        '<span>2. Качество для Wi-Fi:</span>' +
-                    '</label>' +
-                    '<select id="ytSelWifiQualityV230" onchange="window.onYtPolicyChangeV230()" style="padding:4px 8px;font-size:11.5px;font-weight:bold;background:#06080b;color:#58a6ff;border:1px solid #30363d;border-radius:6px;outline:none;">' +
-                        window.buildQualityOptionsHtmlV230(p.wifi_target_h) +
-                    '</select>' +
+                '<div style="display:flex;flex-direction:column;gap:3px;padding-top:4px;border-top:1px dashed #21262d;">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">' +
+                        '<label style="display:flex;align-items:center;gap:7px;color:#e6edf3;font-size:11.5px;font-weight:bold;cursor:pointer;flex:1;min-width:160px;">' +
+                            '<input type="checkbox" id="ytChkWifiQualityV230" ' + (p.use_wifi_quality ? 'checked' : '') + ' onchange="window.onYtPolicyChangeV230()" style="width:16px;height:16px;accent-color:#58a6ff;">' +
+                            '<span>2. Качество для Wi-Fi:</span>' +
+                        '</label>' +
+                        '<button type="button" onclick="window.toggleYtCustomDropdownV233(\'wifi\', event)" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:136px;padding:5px 9px;font-size:11.5px;font-weight:bold;background:#06080b;color:#58a6ff;border:1.5px solid #58a6ff;border-radius:6px;cursor:pointer;">' +
+                            '<span>' + window.getYtQualityLabelByHV233(p.wifi_target_h) + '</span>' +
+                            '<span>' + (openId === 'wifi' ? '▴' : '▾') + '</span>' +
+                        '</button>' +
+                    '</div>' +
+                    (openId === 'wifi' ? window.buildCustomQualityGridHtmlV233('wifi', p.wifi_target_h, '#58a6ff') : '') +
                 '</div>' +
 
                 // Пункт 3: Конкретное качество для мобильного интернета [480p ▾]
-                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-top:4px;border-top:1px dashed #21262d;">' +
-                    '<label style="display:flex;align-items:center;gap:7px;color:#e6edf3;font-size:11.5px;font-weight:bold;cursor:pointer;flex:1;min-width:170px;">' +
-                        '<input type="checkbox" id="ytChkMobileQualityV230" ' + (p.use_mobile_quality ? 'checked' : '') + ' onchange="window.onYtPolicyChangeV230()">' +
-                        '<span>3. Качество для Мобильной сети:</span>' +
-                    '</label>' +
-                    '<select id="ytSelMobileQualityV230" onchange="window.onYtPolicyChangeV230()" style="padding:4px 8px;font-size:11.5px;font-weight:bold;background:#06080b;color:#e3b341;border:1px solid #30363d;border-radius:6px;outline:none;">' +
-                        window.buildQualityOptionsHtmlV230(p.mobile_target_h) +
-                    '</select>' +
+                '<div style="display:flex;flex-direction:column;gap:3px;padding-top:4px;border-top:1px dashed #21262d;">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">' +
+                        '<label style="display:flex;align-items:center;gap:7px;color:#e6edf3;font-size:11.5px;font-weight:bold;cursor:pointer;flex:1;min-width:160px;">' +
+                            '<input type="checkbox" id="ytChkMobileQualityV230" ' + (p.use_mobile_quality ? 'checked' : '') + ' onchange="window.onYtPolicyChangeV230()" style="width:16px;height:16px;accent-color:#e3b341;">' +
+                            '<span>3. Качество для Мобильной сети:</span>' +
+                        '</label>' +
+                        '<button type="button" onclick="window.toggleYtCustomDropdownV233(\'mob\', event)" style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:136px;padding:5px 9px;font-size:11.5px;font-weight:bold;background:#06080b;color:#e3b341;border:1.5px solid #e3b341;border-radius:6px;cursor:pointer;">' +
+                            '<span>' + window.getYtQualityLabelByHV233(p.mobile_target_h) + '</span>' +
+                            '<span>' + (openId === 'mob' ? '▴' : '▾') + '</span>' +
+                        '</button>' +
+                    '</div>' +
+                    (openId === 'mob' ? window.buildCustomQualityGridHtmlV233('mob', p.mobile_target_h, '#e3b341') : '') +
                 '</div>' +
 
                 // Статус-строка активного правила и режима сети
-                '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding-top:5px;border-top:1px solid #21262d;flex-wrap:wrap;">' +
-                    '<span id="ytActiveLimitBadgeV230" style="font-size:10.5px;color:#3fb950;font-weight:bold;">🎯 Лимит: ≤ ' + eff + 'p</span>' +
-                    '<div style="display:flex;align-items:center;gap:4px;">' +
-                        '<span style="font-size:10px;color:#8b949e;">Сеть:</span>' +
-                        '<select id="ytSelNetModeV230" onchange="window.onYtPolicyChangeV230()" style="padding:2px 5px;font-size:10px;background:#06080b;color:#c9d1d9;border:1px solid #30363d;border-radius:5px;">' +
-                            '<option value="auto"' + (p.net_mode === 'auto' ? ' selected' : '') + '>📡 Авто (' + (st.detected_net === 'mobile' ? 'Моб.' : 'Wi-Fi') + ')</option>' +
-                            '<option value="wifi"' + (p.net_mode === 'wifi' ? ' selected' : '') + '>📶 Wi-Fi</option>' +
-                            '<option value="mobile"' + (p.net_mode === 'mobile' ? ' selected' : '') + '>📱 Мобильная</option>' +
-                        '</select>' +
+                '<div style="display:flex;flex-direction:column;gap:3px;padding-top:5px;border-top:1px solid #21262d;">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;">' +
+                        '<span id="ytActiveLimitBadgeV230" style="font-size:10.5px;color:#3fb950;font-weight:bold;">🎯 Лимит: ≤ ' + eff + 'p</span>' +
+                        '<div style="display:flex;align-items:center;gap:4px;">' +
+                            '<span style="font-size:10px;color:#8b949e;">Сеть:</span>' +
+                            '<button type="button" onclick="window.toggleYtCustomDropdownV233(\'net\', event)" style="display:flex;align-items:center;gap:5px;padding:3px 7px;font-size:10.5px;font-weight:bold;background:#06080b;color:#c9d1d9;border:1px solid #30363d;border-radius:5px;cursor:pointer;">' +
+                                '<span>' + netLabel + '</span>' +
+                                '<span>' + (openId === 'net' ? '▴' : '▾') + '</span>' +
+                            '</button>' +
+                        '</div>' +
                     '</div>' +
+                    netMenuHtml +
                 '</div>' +
             '</div>';
 
@@ -29419,7 +29521,10 @@ let vsyncTicks = 0;
             var isHid = (ex.style.display === 'none' || getComputedStyle(ex).display === 'none');
             if (isHid && typeof window.closeAllV71Modals === 'function') window.closeAllV71Modals();
             ex.style.setProperty('display', isHid ? 'flex' : 'none', 'important');
-            if (isHid) window.fetchYtCoresStatusV230();
+            if (isHid) {
+                window.renderYtCoreAndQualityPanelV230();
+                window.fetchYtCoresStatusV230();
+            }
             return;
         }
         if (typeof window.closeAllV71Modals === 'function') window.closeAllV71Modals();
@@ -29437,14 +29542,14 @@ let vsyncTicks = 0;
                     '</span>' +
                     '<button type="button" onclick="document.getElementById(\'jennyYoutubeModalV230\').style.setProperty(\'display\',\'none\',\'important\')" style="padding:4px 10px;font-size:11px;border-radius:7px;background:rgba(88,166,255,0.18);border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;">➖ В фон</button>' +
                 '</div>' +
-                '<div style="padding:9px 12px;background:#090d14;border-bottom:1px solid #21262d;display:flex;flex-direction:column;gap:7px;">' +
+                '<div style="padding:9px 12px;background:#090d14;border-bottom:1px solid #21262d;display:flex;flex-direction:column;gap:7px;max-height:52vh;overflow-y:auto;">' +
                     '<div style="display:flex;gap:6px;">' +
                         '<input type="text" id="ytSearchInpV230" value="" placeholder="Поиск на YouTube или вставь ссылку https://youtu.be/..." onkeydown="if(event.key===\'Enter\') window.runYoutubeSearchV230()" style="flex:1;padding:7px 10px;font-size:12px;background:#06080b !important;color:#e6edf3 !important;border:1px solid #30363d !important;border-radius:8px;text-align:left !important;">' +
                         '<button type="button" onclick="window.runYoutubeSearchV230()" style="padding:7px 12px;background:#da3633;color:#fff;border:none;border-radius:8px;font-weight:bold;white-space:nowrap;">🔍 Найти</button>' +
                     '</div>' +
                     '<div id="ytCoreAndQualityWrapV230" style="display:flex;flex-direction:column;gap:6px;"></div>' +
                 '</div>' +
-                '<div id="ytBodyListV230" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:220px;">' +
+                '<div id="ytBodyListV230" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:180px;">' +
                     '<div style="color:#8b949e;text-align:center;padding:28px 10px;font-size:12px;line-height:1.45;">' +
                         '▶️ Введи запрос или вставь ссылку на YouTube-видео.<br>' +
                         'Выбери правила качества (например, <b>Макс. но не более 1080p</b>) — и ядро автоматически вытащит прямую ссылку и нужное разрешение!' +
@@ -29464,6 +29569,9 @@ let vsyncTicks = 0;
         var q = inp.value.trim();
         if (!q) return;
 
+        window._ytStudioStateV230.openDropdownId = null;
+        window.renderYtCoreAndQualityPanelV230();
+
         body.innerHTML = '<div style="color:#ff7b72;text-align:center;padding:30px 10px;font-weight:bold;">⏳ Поиск «' + q.replace(/</g, '&lt;') + '» через YouTube-ядро...</div>';
         try {
             var res = await fetch('/api/youtube/search', {
@@ -29482,7 +29590,6 @@ let vsyncTicks = 0;
                 return;
             }
             window.renderYoutubeResultsListV230();
-            // Если пользователь вставил прямую ссылку на видео — сразу автоматически вытаскиваем поток по выбранным правилам качества!
             if (d.is_direct_link && list.length === 1) {
                 window.resolveYoutubeVideoLinkV230(list[0].video_id, 0);
             }
@@ -29521,7 +29628,7 @@ let vsyncTicks = 0;
         var box = document.getElementById('ytResolvedBoxV230_' + idx);
         if (box) {
             box.style.display = 'flex';
-            box.innerHTML = '<span style="color:#58a6ff;">⏳ Ядро ' + window._ytStudioStateV230.active_core + ' подбирает поток по правилам качества...</span>';
+            box.innerHTML = '<span style="color:#58a6ff;">⏳ Ядро ' + window._ytStudioStateV230.active_core + ' (yt-dlp + зеркала) подбирает поток...</span>';
         }
         try {
             var st = window._ytStudioStateV230;
@@ -29547,7 +29654,7 @@ let vsyncTicks = 0;
                 box.innerHTML =
                     '<div style="color:#3fb950;font-weight:bold;">' +
                         '✅ Выбрано: <b>' + d.selected_label + '</b> ' +
-                        '<span style="color:#8b949e;font-weight:normal;">(лимит ≤ ' + d.effective_limit_h + 'p • макс. у видео: ' + d.video_max_height + 'p • ядро: ' + d.core_profile + ')</span>' +
+                        '<span style="color:#8b949e;font-weight:normal;">(лимит ≤ ' + d.effective_limit_h + 'p • макс. у видео: ' + d.video_max_height + 'p • ' + d.core_profile + ')</span>' +
                     '</div>' +
                     '<div style="color:#8b949e;font-size:10px;">Доступные разрешения у ролика: <b style="color:#c9d1d9;">' + availStr + '</b></div>' +
                     '<div style="display:flex;gap:5px;align-items:center;">' +
@@ -29617,7 +29724,7 @@ let vsyncTicks = 0;
                 window.syncDualDeckCountersV216();
             }
             if (typeof window.showToast === 'function') {
-                window.showToast('✅ Скачано в Видео (' + d.selected_height + 'p): ' + d.filename + ' (' + d.size_mb + ' МБ)');
+                window.showToast('📹 Скачано в Видео (' + d.selected_height + 'p): ' + d.filename + ' (' + d.size_mb + ' МБ)');
             }
         } catch (e) {
             if (btn) btn.innerText = '⬇️ Скачать';
