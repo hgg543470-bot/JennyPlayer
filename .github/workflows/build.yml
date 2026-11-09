@@ -45,6 +45,7 @@ jobs:
         if [ -n "$NDK_CLANG" ]; then
           echo "Compiling libjenny_vcore.so with $NDK_CLANG"
           "$NDK_CLANG" -O3 -march=armv8-a+simd -ffast-math -fPIC -shared app/src/main/python/jenny_vcore.cpp -o app/src/main/jniLibs/arm64-v8a/libjenny_vcore.so -lm -ldl
+          "$NDK_CLANG" -O3 -march=armv8-a+simd -ffast-math -fPIC -shared app/src/main/python/jenny_yt_core.cpp -o app/src/main/jniLibs/arm64-v8a/libjenny_yt_core.so -lm -ldl
         fi
 
     - name: Права на нативные библиотеки (.so)
