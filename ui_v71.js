@@ -25862,31 +25862,58 @@ let vsyncTicks = 0;
 })();
 /* ================= END JENNY_V219_UNIFIED_PATCH ================= */
 
-/* ================= JENNY_V220_UNIFIED_PATCH (#314):
-   1) DESKTOP OVERLAY & MINI-PLAYER PINCH-ZOOM ASPECT RATIO LOCK + STRICT WINDOW-BOUND CONTROLS (71530.mp4)
-   2) AUDIO-ONLY MODE "A" NO DESKTOP OVERLAY ON HOME SCREEN (71531.mp4)
-   3) 2-ROW VIDEO PLAYER BOTTOM BAR & COMPACT 2-LINE LABELS (71532.mp4)
-   4) 2-STAGE FAST-START + FULL-TRACK PRE-CACHED HARDWARE REVERSE FOR ALL AUDIO TRACKS WITHOUT BLACK SCREEN (71533.mp4)
+/* ================= JENNY_V221_UNIFIED_PATCH (#315):
+   1) FIX DESKTOP OVERLAY & IN-APP PLAYER LAYOUT (CLEAR INLINE PIP HEIGHT/WIDTH, ISOLATE OVERLAY DOM, RESTORE ROT90 FULLSCREEN - 71535.mp4)
+   2) DESKTOP OVERLAY & MINI-PLAYER PINCH-ZOOM ASPECT RATIO LOCK + STRICT WINDOW-BOUND CONTROLS (71530.mp4)
+   3) AUDIO-ONLY MODE "A" NO DESKTOP OVERLAY ON HOME SCREEN (71531.mp4)
+   4) 2-ROW VIDEO PLAYER BOTTOM BAR & COMPACT 2-LINE LABELS (71532.mp4)
+   5) 2-STAGE FAST-START + FULL-TRACK PRE-CACHED HARDWARE REVERSE FOR ALL AUDIO TRACKS WITHOUT BLACK SCREEN (71533.mp4)
 ================= */
 (function() {
-    if (window._jennyV220Installed) return;
-    window._jennyV220Installed = true;
+    if (window._jennyV221Installed) return;
+    window._jennyV221Installed = true;
 
     // -------------------------------------------------------------------------
-    // 1. СТИЛИ V220:
-    //    - Жёсткая привязка всех элементов управления и крестика ✕ к границам окна видео (100% x 100%, box-sizing: border-box)
-    //    - Нижний ряд кнопок основного видеоплеера (#v135BottomToolsRow) строго в 2 просторных ряда с компактным шрифтом
+    // 1. СТИЛИ V221:
+    //    - Жёсткая изоляция плавающего окна на рабочем столе (body.jenny-desktop-overlay-active-v221):
+    //      прячем весь фон приложения (списки, деки, модалки), а #jennyVideoStudioRootV130 растягиваем строго на 100vw x 100vh!
+    //    - Не ломаем .rot90-v130 в основном плеере (:not(.rot90-v130))!
+    //    - Нижний ряд кнопок основного видеоплеера (#v135BottomToolsRow) строго в 2 просторных ряда!
     // -------------------------------------------------------------------------
-    var styleV220 = document.createElement('style');
-    styleV220.id = 'jennyStyleV220';
-    styleV220.textContent = [
-        /* Гарантируем, что в режиме плавающего окна (на рабочем столе и в мини-плеере) сцена и HUD занимают ровно 100% окна без вылета за рамку */
+    var styleV221 = document.createElement('style');
+    styleV221.id = 'jennyStyleV221';
+    styleV221.textContent = [
+        /* Когда активен оверлей на рабочем столе — скрываем всё основное приложение под видеоплеером,
+           чтобы при любом растягивании окна никогда не вылезали деки, списки или инспектор! */
+        'body.jenny-desktop-overlay-active-v221 > *:not(#jennyVideoStudioRootV130) {',
+        '  visibility: hidden !important;',
+        '  pointer-events: none !important;',
+        '}',
+        'body.jenny-desktop-overlay-active-v221 {',
+        '  background: #000000 !important;',
+        '  overflow: hidden !important;',
+        '}',
+
+        /* В режиме оверлея на рабочем столе и в полном режиме #jennyVideoStudioRootV130 ВСЕГДА занимает 100% окна WebView */
         '#jennyVideoStudioRootV130.mode-desktop-v132,',
-        '#jennyVideoStudioRootV130.mode-pip-v130 {',
+        '#jennyVideoStudioRootV130.mode-full-v130:not(.mode-pip-v130) {',
+        '  position: fixed !important;',
+        '  inset: 0 !important;',
+        '  left: 0 !important;',
+        '  top: 0 !important;',
+        '  right: 0 !important;',
+        '  bottom: 0 !important;',
+        '  width: 100vw !important;',
+        '  height: 100vh !important;',
+        '  max-width: 100vw !important;',
+        '  max-height: 100vh !important;',
+        '  border-radius: 0 !important;',
         '  box-sizing: border-box !important;',
         '  overflow: hidden !important;',
         '}',
-        '#jennyVideoStudioRootV130 #jennyVideoStageV130,',
+
+        /* Для не-повёрнутой на 90° сцены и HUD — строго 100% внутри корня плеера (а для .rot90-v130 оставляем его 100dvh x 100dvw!) */
+        '#jennyVideoStudioRootV130 #jennyVideoStageV130:not(.rot90-v130),',
         '#jennyVideoStudioRootV130 #v130HudOverlay {',
         '  width: 100% !important;',
         '  height: 100% !important;',
@@ -25903,12 +25930,6 @@ let vsyncTicks = 0;
         '  width: 100% !important;',
         '  max-width: 100% !important;',
         '  box-sizing: border-box !important;',
-        '}',
-        '#jennyVideoStudioRootV130.mode-desktop-v132 #jennyVideoElV130,',
-        '#jennyVideoStudioRootV130.mode-pip-v130 #jennyVideoElV130 {',
-        '  width: 100% !important;',
-        '  height: 100% !important;',
-        '  object-fit: cover !important;',
         '}',
 
         /* В основном видеоплеере: нижние кнопки строго в 2 ряда (Grid), компактный шрифт и поддержка 2 строк текста внутри кнопки */
@@ -25952,10 +25973,143 @@ let vsyncTicks = 0;
         '  text-align: center !important;',
         '}'
     ].join('\n');
-    document.head.appendChild(styleV220);
+    document.head.appendChild(styleV221);
 
     // -------------------------------------------------------------------------
-    // 2. ХОЛСТ УДЕРЖАНИЯ КАДРА (#jennySeamlessFrameHoldCanvasV220):
+    // 2. СБРОС ИНЛАЙНОВЫХ РАЗМЕРОВ МИНИ-ПЛЕЕРА ПРИ ПЕРЕХОДЕ В ПОЛНЫЙ ЭКРАН ИЛИ НА РАБОЧИЙ СТОЛ (71535.mp4)
+    // -------------------------------------------------------------------------
+    window.clearRootInlinePipGeometryV221 = function() {
+        var root = document.getElementById('jennyVideoStudioRootV130');
+        if (!root) return;
+        root.style.removeProperty('width');
+        root.style.removeProperty('height');
+        root.style.removeProperty('min-width');
+        root.style.removeProperty('min-height');
+        root.style.removeProperty('max-width');
+        root.style.removeProperty('max-height');
+        root.style.left = '0';
+        root.style.top = '0';
+        root.style.right = '0';
+        root.style.bottom = '0';
+    };
+
+    window.applyInAppPipGeometryV221 = function() {
+        var root = document.getElementById('jennyVideoStudioRootV130');
+        var st = window._vidStateV130 || {};
+        if (!root || !st.pipMode || st.desktopOverlay) return;
+        var ratio = window.getVideoAspectRatioV220();
+        var w = st._savedPipWidthV221 || 280;
+        var h = Math.max(105, Math.round(w / ratio));
+        root.style.setProperty('width', w + 'px', 'important');
+        root.style.setProperty('height', h + 'px', 'important');
+        root.style.right = 'auto';
+        root.style.bottom = 'auto';
+        if (!root._hasCustomPipPosV130) {
+            root.style.left = Math.max(8, (window.innerWidth || 360) - w - 10) + 'px';
+            root.style.top = '74px';
+        }
+    };
+
+    // Исправляем syncExactRot90DimensionsV217:
+    // В режиме компактного окна (Мини или Рабочий стол) принудительно ставим object-fit: cover,
+    // чтобы видео заполняло 100% плавающего окна без чёрных полей!
+    var _origSyncRot90V218 = window.syncExactRot90DimensionsV217;
+    window.syncExactRot90DimensionsV217 = function() {
+        if (window.isAnySettingsInputFocusedV218 && window.isAnySettingsInputFocusedV218()) return;
+        var root = document.getElementById('jennyVideoStudioRootV130');
+        var stage = document.getElementById('jennyVideoStageV130');
+        var vid = document.getElementById('jennyVideoElV130');
+        var glC = document.getElementById('jv166InterpCanvas');
+        var st = window._vidStateV130 || {};
+        if (!stage) return;
+
+        var isCompact = Boolean(st.pipMode || st.desktopOverlay);
+        if (!st.pipMode || st.desktopOverlay) {
+            window.clearRootInlinePipGeometryV221();
+        }
+        document.body.classList.toggle('jenny-desktop-overlay-active-v221', Boolean(st.active && st.desktopOverlay));
+
+        if (st.rotated90 && !isCompact) {
+            stage.classList.add('rot90-v130');
+            var w = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0, 320);
+            var h = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, 480);
+            stage.style.setProperty('width', h + 'px', 'important');
+            stage.style.setProperty('height', w + 'px', 'important');
+        } else {
+            stage.classList.remove('rot90-v130');
+            stage.style.removeProperty('width');
+            stage.style.removeProperty('height');
+        }
+
+        if (vid) {
+            var enabledFits = window.getEnabledVideoFitModesV217 ? window.getEnabledVideoFitModesV217() : ['contain', 'cover', 'fill'];
+            if (enabledFits.indexOf(st.fitMode) === -1) {
+                st.fitMode = enabledFits[0];
+            }
+            var fitVal = isCompact ? 'cover' : (st.fitMode || 'contain');
+            vid.style.setProperty('object-fit', fitVal, 'important');
+            vid.style.setProperty('width', '100%', 'important');
+            vid.style.setProperty('height', '100%', 'important');
+            vid.style.setProperty('max-width', 'none', 'important');
+            vid.style.setProperty('max-height', 'none', 'important');
+            if (glC) {
+                glC.style.setProperty('object-fit', fitVal, 'important');
+                glC.style.setProperty('width', '100%', 'important');
+                glC.style.setProperty('height', '100%', 'important');
+                glC.style.setProperty('max-width', 'none', 'important');
+                glC.style.setProperty('max-height', 'none', 'important');
+            }
+        }
+    };
+
+    // Кнопка "⛶ Полный" (#v132BtnFullscreen) в основном плеере:
+    // Включает системный полноэкранный режим И автоматически разворачивает горизонтальное видео на 90° во весь экран!
+    window.toggleVideoNativeFullscreenV132 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130;
+        if (!st) return;
+        if (st.desktopOverlay && typeof window.exitDesktopOverlayModeV132 === 'function') {
+            window.exitDesktopOverlayModeV132(true);
+        }
+        if (st.pipMode && typeof window.toggleVideoPipModeV130 === 'function') {
+            window.toggleVideoPipModeV130();
+        }
+        st.nativeFullscreen = !st.nativeFullscreen;
+
+        var aspect = window.getVideoAspectRatioV220 ? window.getVideoAspectRatioV220() : (16.0 / 9.0);
+        if (aspect >= 1.05) {
+            st.rotated90 = Boolean(st.nativeFullscreen);
+        }
+
+        if (typeof window.syncNativeFullscreenLockV132 === 'function') window.syncNativeFullscreenLockV132();
+        window.syncExactRot90DimensionsV217();
+        window.syncVideoPlayerButtonsUIV217();
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130(st.nativeFullscreen ? '⛶ Полный экран ВКЛ' : '🗗 Обычный экран');
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Перехватываем toggleVideoPipModeV130, чтобы при выходе из Мини в Полный плеер сбрасывались инлайновые width/height!
+    var _origToggleVideoPipModeV221 = window.toggleVideoPipModeV130;
+    window.toggleVideoPipModeV130 = function(ev) {
+        var r = (typeof _origToggleVideoPipModeV221 === 'function')
+            ? _origToggleVideoPipModeV221.apply(this, arguments)
+            : undefined;
+        var st = window._vidStateV130 || {};
+        if (st.pipMode && !st.desktopOverlay) {
+            window.applyInAppPipGeometryV221();
+        } else {
+            window.clearRootInlinePipGeometryV221();
+        }
+        window.syncExactRot90DimensionsV217();
+        window.syncVideoPlayerButtonsUIV217();
+        return r;
+    };
+
+    // -------------------------------------------------------------------------
+    // 3. ХОЛСТ УДЕРЖАНИЯ КАДРА (#jennySeamlessFrameHoldCanvasV220):
     //    Предотвращает чёрный прямоугольник на экране при переключении аудиодорожек (Дор. #1 / #2)
     //    и при подгрузке сегментов реверса!
     // -------------------------------------------------------------------------
@@ -25991,7 +26145,7 @@ let vsyncTicks = 0;
             if (!ctx) return;
             ctx.drawImage(vid, 0, 0, w, h);
 
-            var isCompact = window.isVideoCompactPipOrMiniV218 ? window.isVideoCompactPipOrMiniV218() : Boolean(st.pipMode || st.desktopOverlay);
+            var isCompact = Boolean(st.pipMode || st.desktopOverlay);
             c.style.objectFit = isCompact ? 'cover' : (st.fitMode || 'contain');
             c.style.display = 'block';
 
@@ -26014,7 +26168,7 @@ let vsyncTicks = 0;
     };
 
     // -------------------------------------------------------------------------
-    // 3. СИНХРОНИЗАЦИЯ ПРОПОРЦИЙ ВИДЕО С ANDROID WINDOWMANAGER И МИНИ-ПЛЕЕРОМ (71530.mp4)
+    // 4. СИНХРОНИЗАЦИЯ ПРОПОРЦИЙ ВИДЕО С ANDROID WINDOWMANAGER И МИНИ-ПЛЕЕРОМ (71530.mp4 & 71535.mp4)
     // -------------------------------------------------------------------------
     window.getVideoAspectRatioV220 = function() {
         var vid = document.getElementById('jennyVideoElV130');
@@ -26036,25 +26190,27 @@ let vsyncTicks = 0;
         if (window.AndroidBridge && typeof window.AndroidBridge.setVideoAspectRatio === 'function') {
             try { window.AndroidBridge.setVideoAspectRatio(ratio); } catch (e) {}
         }
-        // Если сейчас открыт внутриприложенческий мини-плеер (mode-pip-v130) — выравниваем его высоту строго по пропорциям видео!
         var root = document.getElementById('jennyVideoStudioRootV130');
-        if (root && st.active && st.pipMode && !st.desktopOverlay) {
-            var rect = root.getBoundingClientRect();
-            if (rect.width >= 120) {
-                var targetH = Math.round(rect.width / ratio);
-                if (Math.abs(rect.height - targetH) >= 3) {
-                    root.style.setProperty('height', targetH + 'px', 'important');
-                }
-            }
+        if (!root) return;
+        if (st.desktopOverlay || !st.pipMode) {
+            // В режиме рабочего стола или полного плеера НИКОГДА не ставим пиксельные width/height на root!
+            window.clearRootInlinePipGeometryV221();
+        } else if (st.active && st.pipMode && !st.desktopOverlay) {
+            var curW = parseFloat(root.style.width) || st._savedPipWidthV221 || 280;
+            var targetH = Math.max(105, Math.round(curW / ratio));
+            root.style.setProperty('width', curW + 'px', 'important');
+            root.style.setProperty('height', targetH + 'px', 'important');
         }
     };
 
-    // Обновляем clampPipVideoInsideScreenV145: разрешаем свободно двигать увеличенное окно мини-плеера влево/вправо,
-    // чтобы дотянуться до его краёв и кнопок, сохраняя минимум 80px окна на экране!
     window.clampPipVideoInsideScreenV145 = function() {
         var root = document.getElementById('jennyVideoStudioRootV130');
         var st = window._vidStateV130;
-        if (!root || !st || !st.active || !st.pipMode || st.desktopOverlay) return;
+        if (!root || !st || !st.active) return;
+        if (st.desktopOverlay || !st.pipMode) {
+            window.clearRootInlinePipGeometryV221();
+            return;
+        }
         var r = root.getBoundingClientRect();
         var W = window.innerWidth || 360;
         var H = window.innerHeight || 740;
@@ -26074,28 +26230,28 @@ let vsyncTicks = 0;
         }
     };
 
-    // Перехватываем щипок (pinch-to-zoom) внутриприложенческого мини-плеера, чтобы он тоже строго держал пропорции видео без чёрных полос!
-    var stageElInit = document.getElementById('jennyVideoStageV130');
     window.bindAspectLockedPipPinchV220 = function() {
         var root = document.getElementById('jennyVideoStudioRootV130');
         var stage = document.getElementById('jennyVideoStageV130');
-        if (!root || !stage || stage._v220AspectPinchBound) return;
-        stage._v220AspectPinchBound = true;
+        if (!root || !stage || stage._v221AspectPinchBound) return;
+        stage._v221AspectPinchBound = true;
 
         stage.addEventListener('touchmove', function(e) {
             var st = window._vidStateV130 || {};
             if (!st.active || !st.pipMode || st.desktopOverlay || st.isLocked) return;
             if (e.touches && e.touches.length >= 2) {
                 var ratio = window.getVideoAspectRatioV220();
-                var curW = parseFloat(root.style.width) || root.getBoundingClientRect().width || 280;
-                var lockedH = Math.max(100, Math.round(curW / ratio));
+                var curW = Math.max(160, parseFloat(root.style.width) || root.getBoundingClientRect().width || 280);
+                var lockedH = Math.max(96, Math.round(curW / ratio));
+                st._savedPipWidthV221 = curW;
+                root.style.setProperty('width', curW + 'px', 'important');
                 root.style.setProperty('height', lockedH + 'px', 'important');
             }
         }, { passive: true, capture: false });
     };
 
     // -------------------------------------------------------------------------
-    // 4. РЕЖИМ «А» (ТОЛЬКО АУДИО ИЗ ВИДЕО) НЕ ДОЛЖЕН ВКЛЮЧАТЬ ОВЕРЛЕЙ НА РАБОЧЕМ СТОЛЕ (71531.mp4)
+    // 5. РЕЖИМ «А» (ТОЛЬКО АУДИО ИЗ ВИДЕО) И ПЕРЕХОДЫ НА РАБОЧИЙ СТОЛ / ОБРАТНО В ПРИЛОЖЕНИЕ (71531.mp4 & 71535.mp4)
     // -------------------------------------------------------------------------
     var _origEnterDesktopOverlayV220 = window.enterDesktopOverlayModeV132;
     window.enterDesktopOverlayModeV132 = function(ev) {
@@ -26103,25 +26259,64 @@ let vsyncTicks = 0;
         if (st.videoStreamModeV217 === 'a_only') {
             return;
         }
+        window.clearRootInlinePipGeometryV221();
+        document.body.classList.add('jenny-desktop-overlay-active-v221');
         window.syncNativeVideoAspectRatioV220();
         if (typeof _origEnterDesktopOverlayV220 === 'function') {
             return _origEnterDesktopOverlayV220.apply(this, arguments);
         }
     };
 
+    var _origExitDesktopOverlayV220 = window.exitDesktopOverlayModeV132;
+    window.exitDesktopOverlayModeV132 = function(bringToFront, ev) {
+        document.body.classList.remove('jenny-desktop-overlay-active-v221');
+        window.clearRootInlinePipGeometryV221();
+        if (typeof _origExitDesktopOverlayV220 === 'function') {
+            return _origExitDesktopOverlayV220.apply(this, arguments);
+        }
+    };
+
     var _origOnDesktopOverlayStateChangedV220 = window.onDesktopOverlayStateChangedV133;
     window.onDesktopOverlayStateChangedV133 = function(isOverlay) {
         var st = window._vidStateV130 || {};
+        var root = document.getElementById('jennyVideoStudioRootV130');
         if (isOverlay && st.videoStreamModeV217 === 'a_only') {
+            document.body.classList.remove('jenny-desktop-overlay-active-v221');
             if (typeof window.exitDesktopOverlayModeV132 === 'function') {
                 window.exitDesktopOverlayModeV132(false);
             }
             return;
         }
+        document.body.classList.toggle('jenny-desktop-overlay-active-v221', Boolean(isOverlay && st.active));
+
+        if (isOverlay) {
+            // На рабочем столе root должен покрывать 100% окна оверлея без инлайновых 280x158px от мини-плеера!
+            st.desktopOverlay = true;
+            st.pipMode = false;
+            st.rotated90 = false;
+            window.clearRootInlinePipGeometryV221();
+            if (root) {
+                root.classList.remove('mode-pip-v130');
+                root.classList.add('mode-full-v130', 'mode-desktop-v132');
+            }
+        } else {
+            st.desktopOverlay = false;
+            if (root) root.classList.remove('mode-desktop-v132');
+        }
+
         var r = (typeof _origOnDesktopOverlayStateChangedV220 === 'function')
             ? _origOnDesktopOverlayStateChangedV220.apply(this, arguments)
             : undefined;
-        window.syncNativeVideoAspectRatioV220();
+
+        if (isOverlay) {
+            window.clearRootInlinePipGeometryV221();
+        } else if (st.pipMode) {
+            window.applyInAppPipGeometryV221();
+        } else {
+            window.clearRootInlinePipGeometryV221();
+        }
+
+        window.syncExactRot90DimensionsV217();
         if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
             window.syncVideoPlayerButtonsUIV217();
         }
@@ -26153,7 +26348,7 @@ let vsyncTicks = 0;
     };
 
     // -------------------------------------------------------------------------
-    // 5. ДВУХЭТАПНЫЙ АППАРАТНЫЙ РЕВЕРС (3.5 СЕК МИКРО-КУСОК + ФОНОВАЯ ПРЕДЗАГРУЗКА ТЕКУЩЕЙ ДОРОЖКИ)
+    // 6. ДВУХЭТАПНЫЙ АППАРАТНЫЙ РЕВЕРС (3.8 СЕК МИКРО-КУСОК + ФОНОВАЯ ПРЕДЗАГРУЗКА ТЕКУЩЕЙ ДОРОЖКИ)
     //    И МГНОВЕННОЕ ПЕРЕКЛЮЧЕНИЕ АУДИОДОРОЖЕК (ДОР. #1 / #2) В РЕВЕРСЕ БЕЗ ЧЁРНОГО ЭКРАНА (71533.mp4)
     // -------------------------------------------------------------------------
     window.triggerReverseTrackBackgroundPrecacheV220 = function(fromPosSec, audioIdx, noAudFlag) {
@@ -26162,7 +26357,6 @@ let vsyncTicks = 0;
         var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
         if (!rawBaseUrl || fromPosSec <= 0.4) return;
 
-        // Запускаем предзагрузку следующих окон ТЕКУЩЕЙ звуковой дорожки (пока пользователь слушает первые секунды реверса)
         var win1 = Math.min(10.0, Math.max(2.0, fromPosSec));
         fetch('/api/video/reverse_precache?src=' + encodeURIComponent(rawBaseUrl) +
             '&pos=' + fromPosSec.toFixed(2) +
@@ -26188,8 +26382,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // Полностью изолируем syncVideoRamEngineV211 от аппаратного реверс-потока:
-    // он НИКОГДА не должен гасить vd.htmlGain или убивать таймер реверса при срабатывании loadeddata/canplay!
     var _origSyncVideoRamEngineV219 = window.syncVideoRamEngineV211;
     window.syncVideoRamEngineV211 = window.syncVideoRamEngineV131 = function(isDragging) {
         var st = window._vidStateV130 || {};
@@ -26212,8 +26404,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // Отключаем фоновую 6-поточную распаковку всего фильма в Float32 RAM (decodeVideoToRamV131),
-    // так как она грузит только дорожку #1 и конкурирует с FFmpeg при реверсе!
     window.decodeVideoToRamV131 = async function() {
         return null;
     };
@@ -26255,7 +26445,6 @@ let vsyncTicks = 0;
             return;
         }
 
-        // Если аппаратный реверс-поток ТОЙ ЖЕ дорожки уже играет и не требуется перезапуск (просто смена скорости) — меняем playbackRate на лету!
         if (!forceReloadTrackOrSeek && wasAlreadyRev && st._playingHardwareRevStreamV219 && !vid.paused && !vid.ended && st._revActiveAudioIdxV220 === (st.audioTrackIdxV216 || 0)) {
             try {
                 vid.defaultPlaybackRate = spd;
@@ -26276,15 +26465,12 @@ let vsyncTicks = 0;
                 return;
             }
 
-            // ЭТАП 1: Первый кусок делаем коротким (3.8 сек), чтобы реверс стартовал максимально быстро!
-            // ЭТАП 2: Следующие куски (которые уже предзагружены в фоне в /tmp) берём по 10.0 сек!
             var desiredWin = isInitialMicroChunk ? 3.8 : 10.0;
             var winLen = Math.min(desiredWin, Math.max(1.2, anchorPosSec));
             var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
             var aIdx = st.audioTrackIdxV216 || 0;
             var noAud = (st.videoStreamModeV217 === 'v_only') ? '1' : '0';
 
-            // Удерживаем текущий кадр на холсте #jennySeamlessFrameHoldCanvasV220, чтобы не было чёрного экрана!
             window.captureAndHoldVideoFrameV220(2600);
 
             st._playingHardwareRevStreamV219 = true;
@@ -26306,7 +26492,6 @@ let vsyncTicks = 0;
             if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = (noAud === '1' || st.dspBypass) ? 0.0 : 1.0;
             if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = (noAud === '1') ? 0.0 : (st.dspBypass ? 1.0 : 0.0);
 
-            // Параллельно запускаем фоновую предзагрузку следующих кусков ЭТОЙ ЖЕ дорожки (aIdx)
             if (anchorPosSec - winLen > 0.4) {
                 window.triggerReverseTrackBackgroundPrecacheV220(anchorPosSec - winLen, aIdx, noAud);
             }
@@ -26349,10 +26534,8 @@ let vsyncTicks = 0;
             vid.play().catch(function(){});
         };
 
-        // Запускаем Этап 1: быстрый стартовый микро-кусок (3.8 сек) текущей дорожки!
         launchReverseWindow(curMediaSec, true);
 
-        // Независимый таймер обратного хода (st._hwRevTimerV220), который никто не может случайно сбросить
         st._hwRevTimerV220 = setInterval(function() {
             if (!st.active || st.userPaused || !vd.isReversed || st._revTrackSessionIdV220 !== myRevSession) {
                 window.stopHardwareReverseTimerV220();
@@ -26381,7 +26564,6 @@ let vsyncTicks = 0;
             var winLen = Number(st._revWinLenV219 || 3.8);
             var sinceLaunchMs = performance.now() - (st._revLaunchWallTsV220 || 0);
             if (st._revStreamStartedPlayingV220 && (vid.ended || progressed >= winLen - 0.14) && effTime > 0.25 && sinceLaunchMs > 400) {
-                // Бесшовно переходим к следующему (уже предзагруженному в /tmp!) 10-секундному окну текущей дорожки
                 launchReverseWindow(effTime, false);
             }
         }, 60);
@@ -26400,9 +26582,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // Переключение звуковой дорожки (#v130BtnRemux — 🔊 Дор. #1 / #2):
-    // Если сейчас включён РЕВЕРС (⏪), НЕ переключаемся на прямой поток, а мгновенно подгружаем быстрый микро-кусок
-    // НОВОЙ дорожки в реверсе + запускаем фоновую предзагрузку новой дорожки без чёрного экрана!
     window.switchVideoToFfmpegRemuxV130 = function(ev, forceTranscodeVideo) {
         if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
         if (ev && ev.stopPropagation) ev.stopPropagation();
@@ -26420,7 +26599,6 @@ let vsyncTicks = 0;
             st.audioTrackIdxV216 = st.audioTrackIdxV216 || 0;
         }
 
-        // Удерживаем текущий видеокадр на холсте, чтобы при смене дорожки экран НЕ чернел!
         window.captureAndHoldVideoFrameV220(2500);
 
         var isRev = Boolean(vd.isReversed || window.isReversedDeckB);
@@ -26443,9 +26621,6 @@ let vsyncTicks = 0;
         if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
     };
 
-    // Защищаем seekDeckBAndPlayerSyncedV212:
-    // 1) Если идёт аппаратный реверс и сработал фоновый 2.4-секундный торрент-таймер (fromExplicitUser !== true), игнорируем его!
-    // 2) Если пользователь сам перемотал ползунок во время реверса — продолжаем реверс с новой точки!
     var _origSeekDeckBV218 = window.seekDeckBAndPlayerSyncedV212;
     window.seekDeckBAndPlayerSyncedV212 = function(targetSec, showToastMsg, fromExplicitUser) {
         var st = window._vidStateV130 || {};
@@ -26454,7 +26629,6 @@ let vsyncTicks = 0;
 
         if (isRev) {
             if (!fromExplicitUser && !showToastMsg && st._playingHardwareRevStreamV219) {
-                // Фоновый интервал проверки торрента НЕ должен сбивать активный реверс на прямое воспроизведение!
                 return;
             }
             var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167() : 0;
@@ -26469,7 +26643,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // Снимаем удержание кадра как только новый поток выдал первый кадр
     document.addEventListener('playing', function(e) {
         if (e && e.target && e.target.id === 'jennyVideoElV130') {
             window.releaseHeldVideoFrameV220();
@@ -26489,7 +26662,7 @@ let vsyncTicks = 0;
     }, true);
 
     // -------------------------------------------------------------------------
-    // 6. ГАРАНТИРОВАННЫЕ 2 РЯДА КНОПОК В ОСНОВНОМ ВИДЕОПЛЕЕРЕ И АККУРАТНЫЕ ПОДПИСИ (71532.mp4)
+    // 7. ГАРАНТИРОВАННЫЕ 2 РЯДА КНОПОК В ОСНОВНОМ ВИДЕОПЛЕЕРЕ И АККУРАТНЫЕ ПОДПИСИ (71532.mp4)
     // -------------------------------------------------------------------------
     var _origSyncVidBtnsV219 = window.syncVideoPlayerButtonsUIV217;
     window.syncVideoPlayerButtonsUIV217 = function() {
@@ -26502,10 +26675,14 @@ let vsyncTicks = 0;
         var st = window._vidStateV130 || {};
         var vc = window._jennyVideoUiCfgV217 || {};
         var svgs = window.VID_SVGS_V217 || {};
-        var isCompact = window.isVideoCompactPipOrMiniV218 ? window.isVideoCompactPipOrMiniV218() : Boolean(st.pipMode || st.desktopOverlay);
+        var isCompact = Boolean(st.pipMode || st.desktopOverlay);
+
+        root.classList.toggle('compact-pip-v218', isCompact);
+        document.body.classList.toggle('jenny-desktop-overlay-active-v221', Boolean(st.active && st.desktopOverlay));
 
         window.bindAspectLockedPipPinchV220();
         window.syncNativeVideoAspectRatioV220();
+        window.syncExactRot90DimensionsV217();
 
         var btmRow = document.getElementById('v135BottomToolsRow');
         if (btmRow) {
@@ -26525,8 +26702,6 @@ let vsyncTicks = 0;
                 btmRow.style.setProperty('justify-content', 'space-between', 'important');
                 btmRow.style.removeProperty('grid-template-columns');
             } else {
-                // Считаем сколько кнопок включено в нижнем ряду (с учётом опциональных 90° и Вписать):
-                // если 7-8 кнопок — 4 колонки x 2 ряда; если 5-6 кнопок — 3 колонки x 2 ряда!
                 var visCount = 6 + (vc.showRotateBtn !== false ? 1 : 0) + (vc.showFitBtn !== false ? 1 : 0);
                 var cols = (visCount <= 6) ? 3 : 4;
                 btmRow.style.setProperty('display', 'grid', 'important');
@@ -26537,7 +26712,6 @@ let vsyncTicks = 0;
             }
         }
 
-        // Компактная подпись кнопки звуковой дорожки (#v130BtnRemux), чтобы она никогда не упиралась в края рамки
         var btnRemux = document.getElementById('v130BtnRemux');
         if (btnRemux) {
             var aIdx = (st.audioTrackIdxV216 || 0) + 1;
@@ -26550,4 +26724,4 @@ let vsyncTicks = 0;
         window.syncVideoPlayerButtonsUIV217();
     }, 350);
 })();
-/* ================= END JENNY_V220_UNIFIED_PATCH ================= */
+/* ================= END JENNY_V221_UNIFIED_PATCH ================= */
