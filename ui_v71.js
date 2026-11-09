@@ -26725,3 +26725,281 @@ let vsyncTicks = 0;
     }, 350);
 })();
 /* ================= END JENNY_V221_UNIFIED_PATCH ================= */
+
+/* ================= JENNY_V222_REVERSE_BLOB_PATCH (#316): ZERO-PAUSE PROGRESSIVE RAM-BLOB REVERSE ENGINE (71541.mp4) ================= */
+(function() {
+    if (window._jennyV222Installed) return;
+    window._jennyV222Installed = true;
+
+    window.cleanupRevBlobQueueV222 = function() {
+        var st = window._vidStateV130 || {};
+        if (st._revPreloadAbortCtrlV222) {
+            try { st._revPreloadAbortCtrlV222.abort(); } catch (e) {}
+            st._revPreloadAbortCtrlV222 = null;
+        }
+        if (st._preloadedRevSegV222 && st._preloadedRevSegV222.blobUrl) {
+            try { URL.revokeObjectURL(st._preloadedRevSegV222.blobUrl); } catch (e) {}
+        }
+        st._preloadedRevSegV222 = null;
+        if (st._activeRevBlobUrlV222) {
+            try { URL.revokeObjectURL(st._activeRevBlobUrlV222); } catch (e) {}
+            st._activeRevBlobUrlV222 = null;
+        }
+    };
+
+    // Фоновая предзагрузка следующего куска реверса (14 -> 20 -> 24 сек) прямо в оперативную память браузера (Blob URL)!
+    // Запускается СТРОГО ПОСЛЕ старта текущего куска, чтобы 2 FFmpeg никогда не конкурировали за процессор!
+    window.preloadNextReverseSegmentToRamBlobV222 = function(nextPosSec, chunkStepIndex, sessionId) {
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        if (!st.active || !vd.isReversed || st._revTrackSessionIdV220 !== sessionId) return;
+        if (nextPosSec <= 0.3) return;
+
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        if (!rawBaseUrl) return;
+
+        // Прогрессивный размер буфера: 1-й предзагруженный кусок = 14 сек, 2-й = 20 сек, 3-й и далее = 24 сек!
+        var targetWin = (chunkStepIndex <= 1) ? 14.0 : ((chunkStepIndex === 2) ? 20.0 : 24.0);
+        var winLen = Number(Math.min(targetWin, Math.max(1.5, nextPosSec)).toFixed(1));
+        var posClean = Number(nextPosSec.toFixed(1));
+        var aIdx = st.audioTrackIdxV216 || 0;
+        var noAud = (st.videoStreamModeV217 === 'v_only') ? '1' : '0';
+
+        if (st._revPreloadAbortCtrlV222) {
+            try { st._revPreloadAbortCtrlV222.abort(); } catch (e) {}
+        }
+        var ctrl = new AbortController();
+        st._revPreloadAbortCtrlV222 = ctrl;
+
+        var url = '/api/video/reverse_precache_blob?src=' + encodeURIComponent(rawBaseUrl) +
+            '&pos=' + posClean.toFixed(1) +
+            '&win=' + winLen.toFixed(1) +
+            '&aidx=' + aIdx +
+            '&no_audio=' + noAud +
+            '&t=' + Date.now();
+
+        fetch(url, { signal: ctrl.signal })
+            .then(function(res) {
+                if (!res.ok) throw new Error('Preload HTTP ' + res.status);
+                return res.blob();
+            })
+            .then(function(blob) {
+                if (!blob || blob.size < 1024) return;
+                if (!st.active || !vd.isReversed || st._revTrackSessionIdV220 !== sessionId) return;
+                if (st._preloadedRevSegV222 && st._preloadedRevSegV222.blobUrl) {
+                    try { URL.revokeObjectURL(st._preloadedRevSegV222.blobUrl); } catch (e) {}
+                }
+                var bUrl = URL.createObjectURL(blob);
+                st._preloadedRevSegV222 = {
+                    blobUrl: bUrl,
+                    anchorPos: posClean,
+                    winLen: winLen,
+                    aIdx: aIdx,
+                    stepIdx: chunkStepIndex
+                };
+            })
+            .catch(function() {});
+    };
+
+    window.startImmediateVideoReverseEngineV217 = function(revSpd, forceReloadTrackOrSeek, explicitStartSec) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        if (!vid || !st || !st.active || !vd) return;
+
+        var spd = Math.max(0.1, Math.min(8.0, Number(revSpd) || window._lastRevVideoSpeedV217 || 0.95));
+        window._lastRevVideoSpeedV217 = spd;
+
+        var wasAlreadyRev = Boolean(vd.isReversed || window.isReversedDeckB);
+        var curMediaSec = (explicitStartSec !== undefined && isFinite(explicitStartSec))
+            ? Number(explicitStartSec)
+            : (window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0));
+
+        window.isReversedDeckB = true;
+        vd.isReversed = true;
+        vd.speed = spd;
+        window._jennyVideoSpeedV170 = spd;
+
+        if (st.userPaused) {
+            window.syncVideoPlayerButtonsUIV217();
+            return;
+        }
+
+        window._vidPlayIntentV132 = true;
+        window._vidIsBufferingV132 = false;
+
+        if (!forceReloadTrackOrSeek && wasAlreadyRev && st._playingHardwareRevStreamV219 && !vid.paused && !vid.ended && st._revActiveAudioIdxV220 === (st.audioTrackIdxV216 || 0)) {
+            try {
+                vid.defaultPlaybackRate = spd;
+                vid.playbackRate = spd;
+            } catch (e) {}
+            window.syncVideoPlayerButtonsUIV217();
+            return;
+        }
+
+        window.stopHardwareReverseTimerV220();
+        window.cleanupRevBlobQueueV222();
+        st._revTrackSessionIdV220 = (st._revTrackSessionIdV220 || 0) + 1;
+        var myRevSession = st._revTrackSessionIdV220;
+        var currentStepIdx = 0;
+
+        var launchReverseWindow = function(anchorPosSec, isInitialMicroChunk) {
+            if (!st.active || !vd.isReversed || st.userPaused || st._revTrackSessionIdV220 !== myRevSession) return;
+            if (anchorPosSec <= 0.2) {
+                window.restoreNormalVideoPlaybackV217();
+                return;
+            }
+
+            window.captureAndHoldVideoFrameV220(2800);
+            window._vidPlayIntentV132 = true;
+
+            var aIdx = st.audioTrackIdxV216 || 0;
+            var noAud = (st.videoStreamModeV217 === 'v_only') ? '1' : '0';
+            var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+
+            // Проверяем: готов ли уже предзагруженный в RAM Blob кусок для этой границы!
+            var pre = st._preloadedRevSegV222;
+            var usePreloadedBlob = false;
+            var nextSrcUrl = '';
+            var winLen = 5.0;
+            var cleanAnchor = Number(anchorPosSec.toFixed(1));
+
+            if (!isInitialMicroChunk && pre && pre.blobUrl && pre.aIdx === aIdx && Math.abs(pre.anchorPos - cleanAnchor) <= 1.2) {
+                usePreloadedBlob = true;
+                nextSrcUrl = pre.blobUrl;
+                cleanAnchor = pre.anchorPos;
+                winLen = pre.winLen;
+                currentStepIdx = pre.stepIdx;
+                st._preloadedRevSegV222 = null;
+                if (st._activeRevBlobUrlV222 && st._activeRevBlobUrlV222 !== nextSrcUrl) {
+                    try { URL.revokeObjectURL(st._activeRevBlobUrlV222); } catch (e) {}
+                }
+                st._activeRevBlobUrlV222 = nextSrcUrl;
+            } else {
+                // Стартовый кусок делаем 5.0 сек (при 1.5x это 3.3 сек реального времени — с запасом хватает, чтобы в фоне собрать 14-секундный Blob!)
+                currentStepIdx = isInitialMicroChunk ? 0 : (currentStepIdx + 1);
+                var desiredWin = isInitialMicroChunk ? 5.0 : 14.0;
+                winLen = Number(Math.min(desiredWin, Math.max(1.2, cleanAnchor)).toFixed(1));
+                nextSrcUrl = '/api/video/reverse_remux?src=' + encodeURIComponent(rawBaseUrl) +
+                    '&pos=' + cleanAnchor.toFixed(1) +
+                    '&win=' + winLen.toFixed(1) +
+                    '&aidx=' + aIdx +
+                    '&no_audio=' + noAud +
+                    '&t=' + Date.now();
+            }
+
+            var nextBoundarySec = Number(Math.max(0, cleanAnchor - winLen).toFixed(1));
+
+            st._playingHardwareRevStreamV219 = true;
+            st._revAnchorSecV219 = cleanAnchor;
+            st._revWinLenV219 = winLen;
+            st._revNextBoundarySecV222 = nextBoundarySec;
+            st._revActiveAudioIdxV220 = aIdx;
+            st._revLaunchWallTsV220 = performance.now();
+            st._revStreamStartedPlayingV220 = false;
+            st.usingRemux = true;
+
+            if (vd.sourceNode) {
+                vd.sourceNode.onended = null;
+                try { vd.sourceNode.stop(); } catch (e) {}
+                try { vd.sourceNode.disconnect(); } catch (e) {}
+                vd.sourceNode = null;
+            }
+            vd.isStudioPlaying = false;
+            vid.muted = (noAud === '1');
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = (noAud === '1' || st.dspBypass) ? 0.0 : 1.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = (noAud === '1') ? 0.0 : (st.dspBypass ? 1.0 : 0.0);
+
+            var preloaderTriggered = false;
+            var onRevStreamReady = function() {
+                if (st._revTrackSessionIdV220 !== myRevSession) return;
+                st._revStreamStartedPlayingV220 = true;
+                window._vidPlayIntentV132 = true;
+                window._vidIsBufferingV132 = false;
+                window.releaseHeldVideoFrameV220();
+
+                var curSpdNow = vd.speed || spd;
+                try {
+                    vid.preservesPitch = true;
+                    vid.webkitPreservesPitch = true;
+                    vid.defaultPlaybackRate = curSpdNow;
+                    vid.playbackRate = curSpdNow;
+                } catch (e) {}
+                if (!st.userPaused && vid.paused) {
+                    vid.play().catch(function(){});
+                }
+                if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+
+                // КАК ТОЛЬКО текущий кусок реально пошёл играть — запускаем сборку следующего куска (14 -> 20 -> 24 сек) в RAM Blob!
+                if (!preloaderTriggered && nextBoundarySec > 0.3) {
+                    preloaderTriggered = true;
+                    window.preloadNextReverseSegmentToRamBlobV222(nextBoundarySec, currentStepIdx + 1, myRevSession);
+                }
+            };
+
+            vid.addEventListener('loadeddata', onRevStreamReady, { once: true });
+            vid.addEventListener('playing', onRevStreamReady, { once: true });
+
+            vid.src = nextSrcUrl;
+            var curSpdInit = vd.speed || spd;
+            try {
+                vid.preservesPitch = true;
+                vid.webkitPreservesPitch = true;
+                vid.defaultPlaybackRate = curSpdInit;
+                vid.playbackRate = curSpdInit;
+            } catch (e) {}
+            vid.play().catch(function(){
+                window._vidPlayIntentV132 = !st.userPaused;
+            });
+        };
+
+        launchReverseWindow(curMediaSec, true);
+
+        st._hwRevTimerV220 = setInterval(function() {
+            if (!st.active || st.userPaused || !vd.isReversed || st._revTrackSessionIdV220 !== myRevSession) {
+                window.stopHardwareReverseTimerV220();
+                return;
+            }
+            window._vidPlayIntentV132 = true;
+            var anchor = Number(st._revAnchorSecV219 || curMediaSec);
+            var progressed = st._revStreamStartedPlayingV220 ? Number(vid.currentTime || 0) : 0;
+            var effTime = Math.max(0, anchor - progressed);
+            var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : 0;
+
+            st._pendingSeekSecV167 = effTime;
+            st._pendingSeekTsV167 = performance.now();
+
+            if (typeof window.updateProgressUIDeckB === 'function') {
+                window.updateProgressUIDeckB(effTime, dur, true);
+            }
+            if (typeof window.syncInternalVideoSliderUIV212 === 'function') {
+                window.syncInternalVideoSliderUIV212(effTime, dur);
+            }
+
+            if (effTime <= 0.15) {
+                window.restoreNormalVideoPlaybackV217();
+                return;
+            }
+
+            var winLen = Number(st._revWinLenV219 || 5.0);
+            var actualDur = (isFinite(vid.duration) && vid.duration > 0.5) ? Math.min(winLen, vid.duration) : winLen;
+            var sinceLaunchMs = performance.now() - (st._revLaunchWallTsV220 || 0);
+
+            if (st._revStreamStartedPlayingV220 && (vid.ended || progressed >= actualDur - 0.12) && effTime > 0.25 && sinceLaunchMs > 350) {
+                var nextAnchor = (st._revNextBoundarySecV222 !== undefined) ? st._revNextBoundarySecV222 : effTime;
+                launchReverseWindow(nextAnchor, false);
+            }
+        }, 50);
+
+        window.syncVideoPlayerButtonsUIV217();
+    };
+
+    var _prevRestoreNormalV221 = window.restoreNormalVideoPlaybackV217;
+    window.restoreNormalVideoPlaybackV217 = function(ev, customTargetFwdSpeed) {
+        window.cleanupRevBlobQueueV222();
+        if (typeof _prevRestoreNormalV221 === 'function') {
+            return _prevRestoreNormalV221.apply(this, arguments);
+        }
+    };
+})();
+/* ================= END JENNY_V222_REVERSE_BLOB_PATCH ================= */

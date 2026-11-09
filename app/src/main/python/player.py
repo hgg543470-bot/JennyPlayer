@@ -9129,7 +9129,7 @@ _override_bottle_route_v212('/api/video/reverse_remux', 'GET', api_video_reverse
 # ================= END JENNY V219 SERVER PATCH =================
 
 
-# ================= JENNY V220 SERVER PATCH (#314): FAST MICRO-CHUNK + BACKGROUND TRACK PRE-CACHING HARDWARE REVERSE & MULTI-TRACK PCM =================
+# ================= JENNY V222 SERVER PATCH (#316): ZERO-PAUSE RAM-BLOB REVERSE PIPELINE & MULTI-TRACK PCM =================
 import hashlib as _hashlib_v220
 
 _REV_CACHE_DIR_V220 = "/tmp/jenny_rev_cache_v220"
@@ -9139,39 +9139,42 @@ except Exception:
     pass
 
 _REV_PRECACHE_LOCK_V220 = threading.Lock()
-_REV_PRECACHE_JOBS_V220 = {}  # key -> {"path": str, "proc": Popen, "done": bool, "ts": float}
+_REV_PRECACHE_JOBS_V220 = {}  # key -> {"path": str, "proc": Popen, "done": bool, "ts": float, "pos": float, "win": float, "aidx": int}
 
 
 def _get_rev_cache_key_and_path_v220(src_str, seg_start, seg_dur, audio_idx, no_audio):
-    raw_k = f"{src_str}|s={seg_start:.2f}|d={seg_dur:.2f}|a={int(audio_idx)}|na={int(bool(no_audio))}"
+    # Округляем до 0.1 сек, чтобы исключить промахи кэша из-за микро-дрейфа таймера
+    s_q = round(float(seg_start), 1)
+    d_q = round(float(seg_dur), 1)
+    raw_k = f"{src_str}|s={s_q:.1f}|d={d_q:.1f}|a={int(audio_idx)}|na={int(bool(no_audio))}"
     h = _hashlib_v220.md5(raw_k.encode("utf-8", errors="ignore")).hexdigest()[:20]
     fpath = os.path.join(_REV_CACHE_DIR_V220, f"rev_{h}.mp4")
     return raw_k, fpath
 
 
-def _cleanup_old_rev_cache_v220(keep_src=None, keep_aidx=None):
+def _cleanup_old_rev_cache_v220(keep_src=None, keep_aidx=None, kill_running_precache=False):
     now_ts = time.time()
     with _REV_PRECACHE_LOCK_V220:
         for k, info in list(_REV_PRECACHE_JOBS_V220.items()):
-            # Если сменился трек или видео — убиваем неактуальные фоновые пре-рендеры
             mismatch = False
             if keep_src is not None and not k.startswith(str(keep_src) + "|"):
                 mismatch = True
             if keep_aidx is not None and f"|a={int(keep_aidx)}|" not in k:
                 mismatch = True
-            if mismatch or (now_ts - info.get("ts", 0) > 120.0):
+            if mismatch or (now_ts - info.get("ts", 0) > 150.0) or (kill_running_precache and not info.get("done")):
                 p = info.get("proc")
                 if p and not info.get("done"):
                     try:
                         p.kill()
                     except Exception:
                         pass
-                fp = info.get("path", "")
-                if fp and os.path.isfile(fp):
-                    try:
-                        os.remove(fp)
-                    except Exception:
-                        pass
+                if mismatch or (now_ts - info.get("ts", 0) > 150.0):
+                    fp = info.get("path", "")
+                    if fp and os.path.isfile(fp):
+                        try:
+                            os.remove(fp)
+                        except Exception:
+                            pass
                 _REV_PRECACHE_JOBS_V220.pop(k, None)
 
 
@@ -9222,89 +9225,132 @@ def _build_reverse_ffmpeg_cmd_v220(src_input, seg_start, seg_dur, audio_idx, no_
     if no_audio:
         cmd.extend(['-an'])
     else:
-        # Строго выбираем запрошенную звуковую дорожку (0:a:{audio_idx}) и разворачиваем её через areverse!
-        cmd.extend(['-map', f'0:a:{int(audio_idx)}', '-af', 'areverse', '-c:a', 'aac', '-b:a', '160k', '-ac', '2'])
+        cmd.extend(['-map', f'0:a:{int(audio_idx)}?', '-af', 'areverse', '-c:a', 'aac', '-b:a', '144k', '-ac', '2'])
 
-    # Ограничиваем высоту реверс-потока до 720p (если исходник 1080p/4K), чтобы буферизация и разворот кадров шли в 3 раза быстрее!
+    # Разрешение 540p (960x540) для реверса: в 4 раза меньше пикселей в буфере фильтра reverse, чем у 1080p,
+    # благодаря чему даже 16-24 секундные куски разворачиваются за ~1 секунду без единого тормоза!
     cmd.extend([
-        '-vf', "scale=-2:'min(720,trunc(ih/2)*2)',reverse",
+        '-vf', "scale=-2:'min(540,trunc(ih/2)*2)',reverse",
         '-threads', ff_threads,
         '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
         '-crf', '26', '-pix_fmt', 'yuv420p', '-g', '15',
         '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-frag_duration', '150000',
+        '-frag_duration', '120000',
         '-flush_packets', '1',
         '-f', 'mp4', out_target
     ])
     return cmd
 
 
-def _start_precache_reverse_segment_v220(src, pos_sec, win_sec, audio_idx, no_audio):
-    seg_end = max(0.2, float(pos_sec))
-    seg_dur = max(1.0, min(16.0, float(win_sec), seg_end))
-    seg_start = max(0.0, seg_end - seg_dur)
+def _render_reverse_segment_sync_v222(src, pos_sec, win_sec, audio_idx, no_audio):
+    seg_end = round(max(0.2, float(pos_sec)), 1)
+    seg_dur = round(max(1.0, min(26.0, float(win_sec), seg_end)), 1)
+    seg_start = round(max(0.0, seg_end - seg_dur), 1)
     raw_k, out_path = _get_rev_cache_key_and_path_v220(src, seg_start, seg_dur, audio_idx, no_audio)
 
     with _REV_PRECACHE_LOCK_V220:
         existing = _REV_PRECACHE_JOBS_V220.get(raw_k)
-        if existing:
-            if existing.get("done") and os.path.isfile(out_path) and os.path.getsize(out_path) > 1024:
-                existing["ts"] = time.time()
-                return raw_k, out_path
+        if existing and existing.get("done") and os.path.isfile(out_path) and os.path.getsize(out_path) >= 1024:
+            existing["ts"] = time.time()
+            return out_path
+        if existing and not existing.get("done"):
             p_ex = existing.get("proc")
             if p_ex and p_ex.poll() is None:
-                existing["ts"] = time.time()
-                return raw_k, out_path
+                # Дожидаемся завершения уже запущенного рендера этого же куска
+                pass
+            else:
+                existing = None
+
+    if existing and not existing.get("done"):
+        p_ex = existing.get("proc")
+        if p_ex:
+            try:
+                p_ex.wait(timeout=30)
+            except Exception:
+                pass
+        if os.path.isfile(out_path) and os.path.getsize(out_path) >= 1024:
+            return out_path
+
+    # Останавливаем любые старые фоновые пре-рендеры, чтобы 100% CPU пошло на текущий сегмент!
+    _cleanup_old_rev_cache_v220(keep_src=src, keep_aidx=audio_idx, kill_running_precache=True)
 
     src_input = _resolve_rev_src_input_v220(src, seg_start)
     if not src_input:
-        return None, None
+        return None
 
-    tmp_path = out_path + ".part"
+    tmp_path = f"{out_path}.{int(time.time()*1000)}.part"
     cmd = _build_reverse_ffmpeg_cmd_v220(src_input, seg_start, seg_dur, audio_idx, no_audio, out_target=tmp_path)
-
-    def _runner():
-        proc = None
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = None
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with _REV_PRECACHE_LOCK_V220:
+            _REV_PRECACHE_JOBS_V220[raw_k] = {
+                "path": out_path,
+                "proc": proc,
+                "done": False,
+                "ts": time.time(),
+                "pos": seg_end,
+                "win": seg_dur,
+                "aidx": int(audio_idx)
+            }
+        proc.wait(timeout=35)
+        if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) >= 1024:
+            os.replace(tmp_path, out_path)
             with _REV_PRECACHE_LOCK_V220:
-                _REV_PRECACHE_JOBS_V220[raw_k] = {
-                    "path": out_path,
-                    "proc": proc,
-                    "done": False,
-                    "ts": time.time()
-                }
-            proc.wait(timeout=35)
-            # Если на выбранной дорожке (например aidx > 0) произошла ошибка маппинга, пробуем с 0:a:0?
-            if (not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) < 1024) and int(audio_idx) > 0:
-                cmd_fb = _build_reverse_ffmpeg_cmd_v220(src_input, seg_start, seg_dur, 0, no_audio, out_target=tmp_path)
-                proc2 = subprocess.Popen(cmd_fb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                proc2.wait(timeout=35)
-            if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) >= 1024:
-                os.replace(tmp_path, out_path)
-                with _REV_PRECACHE_LOCK_V220:
-                    if raw_k in _REV_PRECACHE_JOBS_V220:
-                        _REV_PRECACHE_JOBS_V220[raw_k]["done"] = True
-                        _REV_PRECACHE_JOBS_V220[raw_k]["ts"] = time.time()
-        except Exception:
-            if proc:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-        finally:
-            if os.path.isfile(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
+                if raw_k in _REV_PRECACHE_JOBS_V220:
+                    _REV_PRECACHE_JOBS_V220[raw_k]["done"] = True
+                    _REV_PRECACHE_JOBS_V220[raw_k]["ts"] = time.time()
+            return out_path
+    except Exception:
+        if proc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    finally:
+        if os.path.isfile(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+    return None
 
-    threading.Thread(target=_runner, daemon=True).start()
-    return raw_k, out_path
+
+@route('/api/video/reverse_precache_blob', method='GET')
+def api_video_reverse_precache_blob_v222():
+    """
+    Рендерит следующий кусок реверса (12–24 сек) и сразу отдаёт готовый MP4-файл клиенту в RAM Blob,
+    чтобы переключение между кусками реверса в браузере шло из оперативной памяти за <20 мс без пауз!
+    """
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        response.status = 400
+        return b""
+    try:
+        pos_sec = float(request.query.get('pos') or 10.0)
+    except Exception:
+        pos_sec = 10.0
+    try:
+        win_sec = float(request.query.get('win') or 12.0)
+    except Exception:
+        win_sec = 12.0
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+    no_audio = str(request.query.get('no_audio') or '0') == '1'
+
+    out_path = _render_reverse_segment_sync_v222(src, pos_sec, win_sec, audio_idx, no_audio)
+    if out_path and os.path.isfile(out_path) and os.path.getsize(out_path) >= 1024:
+        return static_file(os.path.basename(out_path), root=_REV_CACHE_DIR_V220, mimetype="video/mp4")
+    response.status = 500
+    return b""
+
+_override_bottle_route_v212('/api/video/reverse_precache_blob', 'GET', api_video_reverse_precache_blob_v222)
 
 
 @route('/api/video/reverse_precache', method='GET')
-def api_video_reverse_precache_v220():
+def api_video_reverse_precache_v222():
     response.content_type = 'application/json; charset=utf-8'
     src = (request.query.get('src') or '').strip()
     if not src:
@@ -9314,23 +9360,26 @@ def api_video_reverse_precache_v220():
     except Exception:
         pos_sec = 10.0
     try:
-        win_sec = float(request.query.get('win') or 10.0)
+        win_sec = float(request.query.get('win') or 12.0)
     except Exception:
-        win_sec = 10.0
+        win_sec = 12.0
     try:
         audio_idx = max(0, int(request.query.get('aidx') or 0))
     except Exception:
         audio_idx = 0
     no_audio = str(request.query.get('no_audio') or '0') == '1'
 
-    _cleanup_old_rev_cache_v220(keep_src=src, keep_aidx=audio_idx)
-    raw_k, out_p = _start_precache_reverse_segment_v220(src, pos_sec, win_sec, audio_idx, no_audio)
-    return json.dumps({"ok": bool(raw_k), "key": raw_k or ""})
+    threading.Thread(
+        target=_render_reverse_segment_sync_v222,
+        args=(src, pos_sec, win_sec, audio_idx, no_audio),
+        daemon=True
+    ).start()
+    return json.dumps({"ok": True})
 
-_override_bottle_route_v212('/api/video/reverse_precache', 'GET', api_video_reverse_precache_v220)
+_override_bottle_route_v212('/api/video/reverse_precache', 'GET', api_video_reverse_precache_v222)
 
 
-def api_video_reverse_remux_v220():
+def api_video_reverse_remux_v222():
     src = (request.query.get('src') or '').strip()
     if not src:
         response.status = 400
@@ -9340,46 +9389,25 @@ def api_video_reverse_remux_v220():
     except Exception:
         pos_sec = 10.0
     try:
-        win_sec = float(request.query.get('win') or 4.0)
+        win_sec = float(request.query.get('win') or 4.5)
     except Exception:
-        win_sec = 4.0
+        win_sec = 4.5
     try:
         audio_idx = max(0, int(request.query.get('aidx') or 0))
     except Exception:
         audio_idx = 0
     no_audio = str(request.query.get('no_audio') or '0') == '1'
 
-    seg_end = max(0.2, pos_sec)
-    seg_dur = max(1.0, min(16.0, win_sec, seg_end))
-    seg_start = max(0.0, seg_end - seg_dur)
+    seg_end = round(max(0.2, pos_sec), 1)
+    seg_dur = round(max(1.0, min(26.0, win_sec, seg_end)), 1)
+    seg_start = round(max(0.0, seg_end - seg_dur), 1)
 
-    _cleanup_old_rev_cache_v220(keep_src=src, keep_aidx=audio_idx)
+    # Останавливаем фоновые пре-рендеры во время старта живого куска, чтобы живой старт получил 100% процессора!
+    _cleanup_old_rev_cache_v220(keep_src=src, keep_aidx=audio_idx, kill_running_precache=True)
     raw_k, cached_path = _get_rev_cache_key_and_path_v220(src, seg_start, seg_dur, audio_idx, no_audio)
 
-    # 1. Если этот участок уже предзагружен в /tmp (или заканчивает рендериться прямо сейчас) — отдаём готовый файл за 1 мс!
-    wait_Existing = None
-    with _REV_PRECACHE_LOCK_V220:
-        wait_Existing = _REV_PRECACHE_JOBS_V220.get(raw_k)
-
-    if wait_Existing and not wait_Existing.get("done"):
-        p_wait = wait_Existing.get("proc")
-        if p_wait and p_wait.poll() is None:
-            try:
-                p_wait.wait(timeout=4.5)
-            except Exception:
-                pass
-
     if os.path.isfile(cached_path) and os.path.getsize(cached_path) >= 1024:
-        # Параллельно запускаем фоновый пре-рендер следующего куска этой же дорожки!
-        if seg_start > 0.4:
-            next_win = min(11.0, seg_start)
-            _start_precache_reverse_segment_v220(src, seg_start, next_win, audio_idx, no_audio)
         return static_file(os.path.basename(cached_path), root=_REV_CACHE_DIR_V220, mimetype="video/mp4")
-
-    # 2. Иначе запускаем быстрый потоковый реверс-ремукс выбранной дорожки (и параллельно ставим следующий кусок в пре-кэш)
-    if seg_start > 0.4:
-        next_win = min(10.0, seg_start)
-        _start_precache_reverse_segment_v220(src, seg_start, next_win, audio_idx, no_audio)
 
     src_input = _resolve_rev_src_input_v220(src, seg_start)
     cmd = _build_reverse_ffmpeg_cmd_v220(src_input, seg_start, seg_dur, audio_idx, no_audio, out_target="-")
@@ -9420,10 +9448,9 @@ def api_video_reverse_remux_v220():
 
     return bottle.HTTPResponse(body=_rev_gen(), status=200, headers=resp_hdrs)
 
-_override_bottle_route_v212('/api/video/reverse_remux', 'GET', api_video_reverse_remux_v220)
+_override_bottle_route_v212('/api/video/reverse_remux', 'GET', api_video_reverse_remux_v222)
 
 
-# Также добавляем поддержку &aidx= в /api/video/pcm_chunk, чтобы любая PCM-выгрузка брала выбранную дорожку
 def api_video_pcm_chunk_v220():
     src = (request.query.get('src') or '').strip()
     if not src:
@@ -9475,7 +9502,7 @@ def api_video_pcm_chunk_v220():
             _unregister_video_ffmpeg_proc_v212(proc)
 
 _override_bottle_route_v212('/api/video/pcm_chunk', 'GET', api_video_pcm_chunk_v220)
-# ================= END JENNY V220 SERVER PATCH =================
+# ================= END JENNY V222 SERVER PATCH =================
 
 
 def start_server():
