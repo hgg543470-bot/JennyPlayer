@@ -30969,3 +30969,947 @@ let vsyncTicks = 0;
     }
 })();
 /* ================= END JENNY_V235_LANG_SEARCH_SLOT_REFRESH_SWAP_AND_PLAY_HOLD_LOCATE_PATCH ================= */
+
+/* ================= JENNY_V236_TORRENT_FOOTER_PIN_LOCK_AND_BOTTOM_HELP_ROW_PATCH (#335 / V236):
+   1) SCREEN 1 (72006.jpg): RESTORE MISSING TORRENT STUDIO BOTTOM BLOCK (#torFooterBarV96) WITH DOWNLOAD BUTTON +
+      LIVE NETWORK DOWNLOAD PROGRESS & LIVE .xFLAC TRANSCODING PROGRESS (WHEN DOWNLOADING WAV/FLAC):
+      - Fix modal flex heights (#jennyTorrentModalV91 .jenny-modal-card-v71 & #torBodyListV96) so #torFooterBarV96 is NEVER clipped off the bottom
+      - Always keep #torFooterBarV96 visible in 'files' mode with live download % bar (#torTotalProgWrapV97) and live xFLAC compression % bar (#torXflacProgWrapV99)
+      - Fetch both /api/torrent/status and /api/sources/live_badges in refreshTorrentDaemonSnapV128 so _lastTorEncBadgeV212 (xFLAC encoding telemetry) is live
+      - Preserve xFLAC compression status on individual file rows (#torFileProgV96_*) during 500ms row highlight updates
+   2) SCREEN 2 (72008.jpg): INDESTRUCTIBLE SAVING OF [+] / [ВКЛ] PINNED SOURCES & FREEZE HEADER/LIST RE-RENDERS UNTIL USER CLICKS [+] / [ВКЛ]:
+      - Dedicated localStorage lock 'jenny_pinned_sources_locked_v236' + immediate sync to ytm_config, /api/user_data/sync, and /api/config/save_all
+      - Prevent loadConfigFromDisk / loadPersistentUserDataV218 / preset loaders from overwriting user's pinnedSourcesV91
+      - Block all background/polling re-renders of #jennySourcesHubBarV91 and #jennySourcesDropMenuV91 after initial build; rebuild ONLY on explicit user click on [+] / [ВКЛ]
+   3) SCREENS 3 & 4 (72010.jpg & 72012.jpg): MOVE [🧭 Гид] AND [🙈 Скрыть все справочные материалы] TO ONE SINGLE ROW WITH
+      [📖 СПРАВОЧНИК НАСТРОЕК (❓)] AT THE VERY BOTTOM OF SETTINGS (#jennyBottomGuideSlotV165) WHEN HELP IS HIDDEN:
+      - Triggered both from the introductory onboarding prompt (#onb_hideHelpChkV165) and from the Settings checkbox (#cfg_hideHelpV62)
+      - Places [📖 Справочник (❓)], [🧭 Гид], and [☑ 🙈 Справки] on one single horizontal row at the end of Settings when hideHelpBadges is true, and restores them to the top when unchecked
+================= */
+(function() {
+    if (window._jennyV236Installed) return;
+    window._jennyV236Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. CSS FOR TORRENT MODAL FOOTER VISIBILITY & COMPACT BOTTOM HELP ROW
+    // -------------------------------------------------------------------------
+    var stV236 = document.createElement('style');
+    stV236.id = 'jennyStyleV236';
+    stV236.textContent = [
+        /* Force Torrent Studio modal card to use full 94vh flex column so #torFooterBarV96 never gets clipped off the bottom */
+        '#jennyTorrentModalV91 .jenny-modal-card-v71 {',
+        '  height: 94vh !important;',
+        '  max-height: 94vh !important;',
+        '  display: flex !important;',
+        '  flex-direction: column !important;',
+        '  overflow: hidden !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        '#jennyTorrentModalV91 .jenny-modal-hdr-v71 {',
+        '  flex-shrink: 0 !important;',
+        '  padding: 7px 10px !important;',
+        '}',
+        '#jennyTorrentModalV91 #torP2pCoreSwitchBoxV139 {',
+        '  padding: 5px 8px !important;',
+        '  margin-bottom: 2px !important;',
+        '  gap: 4px !important;',
+        '}',
+        '#jennyTorrentModalV91 #torFilterPillsBarV99 {',
+        '  gap: 4px !important;',
+        '  margin: 1px 0 !important;',
+        '}',
+        '#jennyTorrentModalV91 #torBodyListV96 {',
+        '  flex: 1 1 0px !important;',
+        '  min-height: 80px !important;',
+        '  max-height: none !important;',
+        '  overflow-y: auto !important;',
+        '  padding: 7px 10px !important;',
+        '}',
+        '#jennyTorrentModalV91 #torFooterBarV96 {',
+        '  flex-shrink: 0 !important;',
+        '  z-index: 20 !important;',
+        '  padding: 8px 10px !important;',
+        '  border-top: 1px solid #30363d !important;',
+        '  background: #090c10 !important;',
+        '  gap: 6px !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        /* Bottom single-row slot in Settings for [📖 Справочник (❓)] + [🧭 Гид] + [☑ 🙈 Справки] */
+        '#jennyBottomGuideSlotV165.jenny-bottom-help-row-v236 {',
+        '  display: flex !important;',
+        '  flex-direction: row !important;',
+        '  align-items: stretch !important;',
+        '  justify-content: space-between !important;',
+        '  gap: 6px !important;',
+        '  width: 100% !important;',
+        '  box-sizing: border-box !important;',
+        '  margin-top: 14px !important;',
+        '  margin-bottom: 18px !important;',
+        '  padding-top: 10px !important;',
+        '  border-top: 1px dashed #30363d !important;',
+        '}',
+        '#jennyBottomGuideSlotV165.jenny-bottom-help-row-v236 #jennyFullGuideBtn {',
+        '  flex: 1 1 auto !important;',
+        '  width: auto !important;',
+        '  min-width: 0 !important;',
+        '  padding: 8px 8px !important;',
+        '  font-size: 11.5px !important;',
+        '  white-space: nowrap !important;',
+        '  overflow: hidden !important;',
+        '  text-overflow: ellipsis !important;',
+        '  margin: 0 !important;',
+        '}',
+        '#jennyBottomGuideSlotV165.jenny-bottom-help-row-v236 #jennyOpenOnboardingBtnV165 {',
+        '  flex: 0 0 auto !important;',
+        '  padding: 0 10px !important;',
+        '  font-size: 11.5px !important;',
+        '  white-space: nowrap !important;',
+        '  margin: 0 !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '}',
+        '#jennyBottomGuideSlotV165.jenny-bottom-help-row-v236 #hideHelpRowV62 {',
+        '  flex: 0 0 auto !important;',
+        '  width: auto !important;',
+        '  margin: 0 !important;',
+        '  padding: 0 9px !important;',
+        '  border-radius: 8px !important;',
+        '  background: #161b22 !important;',
+        '  border: 1px solid #30363d !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        '#jennyBottomGuideSlotV165.jenny-bottom-help-row-v236 #hideHelpRowV62 label {',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  gap: 5px !important;',
+        '  width: auto !important;',
+        '  margin: 0 !important;',
+        '  font-size: 11.5px !important;',
+        '  font-weight: 800 !important;',
+        '  color: #e6edf3 !important;',
+        '  white-space: nowrap !important;',
+        '  cursor: pointer !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(stV236);
+
+    // =========================================================================
+    // 2. SCREEN 1 FIX (72006.jpg): RESTORE TORRENT STUDIO FOOTER (#torFooterBarV96)
+    //    WITH DOWNLOAD BUTTON + LIVE DOWNLOAD & .xFLAC TRANSCODING PROGRESS
+    // =========================================================================
+    window.isLosslessAudioPathV236 = function(p) {
+        return /\.(flac|wav|ape|wv|alac)$/i.test(String(p || '').trim());
+    };
+
+    window.computeJobHasLosslessV236 = function(job) {
+        if (!job || !Array.isArray(job.files)) return false;
+        var targets = (job.targetSet && job.targetSet.size > 0)
+            ? job.files.filter(function(f) { return job.targetSet.has(Number(f.index)); })
+            : ((job.selectedFiles && job.selectedFiles.size > 0)
+                ? job.files.filter(function(f) { return job.selectedFiles.has(Number(f.index)); })
+                : job.files);
+        if (!targets.length) targets = job.files;
+        return targets.some(function(f) {
+            return window.isLosslessAudioPathV236(f.path || f.full_path || f.name || '');
+        });
+    };
+
+    window.ensureTorrentFooterStructureV236 = function() {
+        var modal = document.getElementById('jennyTorrentModalV91');
+        if (!modal) return null;
+        var card = modal.querySelector('.jenny-modal-card-v71');
+        var body = document.getElementById('torBodyListV96');
+        if (body && body.parentElement) {
+            var topControls = body.previousElementSibling;
+            if (topControls && topControls !== modal.querySelector('.jenny-modal-hdr-v71')) {
+                topControls.style.flexShrink = '0';
+                topControls.style.padding = '6px 10px';
+                topControls.style.gap = '4px';
+            }
+        }
+        var ftr = document.getElementById('torFooterBarV96');
+        if (!ftr && card) {
+            ftr = document.createElement('div');
+            ftr.id = 'torFooterBarV96';
+            card.appendChild(ftr);
+        }
+        if (!ftr) return null;
+
+        var h = window._torStateV96 && window._torStateV96.currentHash;
+        var job = (h && window._torMapV112) ? window._torMapV112[h] : null;
+        var hasLossless = job
+            ? window.computeJobHasLosslessV236(job)
+            : (window.torrentHasLosslessFilesV106 ? window.torrentHasLosslessFilesV106() : false);
+        if (job) job.hasLossless = hasLossless;
+
+        var selSet = window.getActiveTorrentSelectSetV117 ? window.getActiveTorrentSelectSetV117() : (job && job.selectedFiles) || new Set();
+        var hasSel = selSet.size > 0;
+
+        ftr.style.cssText = 'display:' + (window._torScreenModeV112 === 'files' ? 'flex' : 'none') + ' !important;flex-direction:column !important;padding:8px 10px !important;border-top:1px solid #30363d !important;background:#090c10 !important;gap:6px !important;flex-shrink:0 !important;z-index:20 !important;';
+
+        ftr.innerHTML =
+            '<div id="torXflacProgWrapV99" style="display:none;flex-direction:column;gap:3px;width:100%;background:#0d131a;padding:5px 8px;border-radius:7px;border:1px solid rgba(63,185,80,0.45);box-sizing:border-box;">' +
+                '<div id="torXflacProgLabelV99" style="font-size:10.5px;color:#3fb950;font-weight:800;white-space:normal;line-height:1.25;">🧬 Пережатие в xFLAC: 0%</div>' +
+                '<div style="width:100%;height:7px;background:#161b22;border-radius:6px;overflow:hidden;border:1px solid #3fb950;">' +
+                    '<div id="torXflacProgFillV99" style="width:0%;height:100%;background:linear-gradient(90deg,#3fb950,#58a6ff);transition:width 0.2s ease;"></div>' +
+                '</div>' +
+            '</div>' +
+            '<div id="torTotalProgWrapV97" style="display:none;flex-direction:column;gap:3px;width:100%;background:#0d1117;padding:5px 8px;border-radius:7px;border:1px solid rgba(88,166,255,0.4);box-sizing:border-box;">' +
+                '<div id="torTotalProgLabelV236" style="font-size:10.5px;color:#58a6ff;font-weight:800;display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
+                    '<span id="torTotalProgTextLeftV236">⬇️ Загрузка сети: 0%</span>' +
+                    '<span id="torTotalProgTextRightV236" style="color:#3fb950;">В плеере: 0/0</span>' +
+                '</div>' +
+                '<div style="width:100%;height:7px;background:#161b22;border-radius:6px;overflow:hidden;border:1px solid #30363d;">' +
+                    '<div id="torTotalProgFillV97" style="width:0%;height:100%;background:linear-gradient(90deg,#8957e5,#58a6ff,#3fb950);transition:width 0.25s ease;"></div>' +
+                '</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:5px;width:100%;align-items:center;">' +
+                '<button type="button" onclick="window.backToTorrentSearchListV97()" style="padding:6px 9px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:7px;font-size:11px;font-weight:bold;flex-shrink:0;">⬅ Раздачи</button>' +
+                '<button type="button" id="btnTorToggleAllV117" onclick="window.toggleSelectAllTorrentFilesV117(event)" style="flex:1;padding:6px 8px;background:#161b22;color:' + (hasSel ? '#8b949e' : '#58a6ff') + ';border:1px solid ' + (hasSel ? '#30363d' : '#58a6ff') + ';border-radius:7px;font-size:11px;font-weight:bold;text-align:center;">' + (hasSel ? '☐ Снять все' : '☑️ Выбрать все') + '</button>' +
+                '<button type="button" id="btnTorStopStreamOrDlV143" onclick="window.stopCurrentOpenTorrentV143()" title="Остановить закачку / поток" style="padding:6px 9px;background:#161b22;color:#e3b341;border:1px solid #e3b341;border-radius:7px;font-size:11px;font-weight:bold;flex-shrink:0;">⏹ Стоп</button>' +
+                '<button type="button" id="btnTorDeleteCurrentV143" onclick="window.deleteCurrentOpenTorrentV143()" title="Удалить раздачу и временный кэш" style="padding:6px 9px;background:rgba(248,81,73,0.15);color:#ff7b72;border:1px solid #ff7b72;border-radius:7px;font-size:11px;font-weight:bold;flex-shrink:0;">🗑️</button>' +
+            '</div>' +
+            '<button type="button" id="btnTorStartDlV97" onclick="window.startSelectedTorrentDownloadV96()" style="width:100%;padding:9px 12px;background:linear-gradient(135deg,#8957e5,#238636);color:#fff;border:none;border-radius:8px;font-weight:900;font-size:12px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.4);">' +
+                (hasLossless ? '⬇️ Качать выбранные (➔ xFLAC)' : '⬇️ Качать выбранные в плеер (Прямой формат)') +
+            '</button>';
+
+        return ftr;
+    };
+
+    var _origRenderTorFilesV236 = window.renderTorrentFilesListV96;
+    window.renderTorrentFilesListV96 = function() {
+        window._torScreenModeV112 = 'files';
+        var h = window._torStateV96 && window._torStateV96.currentHash;
+        var job = (h && window._torMapV112) ? window._torMapV112[h] : null;
+        if (job) {
+            window._torStateV96.files = job.files;
+            window._torStateV96.selectedFiles = job.selectedFiles;
+            job.hasLossless = window.computeJobHasLosslessV236(job);
+        }
+        if (typeof _origRenderTorFilesV236 === 'function') {
+            _origRenderTorFilesV236.apply(this, arguments);
+        }
+        window.ensureTorrentFooterStructureV236();
+        if (job) {
+            window.paintOpenedTorrentJobProgressV112(job, window._lastTorEncBadgeV212 || null);
+        }
+    };
+
+    // Upgrade paintOpenedTorrentJobProgressV112 so both network download and xFLAC transcoding bars + buttons stay live
+    window.paintOpenedTorrentJobProgressV112 = function(job, te) {
+        if (!job || !window._torStateV96 || window._torStateV96.currentHash !== job.hash || window._torScreenModeV112 !== 'files') return;
+        te = te || window._lastTorEncBadgeV212 || {};
+        job.hasLossless = window.computeJobHasLosslessV236(job);
+
+        var ftr = document.getElementById('torFooterBarV96');
+        if (!ftr || !document.getElementById('btnTorStartDlV97') || !document.getElementById('torTotalProgLabelV236')) {
+            ftr = window.ensureTorrentFooterStructureV236();
+        }
+        if (ftr) {
+            ftr.style.setProperty('display', 'flex', 'important');
+        }
+
+        var totalTargets = Math.max(1, (job.targetSet && job.targetSet.size) || (job.selectedFiles && job.selectedFiles.size) || (job.files && job.files.length) || 1);
+        var readyCnt = job.readyCnt || 0;
+        var totalPct = Math.max(0, Math.min(100, job.netPct || 0));
+
+        var sumDoneBytes = 0, sumTotBytes = 0;
+        (job.files || []).forEach(function(f) {
+            var fIdx = Number(f.index);
+            var st = (job.fileStatusMap && job.fileStatusMap[fIdx]) || {};
+            if (!job.targetSet || job.targetSet.size === 0 || job.targetSet.has(fIdx)) {
+                sumDoneBytes += Number(st.completed || 0);
+                sumTotBytes += Number(st.length || f.length || 0);
+            }
+        });
+        var sumDoneMb = (sumDoneBytes / (1024 * 1024)).toFixed(1);
+        var sumTotMb = (sumTotBytes / (1024 * 1024)).toFixed(1);
+
+        var totWrap = document.getElementById('torTotalProgWrapV97');
+        var totFill = document.getElementById('torTotalProgFillV97');
+        var totLeft = document.getElementById('torTotalProgTextLeftV236');
+        var totRight = document.getElementById('torTotalProgTextRightV236');
+
+        if (totWrap) {
+            if (job.dlActive || job.completedAll || totalPct > 0 || sumDoneBytes > 0) {
+                totWrap.style.display = 'flex';
+                if (totFill) totFill.style.width = totalPct + '%';
+                if (totLeft) {
+                    var spd = job.speedKbps > 0 ? (' • ⚡ ' + job.speedKbps + ' КБ/с') : '';
+                    totLeft.innerText = (totalPct >= 100 ? '✅ Скачано: 100%' : ('⬇️ Загрузка: ' + totalPct + '%')) + ' (' + sumDoneMb + ' / ' + sumTotMb + ' МБ' + spd + ')';
+                }
+                if (totRight) {
+                    totRight.innerText = 'В плеере: ' + readyCnt + '/' + totalTargets;
+                }
+            } else {
+                totWrap.style.display = 'none';
+            }
+        }
+
+        // Check if any lossless file in this job is downloaded and waiting/running xFLAC compression
+        var hasLosslessWaitingOrEncoding = false;
+        (job.files || []).forEach(function(f) {
+            var fIdx = Number(f.index);
+            var st = (job.fileStatusMap && job.fileStatusMap[fIdx]) || {};
+            var isTarget = (job.targetSet && job.targetSet.has(fIdx)) || (job.explicitDlSet && job.explicitDlSet.has(fIdx));
+            if (isTarget && window.isLosslessAudioPathV236(f.path || f.full_path || '') && !st.xflac_file && !f.xflac_file) {
+                if (st.done || Number(st.percent || 0) >= 100 || (te && te.active)) {
+                    hasLosslessWaitingOrEncoding = true;
+                }
+            }
+        });
+
+        var encWrap = document.getElementById('torXflacProgWrapV99');
+        var encLbl = document.getElementById('torXflacProgLabelV99');
+        var encFill = document.getElementById('torXflacProgFillV99');
+        if (encWrap) {
+            if (!job.hasLossless || (!job.dlActive && !job.completedAll && !te.active && !hasLosslessWaitingOrEncoding)) {
+                encWrap.style.display = 'none';
+            } else if (readyCnt >= totalTargets && job.targetSet && job.targetSet.size > 0) {
+                encWrap.style.display = 'flex';
+                if (encLbl) encLbl.innerText = '✅ Все выбранные треки (' + readyCnt + '/' + totalTargets + ') пережаты в .xFLAC!';
+                if (encFill) encFill.style.width = '100%';
+            } else if (te.active || hasLosslessWaitingOrEncoding || readyCnt > 0 || job.dlActive) {
+                encWrap.style.display = 'flex';
+                var trackPct = te.active ? Number(te.track_pct || 0) : (hasLosslessWaitingOrEncoding ? 15 : 0);
+                var ovPct = Math.min(100, Math.round(((readyCnt * 100) + trackPct) / totalTargets));
+                var curTrackName = te.current_track || (hasLosslessWaitingOrEncoding ? 'Упаковка WAV/FLAC ➔ .xFLAC...' : 'Ожидание докачки WAV/FLAC...');
+                if (encLbl) {
+                    encLbl.innerText = '🧬 Пережатие в xFLAC [' + readyCnt + '/' + totalTargets + ']: ' + curTrackName + ' (' + (te.active ? trackPct : ovPct) + '%)';
+                }
+                if (encFill) encFill.style.width = Math.max(4, (te.active ? trackPct : ovPct)) + '%';
+            }
+        }
+
+        var btn = document.getElementById('btnTorStartDlV97');
+        if (btn) {
+            if (job.completedAll && job.targetSet && job.targetSet.size > 0) {
+                btn.disabled = false;
+                btn.style.background = 'linear-gradient(135deg, #238636, #1f6feb)';
+                btn.innerText = '✅ Готово (' + readyCnt + '/' + totalTargets + ' в плеере)';
+            } else if (job.dlActive || (te && te.active) || hasLosslessWaitingOrEncoding) {
+                btn.disabled = false;
+                if (job.hasLossless && (te.active || hasLosslessWaitingOrEncoding || totalPct >= 100)) {
+                    var ep = te.active ? (te.track_pct || 0) : Math.min(99, Math.round((readyCnt * 100) / totalTargets));
+                    btn.style.background = 'linear-gradient(135deg, #7341be, #238636)';
+                    btn.innerText = '🧬 Пережатие в xFLAC: ' + ep + '% (готово ' + readyCnt + '/' + totalTargets + ')';
+                } else {
+                    btn.style.background = 'linear-gradient(135deg, #1f6feb, #238636)';
+                    btn.innerText = '⏳ Загрузка: ' + totalPct + '% (в плеере: ' + readyCnt + '/' + totalTargets + ')';
+                }
+            } else {
+                btn.disabled = false;
+                btn.style.background = 'linear-gradient(135deg, #8957e5, #238636)';
+                btn.innerText = job.hasLossless
+                    ? '⬇️ Качать выбранные (➔ xFLAC)'
+                    : '⬇️ Качать выбранные в плеер (Прямой формат)';
+            }
+        }
+
+        var stEl = document.getElementById('torStatusLineV96');
+        if (stEl && (job.dlActive || job.completedAll)) {
+            var spdStr = job.speedKbps > 0 ? (' • ⚡ ' + job.speedKbps + ' КБ/с') : '';
+            var totPeersStr = job.totalPeers > job.peers ? ('/' + job.totalPeers) : '';
+            stEl.innerText = '🧲 Сидов: ' + (job.seeders || 0) + ' • Пиров: ' + (job.peers || 0) + totPeersStr + spdStr + ' • Сеть: ' + totalPct + '% • В плеере: ' + readyCnt + '/' + totalTargets;
+        }
+
+        window.cleanAndHighlightTorrentFileRowsV218();
+    };
+
+    // Upgrade cleanAndHighlightTorrentFileRowsV218 so it shows both download AND .xFLAC transcoding on each file row
+    window.cleanAndHighlightTorrentFileRowsV218 = function() {
+        var curH = window._torStateV96 && window._torStateV96.currentHash;
+        if (!curH || window._torScreenModeV112 !== 'files') return;
+
+        var ftr = document.getElementById('torFooterBarV96');
+        if (ftr && (ftr.style.display === 'none' || getComputedStyle(ftr).display === 'none')) {
+            ftr.style.setProperty('display', 'flex', 'important');
+        }
+
+        var job = window._torMapV112 && window._torMapV112[curH];
+        var te = window._lastTorEncBadgeV212 || {};
+        var vidSt = window._vidStateV130 || {};
+        var activeStreamHash = (vidSt.active && vidSt.torHash) ? String(vidSt.torHash).toLowerCase() : (window._activeStreamSessionV143 ? String(window._activeStreamSessionV143.hash || '').toLowerCase() : '');
+        var activeStreamIdx = (vidSt.active && vidSt.torHash) ? Number(vidSt.torFileIdx) : (window._activeStreamSessionV143 ? Number(window._activeStreamSessionV143.fileIdx) : -1);
+
+        var rows = document.querySelectorAll('#torBodyListV96 [id^="torFileRowV96_"]');
+        rows.forEach(function(rowEl) {
+            var fIdx = Number(String(rowEl.id).replace('torFileRowV96_', ''));
+            var pEl = document.getElementById('torFileProgV96_' + fIdx);
+            var dlBtn = document.getElementById('torDlSingleBtnV98_' + fIdx);
+            var playBtn = rowEl.querySelector('.tor-prev-btn-v97');
+
+            var fMeta = (job && job.files || []).find(function(x) { return Number(x.index) === fIdx; });
+            var st = (job && job.fileStatusMap && job.fileStatusMap[fIdx]) || {};
+            var totMb = (((st.length || (fMeta && fMeta.length) || 0)) / (1024 * 1024)).toFixed(1);
+            var doneMb = (((st.completed || 0)) / (1024 * 1024)).toFixed(1);
+            var pct = Math.max(0, Math.min(100, Number(st.percent || 0)));
+            var readyFile = st.xflac_file || (fMeta && fMeta.xflac_file) || '';
+            var fPath = (fMeta && (fMeta.path || fMeta.full_path)) || st.full_path || '';
+            var isLosslessFile = window.isLosslessAudioPathV236(fPath);
+            var impKey = String(curH).toLowerCase() + '_' + fIdx;
+
+            var isStreamingNow = (activeStreamHash === String(curH).toLowerCase() && activeStreamIdx === fIdx);
+            var isExplicitDl = Boolean(job && job.explicitDlSet && job.explicitDlSet.has(fIdx));
+            var isTarget = Boolean(isExplicitDl || (job && job.targetSet && job.targetSet.has(fIdx)));
+            var isActivelyDownloading = Boolean(job && job.dlActive && (isExplicitDl || (isTarget && Number(st.completed || 0) > 0)));
+            var isEncodingNow = Boolean(isLosslessFile && !readyFile && ((te.active && te.current_key === impKey) || (window._torImportWorkerBusyV112 && (st.done || pct >= 100) && isTarget)));
+            var isQueuedForXflac = Boolean(isLosslessFile && !readyFile && (st.done || pct >= 100) && isTarget);
+
+            if (rowEl) {
+                if (readyFile) {
+                    rowEl.style.background = 'linear-gradient(90deg, rgba(63,185,80,0.26) 100%, #0b0f16 100%)';
+                    rowEl.style.borderColor = 'rgba(63,185,80,0.65)';
+                } else if (isEncodingNow || isQueuedForXflac) {
+                    var ep = (te.active && te.current_key === impKey) ? Number(te.track_pct || 25) : 35;
+                    rowEl.style.background = 'linear-gradient(90deg, rgba(63,185,80,0.38) ' + ep + '%, rgba(137,87,229,0.25) ' + ep + '%)';
+                    rowEl.style.borderColor = '#3fb950';
+                } else if (pct > 0 && (isActivelyDownloading || isStreamingNow)) {
+                    rowEl.style.background = 'linear-gradient(90deg, rgba(137,87,229,0.32) ' + pct + '%, #0b0f16 ' + pct + '%)';
+                    rowEl.style.borderColor = '#8957e5';
+                }
+            }
+
+            if (pEl) {
+                pEl.style.height = 'auto';
+                pEl.style.lineHeight = '1.35';
+                pEl.style.whiteSpace = 'normal';
+                pEl.style.overflow = 'visible';
+
+                if (readyFile) {
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                        '<div style="margin-top:2px;color:#3fb950;font-weight:800;">✅ В плеере: ' + readyFile + '</div>';
+                } else if (isEncodingNow) {
+                    var encP = (te.active && te.current_key === impKey) ? Number(te.track_pct || 15) : 20;
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ (WAV/FLAC скачан)</div>' +
+                        '<div style="margin-top:2px;"><span style="color:#3fb950;font-weight:900;background:rgba(63,185,80,0.18);padding:1px 6px;border-radius:5px;border:1px solid #3fb950;">🧬 Пережатие в xFLAC: ' + encP + '%</span></div>';
+                } else if (isQueuedForXflac) {
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ (100%)</div>' +
+                        '<div style="margin-top:2px;"><span style="color:#d2a8ff;font-weight:900;background:rgba(163,113,247,0.16);padding:1px 6px;border-radius:5px;border:1px solid #a371f7;">🧬 Очередь пережатия в xFLAC...</span></div>';
+                } else if (isStreamingNow && isActivelyDownloading) {
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                        '<div style="margin-top:2px;"><span style="color:#00e5ff;font-weight:900;">📡 В потоке</span> • <span style="color:#3fb950;font-weight:900;">⬇️ Качается: ' + doneMb + ' МБ (' + pct + '%)</span></div>';
+                } else if (isStreamingNow) {
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                        '<div style="margin-top:2px;"><span style="color:#00e5ff;font-weight:900;background:rgba(0,229,255,0.14);padding:1px 6px;border-radius:5px;border:1px solid rgba(0,229,255,0.4);">📡 Поток активен (' + pct + '%)</span></div>';
+                } else if (isActivelyDownloading) {
+                    var xflacHint = isLosslessFile ? ' ➔ xFLAC' : '';
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                        '<div style="margin-top:2px;"><span style="color:#3fb950;font-weight:900;background:rgba(63,185,80,0.15);padding:1px 6px;border-radius:5px;border:1px solid rgba(63,185,80,0.45);">⬇️ Качается: ' + doneMb + ' МБ (' + pct + '%)' + xflacHint + '</span></div>';
+                } else if (pct >= 100) {
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                        '<div style="margin-top:2px;color:#3fb950;font-weight:800;">✅ Скачан (100%)</div>';
+                } else if (pct > 0) {
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                        '<div style="margin-top:2px;color:#8b949e;">Пауза: ' + doneMb + ' МБ (' + pct + '%)</div>';
+                } else {
+                    pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>';
+                }
+            }
+
+            if (playBtn) {
+                playBtn.style.background = isStreamingNow ? 'rgba(0,229,255,0.22)' : '#161b22';
+                playBtn.style.borderColor = isStreamingNow ? '#00e5ff' : '#30363d';
+                playBtn.style.color = isStreamingNow ? '#00e5ff' : '#58a6ff';
+            }
+            if (dlBtn) {
+                if (readyFile) {
+                    dlBtn.innerText = '✅';
+                } else if (isEncodingNow || isQueuedForXflac) {
+                    dlBtn.innerText = '🧬';
+                } else {
+                    dlBtn.innerText = isActivelyDownloading ? '⏳' : '⬇️';
+                }
+            }
+        });
+    };
+
+    // Ensure refreshTorrentDaemonSnapV128 fetches BOTH /api/torrent/status AND /api/sources/live_badges so _lastTorEncBadgeV212 is always populated!
+    var _origRefreshDaemonSnapV236 = window.refreshTorrentDaemonSnapV128;
+    window.refreshTorrentDaemonSnapV128 = async function() {
+        try {
+            fetch('/api/sources/live_badges')
+                .then(function(r) { return r.json(); })
+                .then(function(b) {
+                    if (b && b.torrent_enc) {
+                        window._lastTorEncBadgeV212 = b.torrent_enc;
+                    }
+                })
+                .catch(function() {});
+        } catch (e) {}
+        if (typeof _origRefreshDaemonSnapV236 === 'function') {
+            return await _origRefreshDaemonSnapV236.apply(this, arguments);
+        }
+    };
+
+    // Ensure downloadSingleTorrentTrackV98 & startSelectedTorrentDownloadV96 compute job.hasLossless and immediately show progress in #torFooterBarV96
+    var _origDlSingleV236 = window.downloadSingleTorrentTrackV98;
+    window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
+        var r = (typeof _origDlSingleV236 === 'function')
+            ? await _origDlSingleV236.apply(this, arguments)
+            : undefined;
+        var h = window._torStateV96 && window._torStateV96.currentHash;
+        var job = (h && window._torMapV112) ? window._torMapV112[h] : null;
+        if (job) {
+            job.hasLossless = window.computeJobHasLosslessV236(job);
+            window.paintOpenedTorrentJobProgressV112(job, window._lastTorEncBadgeV212 || null);
+        }
+        return r;
+    };
+
+    var _origStartSelDlV236 = window.startSelectedTorrentDownloadV96;
+    window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
+        var r = (typeof _origStartSelDlV236 === 'function')
+            ? await _origStartSelDlV236.apply(this, arguments)
+            : undefined;
+        var h = window._torStateV96 && window._torStateV96.currentHash;
+        var job = (h && window._torMapV112) ? window._torMapV112[h] : null;
+        if (job) {
+            job.hasLossless = window.computeJobHasLosslessV236(job);
+            window.paintOpenedTorrentJobProgressV112(job, window._lastTorEncBadgeV212 || null);
+        }
+        return r;
+    };
+
+    // =========================================================================
+    // 3. SCREEN 2 FIX (72008.jpg): INDESTRUCTIBLE SAVING OF PINNED SOURCES ([+] / [ВКЛ])
+    //    AND ZERO BACKGROUND RE-RENDERS OF HEADER & DROPDOWN UNTIL USER CLICKS [+] / [ВКЛ]
+    // =========================================================================
+    var PIN_STORAGE_KEY_V236 = 'jenny_pinned_sources_locked_v236';
+
+    window.readLockedPinnedSourcesV236 = function() {
+        if (Array.isArray(window._lockedPinnedSourcesV236)) {
+            return window._lockedPinnedSourcesV236.slice(0, 6);
+        }
+        var raw = null;
+        try { raw = localStorage.getItem(PIN_STORAGE_KEY_V236); } catch (e) {}
+        if (raw) {
+            try {
+                var parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                    window._lockedPinnedSourcesV236 = parsed.slice(0, 6);
+                    return window._lockedPinnedSourcesV236.slice();
+                }
+            } catch (e) {}
+        }
+        window.appConfig = window.appConfig || {};
+        var initial = Array.isArray(window.appConfig.pinnedSourcesV91)
+            ? window.appConfig.pinnedSourcesV91.slice(0, 6)
+            : ['torrent', 'ost', 'radio', 'soundcloud', 'youtube'];
+        window._lockedPinnedSourcesV236 = initial.slice();
+        try { localStorage.setItem(PIN_STORAGE_KEY_V236, JSON.stringify(window._lockedPinnedSourcesV236)); } catch (e) {}
+        return window._lockedPinnedSourcesV236.slice();
+    };
+
+    window.writeLockedPinnedSourcesV236 = function(arr) {
+        var clean = Array.isArray(arr) ? arr.slice(0, 6) : [];
+        window._lockedPinnedSourcesV236 = clean.slice();
+        window.appConfig = window.appConfig || {};
+        window.appConfig.pinnedSourcesV91 = clean.slice();
+        try { localStorage.setItem(PIN_STORAGE_KEY_V236, JSON.stringify(clean)); } catch (e) {}
+        try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        try {
+            if (typeof window.syncPersistentUserDataV218 === 'function') {
+                window.syncPersistentUserDataV218(true);
+            }
+        } catch (e) {}
+        try {
+            fetch('/api/config/save_all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(window.appConfig)
+            }).catch(function() {});
+        } catch (e) {}
+    };
+
+    // Always return the locked pinned sources and keep window.appConfig.pinnedSourcesV91 in sync
+    window.getPinnedSourcesV91 = function() {
+        var pinned = window.readLockedPinnedSourcesV236();
+        window.appConfig = window.appConfig || {};
+        window.appConfig.pinnedSourcesV91 = pinned.slice();
+        return pinned;
+    };
+
+    // Guard loadConfigFromDisk & loadPersistentUserDataV218 so server reloads never wipe pinnedSourcesV91
+    var _origLoadConfigFromDiskV236 = window.loadConfigFromDisk;
+    if (typeof _origLoadConfigFromDiskV236 === 'function') {
+        window.loadConfigFromDisk = async function() {
+            var lockedBefore = window.readLockedPinnedSourcesV236();
+            var res = await _origLoadConfigFromDiskV236.apply(this, arguments);
+            window.appConfig = window.appConfig || {};
+            window.appConfig.pinnedSourcesV91 = lockedBefore.slice();
+            try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+            return res;
+        };
+    }
+
+    var _origLoadPersistentV236 = window.loadPersistentUserDataV218;
+    if (typeof _origLoadPersistentV236 === 'function') {
+        window.loadPersistentUserDataV218 = async function() {
+            var hadExplicitLock = false;
+            try { hadExplicitLock = Boolean(localStorage.getItem(PIN_STORAGE_KEY_V236)); } catch (e) {}
+            var lockedBefore = window.readLockedPinnedSourcesV236();
+            var res = await _origLoadPersistentV236.apply(this, arguments);
+            if (hadExplicitLock) {
+                window.appConfig = window.appConfig || {};
+                window.appConfig.pinnedSourcesV91 = lockedBefore.slice();
+                try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+            }
+            return res;
+        };
+    }
+
+    // Freeze renderHeaderSourcesHubV91 & renderSourcesDropdownMenuContentV218 after initial mount:
+    // ONLY rebuild when window._userPinClickActiveV236 === true (i.e. when the user clicks [+] or [ВКЛ])!
+    var _origRenderHeaderSourcesV236 = window.renderHeaderSourcesHubV91;
+    window._headerSourcesBuiltOnceV236 = false;
+    window._userPinClickActiveV236 = false;
+
+    window.renderHeaderSourcesHubV91 = function() {
+        var hub = document.getElementById('jennySourcesHubBarV91');
+        var dropBtn = document.getElementById('btnSourcesHubDropV91');
+        if (window._headerSourcesBuiltOnceV236 && hub && dropBtn && !window._userPinClickActiveV236) {
+            return;
+        }
+        if (typeof _origRenderHeaderSourcesV236 === 'function') {
+            _origRenderHeaderSourcesV236.call(this, true);
+            if (document.getElementById('jennySourcesHubBarV91')) {
+                window._headerSourcesBuiltOnceV236 = true;
+            }
+        }
+    };
+
+    window.buildSourcesDropdownDOMOnceV236 = function(menu) {
+        if (!menu) menu = document.getElementById('jennySourcesDropMenuV91');
+        if (!menu) return;
+        var pinned = window.getPinnedSourcesV91();
+        var catalog = window.SOURCES_CATALOG_V91 || [];
+
+        menu.innerHTML =
+            '<div style="font-size:10.5px;color:#8b949e;padding:2px 4px;display:flex;justify-content:space-between;">' +
+                '<span>ВЫБЕРИ ИСТОЧНИК:</span>' +
+                '<span id="jennySourcesHdrCntV236">В шапке (' + pinned.length + '/' + catalog.length + ')</span>' +
+            '</div>' +
+            catalog.map(function(s) {
+                var isPin = pinned.indexOf(s.id) !== -1;
+                return '<div id="jennySrcDropRowV236_' + s.id + '" style="display:flex;align-items:center;gap:8px;background:#0f141d;border:1px solid ' + (isPin ? '#3fb950' : '#262c36') + ';border-radius:9px;padding:7px 9px;">' +
+                    '<div onclick="window.triggerSourceActionV91(\'' + s.id + '\', event)" style="display:flex;align-items:center;gap:8px;flex:1;color:#e6edf3;font-size:12px;font-weight:bold;cursor:pointer;">' +
+                        '<span style="display:inline-flex;width:20px;justify-content:center;">' + s.svg + '</span>' +
+                        '<span>' + s.title + '</span>' +
+                    '</div>' +
+                    '<button type="button" id="jennySrcPinBtnV236_' + s.id + '" onclick="window.togglePinSourceV91(\'' + s.id + '\', event)" style="padding:4px 9px;font-size:10.5px;font-weight:bold;border-radius:6px;background:' + (isPin ? 'rgba(63,185,80,0.22)' : '#161b22') + ';border:1px solid ' + (isPin ? '#3fb950' : '#30363d') + ';color:' + (isPin ? '#3fb950' : '#8b949e') + ';cursor:pointer;min-width:38px;text-align:center;">' +
+                        (isPin ? 'ВКЛ' : '+') +
+                    '</button>' +
+                '</div>';
+            }).join('');
+        menu._builtOnceV236 = true;
+    };
+
+    window.syncSourcesDropdownPinStatesInPlaceV236 = function() {
+        var menu = document.getElementById('jennySourcesDropMenuV91');
+        if (!menu || !menu._builtOnceV236) return;
+        var pinned = window.getPinnedSourcesV91();
+        var catalog = window.SOURCES_CATALOG_V91 || [];
+        var cntEl = document.getElementById('jennySourcesHdrCntV236');
+        if (cntEl) cntEl.innerText = 'В шапке (' + pinned.length + '/' + catalog.length + ')';
+
+        catalog.forEach(function(s) {
+            var isPin = pinned.indexOf(s.id) !== -1;
+            var row = document.getElementById('jennySrcDropRowV236_' + s.id);
+            var btn = document.getElementById('jennySrcPinBtnV236_' + s.id);
+            if (row) {
+                row.style.borderColor = isPin ? '#3fb950' : '#262c36';
+            }
+            if (btn) {
+                btn.innerText = isPin ? 'ВКЛ' : '+';
+                btn.style.background = isPin ? 'rgba(63,185,80,0.22)' : '#161b22';
+                btn.style.borderColor = isPin ? '#3fb950' : '#30363d';
+                btn.style.color = isPin ? '#3fb950' : '#8b949e';
+            }
+        });
+    };
+
+    window.renderSourcesDropdownMenuContentV218 = function(menu) {
+        if (!menu) menu = document.getElementById('jennySourcesDropMenuV91');
+        if (!menu) return;
+        if (!menu._builtOnceV236 || menu.children.length === 0) {
+            window.buildSourcesDropdownDOMOnceV236(menu);
+            return;
+        }
+        if (window._userPinClickActiveV236) {
+            window.syncSourcesDropdownPinStatesInPlaceV236();
+        }
+    };
+
+    window.toggleSourcesDropdownMenuV91 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var menu = document.getElementById('jennySourcesDropMenuV91');
+        if (!menu) {
+            menu = document.createElement('div');
+            menu.id = 'jennySourcesDropMenuV91';
+            menu.style.cssText = 'position:fixed;top:54px;right:12px;width:310px;background:#090d14;border:1.5px solid #58a6ff;border-radius:12px;padding:8px;z-index:2147483645;box-shadow:0 12px 32px rgba(0,0,0,0.95);display:none;flex-direction:column;gap:6px;';
+            document.body.appendChild(menu);
+            document.addEventListener('click', function(e) {
+                if (menu.style.display !== 'none' && !menu.contains(e.target) && (!e.target.closest || !e.target.closest('#btnSourcesHubDropV91'))) {
+                    menu.style.display = 'none';
+                }
+            });
+        }
+        if (menu.style.display === 'flex') {
+            menu.style.display = 'none';
+            return;
+        }
+        if (!menu._builtOnceV236 || menu.children.length === 0) {
+            window.buildSourcesDropdownDOMOnceV236(menu);
+        }
+        menu.style.display = 'flex';
+    };
+
+    // Explicit click handler for [+] / [ВКЛ]: the ONLY place allowed to update header icons & dropdown list after startup!
+    window.togglePinSourceV91 = function(srcId, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        if (ev && ev.preventDefault) ev.preventDefault();
+
+        var pinned = window.getPinnedSourcesV91().slice();
+        var idx = pinned.indexOf(srcId);
+        if (idx !== -1) {
+            pinned.splice(idx, 1);
+        } else {
+            pinned.push(srcId);
+        }
+
+        window.writeLockedPinnedSourcesV236(pinned);
+
+        window._userPinClickActiveV236 = true;
+        try {
+            window.syncSourcesDropdownPinStatesInPlaceV236();
+            window.renderHeaderSourcesHubV91(true);
+            if (typeof window.renderSourcesSettingsSectionV91 === 'function') {
+                window.renderSourcesSettingsSectionV91();
+            }
+        } finally {
+            window._userPinClickActiveV236 = false;
+        }
+    };
+
+    // =========================================================================
+    // 4. SCREENS 3 & 4 FIX (72010.jpg & 72012.jpg): MOVE [🧭 Гид] AND [🙈 Скрыть справки]
+    //    TO ONE SINGLE ROW WITH [📖 СПРАВОЧНИК НАСТРОЕК (❓)] AT THE END OF SETTINGS
+    // =========================================================================
+    window.syncGuideButtonPositionV165 = function() {
+        var hide = Boolean(window.appConfig && window.appConfig.hideHelpBadges);
+        document.body.classList.toggle('hide-help-badges', hide);
+
+        var cfgChk = document.getElementById('cfg_hideHelpV62');
+        if (cfgChk && cfgChk.checked !== hide) cfgChk.checked = hide;
+
+        var onbChk = document.getElementById('onb_hideHelpChkV165');
+        if (onbChk && onbChk.checked !== hide) onbChk.checked = hide;
+
+        var sm = document.getElementById('settingsModal');
+        if (!sm) return;
+        var container = sm.querySelector('.container') || sm;
+        var guideBtn = document.getElementById('jennyFullGuideBtn');
+        var onbBtn = document.getElementById('jennyOpenOnboardingBtnV165');
+        var hideRow = document.getElementById('hideHelpRowV62');
+        var topBarRow = document.getElementById('jennyTopBarRow');
+        var themeRow = document.getElementById('jennyThemeStudioBtnRow');
+        if (!guideBtn || !container) return;
+
+        var bottomSlot = document.getElementById('jennyBottomGuideSlotV165');
+        if (!bottomSlot) {
+            bottomSlot = document.createElement('div');
+            bottomSlot.id = 'jennyBottomGuideSlotV165';
+            container.appendChild(bottomSlot);
+        } else if (bottomSlot.parentElement === container && container.lastElementChild !== bottomSlot) {
+            container.appendChild(bottomSlot);
+        }
+
+        var hideLblSpan = hideRow ? hideRow.querySelector('#hideHelpTextSpanV236') : null;
+        if (hideRow && !hideLblSpan) {
+            var lbl = hideRow.querySelector('label');
+            var chk = document.getElementById('cfg_hideHelpV62');
+            if (lbl && chk) {
+                lbl.innerHTML = '';
+                lbl.appendChild(chk);
+                hideLblSpan = document.createElement('span');
+                hideLblSpan.id = 'hideHelpTextSpanV236';
+                lbl.appendChild(hideLblSpan);
+            }
+        }
+
+        if (hide) {
+            bottomSlot.className = 'jenny-bottom-help-row-v236';
+            bottomSlot.style.display = 'flex';
+
+            guideBtn.innerHTML = window.tr('📖 СПРАВОЧНИК (❓)', '📖 MANUAL (❓)');
+            if (guideBtn.parentElement !== bottomSlot) {
+                bottomSlot.appendChild(guideBtn);
+            }
+            if (onbBtn) {
+                onbBtn.innerHTML = window.tr('🧭 Гид', '🧭 Guide');
+                if (onbBtn.parentElement !== bottomSlot) {
+                    bottomSlot.appendChild(onbBtn);
+                }
+            }
+            if (hideRow) {
+                if (hideLblSpan) {
+                    hideLblSpan.textContent = ' 🙈 ' + window.tr('Справки', 'Help');
+                }
+                if (hideRow.parentElement !== bottomSlot) {
+                    bottomSlot.appendChild(hideRow);
+                }
+            }
+
+            // Hide #jennyTopBarRow at the top of Settings if the docked RU/EN button isn't visible inside it
+            if (topBarRow) {
+                var dockedLang = document.getElementById('settingsDockedLangBtn') || topBarRow.querySelector('button');
+                var langVisible = Boolean(window._hasLangRunAway && dockedLang && dockedLang.style.display !== 'none');
+                topBarRow.style.display = langVisible ? 'flex' : 'none';
+            }
+        } else {
+            bottomSlot.className = '';
+            bottomSlot.style.display = 'none';
+
+            guideBtn.style.width = '';
+            guideBtn.innerHTML = window.tr('📖 СПРАВОЧНИК НАСТРОЕК (❓)', '📖 FULL DSP MANUAL (❓)');
+
+            if (topBarRow) {
+                topBarRow.style.display = 'flex';
+                if (guideBtn.parentElement !== topBarRow) {
+                    topBarRow.insertBefore(guideBtn, topBarRow.firstChild);
+                }
+                if (onbBtn && onbBtn.parentElement !== topBarRow) {
+                    if (guideBtn.nextSibling) {
+                        topBarRow.insertBefore(onbBtn, guideBtn.nextSibling);
+                    } else {
+                        topBarRow.appendChild(onbBtn);
+                    }
+                }
+            }
+
+            if (hideRow) {
+                hideRow.style.cssText = 'padding:9px 12px;border-radius:8px;margin-bottom:12px;';
+                var lbl2 = hideRow.querySelector('label');
+                if (lbl2) lbl2.style.cssText = 'font-weight:bold;color:#e6edf3;width:100%;display:flex;align-items:center;gap:8px;';
+                if (hideLblSpan) {
+                    hideLblSpan.textContent = ' 🙈 ' + window.tr('Скрыть все справочные материалы (оставить 1 справочник в конце)', 'Hide all help badges (move main manual to bottom)');
+                }
+                if (themeRow && hideRow.previousElementSibling !== themeRow) {
+                    themeRow.insertAdjacentElement('afterend', hideRow);
+                }
+            }
+        }
+    };
+
+    window.onToggleHideHelpBadgesV62 = function(chk, ev) {
+        var hide = Boolean(chk && chk.checked);
+        window.appConfig = window.appConfig || {};
+        window.appConfig.hideHelpBadges = hide;
+        try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        window.syncGuideButtonPositionV165();
+        if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
+        if (typeof window.showToast === 'function' && ev) {
+            window.showToast(
+                hide
+                    ? window.tr('🙈 Справки скрыты: Справочник, Гид и галочка перенесены в одну строку в конец настроек', '🙈 Help hidden: Manual, Guide & toggle moved to one row at bottom of Settings')
+                    : window.tr('📖 Все подсказки (❓) включены, кнопки возвращены в начало настроек', '📖 Help badges enabled, buttons returned to top of Settings'),
+                ev
+            );
+        }
+    };
+
+    window.onToggleOnboardingHideHelpV165 = function(chk, ev) {
+        try { navigator.vibrate(20); } catch (e) {}
+        var hide = Boolean(chk && chk.checked);
+        window.appConfig = window.appConfig || {};
+        window.appConfig.hideHelpBadges = hide;
+        try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        var cfgChk = document.getElementById('cfg_hideHelpV62');
+        if (cfgChk) cfgChk.checked = hide;
+        window.onToggleHideHelpBadgesV62({ checked: hide }, ev);
+
+        var statusHint = document.getElementById('onbHideHelpStatusHintV165');
+        if (statusHint) {
+            statusHint.innerHTML = hide
+                ? '🙈 Активно: все значки <b>❓</b> скрыты, а <b>📖 Справочник</b>, <b>🧭 Гид</b> и эта галочка перенесены <b>на одну строку в самый конец настроек</b>.'
+                : '📖 Не активно: значки подсказок <b>❓</b> включены, а кнопки справочника и гида стоят <b>в самом начале настроек</b>.';
+            statusHint.style.color = hide ? '#e3b341' : '#3fb950';
+        }
+    };
+
+    // Ensure dockLangBadgeIntoOpenSettingsV39 works even when #jennyTopBarRow has only 1 child (#settingsDockedLangBtn) because Guide & Manual moved to bottom!
+    var _origDockLangV236 = window.dockLangBadgeIntoOpenSettingsV39;
+    window.dockLangBadgeIntoOpenSettingsV39 = function() {
+        var topRow = document.getElementById('jennyTopBarRow');
+        if (topRow) {
+            topRow.style.display = 'flex';
+        }
+        var sm = document.getElementById('settingsModal');
+        if (!sm || !sm.classList.contains('open') || !topRow) {
+            if (typeof window.syncSettingsLangBtnVisibilityV39 === 'function') {
+                window.syncSettingsLangBtnVisibilityV39(true);
+            }
+            return;
+        }
+        var langBtnInSettings = document.getElementById('settingsDockedLangBtn') || topRow.lastElementChild;
+        if (!langBtnInSettings) return;
+        langBtnInSettings.id = 'settingsDockedLangBtn';
+        langBtnInSettings.style.display = 'flex';
+        langBtnInSettings.style.opacity = '0';
+        langBtnInSettings.style.transition = 'none';
+        langBtnInSettings.innerHTML = window.renderDualLangHTML ? window.renderDualLangHTML(true) : '🌐 RU / EN';
+
+        setTimeout(function() {
+            var slotRect = langBtnInSettings.getBoundingClientRect();
+            var startX = (window.innerWidth || 360) + 12;
+            var startY = Math.max(12, slotRect.top - 28);
+
+            var flyer = document.createElement('div');
+            flyer.style.cssText = 'position:fixed;z-index:999999;pointer-events:none;left:' + startX + 'px;top:' + startY + 'px;transform:scale(0.45) rotate(-18deg);opacity:0.95;transition:all 0.46s cubic-bezier(0.22, 1.35, 0.36, 1);';
+            flyer.innerHTML = '<div class="jenny-lang-btn" style="padding:8px 12px;border-color:#3fb950;box-shadow:0 0 18px #3fb950;background:#0d1117;">' + (window.renderDualLangHTML ? window.renderDualLangHTML(true) : '🌐 RU / EN') + '</div>';
+            document.body.appendChild(flyer);
+
+            requestAnimationFrame(function() {
+                flyer.style.left = slotRect.left + 'px';
+                flyer.style.top = slotRect.top + 'px';
+                flyer.style.transform = 'scale(1) rotate(0deg)';
+            });
+
+            setTimeout(function() {
+                flyer.remove();
+                langBtnInSettings.style.opacity = '1';
+                langBtnInSettings.classList.remove('lang-docked-appear');
+                void langBtnInSettings.offsetWidth;
+                langBtnInSettings.classList.add('lang-docked-appear');
+            }, 460);
+        }, 50);
+    };
+
+    // Initial boot sync for V236
+    var initV236 = function() {
+        window.readLockedPinnedSourcesV236();
+        window._userPinClickActiveV236 = true;
+        try {
+            window.renderHeaderSourcesHubV91(true);
+        } finally {
+            window._userPinClickActiveV236 = false;
+        }
+        window.syncGuideButtonPositionV165();
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(initV236, 280);
+            setTimeout(function() { window.syncGuideButtonPositionV165(); }, 650);
+        });
+    } else {
+        setTimeout(initV236, 280);
+        setTimeout(function() { window.syncGuideButtonPositionV165(); }, 650);
+    }
+})();
+/* ================= END JENNY_V236_TORRENT_FOOTER_PIN_LOCK_AND_BOTTOM_HELP_ROW_PATCH ================= */
