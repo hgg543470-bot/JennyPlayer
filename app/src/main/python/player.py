@@ -502,17 +502,7 @@ def _extract_wav_sr_from_raw_meta_v156(raw_hdr: bytes) -> int:
     sr, _, _ = _extract_wav_meta_from_raw_hdr_v157(raw_hdr, 0)
     return sr
 
-def _old_extract_sr_unused(raw_hdr: bytes) -> int:
-    if len(raw_hdr) >= 44 and raw_hdr[16:20] == b'RIFF':
-        fmt_idx = raw_hdr.find(b'fmt ', 20, min(len(raw_hdr), 512))
-        if fmt_idx != -1 and fmt_idx + 16 <= len(raw_hdr):
-            cand_sr = struct.unpack('<I', raw_hdr[fmt_idx + 12:fmt_idx + 16])[0]
-            if 8000 <= cand_sr <= 384000:
-                return int(cand_sr)
-        cand_sr = struct.unpack('<I', raw_hdr[40:44])[0]
-        if 8000 <= cand_sr <= 384000:
-            return int(cand_sr)
-    return 44100
+# [DOCTOR CLEANED OVERRIDE: _old_extract_sr_unused]
 
 def _get_xflac_fast_header_info_v87(full_p: str):
     try:

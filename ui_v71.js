@@ -373,28 +373,7 @@ window.openPlaylistVisibilityModalV71 = function(ev) {
     document.body.appendChild(m);
 };
 
-window.openPlaylistSortModalV71 = function(ev) {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    window.closeAllV71Modals();
-    const tabId = window.activePlaylistTabV71 || 'all';
-    const smap = window.appConfig.playlistSortMapV71 || {};
-    const cur = smap[tabId] || { mode: 'mtime', dir: 'desc' };
-    const m = document.createElement('div');
-    m.id = 'jennyPlSortModalV71';
-    m.className = 'jenny-modal-backdrop-v71';
-    m.onclick = (e) => { if (e.target === m) m.remove(); };
-
-    const rows = window.SORT_METHODS_V71.map(sm => {
-        const isSel = (cur.mode === sm.id);
-        const brd = isSel ? '#58a6ff' : '#262c36';
-        const clr = isSel ? '#58a6ff' : '#e6edf3';
-        const arrow = isSel ? (cur.dir === 'asc' ? '▲' : '▼') : '';
-        return `<div onclick="window.applySortForCurrentTabV71('${sm.id}')" style="display:flex;justify-content:space-between;align-items:center;background:#0d1117;border:1px solid ${brd};border-radius:9px;padding:10px 12px;cursor:pointer;"><span style="color:${clr};font-weight:bold;">${window.tr(sm.ru, sm.en)}</span><span style="color:#3fb950;font-size:11.5px;">${arrow}</span></div>`;
-    }).join('');
-
-    m.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()"><div class="jenny-modal-hdr-v71"><span style="color:#58a6ff;font-weight:bold;">⇅ ${window.tr('Сортировка текущего списка', 'Sort Current Playlist')}</span><button type="button" onclick="document.getElementById('jennyPlSortModalV71').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button></div><div class="jenny-modal-body-v71">${rows}</div></div>`;
-    document.body.appendChild(m);
-};
+var openPlaylistSortModalV71 = window.openPlaylistSortModalV71 = window.openPlaylistSortModalV71 || function(){};
 
 window.applySortForCurrentTabV71 = function(modeId) {
     const tabId = window.activePlaylistTabV71 || 'all';
@@ -1489,61 +1468,7 @@ window._subModalSortModeV73 = 'alpha'; // 'alpha' | 'count'
 })();
 
 // Универсальный детектор зажатия 180 мс для горизонтальных лент (не мешает свайпу прокрутки и коротким тапам)
-window.attachStripLongPressV73 = function(stripEl, onLongPress) {
-    if (!stripEl || stripEl._longPressBoundV73) return;
-    stripEl._longPressBoundV73 = true;
-
-    let timer = null;
-    let startX = 0;
-    let startY = 0;
-    let moved = false;
-
-    const clearTimer = () => {
-        if (timer) {
-            clearTimeout(timer);
-            timer = null;
-        }
-    };
-
-    // Блокируем случайный click по чипу после срабатывания 180 мс зажатия
-    stripEl.addEventListener('click', (e) => {
-        if (window._suppressNextStripClickV73) {
-            e.stopPropagation();
-            e.preventDefault();
-            window._suppressNextStripClickV73 = false;
-        }
-    }, true);
-
-    stripEl.addEventListener('touchstart', (e) => {
-        if (!e.touches || e.touches.length !== 1) return;
-        moved = false;
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-        clearTimer();
-        timer = setTimeout(() => {
-            timer = null;
-            if (!moved) {
-                window._suppressNextStripClickV73 = true;
-                setTimeout(() => { window._suppressNextStripClickV73 = false; }, 450);
-                try { navigator.vibrate(35); } catch (err) {}
-                onLongPress(e);
-            }
-        }, 180);
-    }, { passive: true });
-
-    stripEl.addEventListener('touchmove', (e) => {
-        if (!timer || !e.touches || e.touches.length === 0) return;
-        const dx = Math.abs(e.touches[0].clientX - startX);
-        const dy = Math.abs(e.touches[0].clientY - startY);
-        if (dx > 10 || dy > 10) {
-            moved = true;
-            clearTimer();
-        }
-    }, { passive: true });
-
-    stripEl.addEventListener('touchend', clearTimer, { passive: true });
-    stripEl.addEventListener('touchcancel', clearTimer, { passive: true });
-};
+var attachStripLongPressV73 = window.attachStripLongPressV73 = window.attachStripLongPressV73 || function(){};
 
 // Вычисляет группы для текущей вкладки (По артистам / По альбомам)
 window.collectActiveSubGroupsV73 = function(tabId) {
@@ -1696,14 +1621,7 @@ window.renderPlaylistStripChipsV71 = function() {
 };
 
 // Выбор конкретного артиста или альбома без сброса прокрутки второй строки!
-window.selectSubFilterItemV73 = function(tabId, itemName, scrollChipIntoView) {
-    if (tabId === 'artists') {
-        window.selectedArtistV71 = itemName;
-    } else if (tabId === 'albums') {
-        window.selectedAlbumV71 = itemName;
-    }
-    window.renderActivePlaylistTracksV71(Boolean(scrollChipIntoView));
-};
+var selectSubFilterItemV73 = window.selectSubFilterItemV73 = window.selectSubFilterItemV73 || function(){};
 
 // Переопределяем renderActivePlaylistTracksV71: сохраняем scrollLeft второй строки и вешаем 180 мс зажатие
 window.renderActivePlaylistTracksV71 = function(scrollSubChipToCenter) {
@@ -4137,13 +4055,7 @@ window.stopKhPreviewV88 = function() {
     }
 })();
 
-window.updateKhHeaderBtnBadgeV89 = function(text, isBusy) {
-    const hdrBtn = document.getElementById('btnKhinsiderOstV88');
-    if (!hdrBtn) return;
-    hdrBtn.innerHTML = isBusy
-        ? `<span>⏳</span><span style="color:#58a6ff;">${text}</span>`
-        : `<span>🎮</span><span>OST</span>`;
-};
+var updateKhHeaderBtnBadgeV89 = window.updateKhHeaderBtnBadgeV89 = window.updateKhHeaderBtnBadgeV89 || function(){};
 
 window.minimizeKhinsiderModalV88 = function() {
     const m = document.getElementById('jennyKhinsiderModalV88');
@@ -4365,27 +4277,7 @@ window.previewKhTrackV88 = async function(trackIdx, btnEl, ev) {
     }
 };
 
-window.runKhSearchV88 = async function() {
-    const inp = document.getElementById('khSearchInpV88');
-    const body = document.getElementById('khBodyContentV88');
-    const ftr = document.getElementById('khFooterBarV88');
-    if (!inp || !body) return;
-    const q = inp.value.trim();
-    if (!q) return;
-    window._khStateV88.lastQuery = q;
-    if (ftr) ftr.style.display = 'none';
-    body.innerHTML = `<div style="color:#58a6ff;text-align:center;padding:35px 10px;">⏳ Поиск «${q}»...</div>`;
-    try {
-        const res = await fetch('/api/khinsider/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) });
-        const data = await res.json();
-        if (!res.ok || data.status !== 'ok') throw new Error(data.error || 'Ошибка поиска');
-        window._khStateV88.lastAlbums = data.albums || [];
-        window._khStateV88.currentAlbum = null;
-        window.renderKhAlbumsListV88();
-    } catch (e) {
-        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 10px;">❌ ${e.message || e}</div>`;
-    }
-};
+var runKhSearchV88 = window.runKhSearchV88 = window.runKhSearchV88 || function(){};
 
 window.renderKhAlbumsListV88 = function() {
     const body = document.getElementById('khBodyContentV88');
@@ -4684,19 +4576,7 @@ window.renderHeaderSourcesHubV91 = function() {
     hub.innerHTML = btnsHtml + `<button type="button" id="btnSourcesHubDropV91" class="jenny-icon-pill" onclick="window.toggleSourcesDropdownMenuV91(event)" title="Все источники" style="width:32px;height:30px;padding:0;border-radius:9px;">${window.JENNY_NEON_SVGS_V92.hub}</button>`;
 };
 
-window.updateKhHeaderBtnBadgeV89 = function(text, isBusy) {
-    const hdrBtn = document.getElementById('btnKhinsiderOstV88');
-    if (!hdrBtn) return;
-    if (isBusy) {
-        hdrBtn.style.width = 'auto';
-        hdrBtn.style.padding = '0 6px';
-        hdrBtn.innerHTML = `<span style="font-size:10px;color:#3fb950;font-weight:900;">${text}</span>`;
-    } else {
-        hdrBtn.style.width = '32px';
-        hdrBtn.style.padding = '0';
-        hdrBtn.innerHTML = window.JENNY_NEON_SVGS_V92.ost;
-    }
-};
+/* [CLEANED: updateKhHeaderBtnBadgeV89] */
 
 window.renderSourcesSettingsSectionV91 = function() {
     const sm = document.getElementById('settingsModal');
@@ -5001,33 +4881,7 @@ window.openSoundCloudModalV92 = function(ev) {
     window.runScDedicatedSearchV93();
 };
 
-window.runScDedicatedSearchV93 = async function() {
-    const inp = document.getElementById('scDedicatedInpV93');
-    const body = document.getElementById('scDedicatedBodyV93');
-    if (!inp || !body) return;
-    const q = inp.value.trim() || 'Synthwave';
-    body.innerHTML = `<div style="color:#ff8c42;text-align:center;padding:30px 10px;">⏳ Поиск «${q}» в SoundCloud...</div>`;
-    try {
-        const res = await fetch('/api/soundcloud/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) });
-        const d = await res.json();
-        const tracks = d.tracks || [];
-        if (!tracks.length) {
-            body.innerHTML = `<div style="color:#e3b341;text-align:center;padding:20px 10px;font-size:12px;">⚠️ SoundCloud запросил подтверждение куки.<br><br><button type="button" onclick="window.openScAuthBoxV93()" style="padding:7px 12px;background:#ff8c42;color:#000;border:none;border-radius:7px;font-weight:bold;">🔑 Открыть окно Куки / Входа</button></div>`;
-            return;
-        }
-        window._khStateV88.currentAlbum = { slug: 'sc_search', album_title: 'SoundCloud', has_flac: false, tracks };
-        body.innerHTML = tracks.map(t => `<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid #21262d;border-radius:8px;">
-            <div style="flex:1;min-width:0;">
-                <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${t.index}. ${t.title}</div>
-                <div style="color:#8b949e;font-size:10px;margin-top:2px;">⏱ ${t.duration} • SoundCloud Stream</div>
-            </div>
-            <button type="button" class="kh-prev-btn-v88" onclick="window.previewKhTrackV88(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
-            <button type="button" onclick="window._khStateV88.formatMode='mp3';window.downloadSingleKhTrackV88(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:rgba(255,140,66,0.18);color:#ff8c42;border:1px solid #ff8c42;">⬇️</button>
-        </div>`).join('');
-    } catch (e) {
-        body.innerHTML = `<div style="color:#ff7b72;text-align:center;padding:25px 10px;">❌ ${e.message || e}</div>`;
-    }
-};
+var runScDedicatedSearchV93 = window.runScDedicatedSearchV93 = window.runScDedicatedSearchV93 || function(){};
 
 window.openTorrentHubPreviewModalV91 = function(ev) {
     if (ev && ev.stopPropagation) ev.stopPropagation();
@@ -5357,26 +5211,7 @@ window.previewScTrackV96 = async function(idx, btnEl, ev) {
     window._khStateV88.currentAlbum = savedAlb;
 };
 
-window.downloadScTrackV96 = async function(idx, btnEl, ev) {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    const t = (window._scDedicatedTracksV96 || []).find(x => x.index === idx);
-    if (!t) return;
-    if (btnEl) btnEl.innerText = '⏳';
-    try {
-        const res = await fetch('/api/soundcloud/download_track', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ page_path: t.page_path, track_title: t.title, track_num: t.index })
-        });
-        const d = await res.json();
-        if (!res.ok || d.status !== 'ok') throw new Error(d.error || 'Ошибка скачивания');
-        if (btnEl) btnEl.innerText = '✅';
-        if (typeof window.fetchData === 'function') window.fetchData();
-        if (typeof window.showToast === 'function') window.showToast(`✅ Скачано: ${d.filename} (${d.size_mb} MB)`);
-    } catch (e) {
-        if (btnEl) btnEl.innerText = '⬇️';
-        if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
-    }
-};
+var downloadScTrackV96 = window.downloadScTrackV96 = window.downloadScTrackV96 || function(){};
 
 window.runScDedicatedSearchV93 = async function() {
     const inp = document.getElementById('scDedicatedInpV93');
@@ -6202,28 +6037,7 @@ window.toggleTorrentFilterPillV99 = function(key) {
     }
 };
 
-window.renderTorrentFilterBarV99 = function() {
-    const m = document.getElementById('jennyTorrentModalV91');
-    if (!m) return;
-    let bar = document.getElementById('torFilterPillsBarV99');
-    if (!bar) {
-        const stLine = document.getElementById('torStatusLineV96');
-        if (!stLine || !stLine.parentNode) return;
-        bar = document.createElement('div');
-        bar.id = 'torFilterPillsBarV99';
-        bar.style.cssText = 'display:flex;gap:5px;flex-wrap:wrap;margin:2px 0;';
-        stLine.parentNode.insertBefore(bar, stLine);
-    }
-    const ts = window._torStateV96;
-    const mkPill = (k, icon, label, activeColor) => {
-        const on = Boolean(ts[k]);
-        return `<button type="button" onclick="window.toggleTorrentFilterPillV99('${k}')" style="padding:4px 8px;font-size:10.5px;border-radius:8px;font-weight:bold;background:${on ? 'rgba(63,185,80,0.2)' : '#11161f'};border:1px solid ${on ? activeColor : '#30363d'};color:${on ? activeColor : '#8b949e'};display:inline-flex;align-items:center;gap:4px;"><span>${on ? '☑️' : '⬜'}</span><span>${icon} ${label}</span></button>`;
-    };
-    bar.innerHTML =
-        mkPill('exactSearch', '🎯', 'Точный поиск', '#58a6ff') +
-        mkPill('hideZeroSeeds', '🚫', 'Скрыть 0 сидов', '#3fb950') +
-        mkPill('onlyFlac', '💎', 'Только FLAC', '#d2a8ff');
-};
+var renderTorrentFilterBarV99 = window.renderTorrentFilterBarV99 = window.renderTorrentFilterBarV99 || function(){};
 
 const _origOpenTorV91 = window.openTorrentHubPreviewModalV91;
 window.openTorrentHubPreviewModalV91 = function(ev) {
@@ -6436,40 +6250,7 @@ window.selectTorrentFormatTagV101 = function(tagId) {
     }
 };
 
-window.renderTorrentFilterBarV99 = function() {
-    const m = document.getElementById('jennyTorrentModalV91');
-    if (!m) return;
-    let bar = document.getElementById('torFilterPillsBarV99');
-    if (!bar) {
-        const stLine = document.getElementById('torStatusLineV96');
-        if (!stLine || !stLine.parentNode) return;
-        bar = document.createElement('div');
-        bar.id = 'torFilterPillsBarV99';
-        bar.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin:2px 0;';
-        stLine.parentNode.insertBefore(bar, stLine);
-    }
-    const ts = window._torStateV96;
-    const mkCheck = (k, icon, label, activeColor) => {
-        const on = Boolean(ts[k]);
-        return `<button type="button" onclick="window.toggleTorrentFilterPillV99('${k}')" style="flex:1;padding:4px 8px;font-size:10.5px;border-radius:8px;font-weight:bold;background:${on ? 'rgba(63,185,80,0.18)' : '#11161f'};border:1px solid ${on ? activeColor : '#30363d'};color:${on ? activeColor : '#8b949e'};display:inline-flex;align-items:center;justify-content:center;gap:4px;"><span>${on ? '☑️' : '⬜'}</span><span>${icon} ${label}</span></button>`;
-    };
-
-    const curTag = ts.formatTag || 'all';
-    const tagsHtml = window.TORRENT_FORMAT_TAGS_V101.map(t => {
-        const act = (curTag === t.id);
-        return `<button type="button" onclick="window.selectTorrentFormatTagV101('${t.id}')" style="padding:4px 9px;font-size:10.5px;border-radius:10px;font-weight:900;flex-shrink:0;background:${act ? 'rgba(88,166,255,0.22)' : '#0d1117'};border:1.5px solid ${act ? t.color : '#262c36'};color:${act ? t.color : '#8b949e'};box-shadow:${act ? '0 0 8px rgba(88,166,255,0.25)' : 'none'};">${t.label}</button>`;
-    }).join('');
-
-    bar.innerHTML = `
-        <div style="display:flex;gap:6px;width:100%;">
-            ${mkCheck('exactSearch', '🎯', 'Точный поиск', '#58a6ff')}
-            ${mkCheck('hideZeroSeeds', '🚫', 'Скрыть 0 сидов', '#3fb950')}
-        </div>
-        <div style="display:flex;gap:5px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none;">
-            ${tagsHtml}
-        </div>
-    `;
-};
+/* [CLEANED: renderTorrentFilterBarV99] */
 
 window.runTorrentActionV96 = async function() {
     window.renderTorrentFilterBarV99();
@@ -6556,116 +6337,7 @@ window.startSelectedTorrentDownloadV96 = async function(explicitFiles) {
     }
 };
 
-window.runTorrentDownloadQueueV102 = async function(targetFilesArray) {
-    const ts = window._torStateV96;
-    const hash = ts.currentHash;
-    if (!hash || !targetFilesArray || !targetFilesArray.length) return;
-    const totWrap = document.getElementById('torTotalProgWrapV97');
-    const totFill = document.getElementById('torTotalProgFillV97');
-    if (totWrap) totWrap.style.display = 'block';
-    ts.dlActive = true;
-
-    const alreadyDoneCnt = targetFilesArray.filter(idx => ts.importedSet.has(`${hash}_${idx}`)).length;
-    await fetch('/api/torrent/queue_plan', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ total: targetFilesArray.length, done: alreadyDoneCnt })
-    });
-    await fetch('/api/torrent/download', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hash, files: targetFilesArray })
-    });
-
-    if (ts.pollTimer) clearInterval(ts.pollTimer);
-    ts.pollTimer = setInterval(async () => {
-        try {
-            const [d, badges] = await Promise.all([
-                fetch('/api/torrent/status').then(r => r.json()),
-                fetch('/api/sources/live_badges').then(r => r.json())
-            ]);
-            const tor = (d.torrents || []).find(x => x.hash === hash);
-            if (!tor) return;
-            const te = (badges && badges.torrent_enc) || {};
-
-            const encWrap = document.getElementById('torXflacProgWrapV99');
-            const encLbl = document.getElementById('torXflacProgLabelV99');
-            const encFill = document.getElementById('torXflacProgFillV99');
-            if (encWrap) {
-                if (te.active || (te.done_count > 0 && te.done_count < te.total_count)) {
-                    encWrap.style.display = 'flex';
-                    if (encLbl) encLbl.innerText = `🧬 Пережатие в xFLAC [${te.done_count}/${te.total_count}]: ${te.current_track || '...'} (${te.track_pct || 0}% • Общий: ${te.overall_pct || 0}%)`;
-                    if (encFill) encFill.style.width = (te.overall_pct || 0) + '%';
-                } else if (te.total_count > 0 && te.done_count >= te.total_count) {
-                    encWrap.style.display = 'flex';
-                    if (encLbl) encLbl.innerText = `✅ Сжато в .xFLAC: ${te.done_count} из ${te.total_count}`;
-                    if (encFill) encFill.style.width = '100%';
-                }
-            }
-
-            let sumLen = 0, sumDone = 0;
-            for (const f of (tor.files || [])) {
-                sumLen += (f.length || 0);
-                sumDone += (f.completed || 0);
-                const impKey = `${hash}_${f.index}`;
-                const rowEl = document.getElementById('torFileRowV96_' + f.index);
-                const pEl = document.getElementById('torFileProgV96_' + f.index);
-                const dlBtn = document.getElementById('torDlSingleBtnV98_' + f.index);
-                const pct = Math.max(0, Math.min(100, f.percent || 0));
-                const doneMb = (f.completed / (1024 * 1024)).toFixed(1);
-                const totMb = (f.length / (1024 * 1024)).toFixed(1);
-                const isCurrentlyEncoding = (te.active && te.current_key === impKey);
-
-                if (rowEl) {
-                    if (f.xflac_file) {
-                        rowEl.style.background = 'linear-gradient(90deg, rgba(63,185,80,0.28) 100%, #0b0f16 100%)';
-                        rowEl.style.borderColor = 'rgba(63,185,80,0.65)';
-                    } else if (isCurrentlyEncoding) {
-                        const ep = te.track_pct || 10;
-                        rowEl.style.background = `linear-gradient(90deg, rgba(63,185,80,0.38) ${ep}%, rgba(137,87,229,0.25) ${ep}%)`;
-                        rowEl.style.borderColor = '#3fb950';
-                    } else {
-                        rowEl.style.background = `linear-gradient(90deg, rgba(137,87,229,0.32) ${pct}%, #0b0f16 ${pct}%)`;
-                    }
-                }
-
-                if (f.xflac_file) {
-                    if (pEl) pEl.innerText = `✅ В плеере: ${f.xflac_file}`;
-                    if (dlBtn) dlBtn.innerText = '✅';
-                } else if (isCurrentlyEncoding) {
-                    if (pEl) pEl.innerText = `🧬 Сжатие в .xFLAC: ${te.track_pct || 0}% (трек ${te.done_count + 1} из ${te.total_count})`;
-                } else if (pEl) {
-                    pEl.innerText = f.done
-                        ? `⏳ Очередь сжатия xFLAC (готово ${te.done_count}/${te.total_count})...`
-                        : `⬇️ Скачивание: ${doneMb} / ${totMb} MB (${pct}%)`;
-                }
-
-                if (f.done && !f.xflac_file && !ts.importedSet.has(impKey) && !window._torImportBusyV98) {
-                    ts.importedSet.add(impKey);
-                    window._torImportBusyV98 = true;
-                    fetch('/api/torrent/import_track', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ hash, index: f.index, full_path: f.full_path, torrent_name: tor.name, format_mode: 'xflac_psycho' })
-                    }).then(r => r.json()).then(res => {
-                        if (res.status === 'ok') {
-                            if (pEl) pEl.innerText = `✅ В плеере: ${res.filename} (${res.size_mb} MB)`;
-                            if (dlBtn) dlBtn.innerText = '✅';
-                            if (typeof window.fetchData === 'function') window.fetchData();
-                        }
-                    }).finally(() => {
-                        window._torImportBusyV98 = false;
-                    });
-                }
-            }
-            const totalPct = sumLen > 0 ? Math.round((sumDone * 100) / sumLen) : 0;
-            ts.dlOverallPct = totalPct;
-            if (totFill) totFill.style.width = totalPct + '%';
-            const stEl = document.getElementById('torStatusLineV96');
-            if (stEl) {
-                stEl.innerText = `🧲 Сидов: ${tor.seeders} • Пиров: ${tor.peers} • Сеть: ${totalPct}% (выбрано: ${targetFilesArray.length})` +
-                    (te.total_count > 0 ? ` • xFLAC: ${te.done_count}/${te.total_count} (${te.overall_pct || 0}%)` : '');
-            }
-        } catch (e) {}
-    }, 750);
-};
+var runTorrentDownloadQueueV102 = window.runTorrentDownloadQueueV102 = window.runTorrentDownloadQueueV102 || function(){};
 
 // === 🚀 JENNY V105: CLEAN SOUNDCLOUD UI (NO MANUAL COOKIES) + TORRENT PATH & BUTTON LOCK ===
 window.openSoundCloudModalV92 = function(ev) {
@@ -8195,12 +7867,7 @@ window.ensureTorrentFileInputV113 = function() {
     return inp;
 };
 
-window.triggerPickTorrentFileV113 = function(ev) {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    const inp = window.ensureTorrentFileInputV113();
-    inp.value = '';
-    inp.click();
-};
+var triggerPickTorrentFileV113 = window.triggerPickTorrentFileV113 = window.triggerPickTorrentFileV113 || function(){};
 
 window.handleTorrentFilePickedV113 = async function(ev) {
     const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null;
@@ -10168,11 +9835,7 @@ fb.innerText = text; fb.style.display = 'block';
 clearTimeout(fb._hideT); fb._hideT = setTimeout(() => { fb.style.display = 'none'; }, 850);
 };
 
-window.wakeVideoHudV130 = function(fromTapWake) {
-if (typeof window.setVideoHudHiddenUnifiedV214 === 'function') {
-window.setVideoHudHiddenUnifiedV214(false, Boolean(fromTapWake));
-}
-};
+var wakeVideoHudV130 = window.wakeVideoHudV130 = window.wakeVideoHudV130 || function(){};
 
 window.openVideoDeckDspStudioV131 = function(ev) {
 if (window.isVideoHudGuardActiveV130(ev)) return;
@@ -10297,26 +9960,7 @@ if (btn) btn.innerText = '❐ Мини';
 window.wakeVideoHudV130(false);
 };
 
-window.toggleVideoPlayPauseV130 = function(ev) {
-if (window.isVideoHudGuardActiveV130(ev)) return;
-if (ev && ev.stopPropagation) ev.stopPropagation();
-const vid = document.getElementById('jennyVideoElV130'), st = window._vidStateV130, vd = window.videoDeckV131, playBtn = document.getElementById('v130CenterPlayBtn');
-if (!vid) return;
-if (st.userPaused || (vid.paused && !vd.isReversed)) {
-st.userPaused = false; window.initVideoDeckAudioV131();
-if (!vd.isReversed) vid.play().catch(() => {});
-window.syncVideoRamEngineV131(false);
-if (playBtn) playBtn.innerText = '⏸';
-} else {
-st.userPaused = true;
-if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
-if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
-if (vd.sourceNode) { vd.sourceNode.onended = null; try { vd.sourceNode.stop(); } catch (e) {} try { vd.sourceNode.disconnect(); } catch (e) {} vd.sourceNode = null; }
-vd.isStudioPlaying = false; vid.pause();
-if (playBtn) playBtn.innerText = '▶';
-}
-window.wakeVideoHudV130(false);
-};
+var toggleVideoPlayPauseV130 = window.toggleVideoPlayPauseV130 = window.toggleVideoPlayPauseV130 || function(){};
 
 window.seekVideoRelativeV130 = function(deltaSec, ev) {
 if (window.isVideoHudGuardActiveV130(ev)) return;
@@ -10330,18 +9974,7 @@ window.showVideoFeedbackV130(deltaSec > 0 ? `⏩ +${deltaSec} сек` : `⏪ ${d
 window.wakeVideoHudV130(false);
 };
 
-window.switchVideoToFfmpegRemuxV130 = function(ev) {
-if (window.isVideoHudGuardActiveV130(ev)) return;
-if (ev && ev.stopPropagation) ev.stopPropagation();
-const st = window._vidStateV130, vid = document.getElementById('jennyVideoElV130');
-if (!vid || !st.currentUrl) return;
-const curSec = (vid.currentTime || 0) + (st.remuxBaseOffset || 0);
-st.usingRemux = true; st.remuxBaseOffset = curSec;
-vid.src = `/api/video/live_remux?src=${encodeURIComponent(st.currentUrl)}&start=${curSec.toFixed(1)}&t=${Date.now()}`;
-vid.play().catch(() => {});
-window.showVideoFeedbackV130('🛠️ Включён потоковый аудио-декодер FFmpeg (AAC)');
-window.wakeVideoHudV130(false);
-};
+var switchVideoToFfmpegRemuxV130 = window.switchVideoToFfmpegRemuxV130 = window.switchVideoToFfmpegRemuxV130 || function(){};
 
 window.openTorHubFromVideoV130 = function(ev) {
 if (window.isVideoHudGuardActiveV130(ev)) return;
@@ -11203,29 +10836,7 @@ window.installCleanStageTouchV133();
 // === 🧠🎬 JENNY V134: FULL VIDEO RAM UNPACK (3X PARALLEL) & AUTO VIDEO LIBRARY SYNC ===
 
 // 1. Автоподхват всех скачанных торрент-видео (включая «Матрицу») прямо во вкладку «🎬 Видео»!
-window.syncDiscoveredVideosIntoPlaylistV134 = async function() {
-try {
-const res = await fetch('/api/video/discovered_list');
-if (!res.ok) return;
-const data = await res.json();
-const vids = (data && data.videos) || [];
-if (vids.length && window.lastData && Array.isArray(window.lastData.all_tracks)) {
-let added = false;
-vids.forEach(fn => {
-if (!window.lastData.all_tracks.includes(fn)) {
-window.lastData.all_tracks.unshift(fn);
-added = true;
-}
-});
-if (added) {
-if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
-if (window.activePlaylistTabV71 === 'videos' && typeof window.renderActivePlaylistTracksV71 === 'function') {
-window.renderActivePlaylistTracksV71(false);
-}
-}
-}
-} catch (e) {}
-};
+var syncDiscoveredVideosIntoPlaylistV134 = window.syncDiscoveredVideosIntoPlaylistV134 = window.syncDiscoveredVideosIntoPlaylistV134 || function(){};
 
 setInterval(window.syncDiscoveredVideosIntoPlaylistV134, 4500);
 setTimeout(window.syncDiscoveredVideosIntoPlaylistV134, 800);

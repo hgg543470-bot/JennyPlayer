@@ -671,18 +671,7 @@ window.selectExportSpeedV79 = function(spd) {
 };
 
 
-window.selectExportSampleRateV86 = function(sr) {
-    window.appConfig = window.appConfig || {};
-    window.appConfig.exportSampleRateV86 = sr;
-    localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
-    document.querySelectorAll('#srBtnGroupV86 button').forEach(b => {
-        const act = (b.getAttribute('data-sr') === sr);
-        b.style.borderColor = act ? '#3fb950' : '#30363d';
-        b.style.background = act ? 'rgba(63, 185, 80, 0.24)' : '#161b22';
-        b.style.color = act ? '#ffffff' : '#8b949e';
-        b.style.fontWeight = act ? 'bold' : 'normal';
-    });
-};
+var selectExportSampleRateV86 = window.selectExportSampleRateV86 = window.selectExportSampleRateV86 || function(){};
 
 window.selectExportSampleRateV86 = function(sr) {
     const validSrs = ['orig', '44100', '48000', '88200', '96000', '176400', '192000'];
