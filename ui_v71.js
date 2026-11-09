@@ -27056,3 +27056,257 @@ let vsyncTicks = 0;
     };
 })();
 /* ================= END JENNY_V223_REVERSE_RAM_QUEUE_PATCH ================= */
+
+/* ================= JENNY_V224_HUD_AND_HEADER_STABILITY_PATCH (#318):
+   1) PREVENT VIDEO HUD OVERLAY (#v130HudOverlay) FROM AUTO-WAKING ON REVERSE CHUNK SWAPS OR BACKGROUND <video> EVENTS (71547.mp4 00:03-00:27)
+   2) STOP TOP HEADER PINNED BUTTONS (#topHeaderCapsule / #jennySourcesHubBarV91) FROM SHAKING/JITTERING EVERY 750ms (71547.mp4 00:35-00:54)
+================= */
+(function() {
+    if (window._jennyV224Installed) return;
+    window._jennyV224Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. ЖЁСТКАЯ ФИКСАЦИЯ ГЕОМЕТРИИ КНОПОК В ВЕРХНЕЙ ШАПКЕ (#topHeaderCapsule),
+    //    ЧТОБЫ ОНИ НИКОГДА НЕ ДЁРГАЛИСЬ ОТ ПОЛЛЕРА БЕЙДЖЕЙ ИЛИ ТАЙМЕРОВ (71547.mp4 00:35-00:54)
+    // -------------------------------------------------------------------------
+    var styleV224 = document.createElement('style');
+    styleV224.id = 'jennyStyleV224';
+    styleV224.textContent = [
+        '#topHeaderCapsule .jenny-icon-pill {',
+        '  width: 28px !important;',
+        '  min-width: 28px !important;',
+        '  max-width: 28px !important;',
+        '  height: 28px !important;',
+        '  min-height: 28px !important;',
+        '  max-height: 28px !important;',
+        '  padding: 0 !important;',
+        '  margin: 0 !important;',
+        '  border-radius: 8px !important;',
+        '  flex: 0 0 28px !important;',
+        '  position: relative !important;',
+        '  box-sizing: border-box !important;',
+        '  transition: none !important;',
+        '  transform: none !important;',
+        '  overflow: visible !important;',
+        '}',
+        '#topHeaderCapsule #jennySourcesHubBarV91 {',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  gap: 3px !important;',
+        '  flex-shrink: 0 !important;',
+        '  transition: none !important;',
+        '}',
+        '.jenny-hdr-corner-badge-v224 {',
+        '  position: absolute !important;',
+        '  right: -3px !important;',
+        '  bottom: -3px !important;',
+        '  background: #090d14 !important;',
+        '  border: 1px solid #3fb950 !important;',
+        '  color: #3fb950 !important;',
+        '  font-size: 8px !important;',
+        '  font-weight: 900 !important;',
+        '  font-family: monospace !important;',
+        '  line-height: 1 !important;',
+        '  padding: 1px 2.5px !important;',
+        '  border-radius: 5px !important;',
+        '  pointer-events: none !important;',
+        '  z-index: 5 !important;',
+        '  white-space: nowrap !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(styleV224);
+
+    // Делаем renderHeaderSourcesHubV91 строго идемпотентным:
+    // перестраиваем DOM шапки ТОЛЬКО тогда, когда реально изменился список закреплённых кнопок или при первом старте!
+    window.renderHeaderSourcesHubV91 = function(forceRebuild) {
+        if (typeof window.upgradeLogoSvgWithV11UnderPlayerV218 === 'function') {
+            window.upgradeLogoSvgWithV11UnderPlayerV218();
+        }
+        var oldBtn = document.getElementById('btnKhinsiderOstV88');
+        var settingsBtn = document.getElementById('btn-settingsModal');
+        var parent = (settingsBtn && settingsBtn.parentElement) || (oldBtn && oldBtn.parentElement);
+        if (!parent) return;
+
+        var oldFixedTor = document.getElementById('btnHeaderTorrentFixedV216');
+        if (oldFixedTor) oldFixedTor.remove();
+
+        var pinned = window.getPinnedSourcesV91 ? window.getPinnedSourcesV91() : [];
+        var sig = pinned.join(',');
+        var folderBtn = document.getElementById('folderIconTrigger');
+        var hub = document.getElementById('jennySourcesHubBarV91');
+        var dropBtn = document.getElementById('btnSourcesHubDropV91');
+
+        if (!forceRebuild &&
+            folderBtn && folderBtn.parentElement === parent && parent.firstElementChild === folderBtn &&
+            hub && hub.parentElement === parent && dropBtn &&
+            hub._v224PinnedSig === sig) {
+            return;
+        }
+
+        parent.style.gap = '3px';
+
+        if (!folderBtn) {
+            folderBtn = document.createElement('button');
+            folderBtn.type = 'button';
+            folderBtn.id = 'folderIconTrigger';
+            folderBtn.className = 'jenny-icon-pill';
+            folderBtn.title = 'Менеджер папок';
+            folderBtn.onclick = function(ev) { if (window.openFolderManagerModalV62) window.openFolderManagerModalV62(ev); };
+            folderBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+        }
+        folderBtn.style.cssText = 'width:28px !important;height:28px !important;padding:0 !important;border-radius:8px !important;border-color:rgba(88,166,255,0.55);color:#58a6ff;';
+        if (folderBtn.parentElement !== parent || parent.firstElementChild !== folderBtn) {
+            parent.insertBefore(folderBtn, parent.firstElementChild);
+        }
+
+        if (!hub) {
+            hub = document.createElement('div');
+            hub.id = 'jennySourcesHubBarV91';
+            hub.style.cssText = 'display:inline-flex;align-items:center;gap:3px;';
+            if (oldBtn && oldBtn.parentElement === parent) oldBtn.replaceWith(hub);
+            else parent.insertBefore(hub, settingsBtn);
+        } else if (hub.parentElement !== parent) {
+            parent.insertBefore(hub, settingsBtn);
+        }
+
+        var btnsHtml = pinned.map(function(id) {
+            var s = (window.SOURCES_CATALOG_V91 || []).find(function(x) { return x.id === id; });
+            if (!s) return '';
+            var btnIdAttr = (id === 'ost') ? 'id="btnKhinsiderOstV88"' : 'id="btnPinnedSrc_' + id + '_V91"';
+            return '<button type="button" ' + btnIdAttr + ' class="jenny-icon-pill" onclick="window.triggerSourceActionV91(\'' + s.id + '\', event)" title="' + s.title + '" style="width:28px !important;height:28px !important;padding:0 !important;border-radius:8px !important;">' + s.svg + '</button>';
+        }).join('');
+
+        var hubSvg = (window.JENNY_NEON_SVGS_V92 && window.JENNY_NEON_SVGS_V92.hub) || '⊞';
+        hub.innerHTML = btnsHtml + '<button type="button" id="btnSourcesHubDropV91" class="jenny-icon-pill" onclick="window.toggleSourcesDropdownMenuV91(event)" title="Все источники" style="width:28px !important;height:28px !important;padding:0 !important;border-radius:8px !important;">' + hubSvg + '</button>';
+        hub._v224PinnedSig = sig;
+
+        if (settingsBtn) {
+            settingsBtn.style.cssText = 'width:28px !important;height:28px !important;padding:0 !important;border-radius:8px !important;';
+        }
+
+        // Восстанавливаем активные мини-бейджи поверх кнопок без изменения их ширины
+        var badges = window._sourceBadgesV99 || {};
+        Object.keys(badges).forEach(function(k) {
+            if (badges[k]) window.applyHeaderIconBadgeV99(k, badges[k]);
+        });
+    };
+
+    // Переопределяем togglePinSourceV91, чтобы при ручном переключении [ВКЛ] в меню ⊞ шапка обновлялась с forceRebuild = true
+    var _origTogglePinSourceV224 = window.togglePinSourceV91;
+    window.togglePinSourceV91 = function(srcId, ev) {
+        var r = (typeof _origTogglePinSourceV224 === 'function')
+            ? _origTogglePinSourceV224.apply(this, arguments)
+            : undefined;
+        window.renderHeaderSourcesHubV91(true);
+        return r;
+    };
+
+    // Переопределяем applyHeaderIconBadgeV99:
+    // НИКОГДА не меняем width/padding кнопки в шапке (никаких width:auto или width:32px!),
+    // чтобы соседние кнопки в #topHeaderCapsule не прыгали ни на 1 пиксель!
+    window._sourceBadgesV99 = window._sourceBadgesV99 || { ost: '', archive: '', radio: '', soundcloud: '', torrent: '' };
+    window.applyHeaderIconBadgeV99 = function(srcId, badgeText) {
+        var cleanText = String(badgeText || '').trim();
+        window._sourceBadgesV99[srcId] = cleanText;
+        var btnId = (srcId === 'ost') ? 'btnKhinsiderOstV88' : ('btnPinnedSrc_' + srcId + '_V91');
+        var btn = document.getElementById(btnId);
+        if (!btn) return;
+        if (btn._v224LastBadgeText === cleanText) return;
+        btn._v224LastBadgeText = cleanText;
+
+        var badgeEl = btn.querySelector('.jenny-hdr-corner-badge-v224');
+        if (!cleanText) {
+            if (badgeEl) badgeEl.remove();
+            return;
+        }
+        if (!badgeEl) {
+            badgeEl = document.createElement('span');
+            badgeEl.className = 'jenny-hdr-corner-badge-v224';
+            btn.appendChild(badgeEl);
+        }
+        badgeEl.textContent = cleanText;
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. ЗАПРЕТ САМОПРОИЗВОЛЬНОГО ПОЯВЛЕНИЯ HUD ВИДЕОПЛЕЕРА (#v130HudOverlay)
+    //    ПРИ ПОДГРУЗКЕ КУСКОВ РЕВЕРСА И ФОНОВЫХ СОБЫТИЯХ <video> (71547.mp4 00:03-00:27)
+    // -------------------------------------------------------------------------
+    window._lastTrustedVideoUserInputTsV224 = performance.now();
+    window._lastVideoOpenTsV224 = performance.now();
+
+    // Фиксируем только реальные физические касания/клики пользователя внутри #jennyVideoStudioRootV130
+    ['touchstart', 'touchmove', 'touchend', 'mousedown', 'pointerdown', 'input'].forEach(function(evName) {
+        window.addEventListener(evName, function(e) {
+            if (!e || e.isTrusted === false) return;
+            var root = document.getElementById('jennyVideoStudioRootV130');
+            if (!root || !root.classList.contains('active')) return;
+            if (e.target && root.contains(e.target)) {
+                window._lastTrustedVideoUserInputTsV224 = performance.now();
+            }
+        }, { capture: true, passive: true });
+    });
+
+    // Разрешаем показ HUD при первичном открытии видеоплеера или переключении режимов окна пользователем
+    ['openJennyVideoPlayerV130', 'toggleVideoLockModeV132', 'toggleVideoPipModeV130', 'exitDesktopOverlayModeV132'].forEach(function(fnName) {
+        var origFn = window[fnName];
+        if (typeof origFn === 'function' && !origFn._v224HudWrapped) {
+            window[fnName] = function() {
+                window._lastVideoOpenTsV224 = performance.now();
+                window._lastTrustedVideoUserInputTsV224 = performance.now();
+                return origFn.apply(this, arguments);
+            };
+            window[fnName]._v224HudWrapped = true;
+        }
+    });
+
+    var _origSetVideoHudHiddenUnifiedV214 = window.setVideoHudHiddenUnifiedV214;
+    window.setVideoHudHiddenUnifiedV214 = function(shouldHide, fromTapWake) {
+        if (!shouldHide) {
+            var now = performance.now();
+            var trustedTouchAge = now - (window._lastTrustedVideoUserInputTsV224 || -1e9);
+            var videoOpenAge = now - (window._lastVideoOpenTsV224 || -1e9);
+            var isTrustedUserWake = Boolean(fromTapWake) || (trustedTouchAge < 480) || (videoOpenAge < 900);
+            if (!isTrustedUserWake) {
+                // Игнорируем фоновые вызовы wakeVideoHudV130(false) от событий <video> (play, playing, pause)
+                // при смене чанков реверса в RAM или фоновом ремуксе!
+                return;
+            }
+        }
+        if (typeof _origSetVideoHudHiddenUnifiedV214 === 'function') {
+            return _origSetVideoHudHiddenUnifiedV214.call(this, shouldHide, fromTapWake);
+        }
+    };
+
+    window.wakeVideoHudV130 = function(fromTapWake) {
+        if (typeof window.setVideoHudHiddenUnifiedV214 === 'function') {
+            window.setVideoHudHiddenUnifiedV214(false, Boolean(fromTapWake));
+        }
+    };
+
+    // Дополнительно ставим st._internalRevPause = true при технической паузе смены чанка в реверсе,
+    // чтобы не мигала иконка ▶/⏸ и не вызывался wakeVideoHudV130(false)
+    window.bindRevPauseGuardV224 = function() {
+        var vidEl = document.getElementById('jennyVideoElV130');
+        if (vidEl && !vidEl._v224RevPauseGuarded) {
+            vidEl._v224RevPauseGuarded = true;
+            vidEl.addEventListener('pause', function() {
+                var st = window._vidStateV130 || {};
+                var vd = window.videoDeckV131 || {};
+                if (st.active && vd.isReversed && !st.userPaused) {
+                    st._internalRevPause = true;
+                }
+            }, true);
+        }
+    };
+    window.bindRevPauseGuardV224();
+
+    setInterval(function() {
+        window.bindRevPauseGuardV224();
+    }, 1000);
+
+    setTimeout(function() {
+        window.renderHeaderSourcesHubV91(true);
+        window.bindRevPauseGuardV224();
+    }, 100);
+})();
+/* ================= END JENNY_V224_HUD_AND_HEADER_STABILITY_PATCH ================= */
