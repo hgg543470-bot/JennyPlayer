@@ -27353,7 +27353,7 @@ let vsyncTicks = 0;
 })();
 /* ================= END JENNY_V224_HUD_AND_HEADER_STABILITY_PATCH ================= */
 
-/* ================= JENNY_V227_DECK_B_PARITY_AND_RAM_REVERSE_PATCH (#322):
+/* ================= JENNY_V227_DECK_B_PARITY_AND_RAM_REVERSE_PATCH (#323 / V228):
    1) BASELINE #318 (V224) PURE IN-RAM BLOB QUEUE REVERSE ENGINE (ZERO SSD/FLASH WRITES, ZERO MSE STALLS)
    2) FIX TIME JUMP (-0:00 -> -0:42 -> -0:29) WHEN STARTING REVERSE OR DRAGGING RADIAL SPEED ARC (71562.mp4 00:08-00:11)
    3) FIX FORWARD/REVERSE STREAM RESTORE SO EXITING REVERSE NEVER KEEPS PLAYING BACKWARDS AUDIO (71562.mp4 00:28-00:58 & 71561.mp4 01:15-02:05)
@@ -27931,15 +27931,16 @@ let vsyncTicks = 0;
             arcItems = [];
             circleAngles = [];
 
-            var activeZones = window.getEnabledRadialSpeedsForDeckV218
-                ? window.getEnabledRadialSpeedsForDeckV218('video')
-                : [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-            if (!activeZones || activeZones.length === 0) activeZones = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+            var activeZones = window.getCustomVideoSpeedZonesV217
+                ? window.getCustomVideoSpeedZonesV217()
+                : [1.1, 1.0, 1.05, 0.95, 1.5, 0.9];
+            if (!activeZones || activeZones.length === 0) activeZones = [1.1, 1.0, 1.05, 0.95, 1.5, 0.9];
 
             var isLeftHanded = Boolean(window.appConfig && window.appConfig.leftHandedMode);
             var W = window.innerWidth;
             var H = window.innerHeight;
 
+            // Лучи видеодеки выходят строго из центра синей кнопки эквалайзера Деки Б (#btnEqDeckBV216)
             var eqBtn = document.getElementById('btnEqDeckBV216') || document.getElementById('btn-eqModal');
             if (eqBtn) {
                 var eqRect = eqBtn.getBoundingClientRect();
@@ -27950,10 +27951,13 @@ let vsyncTicks = 0;
                 currentAnchor.x = isLeftHanded ? 31 : (W - 31);
             }
 
-            var startDeg = -108, endDeg = -204;
+            // Поднимаем опорную высоту дуги кружков (curveOriginY), чтобы все 6 кружков располагались свободно и высоко,
+            // а нижний кружок никогда не упирался в нижний край и не загибался вправо!
+            var curveOriginY = Math.min(currentAnchor.y, H - 142);
+            var startDeg = -106, endDeg = -192;
             var rTop = Math.min(W * 0.76, H * 0.35);
             var rMid = Math.min(W * 0.78, H * 0.36);
-            var rBot = Math.min(W * 0.58, H * 0.26);
+            var rBot = Math.min(W * 0.67, H * 0.30);
 
             function sampleCurvePoint(u) {
                 var deg = startDeg + u * (endDeg - startDeg);
@@ -27962,8 +27966,8 @@ let vsyncTicks = 0;
                 var dxRH = r * Math.cos(rad);
                 var dy = r * Math.sin(rad);
                 var x = currentAnchor.x + (isLeftHanded ? -dxRH : dxRH);
-                var y = currentAnchor.y + dy;
-                return { x: Math.max(30, Math.min(W - 30, x)), y: Math.max(150, Math.min(H - 32, y)) };
+                var y = curveOriginY + dy;
+                return { x: Math.max(30, Math.min(W - 30, x)), y: Math.max(140, Math.min(H - 48, y)) };
             }
 
             var STEPS = 240, samples = [], totalLen = 0;
@@ -28212,7 +28216,439 @@ let vsyncTicks = 0;
         }
     };
 
+    // 10. Обновляем радиальную дугу Фиолетовой Деки А (window.setupSeekZone):
+    //     - Лучи и неоновое ядро выходят строго из СВОЕЙ фиолетовой кнопки эквалайзера Деки А (#btn-eqModal)!
+    //     - А сама дуга из 6 кружков приподнята вверх на уровень синей деки (curveOriginY = Math.min(eqB.y, H - 142))
+    //       с плавным углом endDeg = -192° (без зажима о низ экрана), чтобы нижний кружок (x0.9) никогда не загибался вправо!
+    window.getEnabledAudioSpeedZonesV228 = function() {
+        var cfgA = window._musicConfigRefV131 || window.appConfig || {};
+        if (Array.isArray(cfgA.scrubZones) && cfgA.scrubZones.length > 0) {
+            var list = [];
+            cfgA.scrubZones.forEach(function(z) {
+                if (z && z.en !== false && z.val) {
+                    var v = parseFloat(z.val);
+                    if (isFinite(v) && v > 0) list.push(v);
+                }
+            });
+            if (list.length > 0) return list;
+        }
+        var domList = [];
+        for (var i = 1; i <= 6; i++) {
+            var en = document.getElementById('cfg_z' + i + '_en');
+            var val = document.getElementById('cfg_z' + i + '_val');
+            if (en && en.checked && val) {
+                domList.push(parseFloat(val.value) || 1.0);
+            }
+        }
+        return domList.length > 0 ? domList : [1.1, 1.0, 1.05, 0.95, 1.5, 0.9];
+    };
+
+    window.setupSeekZone = function() {
+        var origZone = document.getElementById('seekZone');
+        var arcContainer = document.getElementById('speedArcContainer');
+        var overlay = document.getElementById('scrubOverlay');
+        if (!origZone || !arcContainer || !overlay || origZone._v228Bound) return;
+
+        var zone = origZone.cloneNode(true);
+        zone._v228Bound = true;
+        origZone.replaceWith(zone);
+
+        var debugCanvas = document.getElementById('debugZoneCanvas');
+        if (!debugCanvas) {
+            debugCanvas = document.createElement('canvas');
+            debugCanvas.id = 'debugZoneCanvas';
+            debugCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;width:100%;height:100%;z-index:5998;';
+            overlay.appendChild(debugCanvas);
+        }
+
+        var startY = 0;
+        var isPullingDown = false;
+        var isScrubbing = false;
+        var isSeekingAllowed = true;
+        var scrubSide = null;
+        var currentTempSpeed = null;
+        var arcItems = [];
+        var circleAngles = [];
+        var currentAnchor = { x: 0, y: 0 };
+        var pressTimer = null;
+        var activeTouchA = false;
+
+        function getX(e) {
+            if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientX;
+            if (e.touches && e.touches.length > 0) return e.touches[0].clientX;
+            return e.clientX;
+        }
+        function getY(e) {
+            if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientY;
+            if (e.touches && e.touches.length > 0) return e.touches[0].clientY;
+            return e.clientY;
+        }
+
+        function handleTapSeek(x) {
+            if (x === undefined || isNaN(x)) return;
+            var rect = zone.getBoundingClientRect();
+            var perc = Math.max(0, Math.min(1, (x - rect.left) / rect.width));
+            var player = document.getElementById('audioPlayer');
+            if (player && isFinite(player.duration) && player.duration > 0) {
+                var isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+                if (isVisualReverse) perc = 1.0 - perc;
+                player.currentTime = perc * player.duration;
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+            }
+        }
+
+        function angleDiffSigned(a, b) {
+            return ((a - b) % 360 + 540) % 360 - 180;
+        }
+
+        function drawDebugWheel(anchorX, anchorY, angles) {
+            debugCanvas.width = window.innerWidth;
+            debugCanvas.height = window.innerHeight;
+            var ctx = debugCanvas.getContext('2d');
+            if (!ctx) return;
+            ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+
+            var coreGrad = ctx.createRadialGradient(anchorX, anchorY, 2, anchorX, anchorY, 24);
+            coreGrad.addColorStop(0, 'rgba(227, 179, 65, 0.95)');
+            coreGrad.addColorStop(0.5, 'rgba(163, 113, 247, 0.45)');
+            coreGrad.addColorStop(1, 'rgba(115, 65, 190, 0)');
+            ctx.beginPath();
+            ctx.arc(anchorX, anchorY, 24, 0, 2 * Math.PI);
+            ctx.fillStyle = coreGrad;
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(anchorX, anchorY, 6, 0, 2 * Math.PI);
+            ctx.fillStyle = '#e3b341';
+            ctx.fill();
+
+            var radius = Math.max(window.innerWidth, window.innerHeight) * 0.95;
+            ctx.lineWidth = 1.6;
+            ctx.setLineDash([7, 8]);
+
+            for (var i = 0; i < angles.length - 1; i++) {
+                var delta = angleDiffSigned(angles[i + 1], angles[i]);
+                var midAngle = angles[i] + delta / 2;
+                var rad = midAngle * Math.PI / 180;
+
+                var endX = anchorX + radius * Math.cos(rad);
+                var endY = anchorY + radius * Math.sin(rad);
+
+                var lineGrad = ctx.createLinearGradient(anchorX, anchorY, endX, endY);
+                lineGrad.addColorStop(0, 'rgba(227, 179, 65, 0.65)');
+                lineGrad.addColorStop(0.55, 'rgba(163, 113, 247, 0.35)');
+                lineGrad.addColorStop(1, 'rgba(88, 166, 255, 0.0)');
+
+                ctx.strokeStyle = lineGrad;
+                ctx.beginPath();
+                ctx.moveTo(anchorX, anchorY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+        }
+
+        function generateArc() {
+            arcContainer.innerHTML = '';
+            arcItems = [];
+            circleAngles = [];
+
+            var activeZones = window.getEnabledAudioSpeedZonesV228();
+            var isLeftHanded = Boolean(window.appConfig && window.appConfig.leftHandedMode);
+            var W = window.innerWidth;
+            var H = window.innerHeight;
+
+            // Лучи аудиодеки выходят строго из центра СВОЕЙ фиолетовой кнопки эквалайзера (#btn-eqModal)!
+            var eqBtnA = document.getElementById('btn-eqModal');
+            if (eqBtnA) {
+                var eqRectA = eqBtnA.getBoundingClientRect();
+                currentAnchor.x = eqRectA.left + eqRectA.width / 2;
+                currentAnchor.y = eqRectA.top + eqRectA.height / 2;
+            } else {
+                currentAnchor.y = H - 35;
+                currentAnchor.x = isLeftHanded ? 31 : (W - 31);
+            }
+
+            // А саму дугу кружков приподнимаем вверх на высоту верхнего ряда эквалайзера (или H - 142),
+            // чтобы все 6 кружков стояли высоко и ровно, а нижний кружок (x0.9) не упирался в нижний край и не загибался вправо!
+            var eqBtnB = document.getElementById('btnEqDeckBV216');
+            var bRect = (eqBtnB && eqBtnB.offsetParent !== null) ? eqBtnB.getBoundingClientRect() : null;
+            var curveOriginY = (bRect && bRect.height > 0)
+                ? Math.min(bRect.top + bRect.height / 2, H - 142)
+                : Math.min(currentAnchor.y - 88, H - 142);
+
+            var startDeg = -106;
+            var endDeg   = -192;
+            var rTop     = Math.min(W * 0.76, H * 0.35);
+            var rMid     = Math.min(W * 0.78, H * 0.36);
+            var rBot     = Math.min(W * 0.67, H * 0.30);
+
+            function sampleCurvePoint(u) {
+                var deg = startDeg + u * (endDeg - startDeg);
+                var rad = deg * Math.PI / 180;
+                var r = (1 - u) * (1 - u) * rTop + 2 * (1 - u) * u * rMid + u * u * rBot;
+                var dxRH = r * Math.cos(rad);
+                var dy = r * Math.sin(rad);
+                var x = currentAnchor.x + (isLeftHanded ? -dxRH : dxRH);
+                var y = curveOriginY + dy;
+                return {
+                    x: Math.max(30, Math.min(W - 30, x)),
+                    y: Math.max(140, Math.min(H - 48, y))
+                };
+            }
+
+            var STEPS = 240;
+            var samples = [];
+            var totalLen = 0;
+            for (var k = 0; k <= STEPS; k++) {
+                var pt = sampleCurvePoint(k / STEPS);
+                if (k > 0) {
+                    totalLen += Math.hypot(pt.x - samples[k - 1].x, pt.y - samples[k - 1].y);
+                }
+                samples.push({ x: pt.x, y: pt.y, s: totalLen });
+            }
+
+            var count = activeZones.length;
+            var positions = [];
+            for (var i = 0; i < count; i++) {
+                var targetS = count === 1 ? (totalLen * 0.5) : (totalLen * (i / (count - 1)));
+                var best = samples[0];
+                for (var m = 0; m < samples.length; m++) {
+                    if (samples[m].s >= targetS) {
+                        best = samples[m];
+                        break;
+                    }
+                }
+                positions.push(best);
+            }
+
+            activeZones.forEach(function(val, index) {
+                if (index >= positions.length) return;
+                var el = document.createElement('div');
+                el.className = 'arc-item';
+                el.innerText = 'x' + (val % 1 === 0 ? val.toFixed(1) : val.toString());
+                el.dataset.val = val;
+                el.style.left = (positions[index].x - 24) + 'px';
+                el.style.top = (positions[index].y - 24) + 'px';
+
+                // Угол каждого сектора считаем напрямую от центра СВОЕЙ кнопки эквалайзера Деки А (#btn-eqModal) к центру кружка!
+                var angle = Math.atan2(positions[index].y - currentAnchor.y, positions[index].x - currentAnchor.x) * 180 / Math.PI;
+                circleAngles.push(angle);
+
+                arcContainer.appendChild(el);
+                arcItems.push(el);
+            });
+
+            arcContainer.style.display = 'block';
+            setTimeout(function() { arcContainer.style.opacity = '1'; }, 10);
+
+            drawDebugWheel(currentAnchor.x, currentAnchor.y, circleAngles);
+        }
+
+        zone.addEventListener('touchstart', function(e) {
+            activeTouchA = true;
+            var startX = getX(e);
+            startY = getY(e);
+            var rect = zone.getBoundingClientRect();
+            var perc = (startX - rect.left) / Math.max(1, rect.width);
+
+            if (perc < 0.33) scrubSide = 'left';
+            else if (perc > 0.66) scrubSide = 'right';
+            else scrubSide = 'center';
+
+            isPullingDown = false;
+            currentTempSpeed = null;
+            isScrubbing = false;
+            isSeekingAllowed = true;
+
+            if (scrubSide === 'center') {
+                pressTimer = setTimeout(function() {
+                    pressTimer = null;
+                    isSeekingAllowed = false;
+                    try { navigator.vibrate(50); } catch (err) {}
+
+                    if (window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed)) {
+                        if (typeof window.toggleReverseMode === 'function') window.toggleReverseMode(false);
+                    } else if (window.scrubState.active || window.scrubState.locked) {
+                        if (typeof window.stopScrub === 'function') window.stopScrub(false);
+                    }
+                    var baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+                    var player = document.getElementById('audioPlayer');
+                    if (player) player.playbackRate = baseSpd;
+                    if (typeof window.syncMasterPlaybackEngineV59 === 'function') window.syncMasterPlaybackEngineV59(false);
+
+                    var lockEl = document.getElementById('speedLockIndicator');
+                    if (lockEl) {
+                        lockEl.style.display = 'block';
+                        lockEl.innerText = '✅ Норм: x' + baseSpd;
+                        setTimeout(function() {
+                            if (!window.scrubState.active && !window.scrubState.locked) {
+                                lockEl.style.display = 'none';
+                            }
+                        }, 1000);
+                    }
+                }, 160);
+            } else {
+                pressTimer = setTimeout(function() {
+                    pressTimer = null;
+                    isScrubbing = true;
+
+                    if (window.scrubState.locked) {
+                        window.scrubState.locked = false;
+                        try { navigator.vibrate(50); } catch (err) {}
+                    } else {
+                        try { navigator.vibrate(30); } catch (err) {}
+                    }
+
+                    var defSpeed = parseFloat(window.appConfig.defaultScrubSpeed) || 2.0;
+                    if (typeof window.startScrub === 'function') window.startScrub(scrubSide, defSpeed);
+                }, 250);
+            }
+        }, { passive: true });
+
+        function handleTouchMove(e) {
+            if (!activeTouchA) return;
+            var curX = getX(e);
+            var curY = getY(e);
+            var deltaY = curY - startY;
+
+            if (scrubSide === 'center') {
+                if (Math.abs(deltaY) > 15 && pressTimer) {
+                    clearTimeout(pressTimer);
+                    pressTimer = null;
+                }
+                return;
+            }
+
+            var threshold = window.innerHeight * 0.05;
+
+            if (Math.abs(deltaY) > threshold || isScrubbing) {
+                isSeekingAllowed = false;
+                if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+
+                if (!isScrubbing) {
+                    isScrubbing = true;
+                    if (window.scrubState.locked) window.scrubState.locked = false;
+                }
+
+                if (!isPullingDown) {
+                    isPullingDown = true;
+                    overlay.style.display = 'block';
+                    generateArc();
+                    var defSpeed = parseFloat(window.appConfig.defaultScrubSpeed) || 2.0;
+                    if (typeof window.startScrub === 'function') window.startScrub(scrubSide, defSpeed);
+                }
+
+                var dx = curX - currentAnchor.x;
+                var dy = curY - currentAnchor.y;
+                var fingerAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+                var minDiff = Infinity;
+                var idx = 0;
+
+                circleAngles.forEach(function(ang, i) {
+                    var diff = Math.abs(angleDiffSigned(fingerAngle, ang));
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        idx = i;
+                    }
+                });
+
+                if (arcItems[idx] && !arcItems[idx].classList.contains('active')) {
+                    arcItems.forEach(function(el) { el.classList.remove('active'); });
+                    arcItems[idx].classList.add('active');
+                    currentTempSpeed = parseFloat(arcItems[idx].dataset.val);
+                    if (typeof window.startScrub === 'function') window.startScrub(scrubSide, currentTempSpeed);
+                    try { navigator.vibrate(15); } catch (err) {}
+                }
+            }
+        }
+
+        function handleTouchEnd(e) {
+            if (!activeTouchA) return;
+            activeTouchA = false;
+            if (pressTimer) {
+                clearTimeout(pressTimer);
+                pressTimer = null;
+                if (isSeekingAllowed) handleTapSeek(getX(e));
+            } else if (isScrubbing) {
+                arcContainer.style.opacity = '0';
+                setTimeout(function() { arcContainer.style.display = 'none'; }, 150);
+
+                if (isPullingDown) {
+                    window.scrubState.locked = true;
+                    if (typeof window.startScrub === 'function') window.startScrub(scrubSide, currentTempSpeed);
+
+                    var needsSave = false;
+                    if (window.appConfig.autoSaveScrub) {
+                        window.appConfig.defaultScrubSpeed = currentTempSpeed;
+                        var inputEl = document.getElementById('cfg_defaultScrubSpeed');
+                        if (inputEl) inputEl.value = currentTempSpeed;
+                        needsSave = true;
+                    }
+                    if (window.appConfig.autoSaveBase) {
+                        window.appConfig.normalPlaybackSpeed = currentTempSpeed;
+                        var inputEl2 = document.getElementById('cfg_normalPlaybackSpeed');
+                        if (inputEl2) inputEl2.value = currentTempSpeed;
+                        needsSave = true;
+
+                        var baseCheck = document.getElementById('cfg_xNormalSpeed');
+                        if (baseCheck && !baseCheck.checked) {
+                            baseCheck.checked = true;
+                            window.appConfig.xNormalSpeed = true;
+                        }
+                    }
+                    if (needsSave) {
+                        localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+                    }
+                } else {
+                    if (!window.scrubState.locked) {
+                        if (typeof window.stopScrub === 'function') window.stopScrub();
+                    }
+                }
+            }
+
+            overlay.style.display = 'none';
+            isPullingDown = false;
+            isScrubbing = false;
+            scrubSide = null;
+
+            var ctx = debugCanvas.getContext('2d');
+            if (ctx) ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+        }
+
+        function handleTouchCancel() {
+            if (!activeTouchA) return;
+            activeTouchA = false;
+            if (pressTimer) clearTimeout(pressTimer);
+            arcContainer.style.display = 'none';
+            overlay.style.display = 'none';
+            if (!window.scrubState.locked) {
+                if (typeof window.stopScrub === 'function') window.stopScrub();
+            }
+            isPullingDown = false;
+            isScrubbing = false;
+
+            var ctx = debugCanvas.getContext('2d');
+            if (ctx) ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+        }
+
+        zone.addEventListener('touchmove', handleTouchMove, { passive: true });
+        zone.addEventListener('touchend', handleTouchEnd);
+        zone.addEventListener('touchcancel', handleTouchCancel);
+
+        if (!overlay._v228OverlayBound) {
+            overlay._v228OverlayBound = true;
+            overlay.addEventListener('touchmove', handleTouchMove, { passive: false });
+            overlay.addEventListener('touchend', handleTouchEnd);
+            overlay.addEventListener('touchcancel', handleTouchCancel);
+        }
+    };
+
     setTimeout(function() {
+        window.setupSeekZone();
         window.setupTimeBlockControlsDeckB();
         window.setupSeekZoneDeckB();
         window.syncDeckBSpeedLockIndicatorV227();
