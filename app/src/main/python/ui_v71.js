@@ -26624,7 +26624,7 @@ let vsyncTicks = 0;
     window.seekDeckBAndPlayerSyncedV212 = function(targetSec, isLiveDragOrToast, fromExplicitUser) {
         var st = window._vidStateV130 || {};
         var vd = window.videoDeckV131 || {};
-        var isRev = Boolean(vd.isReversed || window.isReversedDeckB);
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
 
         if (isRev) {
             // Игнорируем ТОЛЬКО фоновый 800мс таймер докачки торрента (_lastTorSeekRetryTsV218),
@@ -26642,7 +26642,6 @@ let vsyncTicks = 0;
             if (typeof window.syncInternalVideoSliderUIV212 === 'function') {
                 window.syncInternalVideoSliderUIV212(clamped, dur);
             }
-            // Если палец ещё ведёт ползунок (isLiveDrag === true и не явный коммит) — обновляем только цифры, а при отпускании/тапе сразу прыгаем!
             if (isLiveDragOrToast === true && !fromExplicitUser && window._v130UserDraggingSeekV212) {
                 return;
             }
@@ -27736,13 +27735,52 @@ let vsyncTicks = 0;
         }
     };
 
-    // -------------------------------------------------------------------------
-    // БЕСШОВНЫЕ ПРЫЖКИ ПО ПОЛОСЕ ПРОГРЕССА ДЕКИ Б И ВИДЕОПЛЕЕРА ВО ВРЕМЯ РЕВЕРСА (71554.mp4 00:23-00:39)
-    // 1) Убираем зеркальную инверсию шкалы Деки Б в реверсе (всегда слева 0:00 -> справа конец видео,
-    //    время отсчитывается назад 14:45 -> 14:44 -> 14:43 синхронно с ползунком внутри видеоплеера).
-    // 2) Любой тап по полосе #seekZoneDeckB (слева, по центру или справа) мгновенно перепрыгивает
-    //    в выбранную точку видео и продолжает реверс с этой секунды!
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // ПОЛНАЯ АНАЛОГИЯ СИНЕЙ ПОЛОСЫ ПРОГРЕССА И БОКОВЫХ ТАЙМЕРОВ ДЕКИ Б (#deckBProgressRow)
+    // С ФИОЛЕТОВОЙ ПОЛОСОЙ ДЕКИ А (71557.jpg + 71554.mp4):
+    // 1) В прямом режиме:
+    //    - Слева (#currentTimeDeckB): прошедшее время `0:06`
+    //    - По центру сверху (#durationTimeDeckB): `0:06 / 23:04`
+    //    - Справа (#remainingTimeDeckB): оставшееся до конца `-22:58`
+    //    - Заливка (#progressFillDeckB): слева направо (`left: 0; width: perc%`)
+    // 2) В режиме реверса (точь-в-точь как на скрине 71557.jpg у фиолетовой деки!):
+    //    - Слева (#currentTimeDeckB): сколько осталось идти назад до 0:00 -> `-0:06` (убывает к `-0:00`)
+    //    - По центру сверху (#durationTimeDeckB): текущая секунда `0:06 / 23:04`
+    //    - По центру снизу (#speedLockIndicatorDeckB): `🔒 ⏪ x0.95` (индикатор скорости и направления)
+    //    - Справа (#remainingTimeDeckB): сколько пройдено от правого края -> `22:58`
+    //    - Заливка (#progressFillDeckB): справа до текущей точки (`right: 0; left: auto; width: (100 - perc)%`),
+    //      так что граница заливки на экране находится РОВНО в точке `perc%`!
+    // 3) Тап в любое место полосы #seekZoneDeckB (и в прямом режиме, и в реверсе!) прыгает
+    //    ровно туда, куда нажал палец (`targetSec = perc * dur`), и сразу продолжает воспроизведение!
+    // 4) Левый таймер (#leftTimeBlockDeckB): короткий тап = включить Реверс ⏪; удержание = тихая перемотка 10x назад.
+    //    Правый таймер (#rightTimeBlockDeckB): короткий тап = включить Прямой ход ⏩; удержание = тихая перемотка 10x вперёд.
+    //    Центр полосы (#seekZoneDeckB): удержание = сброс скорости и направления в `✅ Норм: x1`.
+    //    Свайп вниз с левой/правой трети полосы = радиальная дуга скоростей (⏪ слева / ⏩ справа) с фиксацией замка 🔒!
+    // =========================================================================
+
+    window.syncDeckBSpeedLockIndicatorV226 = function() {
+        var lockEl = document.getElementById('speedLockIndicatorDeckB');
+        if (!lockEl) return;
+        if (lockEl._normToastUntilV226 && performance.now() < lockEl._normToastUntilV226) {
+            return;
+        }
+        var vd = window.videoDeckV131 || {};
+        var sc = window.scrubStateDeckB || {};
+        var isRev = Boolean(window.isReversedDeckB || vd.isReversed || sc.isPhysicallyReversed);
+        var curSpd = Number(vd.speed || window._jennyVideoSpeedV170 || 1.0);
+        var baseSpd = typeof window.getBaseSpeedDeckB === 'function' ? window.getBaseSpeedDeckB() : 1.0;
+
+        if (isRev || sc.active || sc.locked || Math.abs(curSpd - baseSpd) > 0.01) {
+            var icon = (sc.active && !sc.locked) ? '🔄' : '🔒';
+            var dirIcon = isRev ? '⏪' : '⏩';
+            var spdDisp = isRev ? (vd.speed || window._lastRevVideoSpeedV217 || 0.95) : curSpd;
+            lockEl.style.display = 'block';
+            lockEl.innerText = icon + ' ' + dirIcon + ' x' + spdDisp;
+        } else {
+            lockEl.style.display = 'none';
+        }
+    };
+
     window.updateProgressUIDeckB = function(currentTime, duration, isReverseVisual) {
         var pFill = document.getElementById('progressFillDeckB');
         var cTime = document.getElementById('currentTimeDeckB');
@@ -27756,19 +27794,41 @@ let vsyncTicks = 0;
             return m + ':' + (sc < 10 ? '0' + sc : sc);
         };
 
-        if (pFill && isFinite(duration) && duration > 0) {
-            var perc = Math.max(0, Math.min(100, (currentTime / duration) * 100));
+        var cur = Math.max(0, Number(currentTime) || 0);
+        var dur = Math.max(0, Number(duration) || 0);
+
+        if (pFill && isFinite(dur) && dur > 0) {
+            var perc = Math.max(0, Math.min(100, (cur / dur) * 100));
             pFill.style.transform = 'none';
-            pFill.style.right = 'auto';
-            pFill.style.left = '0';
-            pFill.style.width = perc + '%';
+            pFill.style.background = 'rgba(31, 111, 235, 0.45)';
+            if (isReverseVisual) {
+                // Точно как на скрине 71557.jpg у фиолетовой деки:
+                // заливка идёт от правого края до текущей точки cur (граница заливки = perc% слева!)
+                pFill.style.left = 'auto';
+                pFill.style.right = '0';
+                pFill.style.width = (100 - perc) + '%';
+            } else {
+                pFill.style.right = 'auto';
+                pFill.style.left = '0';
+                pFill.style.width = perc + '%';
+            }
         }
 
-        if (isFinite(duration) && duration > 0) {
-            var rem = Math.max(0, duration - currentTime);
-            if (cTime) cTime.innerText = fmt(currentTime);
-            if (rTime) rTime.innerText = '-' + fmt(rem);
-            if (dTime) dTime.innerText = (isReverseVisual ? '⏪ ' : '') + fmt(currentTime) + ' / ' + fmt(duration);
+        if (isFinite(dur) && dur > 0) {
+            var remToEnd = Math.max(0, dur - cur);
+            if (isReverseVisual) {
+                // Точно как на скрине 71557.jpg:
+                // Слева: сколько осталось идти назад до 0:00 (-cur)
+                // По центру: текущая позиция (cur / dur)
+                // Справа: сколько пройдено с конца (dur - cur)
+                if (cTime) cTime.innerText = '-' + fmt(cur);
+                if (rTime) rTime.innerText = fmt(remToEnd);
+                if (dTime) dTime.innerText = fmt(cur) + ' / ' + fmt(dur);
+            } else {
+                if (cTime) cTime.innerText = fmt(cur);
+                if (rTime) rTime.innerText = '-' + fmt(remToEnd);
+                if (dTime) dTime.innerText = fmt(cur) + ' / ' + fmt(dur);
+            }
         }
 
         if (npEl) {
@@ -27785,8 +27845,10 @@ let vsyncTicks = 0;
             }
         }
 
+        window.syncDeckBSpeedLockIndicatorV226();
+
         if (typeof window.syncInternalVideoSliderUIV212 === 'function') {
-            window.syncInternalVideoSliderUIV212(currentTime, duration);
+            window.syncInternalVideoSliderUIV212(cur, dur);
         }
     };
 
@@ -27797,67 +27859,574 @@ let vsyncTicks = 0;
         window.seekDeckBAndPlayerSyncedV212(targetSec, false, true);
     };
 
-    // Перехватываем короткий тап (< 280мс без свайпа вниз) по #seekZoneDeckB в capture-фазе,
-    // чтобы прыжок по времени работал мгновенно в любой части полосы (и в прямом режиме, и в реверсе!),
-    // не конфликтуя с 160мс таймером центральной зоны и скраббингом вниз!
-    window.bindDirectTapSeekOnDeckBBarV226 = function() {
-        var zone = document.getElementById('seekZoneDeckB');
-        if (!zone || zone._v226TapSeekBound) return;
-        zone._v226TapSeekBound = true;
+    window.toggleReverseModeDeckB = function(targetReversed) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130;
+        if (!vid || !vd || !st || !st.active) return;
 
-        var tapStartX = 0;
-        var tapStartY = 0;
-        var tapStartTs = 0;
-        var movedTooMuch = false;
+        var wasReversedNow = Boolean(window.isReversedDeckB || vd.isReversed || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+        var wantRev = (targetReversed !== undefined) ? Boolean(targetReversed) : !wasReversedNow;
+        var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+        var cur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
 
-        var getEvX = function(e) {
+        if (!wantRev) {
+            window.scrubStateDeckB.active = false;
+            window.scrubStateDeckB.locked = false;
+            window.scrubStateDeckB.side = null;
+            window.scrubStateDeckB.isPhysicallyReversed = false;
+            window.persistedPlaybackSpeedDeckB = null;
+            window.persistedPlaybackSideDeckB = 'right';
+
+            var baseSpd = typeof window.getBaseSpeedDeckB === 'function' ? window.getBaseSpeedDeckB() : 1.0;
+            window.restoreNormalVideoPlaybackV217(null, baseSpd);
+            window.syncDeckBSpeedLockIndicatorV226();
+            window.updateProgressUIDeckB(cur, dur, false);
+            return;
+        }
+
+        var revSpd = window._lastRevVideoSpeedV217 || (typeof window.getBaseSpeedDeckB === 'function' ? window.getBaseSpeedDeckB() : 0.95);
+        window.scrubStateDeckB.active = false;
+        window.scrubStateDeckB.locked = true;
+        window.scrubStateDeckB.side = 'left';
+        window.scrubStateDeckB.speed = revSpd;
+        window.scrubStateDeckB.isPhysicallyReversed = true;
+        window.persistedPlaybackSpeedDeckB = revSpd;
+        window.persistedPlaybackSideDeckB = 'left';
+
+        window.startImmediateVideoReverseEngineV217(revSpd, !wasReversedNow, cur);
+        window.syncDeckBSpeedLockIndicatorV226();
+        window.updateProgressUIDeckB(cur, dur, true);
+    };
+
+    window.startScrubDeckB = function(side, speed) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130;
+        if (!vid || !vd || !st || !st.active) return;
+
+        var wantReverseNow = (side === 'left');
+        var cleanSpd = Math.max(0.1, Math.min(8.0, parseFloat(speed) || 1.0));
+
+        window.scrubStateDeckB.active = true;
+        window.scrubStateDeckB.side = side;
+        window.scrubStateDeckB.speed = cleanSpd;
+        window.scrubStateDeckB.isPhysicallyReversed = wantReverseNow;
+        window.persistedPlaybackSpeedDeckB = cleanSpd;
+        window.persistedPlaybackSideDeckB = side;
+
+        if (wantReverseNow) {
+            window._lastRevVideoSpeedV217 = cleanSpd;
+            window.startImmediateVideoReverseEngineV217(cleanSpd, false);
+        } else {
+            window._lastFwdVideoSpeedV217 = cleanSpd;
+            window.restoreNormalVideoPlaybackV217(null, cleanSpd);
+        }
+        window.syncDeckBSpeedLockIndicatorV226();
+        window.syncVideoPlayerButtonsUIV217();
+    };
+
+    window.stopScrubDeckB = function(keepLockedSpeed) {
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130;
+        if (!vd || !st || !st.active) return;
+
+        if (!keepLockedSpeed) {
+            var baseSpd = typeof window.getBaseSpeedDeckB === 'function' ? window.getBaseSpeedDeckB() : 1.0;
+            window.scrubStateDeckB.active = false;
+            window.scrubStateDeckB.locked = false;
+            window.scrubStateDeckB.side = null;
+            window.scrubStateDeckB.speed = baseSpd;
+            window.scrubStateDeckB.isPhysicallyReversed = false;
+            window.persistedPlaybackSpeedDeckB = null;
+            window.persistedPlaybackSideDeckB = 'right';
+            window.restoreNormalVideoPlaybackV217(null, baseSpd);
+        } else {
+            window.scrubStateDeckB.active = false;
+        }
+        window.syncDeckBSpeedLockIndicatorV226();
+        window.syncVideoPlayerButtonsUIV217();
+    };
+
+    // Боковые таймеры Деки Б (#leftTimeBlockDeckB и #rightTimeBlockDeckB) — 100% как в Деке А (ui_controls.js):
+    // - Короткий тап слева = Реверс (⏪)
+    // - Короткий тап справа = Прямой ход (⏩)
+    // - Удержание (> 420мс) слева/справа = тихая быстрая перемотка 10x назад/вперёд с авто-продолжением при отпускании!
+    window.setupTimeBlockControlsDeckB = function() {
+        var origLeft = document.getElementById('leftTimeBlockDeckB');
+        var origRight = document.getElementById('rightTimeBlockDeckB');
+        if (!origLeft || !origRight || origLeft._v226Bound) return;
+
+        var leftBlock = origLeft.cloneNode(true);
+        var rightBlock = origRight.cloneNode(true);
+        leftBlock._v211Bound = true;
+        leftBlock._v226Bound = true;
+        rightBlock._v211Bound = true;
+        rightBlock._v226Bound = true;
+        origLeft.replaceWith(leftBlock);
+        origRight.replaceWith(rightBlock);
+
+        var pressTimer = null;
+        var isLongPress = false;
+        var jumpInterval = null;
+        var holdTargetSec = null;
+
+        var startSilent10xSeekDeckB = function(dirSign) {
+            var vid = document.getElementById('jennyVideoElV130');
+            var st = window._vidStateV130;
+            if (!vid || !st || !st.active) return;
+
+            var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+            var cur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+            holdTargetSec = cur;
+
+            if (jumpInterval) clearInterval(jumpInterval);
+            jumpInterval = setInterval(function() {
+                var dNow = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+                if (!isFinite(dNow) || dNow <= 0) return;
+                var isRev = Boolean(window.isReversedDeckB || (window.videoDeckV131 && window.videoDeckV131.isReversed));
+                // Левый блок (dirSign = -1) всегда мотает к 0:00 (влево), правый блок (dirSign = +1) всегда мотает к концу (вправо)!
+                holdTargetSec = Math.max(0.2, Math.min(dNow - 0.2, (holdTargetSec !== null ? holdTargetSec : cur) + (dirSign * 2.5)));
+                st._pendingSeekSecV167 = holdTargetSec;
+                st._pendingSeekTsV167 = performance.now();
+                window.updateProgressUIDeckB(holdTargetSec, dNow, isRev);
+            }, 90);
+        };
+
+        var stopSilent10xSeekDeckB = function() {
+            if (jumpInterval) {
+                clearInterval(jumpInterval);
+                jumpInterval = null;
+            }
+            if (holdTargetSec !== null) {
+                var target = holdTargetSec;
+                holdTargetSec = null;
+                window.seekDeckBAndPlayerSyncedV212(target, false, true);
+            }
+        };
+
+        leftBlock.addEventListener('touchstart', function(e) {
+            e.stopPropagation();
+            isLongPress = false;
+            clearTimeout(pressTimer);
+            pressTimer = setTimeout(function() {
+                isLongPress = true;
+                try { navigator.vibrate(30); } catch (err) {}
+                startSilent10xSeekDeckB(-1);
+            }, 420);
+        }, { passive: true });
+
+        leftBlock.addEventListener('touchend', function(e) {
+            e.stopPropagation();
+            clearTimeout(pressTimer);
+            if (isLongPress) {
+                stopSilent10xSeekDeckB();
+            } else {
+                window.toggleReverseModeDeckB(true);
+            }
+        });
+
+        leftBlock.addEventListener('touchcancel', function() {
+            clearTimeout(pressTimer);
+            if (isLongPress) stopSilent10xSeekDeckB();
+        });
+
+        rightBlock.addEventListener('touchstart', function(e) {
+            e.stopPropagation();
+            isLongPress = false;
+            clearTimeout(pressTimer);
+            pressTimer = setTimeout(function() {
+                isLongPress = true;
+                try { navigator.vibrate(30); } catch (err) {}
+                startSilent10xSeekDeckB(+1);
+            }, 420);
+        }, { passive: true });
+
+        rightBlock.addEventListener('touchend', function(e) {
+            e.stopPropagation();
+            clearTimeout(pressTimer);
+            if (isLongPress) {
+                stopSilent10xSeekDeckB();
+            } else {
+                window.toggleReverseModeDeckB(false);
+            }
+        });
+
+        rightBlock.addEventListener('touchcancel', function() {
+            clearTimeout(pressTimer);
+            if (isLongPress) stopSilent10xSeekDeckB();
+        });
+    };
+
+    // Центральная полоса прогресса Деки Б (#seekZoneDeckB) — 100% как в Деке А (ui_touch_arc.js):
+    // - Тап в любое место полосы = мгновенный прыжок в точку perc * dur (и в прямом режиме, и в реверсе!)
+    // - Удержание по центру = сброс скорости и реверса в "✅ Норм: x1"
+    // - Удержание / свайп вниз с левой или правой трети = радиальная дуга скоростей Деки Б (⏪ слева / ⏩ справа) с фиксацией 🔒!
+    window.setupSeekZoneDeckB = function() {
+        var origZone = document.getElementById('seekZoneDeckB');
+        if (!origZone || origZone._v226Bound) return;
+
+        var zone = origZone.cloneNode(true);
+        zone._v211Bound = true;
+        zone._v226Bound = true;
+        origZone.replaceWith(zone);
+
+        var overlay = document.getElementById('scrubOverlayDeckB');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'scrubOverlayDeckB';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:5999;display:none;touch-action:none;';
+            document.body.appendChild(overlay);
+        }
+        var arcContainer = document.getElementById('speedArcContainerDeckB');
+        if (!arcContainer) {
+            arcContainer = document.createElement('div');
+            arcContainer.id = 'speedArcContainerDeckB';
+            arcContainer.style.cssText = 'position:fixed;inset:0;z-index:6000;pointer-events:none;transition:opacity 0.1s ease-out;opacity:0;display:none;';
+            document.body.appendChild(arcContainer);
+        }
+        var debugCanvas = document.getElementById('debugZoneCanvasDeckB');
+        if (!debugCanvas) {
+            debugCanvas = document.createElement('canvas');
+            debugCanvas.id = 'debugZoneCanvasDeckB';
+            debugCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;width:100%;height:100%;z-index:5998;';
+            overlay.appendChild(debugCanvas);
+        }
+
+        var startX = 0;
+        var startY = 0;
+        var isPullingDown = false;
+        var isScrubbing = false;
+        var isSeekingAllowed = true;
+        var scrubSide = null;
+        var currentTempSpeed = null;
+        var arcItems = [];
+        var circleAngles = [];
+        var currentAnchor = { x: 0, y: 0 };
+        var pressTimer = null;
+        var activeTouchDeckB = false;
+
+        function getX(e) {
             if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientX;
             if (e.touches && e.touches.length > 0) return e.touches[0].clientX;
             return e.clientX;
-        };
-        var getEvY = function(e) {
+        }
+        function getY(e) {
             if (e.changedTouches && e.changedTouches.length > 0) return e.changedTouches[0].clientY;
             if (e.touches && e.touches.length > 0) return e.touches[0].clientY;
             return e.clientY;
-        };
+        }
+        function angleDiffSigned(a, b) {
+            return ((a - b) % 360 + 540) % 360 - 180;
+        }
+
+        function handleTapSeekDeckB(x) {
+            if (x === undefined || isNaN(x)) return;
+            var rect = zone.getBoundingClientRect();
+            if (rect.width <= 10) return;
+            // Граница заливки и в прямом режиме, и в реверсе находится ровно в точке perc = (x - rect.left) / rect.width!
+            // Поэтому тап пальцем всегда прыгает ровно в точку perc * dur под пальцем!
+            var perc = Math.max(0, Math.min(1, (x - rect.left) / rect.width));
+            var vid = document.getElementById('jennyVideoElV130');
+            if (!vid) return;
+            var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+            if (isFinite(dur) && dur > 0) {
+                var targetSec = perc * dur;
+                window.seekDeckBAndPlayerSyncedV212(targetSec, false, true);
+            }
+        }
+
+        function generateArcDeckB() {
+            arcContainer.innerHTML = '';
+            arcItems = [];
+            circleAngles = [];
+
+            var activeZones = window.getEnabledRadialSpeedsForDeckV218
+                ? window.getEnabledRadialSpeedsForDeckV218('video')
+                : [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+            if (!activeZones || activeZones.length === 0) activeZones = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+            var isLeftHanded = Boolean(window.appConfig && window.appConfig.leftHandedMode);
+            var W = window.innerWidth;
+            var H = window.innerHeight;
+
+            var eqBtn = document.getElementById('btnEqDeckBV216') || document.getElementById('btn-eqModal');
+            if (eqBtn) {
+                var eqRect = eqBtn.getBoundingClientRect();
+                currentAnchor.x = eqRect.left + eqRect.width / 2;
+                currentAnchor.y = eqRect.top + eqRect.height / 2;
+            } else {
+                currentAnchor.y = H - 135;
+                currentAnchor.x = isLeftHanded ? 31 : (W - 31);
+            }
+
+            var startDeg = -108, endDeg = -204;
+            var rTop = Math.min(W * 0.76, H * 0.35);
+            var rMid = Math.min(W * 0.78, H * 0.36);
+            var rBot = Math.min(W * 0.58, H * 0.26);
+
+            function sampleCurvePoint(u) {
+                var deg = startDeg + u * (endDeg - startDeg);
+                var rad = deg * Math.PI / 180;
+                var r = (1 - u) * (1 - u) * rTop + 2 * (1 - u) * u * rMid + u * u * rBot;
+                var dxRH = r * Math.cos(rad);
+                var dy = r * Math.sin(rad);
+                var x = currentAnchor.x + (isLeftHanded ? -dxRH : dxRH);
+                var y = currentAnchor.y + dy;
+                return { x: Math.max(30, Math.min(W - 30, x)), y: Math.max(150, Math.min(H - 32, y)) };
+            }
+
+            var STEPS = 240, samples = [], totalLen = 0;
+            for (var k = 0; k <= STEPS; k++) {
+                var pt = sampleCurvePoint(k / STEPS);
+                if (k > 0) totalLen += Math.hypot(pt.x - samples[k - 1].x, pt.y - samples[k - 1].y);
+                samples.push({ x: pt.x, y: pt.y, s: totalLen });
+            }
+
+            var count = activeZones.length, positions = [];
+            for (var j = 0; j < count; j++) {
+                var targetS = count === 1 ? (totalLen * 0.5) : (totalLen * (j / (count - 1)));
+                var best = samples[0];
+                for (var m = 0; m < samples.length; m++) {
+                    if (samples[m].s >= targetS) { best = samples[m]; break; }
+                }
+                positions.push(best);
+            }
+
+            activeZones.forEach(function(val, index) {
+                if (index >= positions.length) return;
+                var el = document.createElement('div');
+                el.className = 'arc-item';
+                el.innerText = 'x' + (val % 1 === 0 ? val.toFixed(1) : val.toString());
+                el.dataset.val = val;
+                el.style.left = (positions[index].x - 24) + 'px';
+                el.style.top = (positions[index].y - 24) + 'px';
+                var angle = Math.atan2(positions[index].y - currentAnchor.y, positions[index].x - currentAnchor.x) * 180 / Math.PI;
+                circleAngles.push(angle);
+                arcContainer.appendChild(el);
+                arcItems.push(el);
+            });
+
+            arcContainer.style.display = 'block';
+            setTimeout(function() { arcContainer.style.opacity = '1'; }, 10);
+
+            debugCanvas.width = window.innerWidth;
+            debugCanvas.height = window.innerHeight;
+            var ctx = debugCanvas.getContext('2d');
+            if (ctx) {
+                ctx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+                var coreGrad = ctx.createRadialGradient(currentAnchor.x, currentAnchor.y, 2, currentAnchor.x, currentAnchor.y, 24);
+                coreGrad.addColorStop(0, 'rgba(88, 166, 255, 0.95)');
+                coreGrad.addColorStop(0.5, 'rgba(163, 113, 247, 0.45)');
+                coreGrad.addColorStop(1, 'rgba(115, 65, 190, 0)');
+                ctx.beginPath();
+                ctx.arc(currentAnchor.x, currentAnchor.y, 24, 0, 2 * Math.PI);
+                ctx.fillStyle = coreGrad;
+                ctx.fill();
+                var radius = Math.max(window.innerWidth, window.innerHeight) * 0.95;
+                ctx.lineWidth = 1.6;
+                ctx.setLineDash([7, 8]);
+                for (var li = 0; li < circleAngles.length - 1; li++) {
+                    var delta = angleDiffSigned(circleAngles[li + 1], circleAngles[li]);
+                    var midAngle = circleAngles[li] + delta / 2;
+                    var rad = midAngle * Math.PI / 180;
+                    var endX = currentAnchor.x + radius * Math.cos(rad);
+                    var endY = currentAnchor.y + radius * Math.sin(rad);
+                    var lineGrad = ctx.createLinearGradient(currentAnchor.x, currentAnchor.y, endX, endY);
+                    lineGrad.addColorStop(0, 'rgba(88, 166, 255, 0.65)');
+                    lineGrad.addColorStop(0.55, 'rgba(163, 113, 247, 0.35)');
+                    lineGrad.addColorStop(1, 'rgba(88, 166, 255, 0.0)');
+                    ctx.strokeStyle = lineGrad;
+                    ctx.beginPath();
+                    ctx.moveTo(currentAnchor.x, currentAnchor.y);
+                    ctx.lineTo(endX, endY);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+            }
+        }
 
         zone.addEventListener('touchstart', function(e) {
-            tapStartX = getEvX(e);
-            tapStartY = getEvY(e);
-            tapStartTs = performance.now();
-            movedTooMuch = false;
-        }, { capture: true, passive: true });
+            e.stopPropagation();
+            activeTouchDeckB = true;
+            startX = getX(e);
+            startY = getY(e);
+            var rect = zone.getBoundingClientRect();
+            var perc = (startX - rect.left) / Math.max(1, rect.width);
 
-        zone.addEventListener('touchmove', function(e) {
-            var dx = Math.abs(getEvX(e) - tapStartX);
-            var dy = Math.abs(getEvY(e) - tapStartY);
-            if (dx > 16 || dy > 16) {
-                movedTooMuch = true;
-            }
-        }, { capture: true, passive: true });
+            if (perc < 0.33) scrubSide = 'left';
+            else if (perc > 0.66) scrubSide = 'right';
+            else scrubSide = 'center';
 
-        zone.addEventListener('touchend', function(e) {
-            var elapsed = performance.now() - tapStartTs;
-            var endX = getEvX(e);
-            var endY = getEvY(e);
-            if (!movedTooMuch && elapsed < 320 && Math.abs(endY - tapStartY) < 18) {
-                var rect = zone.getBoundingClientRect();
-                if (rect.width > 12) {
-                    var perc = Math.max(0, Math.min(1, (endX - rect.left) / rect.width));
-                    var vid = document.getElementById('jennyVideoElV130');
-                    var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid ? vid.duration : 0);
-                    if (isFinite(dur) && dur > 0) {
-                        var targetSec = perc * dur;
-                        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-                        if (e.stopPropagation) e.stopPropagation();
-                        window.seekDeckBAndPlayerSyncedV212(targetSec, false, true);
+            isPullingDown = false;
+            currentTempSpeed = null;
+            isScrubbing = false;
+            isSeekingAllowed = true;
+
+            if (scrubSide === 'center') {
+                // Удержание в центре сбрасывает реверс и скорость в Норм (x1), а быстрый тап (< 240мс) прыгает по времени!
+                pressTimer = setTimeout(function() {
+                    pressTimer = null;
+                    isSeekingAllowed = false;
+                    try { navigator.vibrate(50); } catch (err) {}
+
+                    window.toggleReverseModeDeckB(false);
+                    var baseSpd = typeof window.getBaseSpeedDeckB === 'function' ? window.getBaseSpeedDeckB() : 1.0;
+
+                    var lockEl = document.getElementById('speedLockIndicatorDeckB');
+                    if (lockEl) {
+                        lockEl._normToastUntilV226 = performance.now() + 1000;
+                        lockEl.style.display = 'block';
+                        lockEl.innerText = '✅ Норм: x' + baseSpd;
+                        setTimeout(function() {
+                            window.syncDeckBSpeedLockIndicatorV226();
+                        }, 1020);
                     }
+                }, 240);
+            } else {
+                pressTimer = setTimeout(function() {
+                    pressTimer = null;
+                    isScrubbing = true;
+                    if (window.scrubStateDeckB.locked) {
+                        window.scrubStateDeckB.locked = false;
+                        try { navigator.vibrate(50); } catch (err) {}
+                    } else {
+                        try { navigator.vibrate(30); } catch (err) {}
+                    }
+                    var vdCfg = (window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {};
+                    var defSpeed = parseFloat(vdCfg.defaultScrubSpeed) || 2.0;
+                    currentTempSpeed = defSpeed;
+                    window.startScrubDeckB(scrubSide, defSpeed);
+                }, 260);
+            }
+        }, { passive: true });
+
+        function handleTouchMoveDeckB(e) {
+            if (!activeTouchDeckB) return;
+            var curX = getX(e);
+            var curY = getY(e);
+            var deltaY = curY - startY;
+
+            if (scrubSide === 'center') {
+                if (Math.abs(deltaY) > 15 && pressTimer) {
+                    clearTimeout(pressTimer);
+                    pressTimer = null;
+                }
+                return;
+            }
+
+            var threshold = window.innerHeight * 0.05;
+            if (Math.abs(deltaY) > threshold || isScrubbing) {
+                isSeekingAllowed = false;
+                if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+
+                if (!isScrubbing) {
+                    isScrubbing = true;
+                    if (window.scrubStateDeckB.locked) window.scrubStateDeckB.locked = false;
+                }
+
+                if (!isPullingDown) {
+                    isPullingDown = true;
+                    overlay.style.display = 'block';
+                    generateArcDeckB();
+                    var vdCfg = (window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {};
+                    var defSpeed = parseFloat(vdCfg.defaultScrubSpeed) || 2.0;
+                    currentTempSpeed = defSpeed;
+                    window.startScrubDeckB(scrubSide, defSpeed);
+                }
+
+                var dx = curX - currentAnchor.x;
+                var dy = curY - currentAnchor.y;
+                var fingerAngle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+                var minDiff = Infinity, idx = 0;
+                circleAngles.forEach(function(ang, i) {
+                    var diff = Math.abs(angleDiffSigned(fingerAngle, ang));
+                    if (diff < minDiff) { minDiff = diff; idx = i; }
+                });
+
+                if (arcItems[idx] && !arcItems[idx].classList.contains('active')) {
+                    arcItems.forEach(function(el) { el.classList.remove('active'); });
+                    arcItems[idx].classList.add('active');
+                    currentTempSpeed = parseFloat(arcItems[idx].dataset.val);
+                    window.startScrubDeckB(scrubSide, currentTempSpeed);
+                    try { navigator.vibrate(15); } catch (err) {}
                 }
             }
-        }, { capture: true, passive: true });
+        }
+
+        function handleTouchEndDeckB(e) {
+            if (!activeTouchDeckB) return;
+            activeTouchDeckB = false;
+
+            if (pressTimer) {
+                clearTimeout(pressTimer);
+                pressTimer = null;
+                if (isSeekingAllowed) handleTapSeekDeckB(getX(e));
+            } else if (isScrubbing) {
+                arcContainer.style.opacity = '0';
+                setTimeout(function() { arcContainer.style.display = 'none'; }, 150);
+
+                if (isPullingDown && currentTempSpeed) {
+                    window.scrubStateDeckB.locked = true;
+                    window.startScrubDeckB(scrubSide, currentTempSpeed);
+                } else if (!window.scrubStateDeckB.locked) {
+                    window.stopScrubDeckB(false);
+                }
+            }
+
+            overlay.style.display = 'none';
+            isPullingDown = false;
+            isScrubbing = false;
+            scrubSide = null;
+
+            var dbg = document.getElementById('debugZoneCanvasDeckB');
+            if (dbg) {
+                var ctx = dbg.getContext('2d');
+                if (ctx) ctx.clearRect(0, 0, dbg.width, dbg.height);
+            }
+        }
+
+        function handleTouchCancelDeckB() {
+            if (!activeTouchDeckB) return;
+            activeTouchDeckB = false;
+            if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+            arcContainer.style.display = 'none';
+            overlay.style.display = 'none';
+            if (!window.scrubStateDeckB.locked) {
+                window.stopScrubDeckB(false);
+            }
+            isPullingDown = false;
+            isScrubbing = false;
+            scrubSide = null;
+            var dbg = document.getElementById('debugZoneCanvasDeckB');
+            if (dbg) {
+                var ctx = dbg.getContext('2d');
+                if (ctx) ctx.clearRect(0, 0, dbg.width, dbg.height);
+            }
+        }
+
+        zone.addEventListener('touchmove', handleTouchMoveDeckB, { passive: true });
+        zone.addEventListener('touchend', handleTouchEndDeckB);
+        zone.addEventListener('touchcancel', handleTouchCancelDeckB);
+        zone.addEventListener('click', function(e) {
+            if (!isScrubbing && !isPullingDown && e.clientX) {
+                handleTapSeekDeckB(e.clientX);
+            }
+        });
+
+        if (!overlay._v226OverlayBound) {
+            overlay._v226OverlayBound = true;
+            overlay.addEventListener('touchmove', handleTouchMoveDeckB, { passive: false });
+            overlay.addEventListener('touchend', handleTouchEndDeckB);
+            overlay.addEventListener('touchcancel', handleTouchCancelDeckB);
+        }
     };
 
-    window.bindDirectTapSeekOnDeckBBarV226();
-    setInterval(window.bindDirectTapSeekOnDeckBBarV226, 800);
+    setTimeout(function() {
+        window.setupTimeBlockControlsDeckB();
+        window.setupSeekZoneDeckB();
+        window.syncDeckBSpeedLockIndicatorV226();
+    }, 120);
 })();
 /* ================= END JENNY_V225_MSE_CONTINUOUS_REVERSE_STREAM_PATCH ================= */
