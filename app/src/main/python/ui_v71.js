@@ -18397,11 +18397,6 @@ let vsyncTicks = 0;
         var vEl = document.getElementById('jennyVideoElV130');
         var stVid = window._vidStateV130;
         if (vEl && stVid && stVid.active) {
-            if (!window._jennyDualDeckV211.deckB) {
-                window._jennyDualDeckV211.deckB = true;
-                window.saveDualDeckStateV211();
-                window.syncDualDeckVisibilityAndAudioV211();
-            }
             var curV = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vEl) : (vEl.currentTime || 0);
             var durV = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vEl) : (vEl.duration || 0);
             var isRevV = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
@@ -23309,3 +23304,1536 @@ let vsyncTicks = 0;
     }, 200);
 })();
 /* ================= END JENNY_V217_UNIFIED_PATCH ================= */
+
+/* ================= JENNY_V218_UNIFIED_PATCH (#312): INPUT FOCUS GUARD, DECK A/B HEART ADD-TO-FAV TOAST, PERSISTENT EXTERNAL STORAGE, MUTUALLY-EXCLUSIVE EQ SELECTOR & SEPARATE DECK EQ/ZONES, COMPACT MINI/PIP WITH PREV/NEXT & HIDDEN 120HZ/KNOBS, FULLSCREEN STRETCH & DUP=0, ALL-FORMAT TORRENT DURATION/SEEK & 5-SOURCE HEADER PIN ================= */
+(function() {
+    if (window._jennyV218Installed) return;
+    window._jennyV218Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. ИСПРАВЛЕНИЕ ВВОДА ЦИФР С КЛАВИАТУРЫ В #settingsModal (00:00-00:25)
+    //    Блокируем перерисовку innerHTML каждые 600 мс и защищаем активный <input> от сброса фокуса!
+    // -------------------------------------------------------------------------
+    window.isAnySettingsInputFocusedV218 = function() {
+        var ae = document.activeElement;
+        if (!ae) return false;
+        var tag = (ae.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+            var type = (ae.getAttribute('type') || 'text').toLowerCase();
+            if (type !== 'checkbox' && type !== 'range' && type !== 'button') {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    var _origRenderThreadsBoxV216 = window.renderThreadsSettingsBoxV216;
+    window.renderThreadsSettingsBoxV216 = function(forceRebuild) {
+        var box = document.getElementById('jennyThreadsSettingsBoxV216');
+        // Если блок уже отрисован и не запрошен принудительный сброс — НЕ перезаписываем innerHTML в таймере!
+        if (box && box._v218Rendered && !forceRebuild) {
+            return;
+        }
+        if (window.isAnySettingsInputFocusedV218() && !forceRebuild) {
+            return;
+        }
+        if (typeof _origRenderThreadsBoxV216 === 'function') {
+            _origRenderThreadsBoxV216.apply(this, arguments);
+        }
+        box = document.getElementById('jennyThreadsSettingsBoxV216');
+        if (box) {
+            box._v218Rendered = true;
+            box.querySelectorAll('input[type="number"], input[type="text"]').forEach(function(inp) {
+                if (inp._v218FocusGuarded) return;
+                inp._v218FocusGuarded = true;
+                inp.addEventListener('touchstart', function(e) { e.stopPropagation(); }, { passive: true });
+                inp.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+                inp.addEventListener('click', function(e) { e.stopPropagation(); });
+            });
+        }
+    };
+
+    var _origResetThreadCfgV216 = window.resetThreadConfigV216;
+    if (typeof _origResetThreadCfgV216 === 'function') {
+        window.resetThreadConfigV216 = async function(ev) {
+            var box = document.getElementById('jennyThreadsSettingsBoxV216');
+            if (box) box._v218Rendered = false;
+            return _origResetThreadCfgV216.apply(this, arguments);
+        };
+    }
+
+    // Защищаем все числовые и текстовые поля в #settingsModal от перехвата тача и потери фокуса
+    window.guardAllSettingsInputsFocusV218 = function() {
+        var sm = document.getElementById('settingsModal');
+        if (!sm) return;
+        sm.querySelectorAll('input[type="number"], input[type="text"]').forEach(function(inp) {
+            if (inp._v218FocusGuarded) return;
+            inp._v218FocusGuarded = true;
+            inp.addEventListener('touchstart', function(e) { e.stopPropagation(); }, { passive: true });
+            inp.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+            inp.addEventListener('click', function(e) { e.stopPropagation(); });
+        });
+    };
+
+    // При открытой клавиатуре на Android ресайз окна не должен сбрасывать фокус с поля ввода
+    var _origSyncRot90V217 = window.syncExactRot90DimensionsV217;
+    window.syncExactRot90DimensionsV217 = function() {
+        if (window.isAnySettingsInputFocusedV218()) return;
+        var stage = document.getElementById('jennyVideoStageV130');
+        var vid = document.getElementById('jennyVideoElV130');
+        var glC = document.getElementById('jv166InterpCanvas');
+        var st = window._vidStateV130 || {};
+        if (!stage) return;
+
+        var isCompact = window.isVideoCompactPipOrMiniV218 ? window.isVideoCompactPipOrMiniV218() : Boolean(st.pipMode);
+        if (st.rotated90 && !isCompact) {
+            var w = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0, 320);
+            var h = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, 480);
+            stage.style.setProperty('width', h + 'px', 'important');
+            stage.style.setProperty('height', w + 'px', 'important');
+        } else {
+            stage.style.removeProperty('width');
+            stage.style.removeProperty('height');
+        }
+
+        if (vid) {
+            var enabledFits = window.getEnabledVideoFitModesV217 ? window.getEnabledVideoFitModesV217() : ['contain', 'cover', 'fill'];
+            if (enabledFits.indexOf(st.fitMode) === -1) {
+                st.fitMode = enabledFits[0];
+            }
+            var fitVal = st.fitMode || 'contain';
+            vid.style.setProperty('object-fit', fitVal, 'important');
+            vid.style.setProperty('width', '100%', 'important');
+            vid.style.setProperty('height', '100%', 'important');
+            vid.style.setProperty('max-width', 'none', 'important');
+            vid.style.setProperty('max-height', 'none', 'important');
+            if (glC) {
+                glC.style.setProperty('object-fit', fitVal, 'important');
+                glC.style.setProperty('width', '100%', 'important');
+                glC.style.setProperty('height', '100%', 'important');
+                glC.style.setProperty('max-width', 'none', 'important');
+                glC.style.setProperty('max-height', 'none', 'important');
+            }
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. ДЕФОЛТ "Дубль ΔY (0=Выкл)" = 0 В КРУТИЛКАХ (ВМЕСТО 123 / 10) И ЗАЩИТА КНОПКИ "🔄 СБРОС"
+    // -------------------------------------------------------------------------
+    window._jennyTunerV190 = window._jennyTunerV190 || {};
+    if (!localStorage.getItem('jt218_dup_zero_migrated')) {
+        localStorage.setItem('jt218_dup_zero_migrated', '1');
+        localStorage.setItem('jt190_dupThresh', '0');
+        window._jennyTunerV190.dupThresh = 0;
+    } else if (Number(window._jennyTunerV190.dupThresh) === 10 || Number(window._jennyTunerV190.dupThresh) === 123) {
+        window._jennyTunerV190.dupThresh = 0;
+        localStorage.setItem('jt190_dupThresh', '0');
+    }
+
+    window.resetTunerKnobsToZeroV218 = function(ev) {
+        if (ev) {
+            if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+            if (ev.stopPropagation) ev.stopPropagation();
+            if (ev.preventDefault) ev.preventDefault();
+        }
+        var defs = {
+            dupThresh: 0.0,
+            targetFps: 120.0,
+            flowScale: 0.85,
+            ghostGate: 0.12,
+            detailGuard: 0.45,
+            bridgeSpread: 0.35,
+            searchRadius: 15.0,
+            inkGuard: 0.50,
+            pllSmooth: 0.85
+        };
+        var mins = { dupThresh: 0, targetFps: 0, flowScale: 0, ghostGate: 0.02, detailGuard: 0, bridgeSpread: 0, searchRadius: 4, inkGuard: 0, pllSmooth: 0.10 };
+        var maxs = { dupThresh: 255, targetFps: 180, flowScale: 2.50, ghostGate: 0.45, detailGuard: 1.0, bridgeSpread: 1.0, searchRadius: 48, inkGuard: 1.0, pllSmooth: 0.95 };
+        var fmts = { dupThresh: 0, targetFps: 0, flowScale: 2, ghostGate: 2, detailGuard: 2, bridgeSpread: 2, searchRadius: 1, inkGuard: 2, pllSmooth: 2 };
+
+        window._jennyTunerV190 = window._jennyTunerV190 || {};
+        Object.keys(defs).forEach(function(k) {
+            var v = defs[k];
+            window._jennyTunerV190[k] = v;
+            try { localStorage.setItem('jt190_' + k, String(v)); } catch (e) {}
+            var fillEl = document.getElementById('jt190Fill_' + k);
+            var valEl = document.getElementById('jt190Val_' + k);
+            var pct = Math.max(0, Math.min(100, ((v - mins[k]) / (maxs[k] - mins[k])) * 100));
+            if (fillEl) fillEl.style.width = pct.toFixed(1) + '%';
+            if (valEl) valEl.textContent = v.toFixed(fmts[k]);
+        });
+        if (typeof window.showToast === 'function') {
+            window.showToast('🔄 Крутилки сброшены (Дубль ΔY = 0)!');
+        }
+    };
+
+    // Перехватываем кнопку #jt190ResetBtn в capture-фазе, чтобы палец никогда не задевал ползунок Дубль ΔY под ней!
+    window.addEventListener('touchstart', function(e) {
+        var rBtn = document.getElementById('jt190ResetBtn');
+        if (!rBtn || rBtn.style.display === 'none' || !e.touches || !e.touches[0]) return;
+        var rect = rBtn.getBoundingClientRect();
+        var tx = e.touches[0].clientX;
+        var ty = e.touches[0].clientY;
+        if (tx >= rect.left - 8 && tx <= rect.right + 8 && ty >= rect.top - 8 && ty <= rect.bottom + 6) {
+            window.resetTunerKnobsToZeroV218(e);
+        }
+    }, { capture: true, passive: false });
+
+    // -------------------------------------------------------------------------
+    // 3. ПЕРСИСТЕНТНОЕ ХРАНИЛИЩЕ ИЗБРАННОГО, ПЛЕЙЛИСТОВ, ТЕГОВ И ЭКВАЛАЙЗЕРОВ НА ДИСКЕ
+    //    (Восстанавливает всё после удаления и переустановки APK!)
+    // -------------------------------------------------------------------------
+    window._syncUserDataTimerV218 = null;
+
+    window.syncPersistentUserDataV218 = function(immediate) {
+        var doSync = function() {
+            try {
+                var payload = {
+                    favorites: Array.isArray(window.favorites) ? window.favorites : [],
+                    customPlaylistsV71: (window.appConfig && window.appConfig.customPlaylistsV71) || [],
+                    visiblePlaylistTabsV71: (window.appConfig && window.appConfig.visiblePlaylistTabsV71) || {},
+                    playlistSortMapV71: (window.appConfig && window.appConfig.playlistSortMapV71) || {},
+                    trackPlayStatsV71: (window.appConfig && window.appConfig.trackPlayStatsV71) || {},
+                    pinnedSourcesV91: (window.appConfig && window.appConfig.pinnedSourcesV91) || ['ost', 'radio', 'soundcloud', 'torrent'],
+                    deckAEq: window._deckAEqV218 || (window._musicConfigRefV131 && window._musicConfigRefV131.eq) || { b60: 0, b230: 0, b910: 0, b3600: 0, b14000: 0 },
+                    deckBEq: window._deckBEqV218 || (window.videoDeckV131 && window.videoDeckV131.config && window.videoDeckV131.config.eq) || { b60: 0, b230: 0, b910: 0, b3600: 0, b14000: 0 },
+                    deckAScrubZones: (window._musicConfigRefV131 && window._musicConfigRefV131.scrubZones) || null,
+                    deckBScrubZones: (window.videoDeckV131 && window.videoDeckV131.config && window.videoDeckV131.config.scrubZones) || null
+                };
+                fetch('/api/user_data/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }).catch(function(){});
+            } catch (e) {}
+        };
+        if (window._syncUserDataTimerV218) clearTimeout(window._syncUserDataTimerV218);
+        if (immediate) doSync();
+        else window._syncUserDataTimerV218 = setTimeout(doSync, 350);
+    };
+
+    window.loadPersistentUserDataV218 = async function() {
+        try {
+            var res = await fetch('/api/user_data/load');
+            if (!res.ok) return;
+            var j = await res.json();
+            var d = (j && j.data) || {};
+            var changed = false;
+
+            if (Array.isArray(d.favorites) && d.favorites.length > 0) {
+                var curFavs = Array.isArray(window.favorites) ? window.favorites : [];
+                d.favorites.forEach(function(fn) {
+                    if (fn && curFavs.indexOf(fn) === -1) {
+                        curFavs.push(fn);
+                        changed = true;
+                    }
+                });
+                window.favorites = curFavs;
+                try { localStorage.setItem('ytm_favs', JSON.stringify(window.favorites)); } catch (e) {}
+            }
+
+            if (window.appConfig) {
+                if (Array.isArray(d.customPlaylistsV71) && d.customPlaylistsV71.length > 0) {
+                    var existingIds = new Set((window.appConfig.customPlaylistsV71 || []).map(function(p) { return p.id; }));
+                    d.customPlaylistsV71.forEach(function(pl) {
+                        if (pl && pl.id && !existingIds.has(pl.id)) {
+                            window.appConfig.customPlaylistsV71.push(pl);
+                            changed = true;
+                        }
+                    });
+                }
+                if (d.visiblePlaylistTabsV71 && typeof d.visiblePlaylistTabsV71 === 'object') {
+                    window.appConfig.visiblePlaylistTabsV71 = Object.assign({}, d.visiblePlaylistTabsV71, window.appConfig.visiblePlaylistTabsV71 || {});
+                }
+                if (d.playlistSortMapV71 && typeof d.playlistSortMapV71 === 'object') {
+                    window.appConfig.playlistSortMapV71 = Object.assign({}, d.playlistSortMapV71, window.appConfig.playlistSortMapV71 || {});
+                }
+                if (changed) {
+                    try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+                }
+            }
+
+            if (d.deckAEq && !localStorage.getItem('jenny_eq_deckA_v218')) {
+                window._deckAEqV218 = d.deckAEq;
+                try { localStorage.setItem('jenny_eq_deckA_v218', JSON.stringify(d.deckAEq)); } catch (e) {}
+            }
+            if (d.deckBEq && !localStorage.getItem('jenny_eq_deckB_v218')) {
+                window._deckBEqV218 = d.deckBEq;
+                try { localStorage.setItem('jenny_eq_deckB_v218', JSON.stringify(d.deckBEq)); } catch (e) {}
+            }
+
+            if (changed) {
+                if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(true);
+                window.syncDeckFavButtonsUIV218();
+            }
+        } catch (e) {}
+    };
+
+    // Оборачиваем toggleFav и savePlaylistStateQuietlyV71, чтобы любое изменение сразу сохранялось на внешний диск
+    var _origToggleFavV218 = window.toggleFav;
+    window.toggleFav = function(filename) {
+        if (typeof _origToggleFavV218 === 'function') {
+            _origToggleFavV218.apply(this, arguments);
+        } else {
+            window.favorites = Array.isArray(window.favorites) ? window.favorites : [];
+            var idx = window.favorites.indexOf(filename);
+            if (idx !== -1) window.favorites.splice(idx, 1);
+            else window.favorites.unshift(filename);
+            try { localStorage.setItem('ytm_favs', JSON.stringify(window.favorites)); } catch (e) {}
+        }
+        window.syncDeckFavButtonsUIV218();
+        window.syncPersistentUserDataV218(true);
+    };
+
+    var _origSavePlQuietV218 = window.savePlaylistStateQuietlyV71;
+    window.savePlaylistStateQuietlyV71 = function() {
+        if (typeof _origSavePlQuietV218 === 'function') _origSavePlQuietV218.apply(this, arguments);
+        window.syncPersistentUserDataV218(false);
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. КНОПКИ СЕРДЕЧКА (🤍 / ❤️) В ПАНЕЛЯХ ДЕКИ А (#btn-favModal) И ДЕКИ Б (#btnFavDeckBV216)
+    //    Добавляют/удаляют текущий играющий трек или видео в Избранное с компактным уведомлением!
+    //    (НЕ открывают список избранного и НЕ перекрывают открытый эквалайзер / настройки!)
+    // -------------------------------------------------------------------------
+    var HEART_OUTLINE_SVG_V218 = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>';
+    var HEART_FILLED_SVG_V218  = '<svg viewBox="0 0 24 24" width="15" height="15" fill="#f43f5e" stroke="#f43f5e" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>';
+
+    window.getCurrentDeckTargetFilenameV218 = function(whichDeck) {
+        var isVid = (whichDeck === 'video');
+        if (isVid) {
+            var st = window._vidStateV130 || {};
+            if (st.currentTitle && st.currentTitle !== '🎬 Дека Б: Выбери видео') {
+                return String(st.currentTitle).trim();
+            }
+            var npB = document.getElementById('nowPlayingDeckB');
+            if (npB) {
+                var txtB = String(npB.innerText || '').replace(/^🎬\s*/, '').trim();
+                if (txtB && txtB.indexOf('Выбери видео') === -1) return txtB;
+            }
+            return '';
+        } else {
+            if (window.currentPlayingTrack) return String(window.currentPlayingTrack).trim();
+            return '';
+        }
+    };
+
+    window.syncDeckFavButtonsUIV218 = function() {
+        var favs = Array.isArray(window.favorites) ? window.favorites : [];
+        var curA = window.getCurrentDeckTargetFilenameV218('audio');
+        var curB = window.getCurrentDeckTargetFilenameV218('video');
+
+        var btnA = document.getElementById('btn-favModal');
+        if (btnA) {
+            var isFavA = Boolean(curA && favs.indexOf(curA) !== -1);
+            if (btnA._lastFavStateV218 !== isFavA) {
+                btnA._lastFavStateV218 = isFavA;
+                btnA.innerHTML = isFavA ? HEART_FILLED_SVG_V218 : HEART_OUTLINE_SVG_V218;
+            }
+        }
+
+        var btnB = document.getElementById('btnFavDeckBV216');
+        if (btnB) {
+            var isFavB = Boolean(curB && favs.indexOf(curB) !== -1);
+            if (btnB._lastFavStateV218 !== isFavB) {
+                btnB._lastFavStateV218 = isFavB;
+                btnB.innerHTML = isFavB ? HEART_FILLED_SVG_V218 : HEART_OUTLINE_SVG_V218;
+            }
+        }
+    };
+
+    window.openFavForDeckV216 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        if (ev && ev.preventDefault) ev.preventDefault();
+
+        var isVid = (whichDeck === 'video');
+        var targetFn = window.getCurrentDeckTargetFilenameV218(isVid ? 'video' : 'audio');
+        if (!targetFn) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(isVid ? '🎬 Сначала выбери или запусти видео в Деке Б' : '🎵 Сначала выбери или запусти трек в Деке А', ev);
+            }
+            return;
+        }
+
+        window.favorites = Array.isArray(window.favorites) ? window.favorites : [];
+        var existingIdx = window.favorites.indexOf(targetFn);
+        var added = false;
+        if (existingIdx !== -1) {
+            window.favorites.splice(existingIdx, 1);
+            added = false;
+        } else {
+            window.favorites.unshift(targetFn);
+            added = true;
+        }
+        try { localStorage.setItem('ytm_favs', JSON.stringify(window.favorites)); } catch (e) {}
+
+        window.syncDeckFavButtonsUIV218();
+        window.syncPersistentUserDataV218(true);
+
+        // Обновляем счётчики чипов и сердечки в видимом списке треков, НЕ переключая вкладку и НЕ закрывая открытый эквалайзер!
+        if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+        if (window.activePlaylistTabV71 === 'fav' && typeof window.renderActivePlaylistTracksV71 === 'function') {
+            window.renderActivePlaylistTracksV71(true);
+        } else {
+            document.querySelectorAll('#unifiedList .track-row-capsule').forEach(function(row) {
+                if (row.getAttribute('data-track') === targetFn) {
+                    var heartSpan = row.querySelector('span[onclick*="toggleFav"]');
+                    if (heartSpan) heartSpan.innerText = added ? '❤️' : '🤍';
+                }
+            });
+        }
+
+        var shortName = targetFn.length > 28 ? (targetFn.slice(0, 26) + '…') : targetFn;
+        if (typeof window.showToast === 'function') {
+            window.showToast(
+                added
+                    ? ('❤️ В избранном: ' + shortName)
+                    : ('🤍 Убрано из избранного: ' + shortName),
+                ev
+            );
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 5. РАЗДЕЛЬНЫЙ 5-ПОЛОСНЫЙ ЭКВАЛАЙЗЕР И РАДИАЛЬНЫЕ ЗОНЫ ДЛЯ ДЕКИ А И ДЕКИ Б,
+    //    ЧИСТЫЙ СЕЛЕКТОР ДЕКИ В ЭКВАЛАЙЗЕРЕ И РУЧНОЕ/АВТО УПРАВЛЕНИЕ ДЕКОЙ Б
+    // -------------------------------------------------------------------------
+    var savedEqA = null, savedEqB = null;
+    try { savedEqA = JSON.parse(localStorage.getItem('jenny_eq_deckA_v218') || 'null'); } catch (e) {}
+    try { savedEqB = JSON.parse(localStorage.getItem('jenny_eq_deckB_v218') || 'null'); } catch (e) {}
+
+    window._musicConfigRefV131 = window._musicConfigRefV131 || window.appConfig || {};
+    window._deckAEqV218 = savedEqA || Object.assign({ b60: 0, b230: 0, b910: 0, b3600: 0, b14000: 0 }, (window._musicConfigRefV131.eq || {}));
+    window._deckBEqV218 = savedEqB || Object.assign({ b60: 0, b230: 0, b910: 0, b3600: 0, b14000: 0 }, (window.videoDeckV131 && window.videoDeckV131.config && window.videoDeckV131.config.eq) || {});
+
+    window._musicConfigRefV131.eq = Object.assign({}, window._deckAEqV218);
+    if (window.videoDeckV131 && window.videoDeckV131.config) {
+        window.videoDeckV131.config.eq = Object.assign({}, window._deckBEqV218);
+        if (!Array.isArray(window.videoDeckV131.config.scrubZones) || window.videoDeckV131.config.scrubZones.length !== 6) {
+            window.videoDeckV131.config.scrubZones = [
+                { val: 1.1, en: true }, { val: 1.0, en: true },
+                { val: 1.05, en: true }, { val: 0.95, en: true },
+                { val: 1.5, en: true }, { val: 0.9, en: true }
+            ];
+        } else {
+            // Клонируем массив зон, чтобы Дека А и Дека Б никогда не ссылались на один и тот же массив в памяти!
+            window.videoDeckV131.config.scrubZones = JSON.parse(JSON.stringify(window.videoDeckV131.config.scrubZones));
+        }
+    }
+
+    window.applyBothDecksEQNodesV218 = function() {
+        var bands = [60, 230, 910, 3600, 14000];
+        bands.forEach(function(freq) {
+            var valA = parseFloat(window._deckAEqV218['b' + freq]) || 0;
+            if (window.eqNodes && window.eqNodes['band' + freq]) {
+                window.eqNodes['band' + freq].gain.value = valA;
+            }
+            var valB = parseFloat(window._deckBEqV218['b' + freq]) || 0;
+            if (window.videoDeckV131 && window.videoDeckV131.eqNodes && window.videoDeckV131.eqNodes['band' + freq]) {
+                window.videoDeckV131.eqNodes['band' + freq].gain.value = valB;
+            }
+        });
+    };
+
+    window.syncEqSlidersToActiveDeckV218 = function() {
+        var isVid = (window._activeUiDeckV131 === 'video');
+        var eqObj = isVid ? window._deckBEqV218 : window._deckAEqV218;
+        [60, 230, 910, 3600, 14000].forEach(function(freq) {
+            var v = parseFloat(eqObj['b' + freq]) || 0;
+            var el = document.getElementById('eq_' + freq);
+            if (el) {
+                el.value = String(v);
+                el.style.accentColor = isVid ? '#3b82f6' : '#a855f7';
+            }
+            var lbl = document.getElementById('eq_val_lbl_' + freq);
+            if (lbl) lbl.innerText = (v > 0 ? '+' : '') + v + ' dB';
+        });
+        window.applyBothDecksEQNodesV218();
+    };
+
+    window.changeEQ = function() {
+        var isVid = (window._activeUiDeckV131 === 'video');
+        if (isVid) {
+            if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+        } else {
+            if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+        }
+        var targetEq = isVid ? window._deckBEqV218 : window._deckAEqV218;
+        [60, 230, 910, 3600, 14000].forEach(function(freq) {
+            var el = document.getElementById('eq_' + freq);
+            var val = el ? (parseInt(el.value, 10) || 0) : 0;
+            targetEq['b' + freq] = val;
+            var lbl = document.getElementById('eq_val_lbl_' + freq);
+            if (lbl) lbl.innerText = (val > 0 ? '+' : '') + val + ' dB';
+        });
+
+        if (isVid) {
+            if (window.videoDeckV131 && window.videoDeckV131.config) {
+                window.videoDeckV131.config.eq = Object.assign({}, window._deckBEqV218);
+                if (typeof window.saveVideoConfigV131 === 'function') window.saveVideoConfigV131();
+            }
+            try { localStorage.setItem('jenny_eq_deckB_v218', JSON.stringify(window._deckBEqV218)); } catch (e) {}
+        } else {
+            if (window._musicConfigRefV131) {
+                window._musicConfigRefV131.eq = Object.assign({}, window._deckAEqV218);
+                try { localStorage.setItem('ytm_config', JSON.stringify(window._musicConfigRefV131)); } catch (e) {}
+            }
+            try { localStorage.setItem('jenny_eq_deckA_v218', JSON.stringify(window._deckAEqV218)); } catch (e) {}
+        }
+        window.applyBothDecksEQNodesV218();
+        window.syncPersistentUserDataV218(false);
+    };
+
+    window.applyEQSettings = function() {
+        window.syncEqSlidersToActiveDeckV218();
+    };
+
+    // Раздельные радиальные зоны скраббинга для Деки А и Деки Б
+    var _origSaveZonesV218 = window.saveZonesToConfig;
+    window.saveZonesToConfig = function() {
+        var isVid = (window._activeUiDeckV131 === 'video');
+        var cfg = isVid
+            ? ((window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig)
+            : (window._musicConfigRefV131 || window.appConfig);
+        if (!cfg.scrubZones) cfg.scrubZones = [];
+        for (var i = 1; i <= 6; i++) {
+            var enEl = document.getElementById('cfg_z' + i + '_en');
+            var valEl = document.getElementById('cfg_z' + i + '_val');
+            if (enEl && valEl) {
+                cfg.scrubZones[i - 1] = {
+                    en: Boolean(enEl.checked),
+                    val: parseFloat(String(valEl.value).replace(',', '.')) || 1.0
+                };
+            }
+        }
+        if (isVid) {
+            if (typeof window.saveVideoConfigV131 === 'function') window.saveVideoConfigV131();
+            if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') window.syncVideoPlayerButtonsUIV217();
+        } else {
+            try { localStorage.setItem('ytm_config', JSON.stringify(cfg)); } catch (e) {}
+        }
+        window.syncPersistentUserDataV218(false);
+    };
+
+    var _origSyncControlsToDeckV131 = window.syncAllControlsToActiveDeckV131;
+    window.syncAllControlsToActiveDeckV131 = function() {
+        if (window.isAnySettingsInputFocusedV218()) return;
+        if (typeof _origSyncControlsToDeckV131 === 'function') {
+            _origSyncControlsToDeckV131.apply(this, arguments);
+        }
+        var isVid = (window._activeUiDeckV131 === 'video');
+        var cfg = isVid
+            ? ((window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {})
+            : (window._musicConfigRefV131 || window.appConfig || {});
+
+        var defZones = [1.1, 1.0, 1.05, 0.95, 1.5, 0.9];
+        if (!Array.isArray(cfg.scrubZones) || cfg.scrubZones.length !== 6) {
+            cfg.scrubZones = defZones.map(function(v) { return { val: v, en: true }; });
+        }
+        for (var i = 0; i < 6; i++) {
+            var z = cfg.scrubZones[i] || { val: defZones[i], en: true };
+            var enEl = document.getElementById('cfg_z' + (i + 1) + '_en');
+            var valEl = document.getElementById('cfg_z' + (i + 1) + '_val');
+            if (enEl) enEl.checked = (z.en !== false);
+            if (valEl && document.activeElement !== valEl) valEl.value = z.val;
+        }
+        window.syncEqSlidersToActiveDeckV218();
+    };
+
+    // Чистый селектор активной деки для Эквалайзера (#eqModal) и Спектра (#specModal) — БЕЗ включения/выключения самих дек!
+    window.selectUiDeckFocusOnlyV218 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var targetFocus = (whichDeck === 'video' || whichDeck === 'B') ? 'video' : 'music';
+        if (window._activeUiDeckV131 === 'music' && window.appConfig && window.appConfig !== (window.videoDeckV131 && window.videoDeckV131.config)) {
+            window._musicConfigRefV131 = window.appConfig;
+        }
+        window._activeUiDeckV131 = targetFocus;
+        if (window._jennyDualDeckV211) {
+            window._jennyDualDeckV211.uiFocus = targetFocus;
+            window.saveDualDeckStateV211();
+        }
+        if (targetFocus === 'video') {
+            if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+            if (window.videoDeckV131 && window.videoDeckV131.config) window.appConfig = window.videoDeckV131.config;
+        } else if (window._musicConfigRefV131) {
+            window.appConfig = window._musicConfigRefV131;
+        }
+        window.syncAllControlsToActiveDeckV131();
+        window.renderDeckSwitchBannersV131();
+    };
+
+    // Переключение ВКЛ/ВЫКЛ самих дек (только в #settingsModal!):
+    // Если вручную выключили Деку Б — закрываем и выгружаем окно с видео!
+    window.toggleComplementDeckV211 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var d = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music', manualDeckB: false };
+        var isVideoBtn = (whichDeck === 'video' || whichDeck === 'B');
+
+        if (isVideoBtn) {
+            d.deckB = !d.deckB;
+            d.manualDeckB = Boolean(d.deckB);
+            if (d.deckB) {
+                d.uiFocus = 'video';
+            } else {
+                // При ручном выключении Деки Б закрываем и выгружаем окно с видео, как попросил Дмитрий!
+                if (window._vidStateV130 && window._vidStateV130.active && typeof window.closeVideoPlayerV130 === 'function') {
+                    window._closingFromManualDeckBOffV218 = true;
+                    try { window.closeVideoPlayerV130(); } finally { window._closingFromManualDeckBOffV218 = false; }
+                } else {
+                    var vEl = document.getElementById('jennyVideoElV130');
+                    if (vEl && !vEl.paused) { try { vEl.pause(); } catch (e) {} }
+                    if (window.videoDeckV131 && window.videoDeckV131.sourceNode) {
+                        try { window.videoDeckV131.sourceNode.stop(); } catch (e) {}
+                    }
+                }
+                if (d.deckA) d.uiFocus = 'music';
+            }
+        } else {
+            d.deckA = !d.deckA;
+            if (d.deckA) {
+                d.uiFocus = 'music';
+            } else {
+                var aEl = document.getElementById('audioPlayer');
+                if (aEl && !aEl.paused) { try { aEl.pause(); } catch (e) {} }
+                if (window.studioSourceNode) {
+                    try { window.studioSourceNode.stop(); } catch (e) {}
+                }
+                if (d.deckB) d.uiFocus = 'video';
+            }
+        }
+
+        window.selectUiDeckFocusOnlyV218(d.uiFocus);
+        window.saveDualDeckStateV211();
+        window.syncDualDeckVisibilityAndAudioV211();
+        window.renderDeckSwitchBannersV131();
+
+        if (typeof window.showToast === 'function' && ev) {
+            var modeStr = (d.deckA && d.deckB)
+                ? '🔥 Дека А (Музыка) + Дека Б (Видео) работают ВМЕСТЕ!'
+                : (d.deckB ? '🎬 Активна Дека Б: Видео' : (d.deckA ? '🎵 Активна Дека А: Музыка' : '⏸ Обе деки выключены'));
+            window.showToast(modeStr);
+        }
+    };
+
+    // Отрисовка шапки дек:
+    // В #settingsModal — кнопки питания дек [ВКЛ/ВЫКЛ] + переключение фокуса пульта DSP.
+    // В #eqModal и #specModal — ЧИСТЫЙ взаимоисключающий переключатель (Дека А ↔ Дека Б) БЕЗ кнопок ВКЛ/ВЫКЛ!
+    window.renderDeckSwitchBannersV131 = function() {
+        var d = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music' };
+        var isVidFocus = (window._activeUiDeckV131 === 'video' || d.uiFocus === 'video');
+
+        // 1) Плашка для #settingsModal (с ВКЛ/ВЫКЛ самих дек и выбором чьи настройки DSP крутить ниже)
+        var sm = document.getElementById('settingsModal');
+        if (sm) {
+            var contS = sm.querySelector('.container') || sm;
+            var exS = document.getElementById('deckSwitchBarSettingsV131');
+            if (!exS) {
+                exS = document.createElement('div');
+                contS.insertBefore(exS, contS.firstChild);
+            }
+            var clsA = 'jenny-deck-ctrl-btn-v211 ' + (d.deckA ? 'deck-on-v211' : 'deck-off-v211') + (!isVidFocus ? ' deck-focused-v211' : '');
+            var clsB = 'jenny-deck-ctrl-btn-v211 ' + (d.deckB ? 'deck-on-v211' : 'deck-off-v211') + (isVidFocus ? ' deck-focused-v211' : '');
+            var statusA = d.deckA ? 'ВКЛ' : 'ВЫКЛ';
+            var statusB = d.deckB ? 'ВКЛ' : 'ВЫКЛ';
+
+            exS.outerHTML =
+                '<div id="deckSwitchBarSettingsV131" style="display:flex;flex-direction:column;gap:6px;padding:8px;background:#05070b;border:1px solid var(--border-uniform, #30363d);border-radius:16px;margin-bottom:10px;box-shadow:inset 0 1px 4px rgba(0,0,0,0.9);">' +
+                    '<div style="display:flex;align-items:center;gap:8px;width:100%;">' +
+                        '<button type="button" class="' + clsA + '" onclick="window.toggleComplementDeckV211(\'music\', event)">' +
+                            '<span>🎵 Дека А: Музыка</span>' +
+                            '<span class="jenny-deck-pill-badge-v211">' + statusA + '</span>' +
+                        '</button>' +
+                        '<button type="button" class="' + clsB + '" onclick="window.toggleComplementDeckV211(\'video\', event)">' +
+                            '<span>🎬 Дека Б: Видео</span>' +
+                            '<span class="jenny-deck-pill-badge-v211">' + statusB + '</span>' +
+                        '</button>' +
+                    '</div>' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 0 4px;gap:6px;">' +
+                        '<div style="display:flex;align-items:center;gap:4px;">' +
+                            '<span style="font-size:10px;color:#8b949e;">Пульт:</span>' +
+                            '<button type="button" onclick="window.selectUiDeckFocusOnlyV218(\'music\', event)" style="padding:2px 7px;font-size:10px;font-weight:bold;border-radius:12px;border:1px solid ' + (!isVidFocus ? '#a855f7' : '#30363d') + ';background:' + (!isVidFocus ? 'rgba(168,85,247,0.28)' : 'transparent') + ';color:' + (!isVidFocus ? '#e9d5ff' : '#8b949e') + ';">🎵 Дека А</button>' +
+                            '<button type="button" onclick="window.selectUiDeckFocusOnlyV218(\'video\', event)" style="padding:2px 7px;font-size:10px;font-weight:bold;border-radius:12px;border:1px solid ' + (isVidFocus ? '#3b82f6' : '#30363d') + ';background:' + (isVidFocus ? 'rgba(59,130,246,0.28)' : 'transparent') + ';color:' + (isVidFocus ? '#dbeafe' : '#8b949e') + ';">🎬 Дека Б</button>' +
+                        '</div>' +
+                        (isVidFocus
+                            ? '<button type="button" onclick="window.copyMusicDspToVideoV131(event)" style="padding:3px 8px;font-size:10px;font-weight:bold;border-radius:20px;background:linear-gradient(145deg,#160d2e,#090514);border:1px solid #3fb950;color:#3fb950;">📋 Скопировать DSP из Музыки</button>'
+                            : '<span style="font-size:9.5px;color:#8b949e;">Настраивается: Дека А</span>') +
+                    '</div>' +
+                '</div>';
+        }
+
+        // 2) Плашка для #eqModal и #specModal — СТРОГО взаимоисключающий выбор чей эквалайзер/спектр открыт (БЕЗ ВКЛ/ВЫКЛ дек!)
+        [['eqModal', 'deckSwitchBarEqV131'], ['specModal', 'deckSwitchBarSpecV131']].forEach(function(pair) {
+            var m = document.getElementById(pair[0]);
+            if (!m) return;
+            var cont = m.querySelector('.container') || m;
+            var ex = document.getElementById(pair[1]);
+            if (!ex) {
+                ex = document.createElement('div');
+                cont.insertBefore(ex, cont.firstChild);
+            }
+            var isEq = (pair[0] === 'eqModal');
+            ex.outerHTML =
+                '<div id="' + pair[1] + '" style="display:flex;flex-direction:column;gap:5px;padding:7px 8px;background:#05070b;border:1.5px solid ' + (isVidFocus ? '#3b82f6' : '#a855f7') + ';border-radius:14px;margin-bottom:10px;box-shadow:inset 0 1px 4px rgba(0,0,0,0.9);">' +
+                    '<div style="display:flex;align-items:center;gap:8px;width:100%;">' +
+                        '<button type="button" onclick="window.selectUiDeckFocusOnlyV218(\'music\', event)" style="flex:1;padding:8px 8px;font-size:11.5px;font-weight:900;border-radius:10px;border:1.5px solid ' + (!isVidFocus ? '#a855f7' : 'rgba(168,85,247,0.22)') + ';background:' + (!isVidFocus ? 'rgba(126,34,206,0.38)' : 'rgba(15,10,28,0.65)') + ';color:' + (!isVidFocus ? '#f3e8ff' : '#8b949e') + ';box-shadow:' + (!isVidFocus ? '0 0 12px rgba(168,85,247,0.42)' : 'none') + ';cursor:pointer;">' +
+                            '🎵 Дека А: Музыка' +
+                        '</button>' +
+                        '<button type="button" onclick="window.selectUiDeckFocusOnlyV218(\'video\', event)" style="flex:1;padding:8px 8px;font-size:11.5px;font-weight:900;border-radius:10px;border:1.5px solid ' + (isVidFocus ? '#3b82f6' : 'rgba(59,130,246,0.22)') + ';background:' + (isVidFocus ? 'rgba(37,99,235,0.40)' : 'rgba(10,18,36,0.65)') + ';color:' + (isVidFocus ? '#eff6ff' : '#8b949e') + ';box-shadow:' + (isVidFocus ? '0 0 12px rgba(59,130,246,0.42)' : 'none') + ';cursor:pointer;">' +
+                            '🎬 Дека Б: Видео' +
+                        '</button>' +
+                    '</div>' +
+                    '<div style="text-align:center;font-size:10px;font-weight:bold;color:' + (isVidFocus ? '#60a5fa' : '#c084fc') + ';">' +
+                        (isEq
+                            ? (isVidFocus ? '🎚️ Ползунки настраивают эквалайзер: Деки Б (Видео)' : '🎚️ Ползунки настраивают эквалайзер: Деки А (Музыка)')
+                            : (isVidFocus ? '📊 Спектр сигнала: Дека Б (Видео)' : '📊 Спектр сигнала: Дека А (Музыка)')) +
+                    '</div>' +
+                '</div>';
+        });
+        if (typeof window.renderVCoreDeckPanelV166 === 'function') window.renderVCoreDeckPanelV166();
+    };
+
+    // Открытие Эквалайзера (🎚️) и Спектра (📊) с первого нажатия:
+    // если модалка уже открыта для другой деки — не закрываем её, а мгновенно переключаем на нажатую деку!
+    window.openEqForDeckV216 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var targetDeck = (whichDeck === 'video') ? 'video' : 'music';
+        var prevDeck = window._activeUiDeckV131 || 'music';
+        var em = document.getElementById('eqModal');
+        var wasOpen = Boolean(em && em.classList.contains('open'));
+
+        window.selectUiDeckFocusOnlyV218(targetDeck);
+        if (wasOpen) {
+            if (prevDeck === targetDeck) {
+                em.classList.remove('open');
+            }
+        } else {
+            if (typeof window.toggleModal === 'function') window.toggleModal('eqModal');
+            else if (em) em.classList.add('open');
+        }
+        window.syncEqSlidersToActiveDeckV218();
+        window.renderDeckSwitchBannersV131();
+    };
+
+    window.openSpectrumForDeckV216 = function(whichDeck, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var targetDeck = (whichDeck === 'video') ? 'video' : 'music';
+        var prevDeck = window._activeUiDeckV131 || 'music';
+        var sp = document.getElementById('specModal');
+        var wasOpen = Boolean(sp && (sp.classList.contains('open') || sp.style.display === 'flex' || sp.style.display === 'block'));
+
+        window.selectUiDeckFocusOnlyV218(targetDeck);
+        if (wasOpen && prevDeck !== targetDeck) {
+            window.renderDeckSwitchBannersV131();
+            return;
+        }
+        if (typeof window.openSpectrumModalV62 === 'function') window.openSpectrumModalV62();
+    };
+
+    // «📋 Скопировать DSP из Музыки» копирует только звуковые DSP-модули (не перезаписывая эквалайзер и радиальные скорости Деки Б!)
+    window.copyMusicDspToVideoV131 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var mCfg = window._musicConfigRefV131 || window.appConfig || {};
+        var dspKeys = [
+            'studioMode', 'phaseFixEnabled', 'gearKeyV66', 'engineModeV62', 'elasticHoseMode', 'hoseTensionPct',
+            'opt_midPhase', 'val_midPhase', 'opt_midQ', 'val_midQ', 'opt_deEsser', 'val_deEsser',
+            'opt_cleanFir', 'val_cleanFir', 'opt_masterCeil', 'val_masterCeil',
+            'opt_autoRms', 'val_autoRms', 'opt_monoBass', 'val_monoBass',
+            'opt_msWidth', 'val_msWidth', 'opt_punch', 'val_punch', 'opt_crossfeed', 'val_crossfeed',
+            'firEnabled', 'firSettings', 'multiBandEnabled', 'multiBandSettings',
+            'limiterEnabled', 'limiterSettings', 'boosterEnabled', 'boosterPower'
+        ];
+        if (window.videoDeckV131 && window.videoDeckV131.config) {
+            dspKeys.forEach(function(k) {
+                if (mCfg[k] !== undefined) {
+                    window.videoDeckV131.config[k] = JSON.parse(JSON.stringify(mCfg[k]));
+                }
+            });
+            window.saveVideoConfigV131();
+            if (window._activeUiDeckV131 === 'video') {
+                window.appConfig = window.videoDeckV131.config;
+                window.syncAllControlsToActiveDeckV131();
+            }
+            if (typeof window.buildVideoAudioGraphV131 === 'function') window.buildVideoAudioGraphV131();
+            if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false);
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast('✅ Звуковые модули DSP скопированы из Музыки в Видео (Эквалайзер и скорости Деки Б сохранены)!');
+        }
+    };
+
+    // Закрытие видеоплеера (❌): оставляет панель Деки Б включённой ТОЛЬКО если пользователь сам включил её в настройках (manualDeckB)!
+    var _prevCloseVidV218 = window.closeVideoPlayerV130;
+    window.closeVideoPlayerV130 = function(ev) {
+        var d = window._jennyDualDeckV211 || {};
+        var keepDeckB = Boolean(d.manualDeckB) && !window._closingFromManualDeckBOffV218;
+        var r = _prevCloseVidV218 ? _prevCloseVidV218.apply(this, arguments) : undefined;
+        if (window._jennyDualDeckV211) {
+            window._jennyDualDeckV211.deckB = keepDeckB;
+            window.saveDualDeckStateV211();
+            window.syncDualDeckVisibilityAndAudioV211();
+            window.renderDeckSwitchBannersV131();
+        }
+        return r;
+    };
+
+    // -------------------------------------------------------------------------
+    // 6. МИНИ-ПЛЕЕР ("МИНИ") И СИСТЕМНЫЙ PIP НА РАБОЧЕМ СТОЛЕ ANDROID:
+    //    - Полное скрытие плашек ⚡ 120Hz, 🎛️ Крутилки, 🌓 Сплит, 📊 Лог в мини-плеере и PiP
+    //    - В центре вместо [-10] [+10] ставим [⏮ Предыдущее видео] и [⏭ Следующее видео]
+    //    - Внизу оставляем только шкалу перемотки, компактный Замок (🔒) и Дорожку (🔊 Дор.)
+    //    - Чёткая синхронизация кнопок "Полный" / "Обычн." и "Мини" / "Развернуть" при любых переходах!
+    // -------------------------------------------------------------------------
+    window.isSystemPipWindowV218 = function() {
+        var st = window._vidStateV130 || {};
+        if (!st.active) return false;
+        if (st.desktopOverlay) return true;
+        var w = window.innerWidth || document.documentElement.clientWidth || 999;
+        var h = window.innerHeight || document.documentElement.clientHeight || 999;
+        return (w <= 460 && h <= 340);
+    };
+
+    window.isVideoCompactPipOrMiniV218 = function() {
+        var st = window._vidStateV130 || {};
+        if (st.pipMode || st.desktopOverlay) return true;
+        return window.isSystemPipWindowV218();
+    };
+
+    var styleV218 = document.createElement('style');
+    styleV218.id = 'jennyStyleV218';
+    styleV218.textContent = [
+        /* Полное скрытие больших плашек 120Hz / Крутилки / Сплит / Лог в мини-плеере и системном PiP */
+        '#jennyVideoStudioRootV130.compact-pip-v218 #jenny120PillWrapV209,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #jennyTunerFloatWrapV208,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #jennySplitPillWrapV209,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #jennyFenceWrapV173,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v131BtnMixMode,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v131BtnOpenVideoDsp,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130BtnTorHub,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v132BtnFullscreen,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130BtnRotate,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130BtnFit,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v131BtnVideoRev,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130BtnNormSpeed,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130BtnSpeed,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130BtnDsp {',
+        '  display: none !important;',
+        '  opacity: 0 !important;',
+        '  pointer-events: none !important;',
+        '}',
+        /* В мини-плеере и на рабочем столе (PiP) всегда показываем компактную нижнюю панель (шкала + Замок + Дор.) */
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130BottomBar {',
+        '  display: flex !important;',
+        '  padding: 2px 6px 4px 6px !important;',
+        '  gap: 2px !important;',
+        '  background: linear-gradient(0deg, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.35) 75%, transparent 100%) !important;',
+        '}',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v135BottomToolsRow {',
+        '  display: flex !important;',
+        '  justify-content: space-between !important;',
+        '  gap: 6px !important;',
+        '}',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v135BottomToolsRow .v130-btn {',
+        '  height: 24px !important;',
+        '  font-size: 9.5px !important;',
+        '  padding: 0 6px !important;',
+        '  flex: 0 1 auto !important;',
+        '}',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130TopDragBar {',
+        '  padding: 4px 6px !important;',
+        '}',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v130BtnPipToggle {',
+        '  height: 26px !important;',
+        '  font-size: 10px !important;',
+        '  padding: 0 6px !important;',
+        '}',
+        '#jennyVideoStudioRootV130.compact-pip-v218 .v130-btn-close-v217 {',
+        '  width: 26px !important;',
+        '  height: 26px !important;',
+        '}',
+        /* Гарантируем 100% заполнение контейнера видеоэлементом для работы режима "Растянуть" (fill) без чёрных полос */
+        '#jennyVideoStageV130 #jennyVideoElV130, #jennyVideoStageV130 #jv166InterpCanvas {',
+        '  width: 100% !important;',
+        '  height: 100% !important;',
+        '  max-width: none !important;',
+        '  max-height: none !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(styleV218);
+
+    var PREV_VID_SVG_V218 = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>';
+    var NEXT_VID_SVG_V218 = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>';
+
+    var _origSyncVidBtnsV217 = window.syncVideoPlayerButtonsUIV217;
+    window.syncVideoPlayerButtonsUIV217 = function() {
+        var root = document.getElementById('jennyVideoStudioRootV130');
+        var st = window._vidStateV130 || {};
+        if (!root) return;
+
+        var sysPip = window.isSystemPipWindowV218();
+        // Если вышли из системного PiP или 90° обратно в обычный портретный экран приложения —
+        // сбрасываем залипший флаг nativeFullscreen / rotated90, чтобы кнопка всегда писала "Полный", а не "Обычн."!
+        if (window._wasInSystemPipV218 && !sysPip) {
+            window._wasInSystemPipV218 = false;
+            if (!st.pipMode) {
+                st.nativeFullscreen = false;
+                st.rotated90 = false;
+                var stg = document.getElementById('jennyVideoStageV130');
+                if (stg) stg.classList.remove('rot90-v130');
+                if (window.AndroidBridge && typeof window.AndroidBridge.setVideoFullscreenLock === 'function') {
+                    try { window.AndroidBridge.setVideoFullscreenLock(false, Boolean(st.isLocked)); } catch (e) {}
+                }
+            }
+        }
+        if (sysPip) {
+            window._wasInSystemPipV218 = true;
+        }
+
+        if (typeof _origSyncVidBtnsV217 === 'function') {
+            _origSyncVidBtnsV217.apply(this, arguments);
+        }
+
+        var isCompact = window.isVideoCompactPipOrMiniV218();
+        root.classList.toggle('compact-pip-v218', isCompact);
+
+        var svgs = window.VID_SVGS_V217 || {};
+
+        // 1) Кнопка "Мини" / "Развернуть" (#v130BtnPipToggle):
+        //    И в мини-плеере, и на рабочем столе (System PiP) ВСЕГДА пишет "Развернуть"!
+        var btnPip = document.getElementById('v130BtnPipToggle');
+        if (btnPip) {
+            var showExpand = Boolean(st.pipMode || st.desktopOverlay || sysPip);
+            btnPip.innerHTML = (showExpand ? (svgs.fullOn || '') : (svgs.pip || '')) + '<span>' + (showExpand ? 'Развернуть' : 'Мини') + '</span>';
+            btnPip.onclick = function(ev) {
+                if (ev && ev.stopPropagation) ev.stopPropagation();
+                if (st.desktopOverlay && typeof window.exitDesktopOverlayModeV132 === 'function') {
+                    window.exitDesktopOverlayModeV132(true, ev);
+                    st.pipMode = false;
+                    st.nativeFullscreen = false;
+                    st.rotated90 = false;
+                    root.classList.remove('mode-pip-v130');
+                    root.classList.add('mode-full-v130');
+                } else if (sysPip) {
+                    st.pipMode = false;
+                    st.nativeFullscreen = false;
+                    st.rotated90 = false;
+                    root.classList.remove('mode-pip-v130');
+                    root.classList.add('mode-full-v130');
+                    if (window.AndroidBridge && typeof window.AndroidBridge.exitDesktopOverlay === 'function') {
+                        try { window.AndroidBridge.exitDesktopOverlay(true); } catch (e) {}
+                    }
+                } else if (typeof window.toggleVideoPipModeV130 === 'function') {
+                    window.toggleVideoPipModeV130(ev);
+                }
+                window.syncExactRot90DimensionsV217();
+                window.syncVideoPlayerButtonsUIV217();
+            };
+        }
+
+        // 2) Кнопка "Полный" / "Обычн." (#v132BtnFullscreen):
+        var btnFs = document.getElementById('v132BtnFullscreen');
+        if (btnFs) {
+            var isActuallyFull = Boolean((st.nativeFullscreen || st.rotated90) && !isCompact);
+            btnFs.classList.toggle('v130-btn-active-v217', isActuallyFull);
+            btnFs.innerHTML = (isActuallyFull ? (svgs.fullOff || '') : (svgs.fullOn || '')) + '<span>' + (isActuallyFull ? 'Обычн.' : 'Полный') + '</span>';
+        }
+
+        // 3) Центральные кнопки в мини-плеере и на рабочем столе (PiP):
+        //    В режиме Мини / PiP боковые кнопки вокруг Play/Pause переключают Предыдущее (⏮) / Следующее (⏭) видео,
+        //    а сам центральный блок чуть приподнимается, чтобы снизу аккуратно стояли шкала, Замок и Дор.!
+        var centerPlay = document.getElementById('v130CenterPlayBtn');
+        var centerRow = centerPlay ? centerPlay.parentElement : null;
+        if (centerRow) {
+            centerRow.style.transform = isCompact ? 'translateY(-10px)' : 'none';
+            centerRow.style.gap = isCompact ? '12px' : '22px';
+            var btns = centerRow.querySelectorAll('button');
+            var leftBtn = btns.length >= 3 ? btns[0] : null;
+            var rightBtn = btns.length >= 3 ? btns[2] : null;
+
+            if (leftBtn && rightBtn) {
+                if (isCompact) {
+                    leftBtn.style.cssText = 'width:36px !important;height:36px !important;border-radius:50% !important;padding:0 !important;background:rgba(11,24,54,0.88) !important;border:1.5px solid rgba(59,130,246,0.75) !important;color:#60a5fa !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;';
+                    leftBtn.innerHTML = PREV_VID_SVG_V218;
+                    leftBtn.title = 'Предыдущее видео';
+                    leftBtn.onclick = function(ev) { window.playAdjacentVideoDeckBV216(-1, ev); };
+
+                    rightBtn.style.cssText = 'width:36px !important;height:36px !important;border-radius:50% !important;padding:0 !important;background:rgba(11,24,54,0.88) !important;border:1.5px solid rgba(59,130,246,0.75) !important;color:#60a5fa !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;';
+                    rightBtn.innerHTML = NEXT_VID_SVG_V218;
+                    rightBtn.title = 'Следующее видео';
+                    rightBtn.onclick = function(ev) { window.playAdjacentVideoDeckBV216(1, ev); };
+
+                    if (centerPlay) {
+                        centerPlay.style.cssText = 'width:44px !important;height:44px !important;border-radius:50% !important;padding:0 !important;background:rgba(37,99,235,0.88) !important;border:2px solid #93c5fd !important;color:#ffffff !important;box-shadow:0 0 14px rgba(59,130,246,0.65) !important;';
+                    }
+                } else {
+                    leftBtn.style.cssText = 'width:46px !important;height:46px !important;border-radius:50% !important;padding:0 !important;background:rgba(11,24,54,0.88) !important;border:1.5px solid rgba(59,130,246,0.72) !important;color:#60a5fa !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;';
+                    leftBtn.innerHTML = (svgs.seekBack10 || '') + '<span style="font-size:10.5px;font-weight:900;margin-left:1px;">10</span>';
+                    leftBtn.title = '-10 сек';
+                    leftBtn.onclick = function(ev) { if (window.seekVideoRelativeV130) window.seekVideoRelativeV130(-10, ev); };
+
+                    rightBtn.style.cssText = 'width:46px !important;height:46px !important;border-radius:50% !important;padding:0 !important;background:rgba(11,24,54,0.88) !important;border:1.5px solid rgba(59,130,246,0.72) !important;color:#60a5fa !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;';
+                    rightBtn.innerHTML = '<span style="font-size:10.5px;font-weight:900;margin-right:1px;">10</span>' + (svgs.seekFwd10 || '');
+                    rightBtn.title = '+10 сек';
+                    rightBtn.onclick = function(ev) { if (window.seekVideoRelativeV130) window.seekVideoRelativeV130(10, ev); };
+
+                    if (centerPlay) {
+                        centerPlay.style.cssText = 'width:56px !important;height:56px !important;border-radius:50% !important;padding:0 !important;background:rgba(37,99,235,0.88) !important;border:2px solid #93c5fd !important;color:#ffffff !important;box-shadow:0 0 18px rgba(59,130,246,0.65) !important;';
+                    }
+                }
+            }
+        }
+    };
+
+    window.addEventListener('resize', function() {
+        window.syncVideoPlayerButtonsUIV217();
+    });
+    document.addEventListener('visibilitychange', function() {
+        setTimeout(window.syncVideoPlayerButtonsUIV217, 120);
+    });
+
+    // -------------------------------------------------------------------------
+    // 7. ИСПРАВЛЕНИЕ ПЕРЕМОТКИ ТОРРЕНТ-ПОТОКА (БЕЗ СБРОСА ⏳ -> ▶ ДО ЗАГРУЗКИ КУСКА)
+    //    И РЕАЛЬНОЕ ПЕРЕКЛЮЧЕНИЕ АУДИОДОРОЖЕК (Дорожка #1 / #2 / #3)
+    // -------------------------------------------------------------------------
+    window.switchVideoToFfmpegRemuxV130 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        if (!vid || !st) return;
+
+        var totalTracks = Math.max(2, Number(st.audioStreamsCountV218) || 3);
+        if (!st.usingRemux && (st.audioTrackIdxV216 === undefined || st.audioTrackIdxV216 === 0)) {
+            st.audioTrackIdxV216 = 1 % totalTracks;
+        } else {
+            st.audioTrackIdxV216 = ((st.audioTrackIdxV216 || 0) + 1) % totalTracks;
+        }
+
+        var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+        window.seekDeckBAndPlayerSyncedV212(curSec, false);
+        window.syncVideoPlayerButtonsUIV217();
+
+        if (typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130('🔊 Переключена аудиодорожка #' + (st.audioTrackIdxV216 + 1));
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Переопределяем seekDeckBAndPlayerSyncedV212: всегда передаём выбранную аудиодорожку &aidx= и удерживаем ⏳ при докачке куска торрента!
+    window.seekDeckBAndPlayerSyncedV212 = function(targetSec, showToastMsg) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        if (!vid || !st || !st.active) return;
+
+        var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : 0;
+        var clamped = dur > 0 ? Math.max(0, Math.min(dur - 0.2, Number(targetSec) || 0)) : Math.max(0, Number(targetSec) || 0);
+
+        st._pendingSeekSecV167 = clamped;
+        st._pendingSeekTsV167 = performance.now();
+
+        if (typeof window.updateProgressUIDeckB === 'function') {
+            window.updateProgressUIDeckB(clamped, dur, false);
+        }
+        if (typeof window.syncInternalVideoSliderUIV212 === 'function') {
+            window.syncInternalVideoSliderUIV212(clamped, dur);
+        }
+
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        var checkStr = String(st.currentTitle || '') + ' ' + String(rawBaseUrl);
+        var isRemuxFmt = /\.(mkv|avi|ts|m2ts|wmv|flv|mpg|mpeg|vob)(\?|$)/i.test(checkStr);
+        var aIdx = st.audioTrackIdxV216 || 0;
+        var sMode = st.videoStreamModeV217 || 'va';
+
+        if (!st.userPaused) {
+            window._vidPlayIntentV132 = true;
+            window._vidIsBufferingV132 = true;
+            st._seekingTorrentWaitUntilV218 = performance.now() + 18000;
+            if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+        }
+
+        if ((st.usingRemux || isRemuxFmt || aIdx > 0 || sMode !== 'va') && rawBaseUrl) {
+            st.usingRemux = true;
+            st.remuxBaseOffset = clamped;
+            var isAvi = /\.(avi|wmv|flv|mpg|mpeg|vob)(\?|$)/i.test(checkStr);
+            var tcFlag = isAvi ? '1' : '0';
+            var modeParam = (sMode === 'v_only') ? '&no_audio=1' : ((sMode === 'a_only') ? '&audio_only=1' : '');
+            vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+                '&start=' + clamped.toFixed(2) +
+                '&dur=' + (dur || 0).toFixed(2) +
+                '&aidx=' + aIdx +
+                modeParam +
+                '&transcode=' + tcFlag +
+                '&t=' + Date.now();
+            var spd = window._jennyVideoSpeedV170 || (window.videoDeckV131 && window.videoDeckV131.speed) || 1.0;
+            try {
+                vid.defaultPlaybackRate = spd;
+                vid.playbackRate = spd;
+            } catch (e) {}
+            if (!st.userPaused) {
+                vid.play().catch(function(){});
+            }
+        } else {
+            try { vid.currentTime = clamped; } catch (e) {}
+            if (!st.userPaused && vid.paused) {
+                vid.play().catch(function(){});
+            }
+        }
+    };
+
+    // Кнопка Play/Pause (#v130CenterPlayBtn): срабатывает с первого нажатия даже если видео ждёт буфер!
+    window.toggleVideoPlayPauseV130 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131 || {};
+        if (!vid || !st) return;
+
+        var isActuallyPlaying = (!vid.paused && !vid.ended && vid.readyState >= 2) || Boolean(vd.isReversed);
+        if (st.userPaused || !isActuallyPlaying) {
+            st.userPaused = false;
+            window._vidPlayIntentV132 = true;
+            if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+            if (vid.error || vid.ended || (st.usingRemux && vid.readyState === 0)) {
+                var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (st.remuxBaseOffset || 0);
+                window.seekDeckBAndPlayerSyncedV212(curSec, false);
+            } else {
+                window._vidIsBufferingV132 = (vid.readyState < 2);
+                vid.play().catch(function(){});
+            }
+            if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false);
+        } else {
+            st.userPaused = true;
+            window._vidPlayIntentV132 = false;
+            window._vidIsBufferingV132 = false;
+            st._seekingTorrentWaitUntilV218 = 0;
+            if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+            if (vd.sourceNode) { try { vd.sourceNode.stop(); } catch (e) {} vd.sourceNode = null; }
+            vd.isStudioPlaying = false;
+            try { vid.pause(); } catch (e) {}
+        }
+        window.syncVideoPlayBtnIconV132();
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Авто-повтор и удержание иконки ⏳ во время докачки куска торрента при перемотке
+    setInterval(function() {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        if (!vid || !st || !st.active) return;
+
+        // Если мыまだ не знаем длительность (или 0:00 — Поток), опрашиваем /api/video/pcm_meta
+        var curDur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : 0;
+        var rawUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        var now = performance.now();
+
+        if (rawUrl && (curDur <= 12.5 || !st.audioStreamsProbedV218) && (!st._lastMetaPollTsV218 || now - st._lastMetaPollTsV218 > 1800)) {
+            st._lastMetaPollTsV218 = now;
+            fetch('/api/video/pcm_meta?src=' + encodeURIComponent(rawUrl))
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(md) {
+                    if (!md || !st.active) return;
+                    if (md.audio_streams && md.audio_streams >= 1) {
+                        st.audioStreamsCountV218 = Number(md.audio_streams);
+                        st.audioStreamsProbedV218 = true;
+                    }
+                    var d = parseFloat(md.duration) || 0;
+                    if (d > 12.5) {
+                        st.trueDuration = d;
+                        st.knownDurationSec = d;
+                        window._jennyFullMovieDurationSecV210 = d;
+                        var curT = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : 0;
+                        if (typeof window.syncInternalVideoSliderUIV212 === 'function') window.syncInternalVideoSliderUIV212(curT, d);
+                        if (typeof window.updateProgressUIDeckB === 'function') window.updateProgressUIDeckB(curT, d, false);
+                    }
+                })
+                .catch(function(){});
+        }
+
+        // Если пользователь НЕ ставил на паузу, но при перемотке торрента поток ждёт кусок — держим ⏳ и перезапускаем поток каждые 2.4 сек!
+        if (!st.userPaused && window._vidPlayIntentV132 && st.torHash && (vid.paused || vid.ended || vid.readyState < 2)) {
+            window._vidIsBufferingV132 = true;
+            window.syncVideoPlayBtnIconV132();
+            if (!st._lastTorSeekRetryTsV218 || now - st._lastTorSeekRetryTsV218 > 2400) {
+                st._lastTorSeekRetryTsV218 = now;
+                var targetS = st._pendingSeekSecV167 !== undefined ? st._pendingSeekSecV167 : (st.remuxBaseOffset || 0);
+                window.seekDeckBAndPlayerSyncedV212(targetS, false);
+            }
+        }
+    }, 800);
+
+    // Ограждаем потоковое торрент-видео от фонового запуска 3-поточного decodeVideoToRamV131,
+    // чтобы он не забивал 6 HTTP-сокетов WebView при нескачанном торренте!
+    var _origDecodeVidRamV131 = window.decodeVideoToRamV131;
+    window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
+        var st = window._vidStateV130 || {};
+        if (st.torHash && !st.isReadyLocalV212 && String(streamUrl || '').indexOf('/api/torrent/stream/') !== -1) {
+            return null;
+        }
+        if (typeof _origDecodeVidRamV131 === 'function') {
+            return _origDecodeVidRamV131.apply(this, arguments);
+        }
+        return null;
+    };
+
+    // -------------------------------------------------------------------------
+    // 8. ПЕРЕНОС "⬇️ Качается: ... МБ (X%)" НА ВТОРУЮ СТРОКУ В ТОРРЕНТЕ (Scr_part2, 00:21-00:46)
+    // -------------------------------------------------------------------------
+    window.cleanAndHighlightTorrentFileRowsV218 = function() {
+        var curH = window._torStateV96 && window._torStateV96.currentHash;
+        if (!curH || window._torScreenModeV112 !== 'files') return;
+        var job = window._torMapV112 && window._torMapV112[curH];
+        var vidSt = window._vidStateV130 || {};
+        var activeStreamHash = (vidSt.active && vidSt.torHash) ? String(vidSt.torHash).toLowerCase() : (window._activeStreamSessionV143 ? String(window._activeStreamSessionV143.hash || '').toLowerCase() : '');
+        var activeStreamIdx = (vidSt.active && vidSt.torHash) ? Number(vidSt.torFileIdx) : (window._activeStreamSessionV143 ? Number(window._activeStreamSessionV143.fileIdx) : -1);
+
+        var rows = document.querySelectorAll('#torBodyListV96 [id^="torFileRowV96_"]');
+        rows.forEach(function(rowEl) {
+            var fIdx = Number(String(rowEl.id).replace('torFileRowV96_', ''));
+            var pEl = document.getElementById('torFileProgV96_' + fIdx);
+            if (!pEl) return;
+
+            var fMeta = (job && job.files || []).find(function(x) { return Number(x.index) === fIdx; });
+            var st = (job && job.fileStatusMap && job.fileStatusMap[fIdx]) || {};
+            var totMb = (((st.length || (fMeta && fMeta.length) || 0)) / (1024 * 1024)).toFixed(1);
+            var doneMb = (((st.completed || 0)) / (1024 * 1024)).toFixed(1);
+            var pct = Math.max(0, Math.min(100, Number(st.percent || 0)));
+            var readyFile = st.xflac_file || (fMeta && fMeta.xflac_file) || '';
+
+            var isStreamingNow = (activeStreamHash === String(curH).toLowerCase() && activeStreamIdx === fIdx);
+            var isExplicitDl = Boolean(job && job.explicitDlSet && job.explicitDlSet.has(fIdx));
+            var isActivelyDownloading = Boolean(job && job.dlActive && (isExplicitDl || (job.targetSet && job.targetSet.has(fIdx) && Number(st.completed || 0) > 0)));
+
+            pEl.style.height = 'auto';
+            pEl.style.lineHeight = '1.35';
+            pEl.style.whiteSpace = 'normal';
+            pEl.style.overflow = 'visible';
+
+            if (readyFile) {
+                pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                    '<div style="margin-top:2px;color:#3fb950;font-weight:800;">✅ В плеере: ' + readyFile + '</div>';
+            } else if (isStreamingNow && isActivelyDownloading) {
+                pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                    '<div style="margin-top:2px;"><span style="color:#00e5ff;font-weight:900;">📡 В потоке</span> • <span style="color:#3fb950;font-weight:900;">⬇️ Качается: ' + doneMb + ' МБ (' + pct + '%)</span></div>';
+            } else if (isStreamingNow) {
+                pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                    '<div style="margin-top:2px;"><span style="color:#00e5ff;font-weight:900;background:rgba(0,229,255,0.14);padding:1px 6px;border-radius:5px;border:1px solid rgba(0,229,255,0.4);">📡 Поток активен (' + pct + '%)</span></div>';
+            } else if (isActivelyDownloading) {
+                pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                    '<div style="margin-top:2px;"><span style="color:#3fb950;font-weight:900;background:rgba(63,185,80,0.15);padding:1px 6px;border-radius:5px;border:1px solid rgba(63,185,80,0.45);">⬇️ Качается: ' + doneMb + ' МБ (' + pct + '%)</span></div>';
+            } else if (pct >= 100) {
+                pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                    '<div style="margin-top:2px;color:#3fb950;font-weight:800;">✅ Скачан (100%)</div>';
+            } else if (pct > 0) {
+                pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>' +
+                    '<div style="margin-top:2px;color:#8b949e;">Пауза: ' + doneMb + ' МБ (' + pct + '%)</div>';
+            } else {
+                pEl.innerHTML = '<div style="color:#8b949e;">💾 ' + totMb + ' МБ</div>';
+            }
+        });
+    };
+
+    // -------------------------------------------------------------------------
+    // 9. МЕНЮ ИСТОЧНИКОВ (⊞): ЗАКРЕПЛЕНИЕ [ВКЛ] ДЛЯ ВСЕХ 5 ИСТОЧНИКОВ + "v1.1" ПОД "PLAYER" В ЛОГОТИПЕ
+    // -------------------------------------------------------------------------
+    window.upgradeLogoSvgWithV11UnderPlayerV218 = function() {
+        var logoWrap = document.getElementById('jennyLogoWrap');
+        if (!logoWrap || logoWrap._v218Upgraded) return;
+        logoWrap._v218Upgraded = true;
+        logoWrap.innerHTML =
+            '<svg viewBox="0 0 88 38" width="84" height="34" style="overflow:visible;filter:drop-shadow(0 0 6px rgba(88,166,255,0.35));">' +
+                '<defs>' +
+                    '<linearGradient id="jpGradTop" x1="0%" y1="0%" x2="100%" y2="0%">' +
+                        '<stop offset="0%" stop-color="#3fb950"/>' +
+                        '<stop offset="100%" stop-color="#58a6ff"/>' +
+                    '</linearGradient>' +
+                    '<linearGradient id="jpGradBox" x1="0%" y1="0%" x2="100%" y2="100%">' +
+                        '<stop offset="0%" stop-color="#7341be"/>' +
+                        '<stop offset="100%" stop-color="#1f6feb"/>' +
+                    '</linearGradient>' +
+                '</defs>' +
+                '<rect x="1" y="4" width="27" height="27" rx="7" fill="url(#jpGradBox)" stroke="#58a6ff" stroke-width="1"/>' +
+                '<path d="M5.5 17.5h3l2.5-7 4 14 3.5-10 2 3h3" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+                '<text x="33" y="13" fill="url(#jpGradTop)" font-family="monospace" font-weight="900" font-size="13" letter-spacing="1.8">JENNY</text>' +
+                '<line x1="33" y1="16" x2="85" y2="16" stroke="rgba(163,113,247,0.45)" stroke-width="1"/>' +
+                '<text x="33" y="25.5" fill="#d2a8ff" font-family="monospace" font-weight="900" font-size="9.8" letter-spacing="2.5">PLAYER</text>' +
+                '<rect x="33" y="28" width="24" height="8.5" rx="2.5" fill="#0d1117" stroke="#30363d" stroke-width="0.9"/>' +
+                '<text x="45" y="34.3" fill="#8b949e" font-family="monospace" font-weight="bold" font-size="6.8" text-anchor="middle">v1.1</text>' +
+            '</svg>';
+    };
+
+    window.getPinnedSourcesV91 = function() {
+        window.appConfig = window.appConfig || {};
+        if (!Array.isArray(window.appConfig.pinnedSourcesV91)) {
+            window.appConfig.pinnedSourcesV91 = ['torrent', 'ost', 'radio', 'soundcloud'];
+        }
+        if (!localStorage.getItem('jenny_pinned_v218_migrated')) {
+            localStorage.setItem('jenny_pinned_v218_migrated', '1');
+            if (window.appConfig.pinnedSourcesV91.indexOf('torrent') === -1) {
+                window.appConfig.pinnedSourcesV91.unshift('torrent');
+            }
+            try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        }
+        return window.appConfig.pinnedSourcesV91.slice(0, 5);
+    };
+
+    window.togglePinSourceV91 = function(srcId, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var pinned = window.getPinnedSourcesV91().slice();
+        var idx = pinned.indexOf(srcId);
+        if (idx !== -1) {
+            pinned.splice(idx, 1);
+        } else {
+            pinned.push(srcId);
+        }
+        window.appConfig.pinnedSourcesV91 = pinned;
+        try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        window.renderHeaderSourcesHubV91();
+        if (typeof window.renderSourcesSettingsSectionV91 === 'function') window.renderSourcesSettingsSectionV91();
+        window.syncPersistentUserDataV218(false);
+    };
+
+    window.toggleSourcesDropdownMenuV91 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var menu = document.getElementById('jennySourcesDropMenuV91');
+        if (!menu) {
+            menu = document.createElement('div');
+            menu.id = 'jennySourcesDropMenuV91';
+            menu.style.cssText = 'position:fixed;top:54px;right:12px;width:310px;background:#090d14;border:1.5px solid #58a6ff;border-radius:12px;padding:8px;z-index:2147483645;box-shadow:0 12px 32px rgba(0,0,0,0.95);display:none;flex-direction:column;gap:6px;';
+            document.body.appendChild(menu);
+            document.addEventListener('click', function(e) {
+                if (menu.style.display !== 'none' && !menu.contains(e.target) && !e.target.closest('#btnSourcesHubDropV91')) {
+                    menu.style.display = 'none';
+                }
+            });
+        }
+        if (menu.style.display === 'flex') {
+            menu.style.display = 'none';
+            return;
+        }
+        window.renderSourcesDropdownMenuContentV218(menu);
+        menu.style.display = 'flex';
+    };
+
+    window.renderSourcesDropdownMenuContentV218 = function(menu) {
+        if (!menu) menu = document.getElementById('jennySourcesDropMenuV91');
+        if (!menu) return;
+        var pinned = window.getPinnedSourcesV91();
+        var catalog = window.SOURCES_CATALOG_V91 || [];
+        menu.innerHTML =
+            '<div style="font-size:10.5px;color:#8b949e;padding:2px 4px;display:flex;justify-content:space-between;">' +
+                '<span>ВЫБЕРИ ИСТОЧНИК:</span><span>В шапке (' + pinned.length + '/' + catalog.length + ')</span>' +
+            '</div>' +
+            catalog.map(function(s) {
+                var isPin = pinned.indexOf(s.id) !== -1;
+                return '<div style="display:flex;align-items:center;gap:8px;background:#0f141d;border:1px solid ' + (isPin ? '#3fb950' : '#262c36') + ';border-radius:9px;padding:7px 9px;">' +
+                    '<div onclick="window.triggerSourceActionV91(\'' + s.id + '\', event)" style="display:flex;align-items:center;gap:8px;flex:1;color:#e6edf3;font-size:12px;font-weight:bold;cursor:pointer;">' +
+                        '<span style="display:inline-flex;width:20px;justify-content:center;">' + s.svg + '</span>' +
+                        '<span>' + s.title + '</span>' +
+                    '</div>' +
+                    '<button type="button" onclick="window.togglePinSourceV91(\'' + s.id + '\', event);window.renderSourcesDropdownMenuContentV218();" style="padding:3px 8px;font-size:10.5px;font-weight:bold;border-radius:6px;background:' + (isPin ? 'rgba(63,185,80,0.22)' : '#161b22') + ';border:1px solid ' + (isPin ? '#3fb950' : '#30363d') + ';color:' + (isPin ? '#3fb950' : '#8b949e') + ';cursor:pointer;">' +
+                        (isPin ? 'ВКЛ' : '+') +
+                    '</button>' +
+                '</div>';
+            }).join('');
+    };
+
+    window.renderHeaderSourcesHubV91 = function() {
+        window.upgradeLogoSvgWithV11UnderPlayerV218();
+        var oldBtn = document.getElementById('btnKhinsiderOstV88');
+        var settingsBtn = document.getElementById('btn-settingsModal');
+        var parent = (settingsBtn && settingsBtn.parentElement) || (oldBtn && oldBtn.parentElement);
+        if (!parent) return;
+        parent.style.gap = '3px';
+
+        // Удаляем старую жестко прибитую кнопку #btnHeaderTorrentFixedV216, чтобы Торрент управлялся переключателем [ВКЛ] из меню ⊞!
+        var oldFixedTor = document.getElementById('btnHeaderTorrentFixedV216');
+        if (oldFixedTor) oldFixedTor.remove();
+
+        // 1) Кнопка выбора папок 📁 (#folderIconTrigger) всегда первая слева
+        var folderBtn = document.getElementById('folderIconTrigger');
+        if (!folderBtn) {
+            folderBtn = document.createElement('button');
+            folderBtn.type = 'button';
+            folderBtn.id = 'folderIconTrigger';
+            folderBtn.className = 'jenny-icon-pill';
+            folderBtn.title = 'Менеджер папок';
+            folderBtn.onclick = function(ev) { if (window.openFolderManagerModalV62) window.openFolderManagerModalV62(ev); };
+            folderBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+        }
+        folderBtn.style.cssText = 'width:28px !important;height:28px !important;padding:0 !important;border-radius:8px !important;border-color:rgba(88,166,255,0.55);color:#58a6ff;';
+        if (folderBtn.parentElement !== parent || parent.firstElementChild !== folderBtn) {
+            parent.insertBefore(folderBtn, parent.firstElementChild);
+        }
+
+        // 2) Все закреплённые источники (до 5 шт., включая Торрент и Lossless Архивы!) + кнопка ⊞
+        var hub = document.getElementById('jennySourcesHubBarV91');
+        if (!hub) {
+            hub = document.createElement('div');
+            hub.id = 'jennySourcesHubBarV91';
+            hub.style.cssText = 'display:flex;align-items:center;gap:3px;';
+            if (oldBtn && oldBtn.parentElement === parent) oldBtn.replaceWith(hub);
+            else parent.insertBefore(hub, settingsBtn);
+        } else if (hub.parentElement !== parent) {
+            parent.insertBefore(hub, settingsBtn);
+        }
+
+        var pinned = window.getPinnedSourcesV91();
+        var btnsHtml = pinned.map(function(id) {
+            var s = (window.SOURCES_CATALOG_V91 || []).find(function(x) { return x.id === id; });
+            if (!s) return '';
+            var btnIdAttr = (id === 'ost') ? 'id="btnKhinsiderOstV88"' : 'id="btnPinnedSrc_' + id + '_V91"';
+            return '<button type="button" ' + btnIdAttr + ' class="jenny-icon-pill" onclick="window.triggerSourceActionV91(\'' + s.id + '\', event)" title="' + s.title + '" style="width:28px !important;height:28px !important;padding:0 !important;border-radius:8px !important;">' + s.svg + '</button>';
+        }).join('');
+
+        var hubSvg = (window.JENNY_NEON_SVGS_V92 && window.JENNY_NEON_SVGS_V92.hub) || '⊞';
+        hub.innerHTML = btnsHtml + '<button type="button" id="btnSourcesHubDropV91" class="jenny-icon-pill" onclick="window.toggleSourcesDropdownMenuV91(event)" title="Все источники" style="width:28px !important;height:28px !important;padding:0 !important;border-radius:8px !important;">' + hubSvg + '</button>';
+        if (settingsBtn) {
+            settingsBtn.style.cssText = 'width:28px !important;height:28px !important;padding:0 !important;border-radius:8px !important;';
+        }
+    };
+
+    window.renderSourcesSettingsSectionV91 = function() {
+        var box = document.getElementById('jennySourcesSettingsBoxV91');
+        if (!box) return;
+        var pinned = window.getPinnedSourcesV91();
+        var catalog = window.SOURCES_CATALOG_V91 || [];
+        box.innerHTML =
+            '<summary style="cursor:pointer;font-weight:bold;color:#58a6ff;">🌐 Значки источников в шапке (до 5 шт.)</summary>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">' +
+                catalog.map(function(s) {
+                    var chk = pinned.indexOf(s.id) !== -1 ? 'checked' : '';
+                    return '<label style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:#0d1117;border:1px solid #21262d;border-radius:8px;cursor:pointer;">' +
+                        '<span style="display:flex;align-items:center;gap:8px;font-size:12px;color:#e6edf3;">' + s.svg + '<span>' + s.title + '</span></span>' +
+                        '<input type="checkbox" ' + chk + ' onchange="window.togglePinSourceV91(\'' + s.id + '\', event)" style="width:16px;height:16px;accent-color:#3fb950;">' +
+                    '</label>';
+                }).join('') +
+            '</div>';
+    };
+
+    // -------------------------------------------------------------------------
+    // 10. СОРТИРОВКА "📂 ПО ТИПУ ФАЙЛОВ (А ➔ Я / Я ➔ А)" И КЛИКАБЕЛЬНОСТЬ ПУСТЫХ ВКЛАДОК В ИЗБРАННОМ
+    // -------------------------------------------------------------------------
+    if (Array.isArray(window.SORT_METHODS_V71) && !window.SORT_METHODS_V71.some(function(s) { return s.id === 'ext'; })) {
+        window.SORT_METHODS_V71.splice(2, 0, {
+            id: 'ext',
+            defDir: 'asc',
+            ru: '📂 По типу файлов (А ➔ Я / Я ➔ А)',
+            en: '📂 By File Type (A ➔ Z / Z ➔ A)'
+        });
+    }
+
+    var _prevSortTracksV218 = window.sortTrackArrayForTabV71;
+    window.sortTrackArrayForTabV71 = function(tracksArr, tabId) {
+        if (typeof window.ensurePlaylistStateV71 === 'function') window.ensurePlaylistStateV71();
+        var smap = (window.appConfig && window.appConfig.playlistSortMapV71) || {};
+        var sc = smap[tabId] || {};
+        if (sc.mode === 'ext') {
+            var mul = (sc.dir === 'desc') ? -1 : 1;
+            var arr = (tracksArr || []).slice();
+            arr.sort(function(a, b) {
+                var sa = String(a || '').toLowerCase();
+                var sb = String(b || '').toLowerCase();
+                var dotA = sa.lastIndexOf('.');
+                var dotB = sb.lastIndexOf('.');
+                var extA = dotA !== -1 ? sa.slice(dotA + 1) : '';
+                var extB = dotB !== -1 ? sb.slice(dotB + 1) : '';
+                if (extA !== extB) {
+                    return extA.localeCompare(extB) * mul;
+                }
+                return sa.localeCompare(sb) * mul;
+            });
+            return arr;
+        }
+        return _prevSortTracksV218 ? _prevSortTracksV218.apply(this, arguments) : tracksArr;
+    };
+
+    // Разрешаем кликать на пустую подвкладку "🎵 Аудио 0" или "🎬 Видео 0" внутри "❤️ Избранное" без авто-отскока!
+    window.selectFavSubTabExplicitV218 = function(subMode) {
+        window._favSubTabV216 = subMode;
+        window._userExplicitFavSubTabV218 = true;
+        if (typeof window.renderActivePlaylistTracksV71 === 'function') {
+            window.renderActivePlaylistTracksV71(false);
+        }
+    };
+
+    var _prevRenderPlV218 = window.renderActivePlaylistTracksV71;
+    window.renderActivePlaylistTracksV71 = function(preserveScroll) {
+        var tabId = window.activePlaylistTabV71 || 'all';
+        if (tabId === 'fav') {
+            var unifiedBox = document.getElementById('unifiedList');
+            if (!unifiedBox) return;
+            if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
+            var subWrap = document.getElementById('jennySubFilterWrapV71');
+
+            var favAll = (window.favorites || []).slice();
+            var favVid = favAll.filter(function(fn) { return window.isVideoFileNameV130 && window.isVideoFileNameV130(fn); });
+            var favAud = favAll.filter(function(fn) { return !(window.isVideoFileNameV130 && window.isVideoFileNameV130(fn)); });
+
+            var mode = window._favSubTabV216 || 'audio';
+            if (!window._userExplicitFavSubTabV218) {
+                if (mode === 'audio' && favAud.length === 0 && favVid.length > 0) mode = 'video';
+                if (mode === 'video' && favVid.length === 0 && favAud.length > 0) mode = 'audio';
+                window._favSubTabV216 = mode;
+            }
+
+            if (subWrap) {
+                var isAud = (mode === 'audio');
+                subWrap.innerHTML =
+                    '<div id="jennySubFilterBarActiveV73" class="jenny-subfilter-bar-v71" style="display:flex;width:100%;gap:6px;padding:2px 0;">' +
+                        '<div class="jenny-pl-chip-v71' + (isAud ? ' active-pl-chip' : '') + '" onclick="window.selectFavSubTabExplicitV218(\'audio\')" style="flex:1;justify-content:center;text-align:center;cursor:pointer;">' +
+                            '🎵 Аудио <span class="jenny-pl-chip-count-v71">' + favAud.length + '</span>' +
+                        '</div>' +
+                        '<div class="jenny-pl-chip-v71' + (!isAud ? ' active-pl-chip' : '') + '" onclick="window.selectFavSubTabExplicitV218(\'video\')" style="flex:1;justify-content:center;text-align:center;cursor:pointer;">' +
+                            '🎬 Видео <span class="jenny-pl-chip-count-v71">' + favVid.length + '</span>' +
+                        '</div>' +
+                    '</div>';
+            }
+            if (typeof window.syncHeaderHeightWithModalsV71 === 'function') {
+                window.syncHeaderHeightWithModalsV71();
+            }
+
+            var targetList = (mode === 'video') ? favVid : favAud;
+            var sorted = window.sortTrackArrayForTabV71 ? window.sortTrackArrayForTabV71(targetList, 'fav') : targetList;
+            window.viewedFullTabListV73 = sorted.slice();
+            window.currentTrackList = sorted;
+            if (typeof window.updateScopedSearchPlaceholderV73 === 'function') {
+                window.updateScopedSearchPlaceholderV73(sorted.length);
+            }
+
+            if (sorted.length === 0) {
+                unifiedBox.innerHTML = '<div style="padding:22px;color:#8b949e;text-align:center;">' +
+                    (mode === 'video' ? '🎬 В избранном пока нет видеофайлов' : '🎵 В избранном пока нет аудиотреков') +
+                    '</div>';
+            } else {
+                unifiedBox.innerHTML = sorted.map(function(fn) {
+                    return window.buildTrackRowHTML(fn, 'fav', '❤️');
+                }).join('');
+            }
+            if (typeof window.decorateVideoIconsInListV130 === 'function') {
+                window.decorateVideoIconsInListV130();
+            }
+            return;
+        }
+        return _prevRenderPlV218 ? _prevRenderPlV218.apply(this, arguments) : undefined;
+    };
+
+    // Запускаем периодическую синхронизацию новых функций V218
+    setInterval(function() {
+        window.guardAllSettingsInputsFocusV218();
+        window.syncDeckFavButtonsUIV218();
+        window.cleanAndHighlightTorrentFileRowsV218();
+    }, 550);
+
+    setTimeout(function() {
+        window.upgradeLogoSvgWithV11UnderPlayerV218();
+        window.renderHeaderSourcesHubV91();
+        window.renderSourcesSettingsSectionV91();
+        window.guardAllSettingsInputsFocusV218();
+        window.syncDeckFavButtonsUIV218();
+        window.syncEqSlidersToActiveDeckV218();
+        window.renderDeckSwitchBannersV131();
+        window.loadPersistentUserDataV218();
+    }, 250);
+})();
+/* ================= END JENNY_V218_UNIFIED_PATCH ================= */

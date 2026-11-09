@@ -7866,24 +7866,6 @@ def api_video_live_remux_v216():
 _override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v216)
 
 
-def start_server():
-
-
-
-
-
-
-
-
-    load_saved_music_dir()
-    cleanup_stale_temps(DEFAULT_MUSIC_DIR)
-    if MUSIC_DIR != DEFAULT_MUSIC_DIR:
-        cleanup_stale_temps(MUSIC_DIR)
-    print("🎧 АВТОНОМНЫЙ ПЛЕЕР ЗАПУЩЕН НА ПОРТУ 8080")
-    run(host='127.0.0.1', port=8080, quiet=True, server='waitress', threads=64)
-
-if __name__ == "__main__":
-    start_server()
 
 # ================= JENNY V217 (#311): VIDEO STREAM MODES (В+А / В -an / А -vn) IN LIVE_REMUX =================
 def api_video_live_remux_v217():
@@ -8036,3 +8018,810 @@ def api_video_live_remux_v217():
 
 _override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v217)
 # ================= END JENNY V217 =================
+
+
+
+# ==============================================================================
+# 🚀 JENNY V218 (#312): PERSISTENT EXTERNAL USER DATA BACKUP (FAVS / PLAYLISTS /
+#    TAGS / DUAL EQ), SAFE CP1251/UTF-8 MEDIA INSPECTOR, UNIVERSAL VIDEO FORMAT
+#    DURATION (AVI/MKV/MP4/TS/WMV/FLV), MULTI-AUDIO TRACK REMUX & NON-BLOCKING P2P SEEK
+# ==============================================================================
+
+def _safe_decode_bytes_v218(raw_b: bytes) -> str:
+    if not raw_b:
+        return ""
+    if isinstance(raw_b, str):
+        return raw_b
+    for enc in ("utf-8", "cp1251", "windows-1251", "latin-1"):
+        try:
+            return raw_b.decode(enc)
+        except Exception:
+            pass
+    return raw_b.decode("utf-8", errors="replace")
+
+
+def _safe_run_cmd_text_v218(cmd_list, timeout_sec=6.0):
+    try:
+        pr = subprocess.run(
+            cmd_list,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+            timeout=timeout_sec
+        )
+        out_s = _safe_decode_bytes_v218(pr.stdout or b"")
+        err_s = _safe_decode_bytes_v218(pr.stderr or b"")
+        return pr.returncode, out_s, err_s
+    except Exception as e:
+        return -1, "", str(e)
+
+
+# --- 1. Персистентное хранилище Избранного, Плейлистов, Тегов и Эквалайзера на внешнем диске ---
+def _get_persistent_backup_paths_v218():
+    candidates = [
+        "/storage/emulated/0/Download/JennyPlayer_Backup/jenny_user_data_v218.json",
+        "/sdcard/Download/JennyPlayer_Backup/jenny_user_data_v218.json",
+        "/storage/emulated/0/JennyVideo/jenny_user_data_v218.json",
+        os.path.join(DEFAULT_MUSIC_DIR, "jenny_user_data_v218.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "jenny_user_data_v218.json")
+    ]
+    return candidates
+
+
+def _load_persistent_user_data_v218() -> dict:
+    for p in _get_persistent_backup_paths_v218():
+        try:
+            if os.path.isfile(p) and os.path.getsize(p) > 2:
+                with open(p, "rb") as f:
+                    raw = _safe_decode_bytes_v218(f.read())
+                d = json.loads(raw)
+                if isinstance(d, dict):
+                    return d
+        except Exception:
+            pass
+    return {}
+
+
+def _save_persistent_user_data_v218(payload: dict) -> list:
+    saved_to = []
+    if not isinstance(payload, dict):
+        return saved_to
+    existing = _load_persistent_user_data_v218()
+    merged = dict(existing)
+    for k, v in payload.items():
+        if v is not None:
+            merged[k] = v
+    merged["updated_ts"] = int(time.time())
+
+    # Синхронизируем пользовательские теги с локальной базой тегов сервера
+    if isinstance(merged.get("custom_tags_db"), dict) and "save_custom_tags_db_v74" in globals():
+        try:
+            cur_db = load_custom_tags_db_v74() if "load_custom_tags_db_v74" in globals() else {}
+            cur_db.update(merged["custom_tags_db"])
+            save_custom_tags_db_v74(cur_db)
+        except Exception:
+            pass
+
+    raw_bytes = json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8")
+    for p in _get_persistent_backup_paths_v218():
+        try:
+            d_dir = os.path.dirname(p)
+            if d_dir:
+                os.makedirs(d_dir, exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(raw_bytes)
+            saved_to.append(p)
+        except Exception:
+            pass
+    return saved_to
+
+
+@route('/api/user_data/load', method='GET')
+def api_user_data_load_v218():
+    response.content_type = 'application/json; charset=utf-8'
+    data = _load_persistent_user_data_v218()
+    if "load_custom_tags_db_v74" in globals():
+        try:
+            db_tags = load_custom_tags_db_v74()
+            if db_tags and not data.get("custom_tags_db"):
+                data["custom_tags_db"] = db_tags
+            elif db_tags and isinstance(data.get("custom_tags_db"), dict):
+                merged_t = dict(data["custom_tags_db"])
+                merged_t.update(db_tags)
+                data["custom_tags_db"] = merged_t
+                save_custom_tags_db_v74(merged_t)
+        except Exception:
+            pass
+    return json.dumps({"status": "ok", "data": data}, ensure_ascii=False)
+_override_bottle_route_v212('/api/user_data/load', 'GET', api_user_data_load_v218)
+
+
+@route('/api/user_data/sync', method='POST')
+def api_user_data_sync_v218():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        raw_body = _safe_decode_bytes_v218(request.body.read()) or "{}"
+        payload = json.loads(raw_body)
+        if "load_custom_tags_db_v74" in globals():
+            try:
+                payload["custom_tags_db"] = load_custom_tags_db_v74()
+            except Exception:
+                pass
+        paths = _save_persistent_user_data_v218(payload)
+        return json.dumps({"status": "ok", "saved_paths": paths}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+_override_bottle_route_v212('/api/user_data/sync', 'POST', api_user_data_sync_v218)
+
+
+# --- 2. Исправление CORE MEDIA INSPECTOR (/api/track_info и /api/track_meta_v71) для .avi/.mkv и CP1251 ---
+def _resolve_any_media_path_v218(filename: str) -> str:
+    if not filename:
+        return ""
+    fp = resolve_track_full_path_v71(filename)
+    if fp and os.path.isfile(fp):
+        return fp
+    if "_resolve_video_src_input_v131" in globals():
+        vp = _resolve_video_src_input_v131(filename)
+        if vp and not str(vp).startswith(("http://", "https://")) and os.path.isfile(vp):
+            return vp
+    if "_locate_downloaded_p2p_file_v163" in globals():
+        bn = os.path.basename(urllib.parse.unquote(str(filename).split("?")[0]))
+        cand_p, _, _, _ = _locate_downloaded_p2p_file_v163(bn, "", -1)
+        if cand_p and os.path.isfile(cand_p):
+            return cand_p
+    for vdir in ("/storage/emulated/0/JennyVideo", "/storage/emulated/0/Download", DEFAULT_MUSIC_DIR):
+        cand = os.path.join(vdir, os.path.basename(filename))
+        if os.path.isfile(cand):
+            return cand
+    return fp or ""
+
+
+@post('/api/track_meta_v71')
+def get_track_meta_v218():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        req = json.loads(_safe_decode_bytes_v218(request.body.read()) or "{}")
+        fn = (req.get('filename') or '').strip()
+        fp = _resolve_any_media_path_v218(fn)
+        if not fn or not fp or not os.path.isfile(fp):
+            response.status = 404
+            return json.dumps({"status": "error", "error": "Файл не найден"}, ensure_ascii=False)
+        ff = find_ffmpeg_binary()
+        _, out_s, err_s = _safe_run_cmd_text_v218([ff, '-hide_banner', '-i', fp], timeout_sec=6.0)
+        raw = err_s + out_s
+        tags = get_merged_track_tags_v74(fn, raw)
+        tags.pop('ENCODER', None)
+        tr = read_jenny_rev_trailer(fp)
+        rev = {"has_rev": False}
+        if tr:
+            try:
+                with open(fp, 'rb') as rf:
+                    rf.seek(tr["map_offset"])
+                    sm = json.loads(_safe_decode_bytes_v218(zlib.decompress(rf.read(tr["map_len"]))))
+                rev = {
+                    "has_rev": True,
+                    "map_bytes": tr["map_len"],
+                    "pocket_bytes": tr["pocket_len"],
+                    "spd": sm.get("spd", 1.0),
+                    "tension": sm.get("tension", 100),
+                    "seams_count": len(sm.get("seams", []))
+                }
+            except Exception:
+                rev = {"has_rev": True, "map_bytes": tr["map_len"], "pocket_bytes": tr["pocket_len"]}
+        return json.dumps({"status": "ok", "filename": fn, "tags": tags, "rev": rev}, ensure_ascii=False)
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+_override_bottle_route_v212('/api/track_meta_v71', 'POST', get_track_meta_v218)
+
+
+@post('/api/track_info')
+def get_track_info_v218():
+    import datetime
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        req = json.loads(_safe_decode_bytes_v218(request.body.read()) or "{}")
+        filename = (req.get('filename') or '').strip()
+        full_path = _resolve_any_media_path_v218(filename)
+        if not filename or not full_path or not os.path.isfile(full_path):
+            response.status = 404
+            return json.dumps({"status": "error", "error": "Файл не найден (или ещё качается в потоке)"}, ensure_ascii=False)
+
+        st = os.stat(full_path)
+        size_bytes = st.st_size
+        size_mb = f"{size_bytes / (1024 * 1024):.2f} MB ({size_bytes:,} B)".replace(",", " ")
+        mtime_str = datetime.datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        ext = os.path.splitext(filename)[1].lower().lstrip('.') or 'raw'
+
+        container_map = {
+            'opus': 'OGG / Opus Audio Container',
+            'm4a': 'MP4 / ISO Media (Apple Audio)',
+            'mp4': 'MPEG-4 Part 14 (Video/Audio Container)',
+            'mkv': 'Matroska Multimedia Container (MKV)',
+            'avi': 'RIFF Audio Video Interleave (AVI)',
+            'mov': 'Apple QuickTime Movie Container (MOV)',
+            'm4v': 'MPEG-4 Video Container (M4V)',
+            'ts': 'MPEG Transport Stream (TS)',
+            'm2ts': 'Blu-ray BDAV MPEG-2 Transport Stream',
+            'wmv': 'Windows Media Video (ASF/WMV)',
+            'flv': 'Flash Video Container (FLV)',
+            'mp3': 'MPEG-1/2 Audio Layer III',
+            'wav': 'RIFF WAVE (Uncompressed PCM)',
+            'flac': 'Free Lossless Audio Codec',
+            'ogg': 'OGG Vorbis Audio Container',
+            'aac': 'Advanced Audio Coding (ADTS)',
+            'webm': 'WebM Media Audio/Video Container'
+        }
+        container_desc = container_map.get(ext, f"{ext.upper()} Media Stream")
+
+        ffmpeg_bin = find_ffmpeg_binary()
+        _, out_s, err_s = _safe_run_cmd_text_v218([ffmpeg_bin, '-hide_banner', '-i', full_path], timeout_sec=6.0)
+        raw_info = err_s + out_s
+
+        dur_match = re.search(r"Duration:\s*(\d+:\d+:\d+\.\d+)", raw_info)
+        duration_str = dur_match.group(1) if dur_match else "—"
+        dur_seconds = 0.0
+        if dur_match:
+            parts = duration_str.split(':')
+            dur_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        if dur_seconds <= 0:
+            try:
+                with open(full_path, 'rb') as hf:
+                    dur_seconds = _parse_header_duration_bytes_v218(hf.read(131072))
+                if dur_seconds > 0:
+                    hh = int(dur_seconds // 3600)
+                    mm = int((dur_seconds % 3600) // 60)
+                    ss = dur_seconds % 60
+                    duration_str = f"{hh:02d}:{mm:02d}:{ss:05.2f}"
+            except Exception:
+                pass
+
+        br_match = re.search(r"bitrate:\s*(\d+\s*kb/s)", raw_info)
+        bitrate_str = br_match.group(1) if br_match else (
+            f"{int((size_bytes * 8) / dur_seconds / 1000)} kb/s (CBR/VBR calc)" if dur_seconds > 0 else "—"
+        )
+
+        codec_str, sr_str, ch_str, fmt_str = ext.upper(), "48000 Hz", "stereo (2 ch)", "fltp (32-bit float)"
+        v_streams = re.findall(r"Stream #\d+:\d+.*?: Video:\s*([^\n]+)", raw_info)
+        a_streams = re.findall(r"Stream #\d+:\d+.*?: Audio:\s*([^\n]+)", raw_info)
+
+        if a_streams:
+            s_line = a_streams[0]
+            s_parts = [p.strip() for p in s_line.split(',')]
+            if len(s_parts) >= 1:
+                codec_str = s_parts[0]
+            for p in s_parts[1:]:
+                if 'Hz' in p:
+                    sr_str = p
+                elif any(k in p for k in ('stereo', 'mono', '5.1', '7.1', 'channels', 'ch')):
+                    ch_str = p
+                elif any(p.startswith(fp) for fp in ('fltp', 'flt', 's16', 's24', 's32', 'dblp', 'u8')):
+                    fmt_str = p
+            if len(a_streams) > 1:
+                codec_str = f"{codec_str} (Аудиодорожек: {len(a_streams)})"
+
+        if v_streams:
+            v_short = v_streams[0].split(',')[0].strip()
+            res_m = re.search(r"\b(\d{3,4}x\d{3,4})\b", v_streams[0])
+            res_s = f" [{res_m.group(1)}]" if res_m else ""
+            codec_str = f"🎬 {v_short}{res_s} + 🔊 {codec_str}"
+
+        tags = get_merged_track_tags_v74(filename, raw_info)
+        sr_num = int(re.sub(r"\D", "", sr_str) or "48000")
+        total_samples = f"{int(dur_seconds * sr_num):,}".replace(",", " ") if dur_seconds > 0 else "—"
+
+        return json.dumps({
+            "status": "ok",
+            "rev_capsule": "None (Standard stream)",
+            "filename": filename,
+            "full_path": full_path,
+            "folder": os.path.dirname(full_path),
+            "container": container_desc,
+            "size_str": size_mb,
+            "mtime": mtime_str,
+            "duration": duration_str,
+            "bitrate": bitrate_str,
+            "codec": codec_str,
+            "sample_rate": sr_str,
+            "channels": ch_str,
+            "sample_fmt": fmt_str,
+            "total_samples": total_samples,
+            "tags": tags,
+            "raw_ffmpeg": raw_info[:4000]
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+_override_bottle_route_v212('/api/track_info', 'POST', get_track_info_v218)
+
+
+# --- 3. Универсальный бинарный + контейнерный парсер длительности видео (AVI avih / MP4 mvhd / MKV EBML + Bitrate Fallback) ---
+def _parse_header_duration_bytes_v218(hdr: bytes) -> float:
+    if not hdr or len(hdr) < 64:
+        return 0.0
+    # 1) Первичный вызов V216 (AVI avih + MKV EBML)
+    try:
+        d0 = _parse_header_duration_bytes_v216(hdr)
+        if d0 > 1.0:
+            return d0
+    except Exception:
+        pass
+
+    # 2) Расширенный парсинг AVI (поиск 'strh' видеопотока dwScale / dwRate / dwLength, если в avih было 0)
+    try:
+        if hdr[:4] == b'RIFF' and (b'AVI ' in hdr[:32] or b'AVIX' in hdr[:32]):
+            pos = 0
+            while True:
+                idx = hdr.find(b'strh', pos)
+                if idx == -1 or idx + 40 > len(hdr):
+                    break
+                fcc_type = hdr[idx + 8:idx + 12]
+                if fcc_type == b'vids':
+                    dw_scale = struct.unpack_from('<I', hdr, idx + 28)[0]
+                    dw_rate = struct.unpack_from('<I', hdr, idx + 32)[0]
+                    dw_length = struct.unpack_from('<I', hdr, idx + 40)[0]
+                    if dw_scale > 0 and dw_rate > 0 and dw_length > 10:
+                        fps = float(dw_rate) / float(dw_scale)
+                        if 5.0 <= fps <= 240.0:
+                            dur = float(dw_length) / fps
+                            if 2.0 < dur < 86400.0:
+                                return round(dur, 2)
+                pos = idx + 4
+    except Exception:
+        pass
+
+    # 3) Парсинг MP4 / MOV / M4V атома 'mvhd' (Movie Header Box)
+    try:
+        mvhd_pos = hdr.find(b'mvhd')
+        if mvhd_pos != -1 and mvhd_pos + 28 <= len(hdr):
+            ver = hdr[mvhd_pos + 4]
+            if ver == 0 and mvhd_pos + 24 <= len(hdr):
+                timescale = struct.unpack_from('>I', hdr, mvhd_pos + 16)[0]
+                duration = struct.unpack_from('>I', hdr, mvhd_pos + 20)[0]
+                if timescale > 0 and duration > 0:
+                    dur = float(duration) / float(timescale)
+                    if 2.0 < dur < 86400.0:
+                        return round(dur, 2)
+            elif ver == 1 and mvhd_pos + 36 <= len(hdr):
+                timescale = struct.unpack_from('>I', hdr, mvhd_pos + 24)[0]
+                duration = struct.unpack_from('>Q', hdr, mvhd_pos + 28)[0]
+                if timescale > 0 and duration > 0:
+                    dur = float(duration) / float(timescale)
+                    if 2.0 < dur < 86400.0:
+                        return round(dur, 2)
+    except Exception:
+        pass
+
+    return 0.0
+
+
+def _estimate_duration_from_torrent_meta_v218(h_low: str, f_idx: int) -> float:
+    """
+    Если первые 64 КБ файла в торренте ещё только качаются или контейнер (.avi/.ts/.mpg/.wmv)
+    не отдал длительность через ffprobe, оцениваем длительность по размеру файла и имени релиза,
+    чтобы шкала перемотки НИКОГДА не блокировалась на «0:00 — Поток»!
+    """
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.9) as sr:
+            st_obj = json.loads(_safe_decode_bytes_v218(sr.read()))
+        for tor in (st_obj.get("torrents") or []):
+            if (tor.get("hash") or "").strip().lower() == h_low:
+                for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                    if int(fobj.get("index", -1)) == f_idx:
+                        f_len = int(fobj.get("length") or fobj.get("size") or 0)
+                        f_path = (fobj.get("path") or fobj.get("name") or "").lower()
+                        if f_len <= 1048576:
+                            return 0.0
+                        # Пробуем сначала прочитать первые 128 КБ с диска по точному пути из демона
+                        if f_path and os.path.isfile(f_path) and os.path.getsize(f_path) >= 65536:
+                            try:
+                                with open(f_path, "rb") as rf:
+                                    d_hdr = _parse_header_duration_bytes_v218(rf.read(131072))
+                                if d_hdr > 1.0:
+                                    return d_hdr
+                            except Exception:
+                                pass
+                        # Оценка по типу файла / разрешению, если заголовок ещё не скачан
+                        mb = f_len / (1024.0 * 1024.0)
+                        if f_path.endswith(".avi"):
+                            # Стандартные BDRip/DVDRip AVI (например, Daredevil LostFilm ~660 МБ = ~54 мин = 3240 сек, или ~1.45 ГБ фильм)
+                            kbps = 1680.0
+                            return round(max(120.0, (f_len * 8.0) / (kbps * 1000.0)), 1)
+                        if "1080p" in f_path:
+                            kbps = 3200.0 if mb < 1200 else 4800.0
+                        elif "720p" in f_path:
+                            kbps = 2000.0
+                        else:
+                            kbps = 1800.0
+                        return round(max(120.0, (f_len * 8.0) / (kbps * 1000.0)), 1)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _probe_torrent_partial_file_duration_v218(raw_src: str) -> tuple:
+    """Возвращает (duration_sec, audio_streams_count, file_size_bytes)."""
+    src = (raw_src or "").strip()
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+
+    audio_cnt = 1
+    sz_bytes = 0
+
+    if not src.startswith('/api/torrent/stream/'):
+        real_p = _resolve_any_media_path_v218(src)
+        if real_p and os.path.isfile(real_p):
+            try:
+                sz_bytes = os.path.getsize(real_p)
+                with open(real_p, 'rb') as f:
+                    hdr = f.read(131072)
+                d_bin = _parse_header_duration_bytes_v218(hdr)
+            except Exception:
+                d_bin = 0.0
+            ff_bin = find_ffmpeg_binary()
+            _, out_s, err_s = _safe_run_cmd_text_v218(
+                [ff_bin, '-hide_banner', '-seekable', '0', '-probesize', '262144', '-analyzeduration', '400000', '-i', real_p],
+                timeout_sec=2.5
+            )
+            raw = err_s + out_s
+            a_matches = re.findall(r"Stream #\d+:\d+.*?: Audio:", raw)
+            if a_matches:
+                audio_cnt = len(a_matches)
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+            if m:
+                d_ff = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                if d_ff > 1.0:
+                    return round(d_ff, 2), audio_cnt, sz_bytes
+            if d_bin > 1.0:
+                return d_bin, audio_cnt, sz_bytes
+        return 0.0, audio_cnt, sz_bytes
+
+    parts = src.strip('/').split('/')
+    if len(parts) < 5:
+        return 0.0, 1, 0
+    h_low = parts[3].lower()
+    try:
+        f_idx = int(parts[4].split('?')[0])
+    except Exception:
+        f_idx = 0
+
+    # 1. Проверяем локальный файл в torrents_tmp / JennyVideo
+    try:
+        local_p, _, f_total, _ = _locate_downloaded_p2p_file_v163("", h_low, f_idx)
+        if f_total and f_total > 0:
+            sz_bytes = int(f_total)
+        if local_p and os.path.isfile(local_p) and os.path.getsize(local_p) >= 65536:
+            if sz_bytes <= 0:
+                sz_bytes = os.path.getsize(local_p)
+            d_bin = 0.0
+            try:
+                with open(local_p, 'rb') as f:
+                    hdr = f.read(131072)
+                d_bin = _parse_header_duration_bytes_v218(hdr)
+            except Exception:
+                pass
+            ff_bin = find_ffmpeg_binary()
+            _, out_s, err_s = _safe_run_cmd_text_v218(
+                [ff_bin, '-hide_banner', '-seekable', '0', '-probesize', '262144', '-analyzeduration', '400000', '-i', local_p],
+                timeout_sec=2.0
+            )
+            raw = err_s + out_s
+            a_matches = re.findall(r"Stream #\d+:\d+.*?: Audio:", raw)
+            if a_matches:
+                audio_cnt = len(a_matches)
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", raw)
+            if m:
+                d_ff = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+                if d_ff > 1.0:
+                    return round(d_ff, 2), audio_cnt, sz_bytes
+            if d_bin > 1.0:
+                return d_bin, audio_cnt, sz_bytes
+    except Exception:
+        pass
+
+    # 2. Читаем первые 128 КБ напрямую из демона, если 1-й кусок уже скачан
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.8) as sr:
+            st_obj = json.loads(_safe_decode_bytes_v218(sr.read()))
+        for tor in (st_obj.get("torrents") or []):
+            if (tor.get("hash") or "").strip().lower() == h_low:
+                p_map = tor.get("pieces_map") or ""
+                for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                    if int(fobj.get("index", -1)) == f_idx:
+                        beg_p = int(fobj.get("begin_piece") or 0)
+                        sz_bytes = int(fobj.get("length") or fobj.get("size") or sz_bytes)
+                        if not p_map or (0 <= beg_p < len(p_map) and p_map[beg_p] in ('4', '3')):
+                            req = urllib.request.Request(
+                                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/stream?hash={h_low}&file={f_idx}",
+                                headers={"Range": "bytes=0-131071"}
+                            )
+                            with urllib.request.urlopen(req, timeout=1.0) as hr:
+                                hdr_bytes = hr.read(131072)
+                            d_bin = _parse_header_duration_bytes_v218(hdr_bytes)
+                            if d_bin > 1.0:
+                                return d_bin, audio_cnt, sz_bytes
+                        break
+                break
+    except Exception:
+        pass
+
+    # 3. Универсальный фоллбэк по размеру файла торрента (для .avi и любых форматов на старте 0-1%)
+    est_dur = _estimate_duration_from_torrent_meta_v218(h_low, f_idx)
+    return est_dur, audio_cnt, sz_bytes
+
+
+def _probe_torrent_partial_file_duration_v214(raw_src: str) -> float:
+    d, _, _ = _probe_torrent_partial_file_duration_v218(raw_src)
+    return d
+
+
+@route('/api/video/pcm_meta', method='GET')
+def api_video_pcm_meta_v218():
+    response.content_type = 'application/json; charset=utf-8'
+    src = (request.query.get('src') or '').strip()
+    if not src:
+        return json.dumps({"duration": 0, "size": 0, "audio_streams": 1})
+    dur_sec, audio_cnt, sz_bytes = _probe_torrent_partial_file_duration_v218(src)
+    return json.dumps({
+        "duration": dur_sec,
+        "size": sz_bytes,
+        "audio_streams": max(1, int(audio_cnt or 1))
+    })
+_override_bottle_route_v212('/api/video/pcm_meta', 'GET', api_video_pcm_meta_v218)
+
+
+# --- 4. Приоритет первых 2 и последних 2 кусков файла (индексы Cues/idx1) + куска перемотки ---
+_ORIG_BOOST_TORRENT_V214 = _boost_torrent_file_and_pieces_v214
+
+def _boost_torrent_file_and_pieces_v218(h_low: str, f_idx: int, ratio: float = -1.0, byte_offset: int = -1, sync_start: bool = False):
+    _ORIG_BOOST_TORRENT_V214(h_low, f_idx, ratio=ratio, byte_offset=byte_offset, sync_start=sync_start)
+    # Дополнительно гарантируем буст первого и последнего куска файла (где лежат таблицы индексов MKV Cues и AVI idx1)
+    def _boost_head_tail():
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.9) as sr:
+                st_obj = json.loads(_safe_decode_bytes_v218(sr.read()))
+            for tor in (st_obj.get("torrents") or []):
+                if (tor.get("hash") or "").strip().lower() == (h_low or "").strip().lower():
+                    p_map = tor.get("pieces_map") or ""
+                    for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                        if int(fobj.get("index", -1)) == int(f_idx):
+                            beg_p = int(fobj.get("begin_piece") or 0)
+                            end_p = int(fobj.get("end_piece") or 0)
+                            if end_p > beg_p:
+                                key_pieces = [max(beg_p, end_p - 1), beg_p + 1 if beg_p + 1 < end_p else beg_p, beg_p]
+                                for kp in key_pieces:
+                                    if p_map and 0 <= kp < len(p_map) and p_map[kp] == '4':
+                                        continue
+                                    try:
+                                        urllib.request.urlopen(urllib.request.Request(
+                                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                            data=json.dumps({"hash": h_low.strip().lower(), "action": "boost_piece", "piece_index": int(kp)}).encode("utf-8"),
+                                            headers={"Content-Type": "application/json"}
+                                        ), timeout=0.4).read()
+                                    except Exception:
+                                        pass
+                            break
+                    break
+        except Exception:
+            pass
+    threading.Thread(target=_boost_head_tail, daemon=True).start()
+
+_boost_torrent_file_and_pieces_v214 = _boost_torrent_file_and_pieces_v218
+
+
+# --- 5. Неблокирующий live_remux с поддержкой локального 100% файла, выбором аудиодорожек и защитой пула соединений ---
+@route('/api/video/live_remux', method='GET')
+def api_video_live_remux_v218():
+    _cancel_stream_hold_release_v216()
+    raw_src = (request.query.get('src') or '').strip()
+    start_sec = float(request.query.get('start') or 0.0)
+    dur_sec = float(request.query.get('dur') or 0.0)
+    no_audio = (request.query.get('no_audio') == '1')
+    audio_only = (request.query.get('audio_only') == '1')
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+
+    if not raw_src:
+        response.status = 400
+        return "Missing src"
+
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
+        src = '/' + src.split('8080/', 1)[1]
+
+    mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
+    req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
+    now_ts = time.time()
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            if k_existing != req_key:
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+            else:
+                kept = []
+                for ts_started, p_same in plist:
+                    if now_ts - ts_started > 6.0 and p_same.poll() is not None:
+                        continue
+                    kept.append((ts_started, p_same))
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    is_tor_stream = src.startswith('/api/torrent/stream/')
+    src_input = ""
+    if is_tor_stream:
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            if dur_sec <= 0:
+                dur_sec, _, _ = _probe_torrent_partial_file_duration_v218(src)
+            ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
+            _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
+
+            # Если файл уже скачан на 100% на диск — читаем его напрямую с диска (мгновенная перемотка в любую точку!)
+            try:
+                local_p, is_comp, f_len, f_done = _locate_downloaded_p2p_file_v163("", h_low, f_idx)
+                if local_p and os.path.isfile(local_p) and (is_comp or (f_len > 0 and f_done >= f_len)):
+                    src_input = local_p
+            except Exception:
+                pass
+
+            # Если перематываем нескачанный файл (start_sec > 0.5), ждём до 4.0 сек подкачки целевого куска, чтобы FFmpeg не падал на EOF
+            if not src_input and start_sec > 0.5 and ratio > 0.0:
+                wait_deadline = time.time() + 4.0
+                while time.time() < wait_deadline:
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.6) as sr:
+                            st_obj = json.loads(_safe_decode_bytes_v218(sr.read()))
+                        piece_ready = False
+                        for tor in (st_obj.get("torrents") or []):
+                            if (tor.get("hash") or "").strip().lower() == h_low:
+                                p_map = tor.get("pieces_map") or ""
+                                for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                                    if int(fobj.get("index", -1)) == f_idx:
+                                        beg_p = int(fobj.get("begin_piece") or 0)
+                                        end_p = int(fobj.get("end_piece") or 0)
+                                        f_l = int(fobj.get("length") or 0)
+                                        f_c = int(fobj.get("completed") or 0)
+                                        if f_l > 0 and f_c >= f_l:
+                                            piece_ready = True
+                                        elif end_p > beg_p and p_map:
+                                            t_p = max(beg_p, min(end_p - 1, beg_p + int(ratio * (end_p - beg_p))))
+                                            if 0 <= t_p < len(p_map) and p_map[t_p] == '4':
+                                                piece_ready = True
+                                        break
+                                break
+                        if piece_ready:
+                            break
+                    except Exception:
+                        break
+                    time.sleep(0.28)
+
+            if not src_input:
+                src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+        else:
+            src_input = _resolve_any_media_path_v218(src)
+    else:
+        src_input = _resolve_any_media_path_v218(src)
+
+    is_http = str(src_input).startswith(('http://', 'https://'))
+
+    # Проверяем реальное количество аудиодорожек в локальном файле, чтобы индекс audio_idx гарантированно попадал в существующую дорожку
+    if not is_http and src_input and os.path.isfile(src_input) and audio_idx > 0:
+        try:
+            _, _, a_cnt_check = _probe_torrent_partial_file_duration_v218(src_input)
+            if a_cnt_check > 0:
+                audio_idx = audio_idx % a_cnt_check
+        except Exception:
+            pass
+
+    if not is_http and src_input and os.path.isfile(src_input) and not no_audio and not audio_only:
+        ext_l = os.path.splitext(src_input)[1].lower()
+        if ext_l in ('.mp4', '.webm', '.m4v', '.mov') and start_sec <= 0.5 and request.query.get('transcode') != '1' and audio_idx == 0:
+            return static_file(os.path.basename(src_input), root=os.path.dirname(src_input))
+
+    ff_bin = find_ffmpeg_binary()
+    ff_threads = str(max(1, min(8, int(_THREAD_CFG_V216.get("videoFfmpegThreads", 3)))))
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        if start_sec > 0.5:
+            cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
+        else:
+            cmd.extend(['-seekable', '0', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '262144', '-analyzeduration', '300000'])
+
+    if start_sec > 0.5:
+        cmd.extend(['-ss', f"{start_sec:.2f}"])
+
+    is_legacy_avi = str(src_input).lower().endswith(('.avi', '.wmv', '.flv', '.mpeg', '.mpg', '.vob')) or (request.query.get('transcode') == '1') or ('.avi' in src.lower())
+    v_codec_args = [
+        '-threads', ff_threads, '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '24', '-pix_fmt', 'yuv420p', '-g', '30'
+    ] if is_legacy_avi else ['-c:v', 'copy']
+
+    if audio_only:
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-vn', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+            '-threads', ff_threads,
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+    elif no_audio:
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-map', '0:v:0', '-an', '-sn', '-dn',
+            *v_codec_args,
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+    else:
+        cmd.extend([
+            '-fflags', '+genpts+igndts+nobuffer',
+            '-i', src_input,
+            '-map', '0:v:0', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+            *v_codec_args,
+            '-threads', ff_threads,
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none"
+    }
+    def _remux_gen():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_remux_gen(), status=200, headers=resp_hdrs)
+
+_override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v218)
+# ================= END JENNY V218 SERVER PATCH =================
+
+
+def start_server():
+
+
+
+
+
+
+
+
+    load_saved_music_dir()
+    cleanup_stale_temps(DEFAULT_MUSIC_DIR)
+    if MUSIC_DIR != DEFAULT_MUSIC_DIR:
+        cleanup_stale_temps(MUSIC_DIR)
+    print("🎧 АВТОНОМНЫЙ ПЛЕЕР ЗАПУЩЕН НА ПОРТУ 8080")
+    run(host='127.0.0.1', port=8080, quiet=True, server='waitress', threads=64)
+
+if __name__ == "__main__":
+    start_server()
+
