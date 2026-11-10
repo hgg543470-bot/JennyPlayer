@@ -170,78 +170,90 @@ public class MainActivity extends AppCompatActivity {
     
     // === JENNY_V242_GLOBAL_IMMERSIVE_STICKY ===
     // === BEGIN JENNY_V243_SAFE_INSETS_LOCK ===
+    private static final int PLAYER_TOP_OFFSET_PX_V244 = 150;
+    private static final int PLAYER_BOTTOM_OFFSET_PX_V244 = 150;
     private boolean insetsListenerAttachedV243 = false;
+    private int currentImeBottomPxV244 = 0;
 
     private String computeSafeAreaInsetsJsonV243() {
+        return "{\"top\":0,\"bottom\":0,\"left\":0,\"right\":0,\"overlay\":"
+                + isDesktopOverlayActiveV132 + ",\"fullscreen\":" + isVideoFullscreenV132 + "}";
+    }
+
+    private void applyPlayerViewportMarginsV244() {
+        if (webView == null) return;
         try {
-            if (isDesktopOverlayActiveV132) {
-                return "{\"top\":0,\"bottom\":0,\"left\":0,\"right\":0,\"overlay\":true,\"fullscreen\":false}";
-            }
-            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-            float density = Math.max(1.0f, dm.density);
-            boolean isLandscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
-
-            int cutoutTopPx = 0;
-            int cutoutBotPx = 0;
-            int sysTopPx = 0;
-            int sysBotPx = 0;
-
             android.view.Window win = getWindow();
             View decor = (win != null) ? win.getDecorView() : null;
-            android.view.WindowInsets rootInsets = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && decor != null)
-                    ? decor.getRootWindowInsets() : null;
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && rootInsets != null) {
-                android.view.DisplayCutout dc = rootInsets.getDisplayCutout();
-                if (dc != null) {
-                    cutoutTopPx = dc.getSafeInsetTop();
-                    cutoutBotPx = dc.getSafeInsetBottom();
+            if (decor != null) {
+                decor.setBackgroundColor(0xFF000000);
+            }
+            android.view.ViewGroup contentGroup = findViewById(android.R.id.content);
+            if (contentGroup != null) {
+                android.view.View cur = contentGroup;
+                while (cur != null) {
+                    cur.setBackgroundColor(0xFF000000);
+                    if (cur.getPaddingTop() != 0 || cur.getPaddingBottom() != 0
+                            || cur.getPaddingLeft() != 0 || cur.getPaddingRight() != 0) {
+                        cur.setPadding(0, 0, 0, 0);
+                    }
+                    if (cur == decor) break;
+                    android.view.ViewParent vp = cur.getParent();
+                    cur = (vp instanceof android.view.View) ? (android.view.View) vp : null;
                 }
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && rootInsets != null) {
-                try {
-                    android.graphics.Insets sb = rootInsets.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.statusBars());
-                    android.graphics.Insets nb = rootInsets.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.navigationBars());
-                    if (sb != null) sysTopPx = sb.top;
-                    if (nb != null) sysBotPx = nb.bottom;
-                } catch (Throwable ignored) {}
+
+            if (isDesktopOverlayActiveV132) {
+                android.view.ViewGroup.LayoutParams olp = webView.getLayoutParams();
+                if (olp instanceof android.view.ViewGroup.MarginLayoutParams) {
+                    android.view.ViewGroup.MarginLayoutParams m = (android.view.ViewGroup.MarginLayoutParams) olp;
+                    if (m.topMargin != 0 || m.bottomMargin != 0 || m.leftMargin != 0 || m.rightMargin != 0) {
+                        m.topMargin = 0;
+                        m.bottomMargin = 0;
+                        m.leftMargin = 0;
+                        m.rightMargin = 0;
+                        webView.setLayoutParams(m);
+                    }
+                }
+                return;
             }
 
-            int sbResId = getResources().getIdentifier("status_bar_height", "dimen", "android");
-            int resTopPx = sbResId > 0 ? getResources().getDimensionPixelSize(sbResId) : 0;
-            int nbResId = getResources().getIdentifier("navigation_bar_height", "dimen", "android");
-            int resBotPx = nbResId > 0 ? getResources().getDimensionPixelSize(nbResId) : 0;
+            if (contentGroup != null && webView.getParent() == contentGroup) {
+                boolean isLandscape = getResources().getConfiguration().orientation
+                        == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+                int wantTop = isLandscape ? 0 : PLAYER_TOP_OFFSET_PX_V244;
+                int wantBot = isLandscape
+                        ? Math.max(0, currentImeBottomPxV244)
+                        : Math.max(PLAYER_BOTTOM_OFFSET_PX_V244, currentImeBottomPxV244);
 
-            int topDp;
-            int botDp;
-            if (!isLandscape) {
-                int bestTopPx = Math.max(cutoutTopPx, Math.max(sysTopPx, resTopPx));
-                topDp = Math.max(26, Math.min(54, Math.round(bestTopPx / density)));
+                android.view.ViewGroup.LayoutParams rawLp = webView.getLayoutParams();
+                android.widget.FrameLayout.LayoutParams flp = (rawLp instanceof android.widget.FrameLayout.LayoutParams)
+                        ? (android.widget.FrameLayout.LayoutParams) rawLp
+                        : new android.widget.FrameLayout.LayoutParams(
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT);
 
-                int bestBotPx = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && sysBotPx > 0)
-                        ? Math.max(cutoutBotPx, sysBotPx)
-                        : Math.max(cutoutBotPx, resBotPx);
-                botDp = Math.max(18, Math.min(50, Math.round(bestBotPx / density)));
-            } else {
-                topDp = Math.max(0, Math.min(36, Math.round(cutoutTopPx / density)));
-                int bestBotPx = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && sysBotPx > 0)
-                        ? Math.max(cutoutBotPx, sysBotPx)
-                        : cutoutBotPx;
-                botDp = Math.max(10, Math.min(36, Math.round(bestBotPx / density)));
+                if (flp.topMargin != wantTop || flp.bottomMargin != wantBot
+                        || flp.leftMargin != 0 || flp.rightMargin != 0
+                        || flp.width != android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                        || flp.height != android.view.ViewGroup.LayoutParams.MATCH_PARENT) {
+                    flp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+                    flp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+                    flp.topMargin = wantTop;
+                    flp.bottomMargin = wantBot;
+                    flp.leftMargin = 0;
+                    flp.rightMargin = 0;
+                    webView.setLayoutParams(flp);
+                    webView.requestLayout();
+                }
             }
+        } catch (Throwable ignored) {}
+    }
 
-            JSONObject o = new JSONObject();
-            o.put("top", topDp);
-            o.put("bottom", botDp);
-            o.put("left", 0);
-            o.put("right", 0);
-            o.put("overlay", false);
-            o.put("fullscreen", isVideoFullscreenV132);
-            o.put("landscape", isLandscape);
-            return o.toString();
-        } catch (Exception e) {
-            return "{\"top\":34,\"bottom\":28,\"left\":0,\"right\":0,\"overlay\":false,\"fullscreen\":false}";
-        }
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        applyVideoSystemUiLockV132();
     }
 
     private void applyVideoSystemUiLockV132() {
@@ -254,6 +266,9 @@ public class MainActivity extends AppCompatActivity {
 
                 win.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xFF000000));
                 decor.setBackgroundColor(0xFF000000);
+                win.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     win.setStatusBarColor(0xFF000000);
                     win.setNavigationBarColor(0xFF000000);
@@ -261,8 +276,22 @@ public class MainActivity extends AppCompatActivity {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     try {
                         win.setNavigationBarContrastEnforced(false);
+                        win.setStatusBarContrastEnforced(false);
                     } catch (Throwable ignored) {}
                 }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    android.view.WindowManager.LayoutParams lp = win.getAttributes();
+                    if (lp.layoutInDisplayCutoutMode != android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES) {
+                        lp.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                        win.setAttributes(lp);
+                    }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        win.setDecorFitsSystemWindows(false);
+                    } catch (Throwable ignored) {}
+                }
+
                 if (webView != null) {
                     webView.setBackgroundColor(0xFF000000);
                 }
@@ -270,17 +299,29 @@ public class MainActivity extends AppCompatActivity {
                 if (!insetsListenerAttachedV243 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
                     insetsListenerAttachedV243 = true;
                     decor.setOnApplyWindowInsetsListener((v, insets) -> {
-                        evalJs("if(window.syncAndroidSafeInsetsV243) window.syncAndroidSafeInsetsV243();");
-                        return insets;
+                        int imeBot = 0;
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            try {
+                                imeBot = insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                            } catch (Throwable ignored) {}
+                        } else {
+                            int sysBot = insets.getSystemWindowInsetBottom();
+                            if (sysBot > 260) imeBot = sysBot;
+                        }
+                        if (imeBot != currentImeBottomPxV244) {
+                            currentImeBottomPxV244 = imeBot;
+                            applyPlayerViewportMarginsV244();
+                            if (imeBot == 0) {
+                                permWatchHandlerV147.postDelayed(() -> applyVideoSystemUiLockV132(), 120L);
+                            }
+                        } else {
+                            applyPlayerViewportMarginsV244();
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            return android.view.WindowInsets.CONSUMED;
+                        }
+                        return insets.consumeSystemWindowInsets();
                     });
-                }
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    android.view.WindowManager.LayoutParams lp = win.getAttributes();
-                    if (lp.layoutInDisplayCutoutMode != android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES) {
-                        lp.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-                        win.setAttributes(lp);
-                    }
                 }
 
                 if (keepAwake) {
@@ -291,29 +332,25 @@ public class MainActivity extends AppCompatActivity {
 
                 int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                         | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
-                if (isVideoFullscreenV132 || isVideoLockedV132) {
-                    flags |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-                }
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
                 decor.setSystemUiVisibility(flags);
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     try {
                         android.view.WindowInsetsController ic = win.getInsetsController();
                         if (ic != null) {
-                            if (isVideoFullscreenV132 || isVideoLockedV132) {
-                                ic.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
-                                ic.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-                            } else {
-                                ic.show(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
-                            }
+                            ic.hide(android.view.WindowInsets.Type.statusBars()
+                                    | android.view.WindowInsets.Type.navigationBars());
+                            ic.setSystemBarsBehavior(
+                                    android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
                         }
                     } catch (Throwable ignored) {}
                 }
 
-                evalJs("if(window.syncAndroidSafeInsetsV243) window.syncAndroidSafeInsetsV243();");
+                applyPlayerViewportMarginsV244();
             } catch (Exception ignored) {}
         });
     }
@@ -979,6 +1016,7 @@ public class MainActivity extends AppCompatActivity {
                     webView.requestLayout();
                     webView.invalidate();
                 }
+                applyVideoSystemUiLockV132();
                 if (bringToFront) {
                     Intent i = new Intent(MainActivity.this, MainActivity.class);
                     i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -1042,6 +1080,7 @@ public class MainActivity extends AppCompatActivity {
             webView.setScaleX(1.0f);
                         webView.setScaleY(1.0f);
                         setContentView(webView);
+            applyVideoSystemUiLockV132();
             evalJs("if(window.syncAndroidNotification) window.syncAndroidNotification(true);");
             evalJs("if(window.checkAndroidPendingTorrentV114) window.checkAndroidPendingTorrentV114();");
             return;

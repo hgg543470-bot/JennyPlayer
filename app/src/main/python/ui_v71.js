@@ -36215,3 +36215,28 @@ let vsyncTicks = 0;
     }, 150);
 })();
 /* ================= END JENNY_V243_UNIFIED_FIXES ================= */
+
+/* === BEGIN JENNY_V244_VIEWPORT_CLEAN === */
+(function() {
+    window.syncAndroidSafeInsetsV243 = function() {
+        var r = document.documentElement;
+        r.style.setProperty('--jenny-safe-top', '0px');
+        r.style.setProperty('--jenny-safe-bottom', '0px');
+    };
+    window.syncAndroidSafeInsetsV243();
+
+    var st = document.getElementById('jennyStyleV244Clean');
+    if (!st) {
+        st = document.createElement('style');
+        st.id = 'jennyStyleV244Clean';
+        document.head.appendChild(st);
+    }
+    st.textContent = [
+        ':root { --jenny-safe-top: 0px !important; --jenny-safe-bottom: 0px !important; }',
+        'html, body { background-color: #000000 !important; padding-top: 0px !important; padding-bottom: 0px !important; }',
+        '.modal-overlay { padding-top: 15px !important; padding-bottom: 15px !important; }',
+        '.jenny-modal-backdrop-v71 { padding: 14px !important; }',
+        '#jennySourcesDropMenuV91 { top: 48px !important; }'
+    ].join('\n');
+})();
+/* === END JENNY_V244_VIEWPORT_CLEAN === */
