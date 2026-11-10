@@ -11274,6 +11274,590 @@ def get_data_v237():
 _override_bottle_route_v212('/api/data', 'GET', get_data_v237)
 # ================= END JENNY_V237_FAST_SCANDIR_FOLDERS_AND_DATA_CACHE_PATCH =================
 
+# ================= BEGIN JENNY_V240_RADIO_PCM_VIDEO_SYNC_AND_SMART_REMUX_PATCH =================
+import struct as _struct_v240
+
+# 1. EXACT RADIO LIVE PCM RECORDER (HANDLES CHAINED OGG-FLAC LIKE RADIO PARADISE WITHOUT 1:39 EOS CUTOFF
+#    AND COMPUTES EXACT RECORDED AUDIO SECONDS FROM ACTUAL PCM BYTES!)
+_RADIO_REC_PROC_V240 = {"proc": None}
+
+
+def _radio_live_pcm_worker_v240(url: str, dst_path: str, is_lossless: bool):
+    proc = None
+    try:
+        if not is_lossless:
+            hdrs = dict(OST_HEADERS)
+            hdrs["Icy-MetaData"] = "0"
+            req = urllib.request.Request(url, headers=hdrs)
+            with urllib.request.urlopen(req, timeout=15) as resp, open(dst_path, "wb") as out_f:
+                while not _RADIO_REC_V91.get("stop_flag"):
+                    chunk = resp.read(16384)
+                    if not chunk:
+                        break
+                    out_f.write(chunk)
+                    out_f.flush()
+                    _RADIO_REC_V91["bytes"] = int(_RADIO_REC_V91.get("bytes") or 0) + len(chunk)
+                    _RADIO_REC_V91["last_byte_ts"] = time.time()
+            return
+
+        # Lossless mode: decode live via FFmpeg into raw 44.1kHz 16-bit stereo PCM (176,400 bytes = 1.000s)!
+        # FFmpeg transparently decodes chained Ogg-FLAC logical bitstreams across unlimited track changes!
+        ff_bin = find_ffmpeg_binary()
+        cmd = [
+            ff_bin, '-hide_banner', '-loglevel', 'error',
+            '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+            '-user_agent', OST_HEADERS.get('User-Agent', 'Mozilla/5.0'),
+            '-i', url,
+            '-vn', '-sn', '-dn',
+            '-ac', '2', '-ar', '44100',
+            '-f', 's16le', '-'
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+        _RADIO_REC_PROC_V240["proc"] = proc
+        with open(dst_path, "wb") as out_f:
+            while not _RADIO_REC_V91.get("stop_flag"):
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                out_f.write(chunk)
+                _RADIO_REC_V91["bytes"] = int(_RADIO_REC_V91.get("bytes") or 0) + len(chunk)
+                _RADIO_REC_V91["last_byte_ts"] = time.time()
+    except Exception as e:
+        _RADIO_REC_V91["err"] = str(e)
+    finally:
+        _RADIO_REC_PROC_V240["proc"] = None
+        if proc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        _RADIO_REC_V91["active"] = False
+
+
+def _wrap_s16le_pcm_as_wav_bytes_v240(pcm_bytes: bytes, sample_rate: int = 44100, channels: int = 2) -> bytes:
+    data_len = len(pcm_bytes)
+    byte_rate = sample_rate * channels * 2
+    block_align = channels * 2
+    wav_hdr = _struct_v240.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF',
+        36 + data_len,
+        b'WAVE',
+        b'fmt ',
+        16,
+        1,  # PCM
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        16,
+        b'data',
+        data_len,
+    )
+    return wav_hdr + pcm_bytes
+
+
+def api_radio_rec_start_v240():
+    response.content_type = 'application/json; charset=utf-8'
+    try:
+        if _RADIO_REC_V91.get("active"):
+            return json.dumps({"status": "error", "error": "Запись уже идёт"}, ensure_ascii=False)
+        load_multi_dirs_v71()
+        req = json.loads(request.body.read().decode('utf-8') or "{}")
+        s_url = (req.get("url") or "").strip()
+        s_title = (req.get("title") or "Radio").strip()
+        is_ll = bool(req.get("lossless", True))
+        fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
+        xf_mode = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15, 'xflac_hifi': 45}.get(fmt, 25)
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        ext_tmp = ".pcm" if is_ll else ".stream"
+        tmp_raw = os.path.join(MUSIC_DIR, f"temp_final_radraw_{os.getpid()}{ext_tmp}")
+        _RADIO_REC_V91.update({
+            "active": True,
+            "stop_flag": False,
+            "tmp_raw": tmp_raw,
+            "station": s_title,
+            "start_ts": time.time(),
+            "last_byte_ts": time.time(),
+            "bytes": 0,
+            "xf_mode": xf_mode,
+            "lossless": is_ll,
+            "err": "",
+        })
+        t = threading.Thread(target=_radio_live_pcm_worker_v240, args=(s_url, tmp_raw, is_ll), daemon=True)
+        _RADIO_REC_V91["thread"] = t
+        t.start()
+        return json.dumps({"status": "ok"}, ensure_ascii=False)
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+def api_radio_rec_status_v240():
+    response.content_type = 'application/json; charset=utf-8'
+    act = bool(_RADIO_REC_V91.get("active"))
+    raw_b = int(_RADIO_REC_V91.get("bytes") or 0)
+    is_ll = bool(_RADIO_REC_V91.get("lossless", True))
+    if is_ll:
+        # Exact audio seconds decoded into 44.1kHz 16-bit stereo PCM (176,400 bytes/sec)!
+        sec = int(raw_b // 176400)
+    else:
+        # For direct MP3 stream, cap by actual data flow so stalled stream never inflates timer
+        last_ts = float(_RADIO_REC_V91.get("last_byte_ts") or _RADIO_REC_V91.get("start_ts") or time.time())
+        start_ts = float(_RADIO_REC_V91.get("start_ts") or last_ts)
+        sec = max(0, int(last_ts - start_ts)) if raw_b > 0 else 0
+    mb = round(raw_b / (1024.0 * 1024.0), 2)
+    return json.dumps({
+        "active": act,
+        "sec": sec,
+        "wav_mb": mb,
+        "station": _RADIO_REC_V91.get("station") or "",
+        "err": _RADIO_REC_V91.get("err") or "",
+    }, ensure_ascii=False)
+
+
+def api_radio_rec_stop_v240():
+    response.content_type = 'application/json; charset=utf-8'
+    traw = _RADIO_REC_V91.get("tmp_raw") or ""
+    try:
+        _RADIO_REC_V91["stop_flag"] = True
+        p = _RADIO_REC_PROC_V240.get("proc")
+        if p:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        thr = _RADIO_REC_V91.get("thread")
+        if thr and thr.is_alive():
+            thr.join(timeout=2.5)
+        if p:
+            try:
+                p.kill()
+            except Exception:
+                pass
+        _RADIO_REC_V91["active"] = False
+
+        if not traw or not os.path.isfile(traw) or os.path.getsize(traw) < 16384:
+            err_detail = _RADIO_REC_V91.get("err") or "Поток станции не отдал аудиоданных"
+            return json.dumps({"status": "error", "error": f"Мало данных ({err_detail})"}, ensure_ascii=False)
+
+        safe_st = re.sub(r'[\\/:*?"<>|\[\]]+', '_', _RADIO_REC_V91.get("station") or "Radio").strip()[:100]
+        stamp = time.strftime("%H%M%S")
+        is_ll = bool(_RADIO_REC_V91.get("lossless", True))
+
+        if not is_ll:
+            final_name = f"Radio - {safe_st}_{stamp}.mp3"
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            shutil.move(traw, final_path)
+            traw = ""
+            rec_dur_sec = 0.0
+        else:
+            with open(traw, "rb") as f:
+                pcm_b = f.read()
+            # Align to 4-byte stereo frame boundary
+            aligned_len = (len(pcm_b) // 4) * 4
+            pcm_b = pcm_b[:aligned_len]
+            if aligned_len < 16384:
+                return json.dumps({"status": "error", "error": "Слишком короткая запись эфира"}, ensure_ascii=False)
+            rec_dur_sec = round(aligned_len / 176400.0, 1)
+            wav_b = _wrap_s16le_pcm_as_wav_bytes_v240(pcm_b, 44100, 2)
+            xf_mode = int(_RADIO_REC_V91.get("xf_mode", 25))
+            suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac", 45: "_hifi.xflac"}.get(xf_mode, "_psycho.xflac")
+            final_name = f"Radio - {safe_st}_{stamp}{suf}"
+            final_path = os.path.join(MUSIC_DIR, final_name)
+            xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_b, xf_mode)
+            with open(final_path, "wb") as out_f:
+                out_f.write(xfc_bytes)
+
+        db = load_custom_tags_db_v74()
+        db[final_name] = {
+            "TITLE": f"{safe_st} ({stamp})",
+            "ARTIST": "Radio Stream",
+            "ALBUM": "Записи радиоэфира",
+            "GENRE": "Radio",
+        }
+        save_custom_tags_db_v74(db)
+        if '_invalidate_fs_caches_v237' in globals():
+            _invalidate_fs_caches_v237()
+        sz_mb = round(os.path.getsize(final_path) / (1024.0 * 1024.0), 2)
+        return json.dumps({
+            "status": "ok",
+            "filename": final_name,
+            "size_mb": sz_mb,
+            "duration_sec": rec_dur_sec,
+        }, ensure_ascii=False)
+    except Exception as e:
+        response.status = 500
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+    finally:
+        if traw and os.path.isfile(traw):
+            try:
+                os.remove(traw)
+            except Exception:
+                pass
+
+_override_bottle_route_v212('/api/radio/record_start', 'POST', api_radio_rec_start_v240)
+_override_bottle_route_v212('/api/radio/record_status', 'GET', api_radio_rec_status_v240)
+_override_bottle_route_v212('/api/radio/record_stop', 'POST', api_radio_rec_stop_v240)
+
+
+# 2. SMART VIDEO STREAM CODEC INSPECTOR + ZERO-DESYNC LIVE REMUX (V240)
+_VIDEO_STREAM_INSPECT_CACHE_V240 = {}
+
+_LEGACY_TRANSCODE_VCODECS_V240 = {
+    'h263', 'h263p', 'h263i', 'mpeg4', 'msmpeg4v1', 'msmpeg4v2', 'msmpeg4v3',
+    'wmv1', 'wmv2', 'wmv3', 'vc1', 'flv1', 'vp6', 'vp6f', 'theora',
+    'mpeg1video', 'mpeg2video', 'rv10', 'rv20', 'rv30', 'rv40', 'svq1', 'svq3', 'cinepak', 'indeo3', 'indeo5'
+}
+
+_REMUX_REQUIRED_EXTS_V240 = (
+    '.mkv', '.avi', '.mov', '.3gp', '.3g2', '.ts', '.m2ts', '.mts', '.wmv', '.flv', '.mpg', '.mpeg', '.vob', '.ogv'
+)
+
+_TRANSCODE_REQUIRED_EXTS_V240 = (
+    '.avi', '.3gp', '.3g2', '.wmv', '.flv', '.mpg', '.mpeg', '.vob', '.ogv'
+)
+
+
+def _inspect_local_video_streams_v240(full_path: str) -> dict:
+    if not full_path or not os.path.isfile(full_path):
+        return {"ok": False, "needs_remux": False, "needs_transcode": False, "audio_tracks": 1}
+    try:
+        st = os.stat(full_path)
+        cache_key = (full_path, round(st.st_mtime, 2), st.st_size)
+        cached = _VIDEO_STREAM_INSPECT_CACHE_V240.get(cache_key)
+        if cached:
+            return cached
+    except Exception:
+        cache_key = None
+
+    ext_l = os.path.splitext(full_path)[1].lower()
+    container_fmt = ""
+    v_codec = ""
+    a_codecs = []
+    dur_sec = 0.0
+
+    # Check raw magic bytes first (catches 09_spoofed_webm_extension.mp4 in 0.05ms!)
+    spoofed_non_mp4 = False
+    try:
+        with open(full_path, "rb") as f:
+            hdr12 = f.read(12)
+        if ext_l in ('.mp4', '.m4v') and len(hdr12) >= 8:
+            if hdr12[:4] == b'\x1a\x45\xdf\xa3' or hdr12[:4] in (b'RIFF', b'OggS', b'FLV\x01'):
+                spoofed_non_mp4 = True
+    except Exception:
+        pass
+
+    try:
+        ff_bin = find_ffmpeg_binary()
+        res = subprocess.run(
+            [ff_bin, '-hide_banner', '-probesize', '1048576', '-analyzeduration', '1000000', '-i', full_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2.5,
+        )
+        info_txt = (res.stderr or b'').decode('utf-8', errors='replace')
+        m_in = re.search(r'Input #0,\s*([^,\s]+(?:,[^,\s]+)*)', info_txt)
+        if m_in:
+            container_fmt = m_in.group(1).lower()
+        m_dur = re.search(r'Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)', info_txt)
+        if m_dur:
+            dur_sec = int(m_dur.group(1)) * 3600 + int(m_dur.group(2)) * 60 + float(m_dur.group(3))
+        for line in info_txt.splitlines():
+            if 'Stream #' not in line:
+                continue
+            m_v = re.search(r'Video:\s*([a-zA-Z0-9_]+)', line)
+            if m_v and not v_codec:
+                v_codec = m_v.group(1).lower()
+            m_a = re.search(r'Audio:\s*([a-zA-Z0-9_]+)', line)
+            if m_a:
+                a_codecs.append(m_a.group(1).lower())
+    except Exception:
+        pass
+
+    first_a = a_codecs[0] if a_codecs else ""
+    needs_transcode = bool(
+        ext_l in _TRANSCODE_REQUIRED_EXTS_V240
+        or (v_codec and v_codec in _LEGACY_TRANSCODE_VCODECS_V240)
+    )
+
+    # Needs FFmpeg live_remux if:
+    # - Needs video transcoding (.3gp h263, .avi xvid, etc.)
+    # - Non-MP4/non-WebM container (.mkv, .mov, .ts, .avi, .3gp...)
+    # - Spoofed .mp4 file (e.g. Matroska/WebM inside .mp4!)
+    # - Exotic audio inside .mp4/.m4v (flac, opus, vorbis, ac3, eac3, dts, pcm_*, amr_*, mp2)
+    # - Exotic video inside .mp4 (vp9, vp8, av1 paired with opus/flac)
+    mp4_incompatible_audio = first_a not in ('', 'aac', 'mp3')
+    needs_remux = bool(
+        needs_transcode
+        or spoofed_non_mp4
+        or ext_l in _REMUX_REQUIRED_EXTS_V240
+        or (ext_l in ('.mp4', '.m4v') and (
+            mp4_incompatible_audio
+            or ('matroska' in container_fmt)
+            or ('avi' in container_fmt)
+            or (v_codec in ('vp9', 'vp8', 'av1') and first_a != 'aac')
+        ))
+    )
+
+    out = {
+        "ok": True,
+        "container": container_fmt,
+        "v_codec": v_codec,
+        "a_codec": first_a,
+        "audio_tracks": max(1, len(a_codecs)),
+        "duration_sec": round(dur_sec, 2),
+        "spoofed": spoofed_non_mp4,
+        "needs_remux": needs_remux,
+        "needs_transcode": needs_transcode,
+    }
+    if cache_key is not None:
+        if len(_VIDEO_STREAM_INSPECT_CACHE_V240) > 256:
+            _VIDEO_STREAM_INSPECT_CACHE_V240.clear()
+        _VIDEO_STREAM_INSPECT_CACHE_V240[cache_key] = out
+    return out
+
+
+def api_video_smart_check_v240():
+    response.content_type = 'application/json; charset=utf-8'
+    raw_src = (request.query.get('src') or '').strip()
+    if not raw_src:
+        return json.dumps({"status": "error"}, ensure_ascii=False)
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
+    if src.startswith('/api/torrent/stream/'):
+        low_s = src.lower()
+        return json.dumps({
+            "status": "ok",
+            "is_torrent": True,
+            "needs_remux": True,
+            "needs_transcode": any(x in low_s for x in _TRANSCODE_REQUIRED_EXTS_V240),
+            "audio_tracks": 2,
+        }, ensure_ascii=False)
+    fp = _resolve_any_media_path_v218(src)
+    info = _inspect_local_video_streams_v240(fp)
+    info["status"] = "ok"
+    return json.dumps(info, ensure_ascii=False)
+
+_override_bottle_route_v212('/api/video/smart_check_v240', 'GET', api_video_smart_check_v240)
+
+
+def api_video_live_remux_v240():
+    _cancel_stream_hold_release_v216()
+    raw_src = (request.query.get('src') or '').strip()
+    start_sec = float(request.query.get('start') or 0.0)
+    dur_sec = float(request.query.get('dur') or 0.0)
+    no_audio = (request.query.get('no_audio') == '1')
+    audio_only = (request.query.get('audio_only') == '1')
+    try:
+        audio_idx = max(0, int(request.query.get('aidx') or 0))
+    except Exception:
+        audio_idx = 0
+
+    if not raw_src:
+        response.status = 400
+        return "Missing src"
+
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
+
+    mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
+    req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
+    now_ts = time.time()
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            if k_existing != req_key:
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+            else:
+                kept = []
+                for ts_started, p_same in plist:
+                    if now_ts - ts_started > 6.0 and p_same.poll() is not None:
+                        continue
+                    kept.append((ts_started, p_same))
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    is_tor_stream = src.startswith('/api/torrent/stream/')
+    src_input = ""
+    if is_tor_stream:
+        parts = src.strip('/').split('/')
+        if len(parts) >= 5:
+            h_low = parts[3].lower()
+            try:
+                f_idx = int(parts[4].split('?')[0])
+            except Exception:
+                f_idx = 0
+            if dur_sec <= 0:
+                dur_sec, _, _ = _probe_torrent_partial_file_duration_v218(src)
+            ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
+            _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
+
+            try:
+                local_p, is_comp, f_len, f_done = _locate_downloaded_p2p_file_v163("", h_low, f_idx)
+                if local_p and os.path.isfile(local_p) and (is_comp or (f_len > 0 and f_done >= f_len)):
+                    src_input = local_p
+            except Exception:
+                pass
+
+            if not src_input and start_sec > 0.5 and ratio > 0.0:
+                wait_deadline = time.time() + 4.0
+                while time.time() < wait_deadline:
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.6) as sr:
+                            st_obj = json.loads(_safe_decode_bytes_v218(sr.read()))
+                        piece_ready = False
+                        for tor in (st_obj.get("torrents") or []):
+                            if (tor.get("hash") or "").strip().lower() == h_low:
+                                p_map = tor.get("pieces_map") or ""
+                                for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                                    if int(fobj.get("index", -1)) == f_idx:
+                                        beg_p = int(fobj.get("begin_piece") or 0)
+                                        end_p = int(fobj.get("end_piece") or 0)
+                                        f_l = int(fobj.get("length") or 0)
+                                        f_c = int(fobj.get("completed") or 0)
+                                        if f_l > 0 and f_c >= f_l:
+                                            piece_ready = True
+                                        elif end_p > beg_p and p_map:
+                                            t_p = max(beg_p, min(end_p - 1, beg_p + int(ratio * (end_p - beg_p))))
+                                            if 0 <= t_p < len(p_map) and p_map[t_p] == '4':
+                                                piece_ready = True
+                                        break
+                                break
+                        if piece_ready:
+                            break
+                    except Exception:
+                        break
+                    time.sleep(0.28)
+
+            if not src_input:
+                src_input = f"http://127.0.0.1:{globals().get('_INTERNAL_STREAM_PORT_V238', 8080)}/api/torrent/stream/{h_low}/{f_idx}"
+        else:
+            src_input = _resolve_any_media_path_v218(src)
+    else:
+        src_input = _resolve_any_media_path_v218(src)
+
+    is_http = str(src_input).startswith(('http://', 'https://'))
+    local_info = {"needs_transcode": False, "audio_tracks": 0}
+    if not is_http and src_input and os.path.isfile(src_input):
+        local_info = _inspect_local_video_streams_v240(src_input)
+        a_cnt = int(local_info.get("audio_tracks") or 0)
+        if a_cnt > 0 and audio_idx >= a_cnt:
+            audio_idx = audio_idx % a_cnt
+
+    # NOTE V240: NEVER return raw static_file() here! When JS calls /api/video/live_remux,
+    # it specifically needs FFmpeg container/audio/codec remuxing (even at start=0 and aidx=0)!
+
+    ff_bin = find_ffmpeg_binary()
+    ff_threads = str(max(2, min(8, int(_THREAD_CFG_V216.get("videoFfmpegThreads", 3)))))
+    cmd = [ff_bin, '-hide_banner', '-loglevel', 'error']
+    if is_http:
+        if start_sec > 0.5:
+            cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
+        else:
+            cmd.extend(['-seekable', '0', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '262144', '-analyzeduration', '300000'])
+
+    need_v_transcode = bool(
+        request.query.get('transcode') == '1'
+        or local_info.get("needs_transcode")
+        or str(src_input).lower().endswith(_TRANSCODE_REQUIRED_EXTS_V240)
+        or any(ext in src.lower() for ext in _TRANSCODE_REQUIRED_EXTS_V240)
+    )
+
+    # Seek BEFORE -i for fast keyframe demux, then lock timestamps to 0 via -avoid_negative_ts make_zero!
+    if start_sec > 0.5:
+        cmd.extend(['-ss', f"{start_sec:.2f}"])
+
+    if need_v_transcode:
+        v_codec_args = [
+            '-threads', ff_threads,
+            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+            '-crf', '23', '-pix_fmt', 'yuv420p', '-g', '30'
+        ]
+    else:
+        v_codec_args = ['-c:v', 'copy']
+
+    # CRITICAL A/V SYNC FIX V240:
+    # NEVER pass '+igndts' when copying H.264/HEVC B-frames — '+igndts' destroys ctts PTS/DTS offsets,
+    # freezing initial video GOPs in MediaCodec while audio races ahead!
+    fflags_val = '+genpts+nobuffer'
+    af_sync = 'aresample=async=1000:first_pts=0' if start_sec <= 0.5 else 'aresample=async=1000'
+
+    if audio_only:
+        cmd.extend([
+            '-fflags', fflags_val,
+            '-i', src_input,
+            '-vn', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+            '-threads', ff_threads,
+            '-af', af_sync,
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            '-avoid_negative_ts', 'make_zero',
+            '-movflags', 'empty_moov+default_base_moof',
+            '-frag_duration', '200000',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+    elif no_audio:
+        cmd.extend([
+            '-fflags', fflags_val,
+            '-i', src_input,
+            '-map', '0:v:0', '-an', '-sn', '-dn',
+            *v_codec_args,
+            '-avoid_negative_ts', 'make_zero',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-frag_duration', '200000',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+    else:
+        cmd.extend([
+            '-fflags', fflags_val,
+            '-i', src_input,
+            '-map', '0:v:0', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
+            *v_codec_args,
+            '-threads', ff_threads,
+            '-af', af_sync,
+            '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+            '-avoid_negative_ts', 'make_zero',
+            '-max_interleave_delta', '400000',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-frag_duration', '200000',
+            '-flush_packets', '1',
+            '-f', 'mp4', '-'
+        ])
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none"
+    }
+    def _remux_gen_v240():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return bottle.HTTPResponse(body=_remux_gen_v240(), status=200, headers=resp_hdrs)
+
+_override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v240)
+# ================= END JENNY_V240_RADIO_PCM_VIDEO_SYNC_AND_SMART_REMUX_PATCH =================
+
 # ================= BEGIN JENNY_V238_MULTI_PORT_CLUSTER_AND_CORS_PATCH =================
 _ACTIVE_CLUSTER_PORTS_V238 = [8080]
 _CLUSTER_STARTED_LOCK_V238 = threading.Lock()

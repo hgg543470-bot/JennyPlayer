@@ -1782,6 +1782,32 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private static boolean hasValidIsoBmffHeaderV240(File f, long len) {
+        if (len < 12L) return false;
+        RandomAccessFile raf = null;
+        try {
+            raf = new RandomAccessFile(f, "r");
+            byte[] h = new byte[12];
+            raf.readFully(h);
+            // Reject EBML (Matroska / WebM spoofed as .mp4: 1A 45 DF A3) or RIFF/AVI or OggS
+            if ((h[0] & 0xFF) == 0x1A && (h[1] & 0xFF) == 0x45 && (h[2] & 0xFF) == 0xDF && (h[3] & 0xFF) == 0xA3) {
+                return false;
+            }
+            if (h[0] == 'R' && h[1] == 'I' && h[2] == 'F' && h[3] == 'F') return false;
+            if (h[0] == 'O' && h[1] == 'g' && h[2] == 'g' && h[3] == 'S') return false;
+            // Standard ISO BMFF boxes have 'ftyp', 'moov', 'mdat', 'free', 'wide', 'skip', 'styp' at bytes 4..7
+            String box = new String(h, 4, 4, "US-ASCII");
+            return "ftyp".equals(box) || "moov".equals(box) || "mdat".equals(box)
+                    || "free".equals(box) || "wide".equals(box) || "skip".equals(box) || "styp".equals(box);
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (raf != null) {
+                try { raf.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
     private static String guessMediaMimeV238(String lowName) {
         if (lowName.endsWith(".mp3")) return "audio/mpeg";
         if (lowName.endsWith(".flac")) return "audio/flac";
@@ -1790,11 +1816,7 @@ public class MainActivity extends AppCompatActivity {
         if (lowName.endsWith(".aac")) return "audio/aac";
         if (lowName.endsWith(".ogg") || lowName.endsWith(".opus")) return "audio/ogg";
         if (lowName.endsWith(".mp4") || lowName.endsWith(".m4v")) return "video/mp4";
-        if (lowName.endsWith(".mkv")) return "video/x-matroska";
         if (lowName.endsWith(".webm")) return "video/webm";
-        if (lowName.endsWith(".mov")) return "video/quicktime";
-        if (lowName.endsWith(".3gp")) return "video/3gpp";
-        if (lowName.endsWith(".avi")) return "video/x-msvideo";
         return null;
     }
 
@@ -1933,6 +1955,9 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if ((low.endsWith(".opus") || low.endsWith(".ogg")) && hasJennyRevTrailerV238(matched, totalLen)) {
+                return null;
+            }
+            if ((low.endsWith(".mp4") || low.endsWith(".m4v")) && !hasValidIsoBmffHeaderV240(matched, totalLen)) {
                 return null;
             }
 

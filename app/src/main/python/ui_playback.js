@@ -342,8 +342,9 @@ window.playTrack = async function(filename, listContext = 'main') {
         let cleanFileName = filename.replace(/\.(opus|m4a|mp3)$/i, '');
         navigator.mediaSession.metadata = new MediaMetadata({ title: cleanFileName, artist: "🔥 HACKED BY JENNY 🔥" });
 
-        navigator.mediaSession.setActionHandler('play', () => window.togglePlay());
-        navigator.mediaSession.setActionHandler('pause', () => window.togglePlay());
+        navigator.mediaSession.setActionHandler('play', () => { if (window.explicitMediaSessionPlayV240) window.explicitMediaSessionPlayV240(); else window.togglePlay(); });
+        navigator.mediaSession.setActionHandler('pause', () => { if (window.explicitMediaSessionPauseV240) window.explicitMediaSessionPauseV240(); });
+        try { navigator.mediaSession.setActionHandler('stop', () => { if (window.explicitMediaSessionPauseV240) window.explicitMediaSessionPauseV240(); }); } catch (e) {}
         navigator.mediaSession.setActionHandler('previoustrack', () => window.playPreviousTrack());
         navigator.mediaSession.setActionHandler('nexttrack', () => window.playNextTrack());
     }
@@ -583,7 +584,8 @@ window.syncAndroidNotification = function(force) {
     let spd = player.playbackRate || 1.0;
 
     try {
-        window.AndroidBridge.updateMediaState(cleanTitle, !player.paused, displayPos, dur, spd);
+        const isDeckAPlaying = (!player.paused) || Boolean(window.isStudioPlaying && window.studioSourceNode);
+        window.AndroidBridge.updateMediaState(cleanTitle, isDeckAPlaying, displayPos, dur, spd);
     } catch (e) {}
 };
 

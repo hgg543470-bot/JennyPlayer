@@ -127,12 +127,23 @@ public class PlaybackService extends Service {
         mediaSession.setCallback(new MediaSession.Callback() {
             @Override
             public void onPlay() {
-                MainActivity.evalJs("if(window.togglePlay) window.togglePlay();");
+                MainActivity.evalJs("if(window.explicitMediaSessionPlayV240) window.explicitMediaSessionPlayV240(); else if(window.togglePlay) window.togglePlay();");
             }
 
             @Override
             public void onPause() {
-                MainActivity.evalJs("if(window.togglePlay) window.togglePlay();");
+                isPlaying = false;
+                updateMediaSessionState();
+                postAllNotifications();
+                MainActivity.evalJs("if(window.explicitMediaSessionPauseV240) window.explicitMediaSessionPauseV240();");
+            }
+
+            @Override
+            public void onStop() {
+                isPlaying = false;
+                updateMediaSessionState();
+                postAllNotifications();
+                MainActivity.evalJs("if(window.explicitMediaSessionPauseV240) window.explicitMediaSessionPauseV240();");
             }
 
             @Override
@@ -151,7 +162,7 @@ public class PlaybackService extends Service {
                 MainActivity.evalJs("if(window.seekFromNotification) window.seekFromNotification(" + sec + ");");
             }
         });
-        mediaSession.setActive(true);
+        mediaSession.setActive(false);
     }
 
     @Override
@@ -196,6 +207,8 @@ public class PlaybackService extends Service {
                 if (intent.hasExtra("notif_locked")) {
                     saveLockPref(intent.getBooleanExtra("notif_locked", isNotifLocked));
                 }
+                postAllNotifications();
+                return START_STICKY;
             } else if (ACTION_UPDATE.equals(act)) {
                 String t = intent.getStringExtra("title");
                 String sub = intent.getStringExtra("subtitle");
@@ -288,7 +301,7 @@ public class PlaybackService extends Service {
                 .setState(state, currentPosMs, isPlaying ? currentSpeed : 0f);
         mediaSession.setPlaybackState(stateBuilder.build());
         try {
-            mediaSession.setActive(isPlaying || isNotifLocked || isDownloadActive);
+            mediaSession.setActive(isPlaying);
         } catch (Throwable ignored) {}
     }
 

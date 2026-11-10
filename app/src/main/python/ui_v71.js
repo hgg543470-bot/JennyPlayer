@@ -33288,3 +33288,419 @@ let vsyncTicks = 0;
     setInterval(bindVideoExtPauseV239, 1500);
 })();
 /* ================= END JENNY_V239_HOTFIX_PLAYBACK_TORPREVIEW_AND_ROW_HEIGHT ================= */
+
+/* ================= BEGIN JENNY_V240_ISOLATION_RADIO_OST_AND_SMART_VIDEO_PATCH ================= */
+(function() {
+    if (window._jennyV240Installed) return;
+    window._jennyV240Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. STRICT MEDIASESSION PLAY vs PAUSE SEPARATION (NEVER HIJACK TOTAL COMMANDER / EXTERNAL PLAYERS!)
+    // -------------------------------------------------------------------------
+    window.explicitMediaSessionPauseV240 = function() {
+        // Pause Deck A (both HTML5 <audio> and WebAudio 32-bit Studio RAM!) WITHOUT ever toggling Play!
+        if (typeof window.onExternalAudioInterruptV237 === 'function') {
+            window.onExternalAudioInterruptV237();
+        } else if (typeof window.forceStopPauseDeckAAudioV232 === 'function') {
+            window.forceStopPauseDeckAAudioV232(false);
+        }
+        // Also pause any active Radio / OST / SoundCloud preview stream
+        if (window._radioStateV91 && window._radioStateV91.audio && !window._radioStateV91.audio.paused) {
+            if (typeof window.stopFlacRadioStreamV91 === 'function') window.stopFlacRadioStreamV91();
+        }
+        if (window._khStateV88 && window._khStateV88.previewAudio && !window._khStateV88.previewAudio.paused) {
+            if (typeof window.stopKhPreviewV88 === 'function') window.stopKhPreviewV88();
+        }
+        // Also pause Deck B <video> if active and playing
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        if (vid && st && st.active && !vid.paused) {
+            st.userPaused = true;
+            window._vidPlayIntentV132 = false;
+            try { vid.pause(); } catch (e) {}
+            if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+            if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') window.syncVideoPlayerButtonsUIV217();
+        }
+        if ('mediaSession' in navigator) {
+            try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
+        }
+        if (typeof window.syncAndroidNotification === 'function') {
+            window.syncAndroidNotification(true);
+        }
+    };
+
+    window.explicitMediaSessionPlayV240 = function() {
+        var isPlayingA = (typeof window.isDeckAActuallyPlayingV232 === 'function')
+            ? window.isDeckAActuallyPlayingV232()
+            : false;
+        if (!isPlayingA && window.currentPlayingTrack && typeof window.togglePlay === 'function') {
+            window.togglePlay();
+        }
+    };
+
+    var enforceSafeNavigatorMediaSessionV240 = function() {
+        if ('mediaSession' in navigator) {
+            try {
+                navigator.mediaSession.setActionHandler('play', function() {
+                    window.explicitMediaSessionPlayV240();
+                });
+                navigator.mediaSession.setActionHandler('pause', function() {
+                    window.explicitMediaSessionPauseV240();
+                });
+                navigator.mediaSession.setActionHandler('stop', function() {
+                    window.explicitMediaSessionPauseV240();
+                });
+                var playingNow = (typeof window.isDeckAActuallyPlayingV232 === 'function' && window.isDeckAActuallyPlayingV232())
+                    || Boolean(window._vidStateV130 && window._vidStateV130.active && !window._vidStateV130.userPaused);
+                navigator.mediaSession.playbackState = playingNow ? 'playing' : 'paused';
+            } catch (e) {}
+        }
+    };
+    enforceSafeNavigatorMediaSessionV240();
+    setInterval(enforceSafeNavigatorMediaSessionV240, 1500);
+
+    // -------------------------------------------------------------------------
+    // 2. RADIO RECORDING: EXACT MM:SS TIMER + AUTO-SAVE WHEN RADIO STREAM IS STOPPED
+    // -------------------------------------------------------------------------
+    window.fmtRadioRecDurationV240 = function(sec) {
+        var s = Math.max(0, Math.floor(Number(sec) || 0));
+        var m = Math.floor(s / 60);
+        var r = s % 60;
+        return (m < 10 ? '0' : '') + m + ':' + (r < 10 ? '0' : '') + r;
+    };
+
+    window._finalizingRadioRecLockV240 = false;
+    window.finalizeActiveRadioRecordingV240 = async function(reasonMsg) {
+        if (!window._radioStateV91 || !window._radioStateV91.isRecording || window._finalizingRadioRecLockV240) return;
+        window._finalizingRadioRecLockV240 = true;
+        var st = window._radioStateV91.currentStation || (window._radioStateV91.stations && window._radioStateV91.stations[0]);
+        var btn = document.getElementById('btnRadioRecV91');
+        var statusEl = document.getElementById('radNowPlayingTitleV91');
+        clearInterval(window._radioStateV91.recTimer);
+        window._radioStateV91.recTimer = null;
+        window._radioStateV91.isRecording = false;
+        if (btn) {
+            btn.innerText = '⏳ Сохраняем запись...';
+            btn.style.background = '#7341be';
+        }
+        try {
+            var r = await (await window.fetch('/api/radio/record_stop', { method: 'POST' })).json();
+            if (btn) {
+                btn.innerText = (st && !st.lossless) ? '⏺ Сохранить прямой эфир в .MP3 (без пережатия)' : '⏺ Записать эфир в .xFLAC (Lossless)';
+                btn.style.background = '#238636';
+            }
+            if (r && r.status === 'ok') {
+                var durLabel = r.duration_sec ? (' • ' + window.fmtRadioRecDurationV240(r.duration_sec)) : '';
+                if (statusEl) statusEl.innerText = '✅ Сохранено: ' + r.filename + ' (' + r.size_mb + ' MB' + durLabel + ')';
+                if (typeof window.scheduleCoalescedFetchDataV237 === 'function') window.scheduleCoalescedFetchDataV237(200);
+                else if (typeof window.fetchData === 'function') window.fetchData();
+                if (typeof window.showToast === 'function') {
+                    window.showToast('✅ ' + (reasonMsg ? (reasonMsg + ': ') : 'Записано: ') + r.filename + ' (' + r.size_mb + ' MB' + durLabel + ')');
+                }
+            } else if (statusEl) {
+                statusEl.innerText = '❌ ' + ((r && r.error) || 'Ошибка записи');
+            }
+        } catch (e) {
+            if (btn) {
+                btn.innerText = '⏺ Записать эфир в .xFLAC (Lossless)';
+                btn.style.background = '#238636';
+            }
+        } finally {
+            window._finalizingRadioRecLockV240 = false;
+        }
+    };
+
+    window.stopFlacRadioStreamV91 = function() {
+        var wasPlaying = Boolean(window._radioStateV91 && window._radioStateV91.audio && !window._radioStateV91.audio.paused);
+        if (window._radioStateV91 && window._radioStateV91.audio) {
+            try {
+                window._radioStateV91.audio.pause();
+                window._radioStateV91.audio.src = '';
+            } catch (e) {}
+            window._radioStateV91.audio = null;
+        }
+        document.querySelectorAll('.rad-play-btn-v91').forEach(function(b) { b.innerText = '▶'; });
+        // If radio was recording and user stopped the radio stream, automatically stop & save the recording!
+        if (wasPlaying && window._radioStateV91 && window._radioStateV91.isRecording) {
+            window.finalizeActiveRadioRecordingV240('Эфир остановлен, запись сохранена');
+        }
+    };
+
+    window.toggleRadioRecordToXflacV91 = async function() {
+        var st = window._radioStateV91.currentStation || (window._radioStateV91.stations && window._radioStateV91.stations[0]);
+        var btn = document.getElementById('btnRadioRecV91');
+        if (!window._radioStateV91.isRecording) {
+            if (!st) return;
+            var r = await (await window.fetch('/api/radio/record_start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: st.url,
+                    title: st.title,
+                    lossless: Boolean(st.lossless),
+                    format_mode: window._radioStateV91.formatMode
+                })
+            })).json();
+            if (r && r.status === 'ok') {
+                window._radioStateV91.isRecording = true;
+                var targetFmt = st.lossless ? 'xFLAC' : 'прямой MP3';
+                if (btn) {
+                    btn.innerText = '⏹ Стоп (' + targetFmt + ' • 00:00 • 0 МБ)';
+                    btn.style.background = '#da3633';
+                }
+                clearInterval(window._radioStateV91.recTimer);
+                window._radioStateV91.recTimer = setInterval(async function() {
+                    try {
+                        var stData = await (await window.fetch('/api/radio/record_status')).json();
+                        var curBtn = document.getElementById('btnRadioRecV91');
+                        if (stData && stData.active) {
+                            if (curBtn) {
+                                curBtn.innerText = '⏹ Стоп (' + targetFmt + ' • ' + window.fmtRadioRecDurationV240(stData.sec) + ' • ' + stData.wav_mb + ' МБ)';
+                                curBtn.style.background = '#da3633';
+                            }
+                        } else if (window._radioStateV91.isRecording) {
+                            // Server stream ended on its own -> finalize & save immediately instead of leaving timer stuck!
+                            window.finalizeActiveRadioRecordingV240('Поток завершён, запись сохранена');
+                        }
+                    } catch (e) {}
+                }, 600);
+            }
+        } else {
+            await window.finalizeActiveRadioRecordingV240('');
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 3. GAME OST STUDIO — LIVE CLICKABLE "CURRENTLY DOWNLOADING ALBUM" JUMP BANNER
+    // -------------------------------------------------------------------------
+    window.jumpToDownloadingKhAlbumV240 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var kh = window._khStateV88;
+        if (!kh || !kh.downloadingAlbumData) return;
+        kh.currentAlbum = kh.downloadingAlbumData;
+        if (typeof window.renderKhAlbumTracksV88 === 'function') {
+            window.renderKhAlbumTracksV88(kh.downloadingAlbumData);
+        }
+        window.refreshKhActiveDownloadBannerV240();
+    };
+
+    window.refreshKhActiveDownloadBannerV240 = function() {
+        var modal = document.getElementById('jennyKhinsiderModalV88');
+        if (!modal) return;
+        var kh = window._khStateV88 || {};
+        var bar = document.getElementById('khActiveDlJumpBarV240');
+        if (!bar) {
+            var bodyEl = document.getElementById('khBodyContentV88');
+            if (!bodyEl || !bodyEl.parentElement) return;
+            bar = document.createElement('div');
+            bar.id = 'khActiveDlJumpBarV240';
+            bar.onclick = window.jumpToDownloadingKhAlbumV240;
+            bar.style.cssText = 'display:none;margin:6px 12px 0 12px;padding:8px 10px;border-radius:9px;background:linear-gradient(90deg,rgba(31,111,235,0.22),rgba(63,185,80,0.22));border:1px solid #3fb950;cursor:pointer;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 2px 10px rgba(0,0,0,0.35);';
+            bodyEl.parentElement.insertBefore(bar, bodyEl);
+        }
+
+        if (!kh.isDownloading || !kh.downloadingAlbumData) {
+            bar.style.display = 'none';
+            return;
+        }
+
+        var viewingSameAlbum = Boolean(
+            kh.currentAlbum && kh.downloadingAlbumData &&
+            kh.currentAlbum.album_title === kh.downloadingAlbumData.album_title
+        );
+        var progStr = (kh.dlQueueIdxV240 && kh.dlQueueTotalV240)
+            ? ('[' + kh.dlQueueIdxV240 + '/' + kh.dlQueueTotalV240 + (kh.dlLastPctV240 ? (' • ' + kh.dlLastPctV240 + '%') : '') + ']')
+            : '⏳';
+        var albName = kh.downloadingAlbumData.album_title || 'Альбом OST';
+
+        bar.style.display = 'flex';
+        bar.innerHTML =
+            '<div style="min-width:0;flex:1;">' +
+                '<div style="color:#3fb950;font-size:11px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">📥 Качается: ' + albName + '</div>' +
+                '<div style="color:#79c0ff;font-size:10px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + progStr + (kh.dlCurrentTrackTitleV240 ? (' • ' + kh.dlCurrentTrackTitleV240) : '') + '</div>' +
+            '</div>' +
+            '<span style="flex-shrink:0;padding:4px 8px;border-radius:6px;background:' + (viewingSameAlbum ? 'rgba(63,185,80,0.22)' : '#238636') + ';color:#fff;font-size:10.5px;font-weight:bold;border:1px solid #3fb950;">' +
+                (viewingSameAlbum ? 'На экране ✓' : 'Перейти ➔') +
+            '</span>';
+    };
+
+    window.downloadSelectedKhTracksV88 = async function() {
+        var kh = window._khStateV88;
+        var alb = kh.currentAlbum || kh.downloadingAlbumData;
+        if (!alb || !alb.tracks) return;
+        if (kh.isDownloading) {
+            kh.abortDownload = true;
+            return;
+        }
+        var selList = alb.tracks.filter(function(t) { return kh.selectedTracks.has(t.index); });
+        if (!selList.length) {
+            if (typeof window.showToast === 'function') window.showToast('⚠️ Все выбранные треки уже скачаны!');
+            return;
+        }
+        kh.isDownloading = true;
+        kh.abortDownload = false;
+        kh.downloadingAlbumData = alb;
+        kh.dlQueueTotalV240 = selList.length;
+        kh.dlQueueIdxV240 = 1;
+        kh.dlLastPctV240 = 0;
+
+        var btn = document.getElementById('btnKhDownloadSelV88');
+        var stEl = document.getElementById('khDownloadStatusV88');
+        if (btn) btn.innerText = '⏹ Остановить очередь';
+        window.refreshKhActiveDownloadBannerV240();
+
+        var doneCnt = 0;
+        for (var i = 0; i < selList.length; i++) {
+            if (kh.abortDownload) break;
+            var t = selList[i];
+            kh.dlQueueIdxV240 = i + 1;
+            kh.dlCurrentTrackTitleV240 = t.title || ('Track #' + t.index);
+            window.refreshKhActiveDownloadBannerV240();
+            window.startKhProgressPollV89('[' + (i + 1) + '/' + selList.length + ']');
+            try {
+                var res = await window.fetch('/api/khinsider/download_track', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        page_path: t.page_path,
+                        album_title: alb.album_title,
+                        track_title: t.title,
+                        track_num: t.index,
+                        format_mode: kh.formatMode
+                    })
+                });
+                var data = await res.json();
+                if (res.ok && data && data.status === 'ok') {
+                    doneCnt++;
+                    window.markKhTrackAsDownloadedUIV89(t, data);
+                    if (typeof window.scheduleCoalescedFetchDataV237 === 'function') window.scheduleCoalescedFetchDataV237(350);
+                    else if (typeof window.fetchData === 'function') window.fetchData();
+                }
+            } catch (e) {}
+        }
+        window.stopKhProgressPollV89();
+        kh.isDownloading = false;
+        kh.downloadingAlbumData = null;
+        kh.dlCurrentTrackTitleV240 = '';
+        window.refreshKhActiveDownloadBannerV240();
+        if (stEl) stEl.innerText = '✅ Готово! Загружено: ' + doneCnt + ' из ' + selList.length + '.';
+        window.updateKhDownloadBtnLabelV88();
+        if (typeof window.showToast === 'function') window.showToast('🎉 Загружено в плеер: ' + doneCnt + ' треков!');
+    };
+
+    setInterval(function() {
+        if (window._khStateV88 && window._khStateV88.isDownloading) {
+            var fill = document.getElementById('khProgressBarFillV89');
+            if (fill && fill.style && fill.style.width) {
+                window._khStateV88.dlLastPctV240 = parseInt(fill.style.width, 10) || 0;
+            }
+            window.refreshKhActiveDownloadBannerV240();
+        }
+    }, 900);
+
+    // -------------------------------------------------------------------------
+    // 4. AUTOMATIC VIDEO REMUX FOR .3GP / .MOV / EXOTIC & SPOOFED .MP4 WITHOUT CLICKING "🔊 Дор."
+    // -------------------------------------------------------------------------
+    var _activateSeamlessLiveRemuxV240 = function(rawBaseUrl, forceTranscode, audioTracksCount) {
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!st || !vid || !st.active || !rawBaseUrl) return;
+
+        if (audioTracksCount && audioTracksCount > 0) {
+            st.audioStreamsCountV218 = audioTracksCount;
+        }
+        var curSec = (vid.currentTime && isFinite(vid.currentTime) && vid.currentTime > 0.5) ? vid.currentTime : 0;
+        var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+        var aIdx = st.audioTrackIdxV216 || 0;
+        var tcFlag = forceTranscode ? '1' : '0';
+        var spd = window._jennyVideoSpeedV170 || (vd && vd.speed) || (window.getBaseSpeedDeckB ? window.getBaseSpeedDeckB() : 1.0);
+
+        st.usingRemux = true;
+        st.remuxBaseOffset = curSec;
+        st._pendingSeekSecV167 = curSec;
+        st._pendingSeekTsV167 = performance.now();
+
+        vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+            '&start=' + curSec.toFixed(2) +
+            '&dur=' + (dur || 0).toFixed(2) +
+            '&aidx=' + aIdx +
+            '&transcode=' + tcFlag +
+            '&t=' + Date.now();
+        try {
+            vid.defaultPlaybackRate = spd;
+            vid.playbackRate = spd;
+        } catch (e) {}
+        if (!st.userPaused) {
+            vid.play().catch(function() {});
+        }
+        if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
+            window.syncVideoPlayerButtonsUIV217();
+        }
+    };
+
+    var _prevOpenVidV240 = window.openJennyVideoPlayerV130;
+    if (typeof _prevOpenVidV240 === 'function' && !_prevOpenVidV240._v240Wrapped) {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            var res = _prevOpenVidV240.apply(this, arguments);
+            var st = window._vidStateV130;
+            var vid = document.getElementById('jennyVideoElV130');
+            if (!st || !vid) return res;
+
+            var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || streamUrl || '';
+            var checkStr = String(st.currentTitle || titleStr || '') + ' ' + String(rawBaseUrl || '');
+            var openSessionTs = Date.now();
+            st._v240OpenSessionTs = openSessionTs;
+
+            // 1) Immediate remux for .mov, .3gp, .3g2, .ogv (in addition to .mkv, .avi, .ts, .wmv, .flv)
+            var isImmediateTranscodeExt = /\.(avi|3gp|3g2|wmv|flv|mpg|mpeg|vob|ogv)(\?|$)/i.test(checkStr);
+            var isImmediateRemuxExt = isImmediateTranscodeExt || /\.(mkv|mov|ts|m2ts|mts)(\?|$)/i.test(checkStr);
+            if (isImmediateRemuxExt) {
+                _activateSeamlessLiveRemuxV240(rawBaseUrl, isImmediateTranscodeExt, 0);
+                return res;
+            }
+
+            // 2) For .mp4 / .m4v / .webm: run 15ms server smart_check_v240 + <video> error fallback
+            //    so spoofed WebM-in-MP4 (09), FLAC-in-MP4 (11), Opus/VP9/AV1-in-MP4 (08, 12) switch to live_remux automatically!
+            var onDirectMediaError = function() {
+                if (!st.active || st._v240OpenSessionTs !== openSessionTs || st.usingRemux) return;
+                _activateSeamlessLiveRemuxV240(rawBaseUrl, false, 0);
+            };
+            vid.addEventListener('error', onDirectMediaError, { once: true });
+
+            window.fetch('/api/video/smart_check_v240?src=' + encodeURIComponent(rawBaseUrl))
+                .then(function(r) { return r.json(); })
+                .then(function(info) {
+                    if (!info || info.status !== 'ok') return;
+                    if (!st.active || st._v240OpenSessionTs !== openSessionTs) return;
+                    if (info.audio_tracks) {
+                        st.audioStreamsCountV218 = info.audio_tracks;
+                    }
+                    if (info.needs_remux && !st.usingRemux) {
+                        _activateSeamlessLiveRemuxV240(rawBaseUrl, Boolean(info.needs_transcode), info.audio_tracks || 0);
+                    }
+                })
+                .catch(function() {});
+
+            return res;
+        };
+        window.openJennyVideoPlayerV130._v240Wrapped = true;
+    }
+
+    // Also include .3gp/.3g2/.mov in applyCurrentVideoStreamModeV217 when user toggles В+А / В / А modes!
+    var _origApplyModeV217 = window.applyCurrentVideoStreamModeV217;
+    if (typeof _origApplyModeV217 === 'function' && !_origApplyModeV217._v240Wrapped) {
+        window.applyCurrentVideoStreamModeV217 = function(modeStr, showMsg) {
+            var st = window._vidStateV130;
+            if (st) {
+                var chk = String(st.currentTitle || '') + ' ' + String(st.rawTorStreamUrlV214 || st.currentUrl || '');
+                if (/\.(mov|3gp|3g2|mts|ogv)(\?|$)/i.test(chk)) {
+                    st.usingRemux = true;
+                }
+            }
+            return _origApplyModeV217.apply(this, arguments);
+        };
+        window.applyCurrentVideoStreamModeV217._v240Wrapped = true;
+    }
+})();
+/* ================= END JENNY_V240_ISOLATION_RADIO_OST_AND_SMART_VIDEO_PATCH ================= */
