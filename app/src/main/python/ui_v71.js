@@ -34518,7 +34518,7 @@ let vsyncTicks = 0;
         if (btnEl) btnEl.innerText = '⏳';
         var infoEl = document.getElementById('radNowPlayingTitleV91');
         if (infoEl) {
-            infoEl.innerHTML = '⏳ Предбуферизация 4 МБ: <b>' + st.title + '</b>...';
+            infoEl.innerHTML = '⏳ ⚡ Подключение к радиоэфиру...: <b>' + st.title + '</b>...';
         }
         var recBtn = document.getElementById('btnRadioRecV91');
         if (recBtn && !window._radioStateV91.isRecording) {
@@ -35492,3 +35492,726 @@ let vsyncTicks = 0;
     };
 })();
 /* ================= END JENNY_V238_P2P_TURBO_DIAG ================= */
+
+/* ================= BEGIN JENNY_V243_UNIFIED_FIXES ================= */
+(function() {
+    if (window._jennyV243Installed) return;
+    window._jennyV243Installed = true;
+
+    window._lastPhysicalTouchInAppTsV243 = 0;
+    window._lastActiveMediaSourceV243 = 'deckA'; // 'deckA' | 'deckB' | 'radio' | 'external'
+    window._lastRadioAudioElV243 = null;
+    window._lastExternalAudioElV243 = null;
+    window._lastRadioTitleV243 = '';
+    window._lastExternalTitleV243 = '';
+    window._torExpandedDiagHashesV243 = {};
+    window._lastNotifSigV243 = '';
+
+    // -------------------------------------------------------------------------
+    // 1. БЕЗОПАСНЫЕ ОТСТУПЫ ПОД КАМЕРУ И НИЖНИЙ БАР ANDROID (ЧЁРНЫЙ ФОН #000000)
+    //    + АВТОРАСТЯГИВАНИЕ СТРОКИ ПОИСКА + ШАПКА РАДИО БЕЗ НАЛОЖЕНИЯ КНОПОК
+    // -------------------------------------------------------------------------
+    var styleV243 = document.createElement('style');
+    styleV243.id = 'jennyStyleV243';
+    styleV243.textContent = [
+        ':root {',
+        '  --jenny-safe-top: 28px;',
+        '  --jenny-safe-bottom: 22px;',
+        '}',
+        'html, body {',
+        '  background-color: #000000 !important;',
+        '}',
+        'body:not(.jenny-desktop-overlay-active-v221) {',
+        '  padding-top: var(--jenny-safe-top, 28px) !important;',
+        '  padding-bottom: var(--jenny-safe-bottom, 22px) !important;',
+        '  box-sizing: border-box !important;',
+        '  max-height: 100dvh !important;',
+        '}',
+        '.modal-overlay, .jenny-modal-backdrop-v71 {',
+        '  padding-top: calc(var(--jenny-safe-top, 28px) + 6px) !important;',
+        '  padding-bottom: calc(var(--jenny-safe-bottom, 22px) + 6px) !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        '#jennyOmniLogViewerV139 {',
+        '  top: calc(var(--jenny-safe-top, 28px) + 8px) !important;',
+        '  bottom: calc(var(--jenny-safe-bottom, 22px) + 8px) !important;',
+        '}',
+        '#jennySourcesDropMenuV91 {',
+        '  top: calc(var(--jenny-safe-top, 28px) + 46px) !important;',
+        '}',
+        '#jennyVideoStudioRootV130:not(.compact-pip-v218):not(.audio-only-hidden-v219) #jennyVideoStageV130:not(.rot90-v130) #v130TopDragBar {',
+        '  padding-top: calc(var(--jenny-safe-top, 0px) + 8px) !important;',
+        '}',
+        '#jennyVideoStudioRootV130:not(.compact-pip-v218):not(.audio-only-hidden-v219) #jennyVideoStageV130:not(.rot90-v130) #v130BottomBar {',
+        '  padding-bottom: calc(var(--jenny-safe-bottom, 0px) + 10px) !important;',
+        '}',
+
+        /* Авторастягивание поля поиска на 100% свободной ширины до соседних кнопок */
+        '#searchInput {',
+        '  flex: 1 1 auto !important;',
+        '  width: auto !important;',
+        '  min-width: 0 !important;',
+        '  max-width: none !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+
+        /* Исправление наложения кнопок в шапке окна РАДИОЭФИР */
+        '#jennyFlacRadioModalV91 .jenny-modal-hdr-v71 {',
+        '  display: flex !important;',
+        '  flex-wrap: wrap !important;',
+        '  align-items: center !important;',
+        '  justify-content: space-between !important;',
+        '  gap: 6px !important;',
+        '  padding: 8px 10px !important;',
+        '  height: auto !important;',
+        '}',
+        '#jennyFlacRadioModalV91 .jenny-modal-hdr-v71 button {',
+        '  padding: 4px 8px !important;',
+        '  font-size: 10.5px !important;',
+        '  flex-shrink: 0 !important;',
+        '  position: static !important;',
+        '  margin: 0 !important;',
+        '}',
+
+        /* Полупрозрачные зоны Пред./След. под кнопками -10 и +10 в видеоплеере */
+        '#v243VideoPrevNextRow {',
+        '  display: flex;',
+        '  align-items: center;',
+        '  justify-content: center;',
+        '  gap: 22px;',
+        '  margin-top: 12px;',
+        '  pointer-events: none;',
+        '  z-index: 12;',
+        '}',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #v243VideoPrevNextRow,',
+        '#v130HudOverlay.hud-hidden-v130 #v243VideoPrevNextRow {',
+        '  display: none !important;',
+        '}',
+        '.v243-vid-adj-zone {',
+        '  pointer-events: auto !important;',
+        '  min-width: 96px !important;',
+        '  height: 40px !important;',
+        '  padding: 0 12px !important;',
+        '  border-radius: 13px !important;',
+        '  background: rgba(11, 24, 54, 0.34) !important;',
+        '  border: 1px solid rgba(96, 165, 250, 0.32) !important;',
+        '  color: rgba(219, 234, 254, 0.84) !important;',
+        '  backdrop-filter: blur(3px) !important;',
+        '  -webkit-backdrop-filter: blur(3px) !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  gap: 5px !important;',
+        '  font-size: 11px !important;',
+        '  font-weight: 800 !important;',
+        '  cursor: pointer !important;',
+        '  user-select: none !important;',
+        '  transition: background 0.14s ease, transform 0.1s ease !important;',
+        '}',
+        '.v243-vid-adj-zone:active {',
+        '  background: rgba(37, 99, 235, 0.58) !important;',
+        '  transform: scale(0.94) !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(styleV243);
+
+    window.syncAndroidSafeInsetsV243 = function() {
+        var topDp = 28, botDp = 22, isOv = false, isFs = false;
+        try {
+            if (window.AndroidBridge && typeof window.AndroidBridge.getSafeAreaInsetsJson === 'function') {
+                var parsed = JSON.parse(window.AndroidBridge.getSafeAreaInsetsJson() || '{}');
+                if (parsed) {
+                    isOv = Boolean(parsed.overlay);
+                    isFs = Boolean(parsed.fullscreen);
+                    if (typeof parsed.top === 'number') topDp = parsed.top;
+                    if (typeof parsed.bottom === 'number') botDp = parsed.bottom;
+                }
+            }
+        } catch (e) {}
+        var stVid = window._vidStateV130 || {};
+        if (isOv || stVid.desktopOverlay) {
+            topDp = 0;
+            botDp = 0;
+        } else if (isFs || stVid.nativeFullscreen) {
+            botDp = 0;
+        }
+        var rootEl = document.documentElement;
+        rootEl.style.setProperty('--jenny-safe-top', topDp + 'px');
+        rootEl.style.setProperty('--jenny-safe-bottom', botDp + 'px');
+    };
+
+    window.ensureSearchRowStretchV243 = function() {
+        var sInp = document.getElementById('searchInput');
+        if (!sInp || !sInp.parentElement) return;
+        var p = sInp.parentElement;
+        p.style.setProperty('display', 'flex', 'important');
+        p.style.setProperty('align-items', 'center', 'important');
+        p.style.setProperty('gap', '6px', 'important');
+        p.style.setProperty('width', '100%', 'important');
+        p.style.setProperty('box-sizing', 'border-box', 'important');
+        Array.from(p.children).forEach(function(ch) {
+            if (ch === sInp || ch.contains(sInp)) {
+                ch.style.setProperty('flex', '1 1 auto', 'important');
+                ch.style.setProperty('min-width', '0', 'important');
+                ch.style.setProperty('width', 'auto', 'important');
+                ch.style.setProperty('max-width', 'none', 'important');
+            } else {
+                ch.style.setProperty('flex', '0 0 auto', 'important');
+            }
+        });
+        if (p.parentElement && p.children.length === 1 && p.parentElement.children.length > 1) {
+            var gp = p.parentElement;
+            var gpDisp = getComputedStyle(gp).display;
+            if (gpDisp === 'flex' || gpDisp === 'inline-flex') {
+                gp.style.setProperty('width', '100%', 'important');
+                gp.style.setProperty('gap', '6px', 'important');
+                p.style.setProperty('flex', '1 1 auto', 'important');
+                p.style.setProperty('min-width', '0', 'important');
+                p.style.setProperty('width', 'auto', 'important');
+                p.style.setProperty('max-width', 'none', 'important');
+            }
+        }
+    };
+
+    window.fixRadioModalHeaderLayoutV243 = function() {
+        var rm = document.getElementById('jennyFlacRadioModalV91');
+        if (!rm) return;
+        var hdr = rm.querySelector('.jenny-modal-hdr-v71');
+        if (!hdr) return;
+        Array.from(hdr.children).forEach(function(ch) {
+            if (ch.tagName !== 'BUTTON' && !ch.querySelector('button')) {
+                ch.style.minWidth = '0';
+                ch.style.flex = '1 1 auto';
+            } else if (ch.querySelector && ch.querySelector('button')) {
+                ch.style.display = 'flex';
+                ch.style.alignItems = 'center';
+                ch.style.gap = '6px';
+                ch.style.flexWrap = 'nowrap';
+                ch.style.marginLeft = 'auto';
+            }
+        });
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. ЗАКРЫТИЕ «ВЫБЕРИ ИСТОЧНИК» И ГРОМКОСТИ ДЕКИ Б/А ПО ТАПУ МИМО (CAPTURE PHASE)
+    // -------------------------------------------------------------------------
+    var onGlobalPointerCaptureV243 = function(e) {
+        window._lastPhysicalTouchInAppTsV243 = performance.now();
+        var t = e && e.target;
+        if (!t) return;
+
+        var srcMenu = document.getElementById('jennySourcesDropMenuV91');
+        if (srcMenu && srcMenu.style.display !== 'none' && getComputedStyle(srcMenu).display !== 'none') {
+            if (!srcMenu.contains(t) && !(t.closest && t.closest('#btnSourcesHubDropV91'))) {
+                srcMenu.style.display = 'none';
+            }
+        }
+
+        var popB = document.getElementById('volumePopupDeckBV216');
+        if (popB && (popB.classList.contains('show') || popB.classList.contains('open'))) {
+            if (!popB.contains(t) && !(t.closest && t.closest('#volUIWrapperDeckBV216'))) {
+                popB.classList.remove('show', 'open');
+            }
+        }
+
+        var popA = document.getElementById('volumePopup');
+        if (popA && (popA.classList.contains('show') || popA.classList.contains('open'))) {
+            if (!popA.contains(t) && !(t.closest && t.closest('#volUIWrapper'))) {
+                popA.classList.remove('show', 'open');
+            }
+        }
+    };
+    window.addEventListener('pointerdown', onGlobalPointerCaptureV243, { capture: true, passive: true });
+    window.addEventListener('touchstart', onGlobalPointerCaptureV243, { capture: true, passive: true });
+    window.addEventListener('mousedown', onGlobalPointerCaptureV243, { capture: true, passive: true });
+
+    // -------------------------------------------------------------------------
+    // 3. ПОЛУПРОЗРАЧНЫЕ ЗОНЫ ПРЕД./СЛЕД. ПОД КНОПКАМИ -10 И +10 В ВИДЕОПЛЕЕРЕ
+    // -------------------------------------------------------------------------
+    window.ensureVideoPrevNextZonesV243 = function() {
+        var centerPlay = document.getElementById('v130CenterPlayBtn');
+        if (!centerPlay || !centerPlay.parentElement) return;
+        var centerRow = centerPlay.parentElement;
+        if (document.getElementById('v243VideoPrevNextRow')) return;
+
+        var prevSvg = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>';
+        var nextSvg = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>';
+
+        var navRow = document.createElement('div');
+        navRow.id = 'v243VideoPrevNextRow';
+        navRow.innerHTML =
+            '<button type="button" class="v243-vid-adj-zone" onclick="event.stopPropagation();window.playAdjacentVideoDeckBV216(-1, event)" title="Предыдущее видео">' +
+                prevSvg + '<span>Пред.</span>' +
+            '</button>' +
+            '<div style="width:42px;flex-shrink:0;pointer-events:none;"></div>' +
+            '<button type="button" class="v243-vid-adj-zone" onclick="event.stopPropagation();window.playAdjacentVideoDeckBV216(1, event)" title="Следующее видео">' +
+                '<span>След.</span>' + nextSvg +
+            '</button>';
+        centerRow.insertAdjacentElement('afterend', navRow);
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. ЧИСТОЕ ПЕРЕКЛЮЧЕНИЕ РАДИО БЕЗ УТЕЧКИ СОКЕТОВ + ЕДИНАЯ ШТОРКА ANDROID
+    // -------------------------------------------------------------------------
+    window.releaseDetachedAudioSocketV243 = function(audEl) {
+        if (!audEl || audEl.id === 'audioPlayer' || audEl.id === 'jennyVideoElV130') return;
+        try {
+            audEl.onended = null;
+            audEl.onerror = null;
+            audEl.onstalled = null;
+            audEl.onwaiting = null;
+            audEl.ontimeupdate = null;
+            audEl.pause();
+            audEl.removeAttribute('src');
+            audEl.src = '';
+            audEl.load();
+        } catch (e) {}
+    };
+
+    window.resolveCurrentRadioTitleV243 = function() {
+        var rs = window._radioStateV91 || {};
+        if (rs.currentStation) {
+            var nm = rs.currentStation.name || rs.currentStation.title || rs.currentStation.station || '';
+            if (nm) {
+                window._lastRadioTitleV243 = String(nm).trim();
+                return window._lastRadioTitleV243;
+            }
+        }
+        var rm = document.getElementById('jennyFlacRadioModalV91');
+        if (rm) {
+            var sub = rm.querySelector('[id*="Status"], [id*="Title"], [id*="Now"]');
+            if (sub && sub.textContent && sub.textContent.trim().length > 2) {
+                var clean = sub.textContent.replace(/Предбуферизация[^•\n]*/gi, '').trim();
+                if (clean) window._lastRadioTitleV243 = clean.slice(0, 65);
+            }
+        }
+        return window._lastRadioTitleV243 || 'Радиостанция';
+    };
+
+    var _origStopRadioV243 = window.stopFlacRadioStreamV91;
+    if (typeof _origStopRadioV243 === 'function' && !_origStopRadioV243._v243Wrapped) {
+        window.stopFlacRadioStreamV91 = function() {
+            var oldAud = (window._radioStateV91 && window._radioStateV91.audio) || window._lastRadioAudioElV243;
+            var r = _origStopRadioV243.apply(this, arguments);
+            if (oldAud) window.releaseDetachedAudioSocketV243(oldAud);
+            fetch('/api/radio/abort_stale_v243', { method: 'POST' }).catch(function(){});
+            setTimeout(function() {
+                if (window.syncPermanentForegroundNotificationV212) window.syncPermanentForegroundNotificationV212(true);
+            }, 60);
+            return r;
+        };
+        window.stopFlacRadioStreamV91._v243Wrapped = true;
+    }
+
+    // Отслеживаем старт любого HTMLMediaElement (Дека А, Дека Б, Радио, OST/SC/Торрент-поток)
+    var _origMediaPlayV243 = HTMLMediaElement.prototype.play;
+    if (_origMediaPlayV243 && !_origMediaPlayV243._v243Wrapped) {
+        HTMLMediaElement.prototype.play = function() {
+            var self = this;
+            try {
+                var srcStr = String(self.currentSrc || self.src || '');
+                if (self.id === 'audioPlayer') {
+                    window._lastActiveMediaSourceV243 = 'deckA';
+                } else if (self.id === 'jennyVideoElV130') {
+                    window._lastActiveMediaSourceV243 = 'deckB';
+                } else {
+                    var isRad = Boolean(
+                        (window._radioStateV91 && window._radioStateV91.audio === self) ||
+                        /radio|icecast|shoutcast|stream_radio|flac_radio/i.test(srcStr) ||
+                        (document.getElementById('jennyFlacRadioModalV91') &&
+                         getComputedStyle(document.getElementById('jennyFlacRadioModalV91')).display !== 'none' &&
+                         srcStr.indexOf('/api/torrent/') === -1 && srcStr.indexOf('soundcloud') === -1)
+                    );
+                    if (isRad) {
+                        if (window._lastRadioAudioElV243 && window._lastRadioAudioElV243 !== self) {
+                            window.releaseDetachedAudioSocketV243(window._lastRadioAudioElV243);
+                            fetch('/api/radio/abort_stale_v243', { method: 'POST' }).catch(function(){});
+                        }
+                        if (typeof window.isDeckAActuallyPlayingV232 === 'function' && window.isDeckAActuallyPlayingV232() && typeof window.forceStopPauseDeckAAudioV232 === 'function') {
+                            window.forceStopPauseDeckAAudioV232(false);
+                        }
+                        window._lastRadioAudioElV243 = self;
+                        window._lastRadioSrcUrlV243 = srcStr;
+                        window._lastActiveMediaSourceV243 = 'radio';
+                        window.resolveCurrentRadioTitleV243();
+
+                        if (!self._v243RetryHooked) {
+                            self._v243RetryHooked = true;
+                            self.addEventListener('playing', function() {
+                                self._v243RetriedOnce = false;
+                                if (window.syncPermanentForegroundNotificationV212) window.syncPermanentForegroundNotificationV212(true);
+                            });
+                            self.addEventListener('pause', function() {
+                                if (window.syncPermanentForegroundNotificationV212) window.syncPermanentForegroundNotificationV212(true);
+                            });
+                            self.addEventListener('error', function() {
+                                if (!self._v243RetriedOnce && window._lastActiveMediaSourceV243 === 'radio' && window._lastRadioSrcUrlV243) {
+                                    self._v243RetriedOnce = true;
+                                    var baseU = window._lastRadioSrcUrlV243.replace(/([?&])_r243=\d+/g, '').replace(/[?&]$/, '');
+                                    var sep = baseU.indexOf('?') === -1 ? '?' : '&';
+                                    setTimeout(function() {
+                                        if (window._lastRadioAudioElV243 !== self) return;
+                                        self.src = baseU + sep + '_r243=' + Date.now();
+                                        _origMediaPlayV243.call(self).catch(function(){});
+                                    }, 450);
+                                }
+                            });
+                        }
+                    } else if (srcStr) {
+                        if (window._lastExternalAudioElV243 && window._lastExternalAudioElV243 !== self) {
+                            window.releaseDetachedAudioSocketV243(window._lastExternalAudioElV243);
+                        }
+                        window._lastExternalAudioElV243 = self;
+                        window._lastActiveMediaSourceV243 = 'external';
+                        var umpTitle = document.querySelector('.jenny-univ-mini-player-v98 .ump-title, #khMiniTitleV90');
+                        if (umpTitle && umpTitle.textContent) {
+                            window._lastExternalTitleV243 = umpTitle.textContent.trim();
+                        }
+                    }
+                }
+            } catch (e) {}
+
+            var p = _origMediaPlayV243.apply(this, arguments);
+            setTimeout(function() {
+                if (window.syncPermanentForegroundNotificationV212) window.syncPermanentForegroundNotificationV212(true);
+            }, 120);
+            return p;
+        };
+        HTMLMediaElement.prototype.play._v243Wrapped = true;
+    }
+
+    var _origPlayTrackV243 = window.playTrack;
+    if (typeof _origPlayTrackV243 === 'function' && !_origPlayTrackV243._v243Wrapped) {
+        window.playTrack = function(filename) {
+            if (filename && !(window.isVideoFileNameV130 && window.isVideoFileNameV130(filename))) {
+                window._lastActiveMediaSourceV243 = 'deckA';
+            }
+            return _origPlayTrackV243.apply(this, arguments);
+        };
+        window.playTrack._v243Wrapped = true;
+    }
+
+    window.getActiveSourcesSnapshotV243 = function() {
+        var player = document.getElementById('audioPlayer');
+        var vid = document.getElementById('jennyVideoElV130');
+        var stVid = window._vidStateV130 || {};
+        var radAud = (window._radioStateV91 && window._radioStateV91.audio) || window._lastRadioAudioElV243;
+        var extAud = (window._khStateV88 && window._khStateV88.previewAudio) || window._lastExternalAudioElV243;
+        if (extAud && extAud === radAud) extAud = null;
+
+        var deckAPlaying = (typeof window.isDeckAActuallyPlayingV232 === 'function')
+            ? window.isDeckAActuallyPlayingV232()
+            : Boolean(player && window.currentPlayingTrack && !player.paused);
+        var deckBPlaying = Boolean(
+            stVid.active && !stVid.userPaused && vid &&
+            ((!vid.paused && !vid.ended) || (window.videoDeckV131 && window.videoDeckV131.isReversed))
+        );
+        var radioPlaying = Boolean(radAud && !radAud.paused && !radAud.ended && radAud.currentSrc);
+        var extPlaying = Boolean(extAud && !extAud.paused && !extAud.ended && extAud.currentSrc);
+
+        return {
+            player: player, vid: vid, stVid: stVid, radAud: radAud, extAud: extAud,
+            deckAPlaying: deckAPlaying, deckBPlaying: deckBPlaying,
+            radioPlaying: radioPlaying, extPlaying: extPlaying,
+            anyPlaying: Boolean(deckAPlaying || deckBPlaying || radioPlaying || extPlaying)
+        };
+    };
+
+    window.handleNativeMediaControlV243 = function(cmd) {
+        var snap = window.getActiveSourcesSnapshotV243();
+        var target = window._lastActiveMediaSourceV243 || 'deckA';
+        if (snap.radioPlaying) target = 'radio';
+        else if (snap.extPlaying) target = 'external';
+        else if (snap.deckBPlaying && !snap.deckAPlaying) target = 'deckB';
+        else if (snap.deckAPlaying && !snap.deckBPlaying) target = 'deckA';
+
+        if (target === 'radio' && (snap.radAud || window._lastRadioSrcUrlV243)) {
+            var rAud = snap.radAud;
+            if (cmd === 'pause' || (cmd === 'toggle' && snap.radioPlaying)) {
+                if (rAud) { try { rAud.pause(); } catch (e) {} }
+            } else if (cmd === 'play' || (cmd === 'toggle' && !snap.radioPlaying)) {
+                if (rAud) {
+                    if (!rAud.src && window._lastRadioSrcUrlV243) rAud.src = window._lastRadioSrcUrlV243;
+                    rAud.play().catch(function(){});
+                }
+            } else if (cmd === 'next' || cmd === 'prev') {
+                var cards = Array.from(document.querySelectorAll('#jennyFlacRadioModalV91 [onclick*="playFlacRadio"], #jennyFlacRadioModalV91 [onclick*="RadioStation"]'));
+                if (cards.length > 0) {
+                    window._radIdxV243 = ((window._radIdxV243 || 0) + (cmd === 'next' ? 1 : cards.length - 1)) % cards.length;
+                    try { cards[window._radIdxV243].click(); } catch (e) {}
+                }
+            }
+        } else if (target === 'deckB' && snap.stVid && snap.stVid.active) {
+            if (cmd === 'next') {
+                if (window.playAdjacentVideoDeckBV216) window.playAdjacentVideoDeckBV216(1);
+            } else if (cmd === 'prev') {
+                if (window.playAdjacentVideoDeckBV216) window.playAdjacentVideoDeckBV216(-1);
+            } else if (cmd === 'pause' && snap.deckBPlaying) {
+                if (window.togglePlayDeckBV216) window.togglePlayDeckBV216();
+            } else if (cmd === 'play' && !snap.deckBPlaying) {
+                if (window.togglePlayDeckBV216) window.togglePlayDeckBV216();
+            } else if (cmd === 'toggle') {
+                if (window.togglePlayDeckBV216) window.togglePlayDeckBV216();
+            }
+        } else if (target === 'external' && snap.extAud) {
+            if (cmd === 'pause' || (cmd === 'toggle' && snap.extPlaying)) {
+                try { snap.extAud.pause(); } catch (e) {}
+            } else if (cmd === 'play' || (cmd === 'toggle' && !snap.extPlaying)) {
+                snap.extAud.play().catch(function(){});
+            }
+        } else {
+            if (cmd === 'next') {
+                if (window._origNextTrackV243) window._origNextTrackV243();
+            } else if (cmd === 'prev') {
+                if (window._origPrevTrackV243) window._origPrevTrackV243();
+            } else if (cmd === 'pause') {
+                if (snap.deckAPlaying && window.forceStopPauseDeckAAudioV232) window.forceStopPauseDeckAAudioV232(false);
+                else if (snap.deckAPlaying && window._origTogglePlayV243) window._origTogglePlayV243();
+            } else if (cmd === 'play') {
+                if (!snap.deckAPlaying && window._origTogglePlayV243) window._origTogglePlayV243();
+            } else {
+                if (window._origTogglePlayV243) window._origTogglePlayV243();
+            }
+        }
+        setTimeout(function() {
+            if (window.syncPermanentForegroundNotificationV212) window.syncPermanentForegroundNotificationV212(true);
+        }, 80);
+    };
+
+    // Перехват внешних вызовов togglePlay / nextTrack / prevTrack из шторки или гарнитуры, когда активен другой источник
+    if (typeof window.togglePlay === 'function' && !window.togglePlay._v243Wrapped) {
+        window._origTogglePlayV243 = window.togglePlay;
+        window.togglePlay = function() {
+            var touchAge = performance.now() - (window._lastPhysicalTouchInAppTsV243 || 0);
+            if (touchAge > 650 && window._lastActiveMediaSourceV243 !== 'deckA') {
+                return window.handleNativeMediaControlV243('toggle');
+            }
+            window._lastActiveMediaSourceV243 = 'deckA';
+            var r = window._origTogglePlayV243.apply(this, arguments);
+            setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
+            return r;
+        };
+        window.togglePlay._v243Wrapped = true;
+    }
+    if (typeof window.nextTrack === 'function' && !window.nextTrack._v243Wrapped) {
+        window._origNextTrackV243 = window.nextTrack;
+        window.nextTrack = function() {
+            var touchAge = performance.now() - (window._lastPhysicalTouchInAppTsV243 || 0);
+            if (touchAge > 650 && window._lastActiveMediaSourceV243 !== 'deckA') {
+                return window.handleNativeMediaControlV243('next');
+            }
+            return window._origNextTrackV243.apply(this, arguments);
+        };
+        window.nextTrack._v243Wrapped = true;
+    }
+    if (typeof window.prevTrack === 'function' && !window.prevTrack._v243Wrapped) {
+        window._origPrevTrackV243 = window.prevTrack;
+        window.prevTrack = function() {
+            var touchAge = performance.now() - (window._lastPhysicalTouchInAppTsV243 || 0);
+            if (touchAge > 650 && window._lastActiveMediaSourceV243 !== 'deckA') {
+                return window.handleNativeMediaControlV243('prev');
+            }
+            return window._origPrevTrackV243.apply(this, arguments);
+        };
+        window.prevTrack._v243Wrapped = true;
+    }
+
+    if (navigator.mediaSession && typeof navigator.mediaSession.setActionHandler === 'function') {
+        try {
+            navigator.mediaSession.setActionHandler('play', function() { window.handleNativeMediaControlV243('play'); });
+            navigator.mediaSession.setActionHandler('pause', function() { window.handleNativeMediaControlV243('pause'); });
+            navigator.mediaSession.setActionHandler('previoustrack', function() { window.handleNativeMediaControlV243('prev'); });
+            navigator.mediaSession.setActionHandler('nexttrack', function() { window.handleNativeMediaControlV243('next'); });
+        } catch (e) {}
+    }
+
+    window.syncPermanentForegroundNotificationV212 = window.syncAndroidNotification = function(force) {
+        if (!window.AndroidBridge) return;
+        var now = Date.now();
+        var snap = window.getActiveSourcesSnapshotV243();
+        var isActuallyPlaying = snap.anyPlaying;
+
+        var torSnap = window._torLiveDaemonSnapV128 || [];
+        var activeTorCnt = 0, sumKbps = 0, sumDoneB = 0, sumLenB = 0;
+        torSnap.forEach(function(t) {
+            var files = t.files || [];
+            if (files.some(function(f) { return !f.done; }) && !t.paused) {
+                activeTorCnt++;
+                sumKbps += (t.speed_kbps || 0);
+                files.forEach(function(f) { sumLenB += (f.length || 0); sumDoneB += (f.completed || 0); });
+            }
+        });
+        var torPct = sumLenB > 0 ? Math.min(99, Math.floor((sumDoneB * 100) / sumLenB)) : 0;
+
+        var titleParts = [];
+        var subParts = [];
+        if (activeTorCnt > 0) subParts.push('⚡ P2P: ' + sumKbps + ' КБ/с (' + torPct + '%)');
+
+        var posSec = 0, durSec = 0, spd = 1.0;
+
+        if (snap.radioPlaying) {
+            var rName = window.resolveCurrentRadioTitleV243();
+            titleParts.push('📻 ' + rName);
+            subParts.push((window._radioStateV91 && window._radioStateV91.isRecording) ? '🔴 Запись эфира • Прямой поток' : '📡 Прямой радиоэфир');
+        } else if (snap.extPlaying) {
+            titleParts.push('🎧 ' + (window._lastExternalTitleV243 || 'Внешний поток'));
+            subParts.push('🌐 Потоковое прослушивание');
+            durSec = isFinite(snap.extAud.duration) ? snap.extAud.duration : 0;
+            posSec = isFinite(snap.extAud.currentTime) ? snap.extAud.currentTime : 0;
+        } else {
+            if (snap.deckAPlaying && window.currentPlayingTrack) {
+                var cleanA = String(window.currentPlayingTrack).replace(/\.(opus|m4a|mp3|wav|flac|ogg|xflac)$/i, '');
+                titleParts.push('🎵 ' + cleanA);
+                durSec = (snap.player && isFinite(snap.player.duration) && snap.player.duration > 0) ? snap.player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
+                posSec = (snap.player && isFinite(snap.player.currentTime)) ? snap.player.currentTime : 0;
+                spd = (snap.player && snap.player.playbackRate) || 1.0;
+            }
+            if (snap.deckBPlaying && snap.stVid.currentTitle) {
+                var cleanB = String(snap.stVid.currentTitle).replace(/\.(mp4|mkv|webm|avi|mov)$/i, '');
+                titleParts.push('🎬 ' + cleanB);
+                if (!snap.deckAPlaying && snap.vid) {
+                    durSec = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(snap.vid) : (snap.vid.duration || 0);
+                    posSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(snap.vid) : (snap.vid.currentTime || 0);
+                    spd = (window.videoDeckV131 && window.videoDeckV131.speed) || snap.vid.playbackRate || 1.0;
+                }
+            }
+            if (snap.deckAPlaying && snap.deckBPlaying) subParts.push('🎛️ Дека А + Дека Б');
+            else if (snap.deckBPlaying) subParts.push('🎬 Дека Б: x' + spd);
+            else if (snap.deckAPlaying) subParts.push('🎵 Дека А: x' + spd);
+        }
+
+        if (!isActuallyPlaying) {
+            var lastSrc = window._lastActiveMediaSourceV243 || 'deckA';
+            if (lastSrc === 'radio' && (window._lastRadioTitleV243 || (window._radioStateV91 && window._radioStateV91.currentStation))) {
+                titleParts.push('⏸ 📻 ' + window.resolveCurrentRadioTitleV243());
+                subParts.push('📻 Радиоэфир на паузе');
+            } else if (lastSrc === 'deckB' && snap.stVid && snap.stVid.active && snap.stVid.currentTitle) {
+                titleParts.push('⏸ 🎬 ' + String(snap.stVid.currentTitle).replace(/\.(mp4|mkv|webm|avi|mov)$/i, ''));
+                subParts.push('🎬 Видео на паузе');
+            } else if (activeTorCnt > 0) {
+                titleParts.push('🧲 Закачка P2P (' + activeTorCnt + ' разд. • ' + torPct + '%)');
+                subParts.push('📥 Фоновая загрузка активна');
+            } else if (window.currentPlayingTrack) {
+                titleParts.push('⏸ ' + String(window.currentPlayingTrack).replace(/\.(opus|m4a|mp3|wav|flac|ogg|xflac)$/i, ''));
+                subParts.push('🎵 На паузе');
+            } else {
+                titleParts.push('🛡️ Jenny Player');
+                subParts.push('Готов к воспроизведению');
+            }
+        }
+
+        var finalTitle = titleParts.join(' │ ');
+        var finalSub = subParts.join(' • ');
+        var curSig = finalTitle + '|' + finalSub + '|' + (isActuallyPlaying ? '1' : '0');
+
+        if (!force && curSig === window._lastNotifSigV243 && (!isActuallyPlaying || (now - (window._lastPermNotifSyncTsV212 || 0) < 1200))) {
+            return;
+        }
+        window._lastNotifSigV243 = curSig;
+        window._lastPermNotifSyncTsV212 = now;
+
+        try {
+            if (typeof window.AndroidBridge.updateMediaStateFull === 'function') {
+                window.AndroidBridge.updateMediaStateFull(finalTitle, finalSub, isActuallyPlaying, posSec, durSec, spd);
+            } else if (typeof window.AndroidBridge.updateMediaState === 'function') {
+                window.AndroidBridge.updateMediaState(finalTitle + ' || ' + finalSub, isActuallyPlaying, posSec, durSec, spd);
+            }
+        } catch (e) {}
+    };
+
+    // -------------------------------------------------------------------------
+    // 5. ЦЕНТР ЗАКАЧЕК P2P: СКРЫТИЕ ОРИГ/WAV НА MP3 + СВОРАЧИВАЕМАЯ КНОПКА 📡 ИНФО В КАРТОЧКЕ
+    // -------------------------------------------------------------------------
+    window.toggleTorCardDiagV243 = function(hash, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var h = String(hash || '').toLowerCase();
+        window._torExpandedDiagHashesV243[h] = !window._torExpandedDiagHashesV243[h];
+        window.renderTorrentInspectorHubV128();
+    };
+
+    var _prevRenderHubV243 = window.renderTorrentInspectorHubV128;
+    if (typeof _prevRenderHubV243 === 'function' && !_prevRenderHubV243._v243Wrapped) {
+        window.renderTorrentInspectorHubV128 = function() {
+            var r = _prevRenderHubV243.apply(this, arguments);
+            var scrollBody = document.getElementById('torHubScrollBodyV128');
+            if (!scrollBody) return r;
+            var activeTab = window._torHubTabV128 || 'torrents';
+
+            if (activeTab === 'tracks') {
+                // Оставляем кнопки «Добавить ориг» / «Добавить WAV» строго для Lossless (.flac / .ape / .wv / .alac)
+                scrollBody.querySelectorAll('button[onclick*="addP2pCompareFileToPlayerV162"]').forEach(function(btn) {
+                    var oc = String(btn.getAttribute('onclick') || '');
+                    var isLossless = /\.(flac|ape|wv|alac)\s*'/i.test(oc);
+                    if (!isLossless && btn.parentElement) {
+                        btn.parentElement.remove();
+                    }
+                });
+            } else if (activeTab === 'torrents') {
+                // Убираем верхнюю стопку диагностических карточек и переносим их внутрь каждой карточки раздачи под кнопку [📡 Инфо]
+                Array.from(scrollBody.children).forEach(function(ch) {
+                    var st = String(ch.getAttribute('style') || '');
+                    if (st.indexOf('border-left:3px solid') !== -1 || st.indexOf('border-left: 3px solid') !== -1) {
+                        ch.remove();
+                    }
+                });
+
+                var torList = window._torLiveDaemonSnapV128 || [];
+                scrollBody.querySelectorAll('button[onclick*="jumpToTorrentFilesFromHubV128"]').forEach(function(fBtn) {
+                    var m = String(fBtn.getAttribute('onclick') || '').match(/jumpToTorrentFilesFromHubV128\('([^']+)'\)/);
+                    if (!m) return;
+                    var h = String(m[1] || '').toLowerCase();
+                    var btnRow = fBtn.parentElement;
+                    var card = btnRow ? btnRow.parentElement : null;
+                    if (!btnRow || !card || btnRow.querySelector('[data-diag-btn-v243]')) return;
+
+                    var dTor = torList.find(function(x) { return String(x.hash || '').toLowerCase() === h; }) || {};
+                    var isExp = Boolean(window._torExpandedDiagHashesV243[h]);
+
+                    var infoBtn = document.createElement('button');
+                    infoBtn.type = 'button';
+                    infoBtn.setAttribute('data-diag-btn-v243', h);
+                    infoBtn.onclick = function(ev) { window.toggleTorCardDiagV243(h, ev); };
+                    infoBtn.style.cssText = 'padding:5px 7px;font-size:10.5px;border-radius:7px;font-weight:bold;background:' +
+                        (isExp ? 'rgba(57,197,207,0.24)' : '#161b22') + ';color:' + (isExp ? '#39c5cf' : '#79c0ff') +
+                        ';border:1px solid ' + (isExp ? '#39c5cf' : '#30363d') + ';';
+                    infoBtn.innerText = '📡';
+                    infoBtn.title = 'Диагностика роя и соединений';
+
+                    var piecesBtn = btnRow.querySelector('button[onclick*="pieces"]');
+                    if (piecesBtn && piecesBtn.nextSibling) btnRow.insertBefore(infoBtn, piecesBtn.nextSibling);
+                    else btnRow.appendChild(infoBtn);
+
+                    if (isExp) {
+                        var bClr = dTor.diag_status === 'dead' ? '#f85149' : (dTor.diag_status === 'warn' ? '#e3b341' : '#3fb950');
+                        var srcTag = dTor.meta_source ? (' • 🏷️ ' + dTor.meta_source) : '';
+                        var box = document.createElement('div');
+                        box.style.cssText = 'margin-top:4px;padding:6px 8px;background:#080c14;border-left:3px solid ' + bClr + ';border-radius:6px;font-size:10px;line-height:1.4;';
+                        box.innerHTML =
+                            '<div style="color:' + bClr + ';font-weight:800;">' + (dTor.diag_msg || 'Ожидание телеметрии демона...') + '</div>' +
+                            '<div style="color:#8b949e;margin-top:2px;">Рой: <b>' + (dTor.total_peers || 0) + '</b> ➔ Полуоткр: <b>' + (dTor.half_open || 0) +
+                            '</b> ➔ На связи: <b>' + (dTor.peers || 0) + '</b> (сидов: <b>' + (dTor.seeders || 0) + '</b>) • В полёте: <b>' + (dTor.pieces_partial || 0) + '</b>' + srcTag + '</div>';
+                        card.appendChild(box);
+                    }
+                });
+            }
+            return r;
+        };
+        window.renderTorrentInspectorHubV128._v243Wrapped = true;
+    }
+
+    setInterval(function() {
+        window.syncAndroidSafeInsetsV243();
+        window.ensureSearchRowStretchV243();
+        window.ensureVideoPrevNextZonesV243();
+        window.fixRadioModalHeaderLayoutV243();
+    }, 700);
+
+    setTimeout(function() {
+        window.syncAndroidSafeInsetsV243();
+        window.ensureSearchRowStretchV243();
+        window.ensureVideoPrevNextZonesV243();
+        window.fixRadioModalHeaderLayoutV243();
+        window.syncPermanentForegroundNotificationV212(true);
+    }, 150);
+})();
+/* ================= END JENNY_V243_UNIFIED_FIXES ================= */

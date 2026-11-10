@@ -13343,3 +13343,111 @@ def api_torrent_status_v238():
 
 _override_bottle_route_v212('/api/torrent/status', 'GET', api_torrent_status_v238)
 # ================= END JENNY_V238_P2P_TURBO_DIAG =================
+
+# ================= BEGIN JENNY_V243_UNIFIED_FIXES =================
+def _resolve_persistent_tor_data_dir_v243() -> str:
+    for gk, gv in list(globals().items()):
+        if isinstance(gv, str) and "/JENNY/Torrents/data" in gv:
+            try:
+                os.makedirs(gv, exist_ok=True)
+                return gv
+            except Exception:
+                pass
+    jenny_tor_data = "/storage/emulated/0/JENNY/Torrents/data"
+    try:
+        os.makedirs(jenny_tor_data, exist_ok=True)
+        return jenny_tor_data
+    except Exception:
+        fallback = os.path.join(MUSIC_DIR, "torrents_tmp")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
+
+
+def ensure_jtorrent_daemon_v96():
+    global _JTORRENT_PROC_V96
+    if _JTORRENT_PROC_V96 is not None and "_attach_jtorrent_pipe_drainer_v238" in globals():
+        _attach_jtorrent_pipe_drainer_v238(_JTORRENT_PROC_V96)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.8) as r:
+            if r.status == 200:
+                return True
+    except Exception:
+        pass
+
+    lock_ctx = globals().get("_JTORRENT_START_LOCK_V238") or threading.Lock()
+    with lock_ctx:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.6) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+
+        bin_p = find_jtorrent_binary_v96()
+        tor_dir = _resolve_persistent_tor_data_dir_v243()
+        try:
+            os.chmod(bin_p, 0o755)
+        except Exception:
+            pass
+
+        _JTORRENT_PROC_V96 = subprocess.Popen(
+            [bin_p, "-port", _JTORRENT_PORT_V96, "-dir", tor_dir],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
+        if "_attach_jtorrent_pipe_drainer_v238" in globals():
+            _attach_jtorrent_pipe_drainer_v238(_JTORRENT_PROC_V96)
+
+        for _ in range(25):
+            time.sleep(0.15)
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.5) as r:
+                    if r.status == 200:
+                        return True
+            except Exception:
+                pass
+    return False
+
+
+# Расширяем поиск скачанных P2P-файлов на постоянную папку /storage/emulated/0/JENNY/Torrents/data
+_orig_locate_p2p_v243 = _locate_downloaded_p2p_file_v163
+def _locate_downloaded_p2p_file_v163(target_name: str, target_hash: str = "", target_idx: int = -1):
+    res = _orig_locate_p2p_v243(target_name, target_hash, target_idx)
+    if res and res[0] and os.path.isfile(res[0]):
+        return res
+    p_dir = _resolve_persistent_tor_data_dir_v243()
+    target_base = os.path.basename((target_name or "").strip()).lower()
+    if target_base and os.path.isdir(p_dir):
+        for root_w, _, files_w in os.walk(p_dir):
+            for fn_w in files_w:
+                if fn_w.lower() == target_base:
+                    cand = os.path.join(root_w, fn_w)
+                    if os.path.isfile(cand):
+                        return cand, "Torrent P2P", (target_hash or "").strip().lower(), target_idx
+    return res
+
+
+@post('/api/radio/abort_stale_v243')
+def api_radio_abort_stale_v243():
+    response.content_type = 'application/json; charset=utf-8'
+    killed = 0
+    for gk, gv in list(globals().items()):
+        low_k = gk.lower()
+        if "radio" in low_k and "rec" not in low_k:
+            if isinstance(gv, subprocess.Popen):
+                try:
+                    gv.kill()
+                    killed += 1
+                except Exception:
+                    pass
+            elif isinstance(gv, dict):
+                for dk, dv in list(gv.items()):
+                    if isinstance(dv, subprocess.Popen):
+                        try:
+                            dv.kill()
+                            killed += 1
+                        except Exception:
+                            pass
+    return json.dumps({"status": "ok", "killed": killed})
+_override_bottle_route_v212('/api/radio/abort_stale_v243', 'POST', api_radio_abort_stale_v243)
+# ================= END JENNY_V243_UNIFIED_FIXES =================
