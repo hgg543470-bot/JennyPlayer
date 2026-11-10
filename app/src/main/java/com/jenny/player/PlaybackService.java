@@ -247,7 +247,7 @@ public class PlaybackService extends Service {
                         int sepIdx = t.indexOf(" || ");
                         currentTitle = t.substring(0, sepIdx);
                         currentSubtitle = t.substring(sepIdx + 4);
-                    } } else {
+                    } else {
                         currentTitle = t;
                     }
                 }
