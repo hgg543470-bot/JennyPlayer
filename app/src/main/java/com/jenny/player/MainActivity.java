@@ -1233,6 +1233,8 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
+        
+
         // === JENNY_V237_DATASYNC_BRIDGE_START ===
         @JavascriptInterface
         public void updateDataSyncState(boolean active, String title, String status, int progressPct) {

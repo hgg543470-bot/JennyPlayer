@@ -244,10 +244,10 @@ public class PlaybackService extends Service {
                 String sub = intent.getStringExtra("subtitle");
                 if (t != null && !t.isEmpty()) {
                     if ((sub == null || sub.isEmpty()) && t.contains(" || ")) {
-                        String[] parts = t.split(" \|\| ", 2);
-                        currentTitle = parts[0];
-                        currentSubtitle = parts[1];
-                    } else {
+                        int sepIdx = t.indexOf(" || ");
+                        currentTitle = t.substring(0, sepIdx);
+                        currentSubtitle = t.substring(sepIdx + 4);
+                    } } else {
                         currentTitle = t;
                     }
                 }
