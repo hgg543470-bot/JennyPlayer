@@ -9,9 +9,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
-import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -38,22 +35,6 @@ public class PlaybackService extends Service {
     private MediaSession mediaSession;
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
-    private AudioManager audioManager;
-    private AudioFocusRequest audioFocusReq;
-    private final AudioManager.OnAudioFocusChangeListener afListener = new AudioManager.OnAudioFocusChangeListener() {
-        @Override
-        public void onAudioFocusChange(int focusChange) {
-            if (focusChange == AudioManager.AUDIOFOCUS_LOSS
-                    || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                if (isPlaying) {
-                    isPlaying = false;
-                    MainActivity.evalJs("if(window.onExternalAudioInterruptV237) window.onExternalAudioInterruptV237();");
-                    updateMediaSessionState();
-                    postAllNotifications();
-                }
-            }
-        }
-    };
 
     private String currentTitle = "Jenny Player • Студия активна";
     private String currentSubtitle = "🛡️ Фоновый движок 24/7 (P2P + 32-bit DSP)";
@@ -134,30 +115,6 @@ public class PlaybackService extends Service {
         } catch (Throwable ignored) {}
     }
 
-    private void requestAudioFocusIfNeeded() {
-        try {
-            if (audioManager == null) {
-                audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            }
-            if (audioManager == null) return;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (audioFocusReq == null) {
-                    AudioAttributes attrs = new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build();
-                    audioFocusReq = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                            .setAudioAttributes(attrs)
-                            .setAcceptsDelayedFocusGain(true)
-                            .setOnAudioFocusChangeListener(afListener)
-                            .build();
-                }
-                audioManager.requestAudioFocus(audioFocusReq);
-            } else {
-                audioManager.requestAudioFocus(afListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-            }
-        } catch (Throwable ignored) {}
-    }
 
     @Override
     public void onCreate() {
@@ -254,11 +211,8 @@ public class PlaybackService extends Service {
                 if (sub != null && !sub.isEmpty()) {
                     currentSubtitle = sub;
                 }
-                boolean prevPlaying = isPlaying;
+                // WebView owns Android AudioFocus natively; never steal focus from WebView here!
                 isPlaying = intent.getBooleanExtra("playing", isPlaying);
-                if (isPlaying && !prevPlaying) {
-                    requestAudioFocusIfNeeded();
-                }
                 currentPosMs = intent.getLongExtra("pos", currentPosMs);
                 currentDurMs = intent.getLongExtra("dur", currentDurMs);
                 currentSpeed = intent.getFloatExtra("speed", 1.0f);

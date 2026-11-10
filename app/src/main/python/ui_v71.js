@@ -31927,6 +31927,7 @@ let vsyncTicks = 0;
     stV237.textContent = [
         '.tor-file-row-v237 {',
         '  position: relative !important;',
+        '  flex-shrink: 0 !important;',
         '  overflow: hidden !important;',
         '  display: flex !important;',
         '  align-items: center !important;',
@@ -32180,7 +32181,7 @@ let vsyncTicks = 0;
                             '<span id="torRowStatV237_' + idx + '" style="font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>' +
                         '</div>' +
                     '</div>' +
-                    '<button type="button" class="tor-prev-btn-v97" onclick="window.previewSingleTorrentTrackV97(' + idx + ', this, event)" title="Слушать / смотреть поток сразу" style="padding:5px 9px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:7px;font-size:11px;font-weight:bold;flex-shrink:0;">▶</button>' +
+                    '<button type="button" class="tor-prev-btn-v97" onclick="window.previewTorrentFileStreamV97(' + idx + ', this, event)" title="Слушать / смотреть поток сразу" style="padding:5px 9px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:7px;font-size:11px;font-weight:bold;flex-shrink:0;">▶</button>' +
                     '<button type="button" id="torDlSingleBtnV98_' + idx + '" onclick="window.downloadSingleTorrentTrackV98(' + idx + ', this, event)" title="Скачать этот трек в плеер" style="padding:5px 9px;background:rgba(63,185,80,0.16);color:#3fb950;border:1px solid rgba(63,185,80,0.6);border-radius:7px;font-size:11px;font-weight:bold;flex-shrink:0;">⬇️</button>' +
                 '</div>' +
             '</div>';
@@ -32585,8 +32586,10 @@ let vsyncTicks = 0;
         if (player && !player._v237ExtPauseBound) {
             player._v237ExtPauseBound = true;
             player.addEventListener('pause', function() {
-                if (player.ended || window._resumingFromUserPlayV232) return;
-                if (!window._userPausedV75_2) {
+                if (player.ended || player.seeking || window._resumingFromUserPlayV232 || window._internalPauseGuardV239) return;
+                var sinceSwitch = performance.now() - (window._lastInternalMediaSrcSwitchTsV239 || 0);
+                if (sinceSwitch < 600) return;
+                if (!window._userPausedV75_2 && player.currentTime > 0.15) {
                     window.onExternalAudioInterruptV237();
                 } else {
                     if (typeof window.updateTrackListPlayIcons === 'function') {
@@ -33220,3 +33223,68 @@ let vsyncTicks = 0;
     }, 2000);
 })();
 /* ================= END JENNY_V238_MULTI_PORT_SMART_ROUTER_AND_JNI_FOLDERS_PATCH ================= */
+
+/* ================= BEGIN JENNY_V239_HOTFIX_PLAYBACK_TORPREVIEW_AND_ROW_HEIGHT ================= */
+(function() {
+    if (window._jennyV239HotfixInstalled) return;
+    window._jennyV239HotfixInstalled = true;
+
+    // 1. Permanent alias so both previewSingleTorrentTrackV97 and previewTorrentFileStreamV97 always work
+    window.previewSingleTorrentTrackV97 = function(fileIdx, btnEl, ev) {
+        if (typeof window.previewTorrentFileStreamV97 === 'function') {
+            return window.previewTorrentFileStreamV97(fileIdx, btnEl, ev);
+        }
+    };
+
+    // 2. Ensure torrent file rows never shrink inside flex scroll container (#torBodyListV96)
+    var stV239 = document.createElement('style');
+    stV239.id = 'jennyStyleV239';
+    stV239.textContent = [
+        '.tor-file-row-v237 {',
+        '  flex-shrink: 0 !important;',
+        '  min-height: 50px !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(stV239);
+
+    // 3. Stamp _lastInternalMediaSrcSwitchTsV239 whenever media .src changes so queued HTML5 pause events
+    //    from switching tracks/episodes are never mistaken for external audio interruptions
+    try {
+        var mediaProto = window.HTMLMediaElement && window.HTMLMediaElement.prototype;
+        var prevDesc = mediaProto ? Object.getOwnPropertyDescriptor(mediaProto, 'src') : null;
+        if (prevDesc && typeof prevDesc.set === 'function' && typeof prevDesc.get === 'function') {
+            Object.defineProperty(mediaProto, 'src', {
+                configurable: true,
+                enumerable: prevDesc.enumerable,
+                get: function() {
+                    return prevDesc.get.call(this);
+                },
+                set: function(val) {
+                    window._lastInternalMediaSrcSwitchTsV239 = performance.now();
+                    return prevDesc.set.call(this, val);
+                }
+            });
+        }
+    } catch (e) {}
+
+    // 4. External audio interruption sync for Deck B <video> as well (only when genuinely playing >0.4s and paused externally by OS)
+    var bindVideoExtPauseV239 = function() {
+        var vid = document.getElementById('jennyVideoElV130');
+        if (vid && !vid._v239ExtPauseBound) {
+            vid._v239ExtPauseBound = true;
+            vid.addEventListener('pause', function() {
+                var st = window._vidStateV130;
+                if (!st || !st.active || st.userPaused || st._internalRevPause || st._playingHardwareRevStreamV219) return;
+                if (vid.ended || vid.seeking || vid.readyState < 2 || vid.currentTime < 0.4) return;
+                var sinceSwitch = performance.now() - (window._lastInternalMediaSrcSwitchTsV239 || 0);
+                if (sinceSwitch < 700) return;
+                st.userPaused = true;
+                window._vidPlayIntentV132 = false;
+                if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+                if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') window.syncVideoPlayerButtonsUIV217();
+            });
+        }
+    };
+    setInterval(bindVideoExtPauseV239, 1500);
+})();
+/* ================= END JENNY_V239_HOTFIX_PLAYBACK_TORPREVIEW_AND_ROW_HEIGHT ================= */
