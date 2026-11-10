@@ -6658,8 +6658,8 @@ _override_bottle_route_v212('/api/torrent/status', 'GET', api_torrent_status_v21
 # Умное разрешение пути к видео (поддерживает и относительные /api/..., и полные http://127.0.0.1:8080/api/... из vEl.currentSrc!)
 def _resolve_video_src_input_v131(src: str) -> str:
     src = (src or "").strip()
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
     if src.startswith('/api/torrent/stream/'):
         parts = src.strip('/').split('/')
         if len(parts) >= 5:
@@ -6939,8 +6939,8 @@ def api_video_live_remux_v214():
         return "Missing src"
 
     src = raw_src
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
 
     req_key = f"{src}::{round(start_sec, 1)}"
     now_ts = time.time()
@@ -6975,7 +6975,7 @@ def api_video_live_remux_v214():
             ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
             _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=True)
             # Направляем FFmpeg через наш прокси /api/torrent/stream/..., который мгновенно отсекает Cues-запросы в нескачанный хвост!
-            src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+            src_input = f"http://127.0.0.1:{globals().get('_INTERNAL_STREAM_PORT_V238', 8080)}/api/torrent/stream/{h_low}/{f_idx}"
         else:
             src_input = _resolve_video_src_input_v131(src)
     else:
@@ -7043,8 +7043,8 @@ _override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux
 # Быстрое чтение длительности (23:15) из первого скачанного куска файла в torrents_tmp без блокировки HTTP-потока!
 def _probe_torrent_partial_file_duration_v214(raw_src: str) -> float:
     src = (raw_src or "").strip()
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
     if not src.startswith('/api/torrent/stream/'):
         return 0.0
     parts = src.strip('/').split('/')
@@ -7368,8 +7368,8 @@ def _parse_header_duration_bytes_v216(hdr: bytes) -> float:
 
 def _probe_torrent_partial_file_duration_v214(raw_src: str) -> float:
     src = (raw_src or "").strip()
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
 
     # Если это локальный путь или /api/media/...
     if not src.startswith('/api/torrent/stream/'):
@@ -7750,8 +7750,8 @@ def api_video_live_remux_v216():
         return "Missing src"
 
     src = raw_src
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
 
     req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}"
     now_ts = time.time()
@@ -7785,7 +7785,7 @@ def api_video_live_remux_v216():
                 dur_sec = _probe_torrent_partial_file_duration_v214(src)
             ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
             _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=True)
-            src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+            src_input = f"http://127.0.0.1:{globals().get('_INTERNAL_STREAM_PORT_V238', 8080)}/api/torrent/stream/{h_low}/{f_idx}"
         else:
             src_input = _resolve_video_src_input_v131(src)
     else:
@@ -7875,8 +7875,8 @@ def api_video_live_remux_v217():
         return "Missing src"
 
     src = raw_src
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
 
     mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
     req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
@@ -7911,7 +7911,7 @@ def api_video_live_remux_v217():
                 dur_sec = _probe_torrent_partial_file_duration_v214(src)
             ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0) else 0.0
             _boost_torrent_file_and_pieces_v214(h_low, f_idx, ratio=ratio, sync_start=True)
-            src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+            src_input = f"http://127.0.0.1:{globals().get('_INTERNAL_STREAM_PORT_V238', 8080)}/api/torrent/stream/{h_low}/{f_idx}"
         else:
             src_input = _resolve_video_src_input_v131(src)
     else:
@@ -8432,8 +8432,8 @@ def _estimate_duration_from_torrent_meta_v218(h_low: str, f_idx: int) -> float:
 def _probe_torrent_partial_file_duration_v218(raw_src: str) -> tuple:
     """Возвращает (duration_sec, audio_streams_count, file_size_bytes)."""
     src = (raw_src or "").strip()
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
 
     audio_cnt = 1
     sz_bytes = 0
@@ -8618,8 +8618,8 @@ def api_video_live_remux_v218():
         return "Missing src"
 
     src = raw_src
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
 
     mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
     req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
@@ -8696,7 +8696,7 @@ def api_video_live_remux_v218():
                     time.sleep(0.28)
 
             if not src_input:
-                src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+                src_input = f"http://127.0.0.1:{globals().get('_INTERNAL_STREAM_PORT_V238', 8080)}/api/torrent/stream/{h_low}/{f_idx}"
         else:
             src_input = _resolve_any_media_path_v218(src)
     else:
@@ -8822,8 +8822,8 @@ def api_video_live_remux_v219():
         return "Missing src"
 
     src = raw_src
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
 
     mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
     req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
@@ -8898,7 +8898,7 @@ def api_video_live_remux_v219():
                     time.sleep(0.28)
 
             if not src_input:
-                src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+                src_input = f"http://127.0.0.1:{globals().get('_INTERNAL_STREAM_PORT_V238', 8080)}/api/torrent/stream/{h_low}/{f_idx}"
         else:
             src_input = _resolve_any_media_path_v218(src)
     else:
@@ -9018,8 +9018,8 @@ def api_video_reverse_remux_v219():
         return "Invalid reverse params"
 
     src = raw_src
-    if src.startswith(('http://127.0.0.1:8080/', 'http://localhost:8080/')):
-        src = '/' + src.split('8080/', 1)[1]
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
 
     seg_start = max(0.0, anchor_sec - win_sec)
     seg_dur = max(0.5, anchor_sec - seg_start)
@@ -9056,7 +9056,7 @@ def api_video_reverse_remux_v219():
                 dur_est, _, _ = _probe_torrent_partial_file_duration_v218(src)
                 ratio = (seg_start / dur_est) if (dur_est > 0 and seg_start > 0) else 0.0
                 _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
-                src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+                src_input = f"http://127.0.0.1:{globals().get('_INTERNAL_STREAM_PORT_V238', 8080)}/api/torrent/stream/{h_low}/{f_idx}"
         else:
             src_input = _resolve_any_media_path_v218(src)
     else:
@@ -9192,7 +9192,7 @@ def _resolve_rev_src_input_v223(src, seg_start):
                 dur_est, _, _ = _probe_torrent_partial_file_duration_v218(src)
                 ratio = (seg_start / dur_est) if (dur_est > 0 and seg_start > 0) else 0.0
                 _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
-                src_input = f"http://127.0.0.1:8080/api/torrent/stream/{h_low}/{f_idx}"
+                src_input = f"http://127.0.0.1:{globals().get('_INTERNAL_STREAM_PORT_V238', 8080)}/api/torrent/stream/{h_low}/{f_idx}"
         else:
             src_input = _resolve_any_media_path_v218(src)
     else:
@@ -11273,3 +11273,162 @@ def get_data_v237():
 
 _override_bottle_route_v212('/api/data', 'GET', get_data_v237)
 # ================= END JENNY_V237_FAST_SCANDIR_FOLDERS_AND_DATA_CACHE_PATCH =================
+
+# ================= BEGIN JENNY_V238_MULTI_PORT_CLUSTER_AND_CORS_PATCH =================
+_ACTIVE_CLUSTER_PORTS_V238 = [8080]
+_CLUSTER_STARTED_LOCK_V238 = threading.Lock()
+_CLUSTER_STARTED_FLAG_V238 = False
+_INTERNAL_STREAM_PORT_V238 = 8080
+
+
+class JennyCorsWsgiMiddlewareV238:
+    # Universal WSGI-level CORS + HTTP Range Exposure wrapper for all 4 Waitress ports (:8080..:8083).
+    # Guarantees CORS headers even on static_file(), HTTPResponse streams (live_remux / reverse_remux),
+    # 206 Partial Content responses, and 0.05ms OPTIONS preflights.
+    def __init__(self, wsgi_app, port_num):
+        self.wsgi_app = wsgi_app
+        self.port_str = str(port_num)
+
+    def __call__(self, environ, start_response):
+        if environ.get('REQUEST_METHOD') == 'OPTIONS':
+            opt_headers = [
+                ('Access-Control-Allow-Origin', '*'),
+                ('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD'),
+                ('Access-Control-Allow-Headers', 'Origin, Accept, Content-Type, X-Requested-With, Range, Cache-Control'),
+                ('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, X-Jenny-Port'),
+                ('Access-Control-Max-Age', '86400'),
+                ('Timing-Allow-Origin', '*'),
+                ('X-Jenny-Port', self.port_str),
+                ('Content-Length', '0'),
+            ]
+            start_response('204 No Content', opt_headers)
+            return [b'']
+
+        port_str = self.port_str
+
+        def _cors_start_response(status, response_headers, exc_info=None):
+            filtered = []
+            for hk, hv in response_headers:
+                hl = hk.lower()
+                if hl in (
+                    'access-control-allow-origin',
+                    'access-control-allow-methods',
+                    'access-control-allow-headers',
+                    'access-control-expose-headers',
+                    'timing-allow-origin',
+                    'x-jenny-port',
+                ):
+                    continue
+                filtered.append((hk, hv))
+            filtered.extend([
+                ('Access-Control-Allow-Origin', '*'),
+                ('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD'),
+                ('Access-Control-Allow-Headers', 'Origin, Accept, Content-Type, X-Requested-With, Range, Cache-Control'),
+                ('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, X-Jenny-Port'),
+                ('Timing-Allow-Origin', '*'),
+                ('X-Jenny-Port', port_str),
+            ])
+            return start_response(status, filtered, exc_info)
+
+        return self.wsgi_app(environ, _cors_start_response)
+
+
+def api_multiport_ping_v238():
+    response.content_type = 'application/json; charset=utf-8'
+    srv_port = 8080
+    try:
+        srv_port = int(request.environ.get('SERVER_PORT') or 8080)
+    except Exception:
+        pass
+    return json.dumps({
+        "status": "ok",
+        "version": "v238",
+        "current_port": srv_port,
+        "ports": sorted(list(set(_ACTIVE_CLUSTER_PORTS_V238))),
+        "roles": {
+            "8080": "VIP UI / Folders / Presets",
+            "8081": "Deck A Audio / xFLAC / PCM",
+            "8082": "Deck B Video / FFmpeg Live Remux",
+            "8083": "Background P2P / YouTube / OST / Radio"
+        }
+    }, ensure_ascii=False)
+
+_override_bottle_route_v212('/api/multiport/ping', 'GET', api_multiport_ping_v238)
+
+
+def _create_waitress_instance_v238(wsgi_callable, port_num, num_threads):
+    from waitress.server import create_server
+    try:
+        return create_server(
+            wsgi_callable,
+            host='127.0.0.1',
+            port=int(port_num),
+            threads=int(num_threads),
+            connection_limit=256,
+            channel_timeout=120,
+            asyncore_use_poll=True,
+            expose_tracebacks=False,
+        )
+    except TypeError:
+        return create_server(
+            wsgi_callable,
+            host='127.0.0.1',
+            port=int(port_num),
+            threads=int(num_threads),
+        )
+
+
+def start_server_v238():
+    global _CLUSTER_STARTED_FLAG_V238, _INTERNAL_STREAM_PORT_V238
+    load_saved_music_dir()
+    cleanup_stale_temps(DEFAULT_MUSIC_DIR)
+    if MUSIC_DIR != DEFAULT_MUSIC_DIR:
+        cleanup_stale_temps(MUSIC_DIR)
+
+    base_app = bottle.default_app()
+    cfg_pool = 64
+    try:
+        cfg_pool = max(24, min(128, int(_THREAD_CFG_V216.get("serverPoolThreads", 64))))
+    except Exception:
+        cfg_pool = 64
+
+    # Synchronously bind secondary ports (8081 Deck A, 8082 Deck B, 8083 Background) BEFORE port 8080 starts,
+    # so the moment WebView loads http://127.0.0.1:8080, all 4 ports are already listening with zero race!
+    worker_specs = [
+        (8081, max(16, cfg_pool // 2), "Deck A Audio & xFLAC"),
+        (8082, max(16, cfg_pool // 2), "Deck B Video & FFmpeg Remux"),
+        (8083, max(24, cfg_pool),      "Background P2P / YouTube / OST / Radio"),
+    ]
+
+    with _CLUSTER_STARTED_LOCK_V238:
+        if not _CLUSTER_STARTED_FLAG_V238:
+            _CLUSTER_STARTED_FLAG_V238 = True
+            for p_num, p_threads, p_label in worker_specs:
+                try:
+                    wrapped = JennyCorsWsgiMiddlewareV238(base_app, p_num)
+                    srv_obj = _create_waitress_instance_v238(wrapped, p_num, p_threads)
+                    if p_num not in _ACTIVE_CLUSTER_PORTS_V238:
+                        _ACTIVE_CLUSTER_PORTS_V238.append(p_num)
+                    if p_num == 8082:
+                        _INTERNAL_STREAM_PORT_V238 = 8082
+                    t = threading.Thread(
+                        target=srv_obj.run,
+                        name=f"JennyWaitress_{p_num}",
+                        daemon=True,
+                    )
+                    t.start()
+                    print(f"⚡ [V238] ПОРТ {p_num} АКТИВЕН ({p_label}, потоков: {p_threads})")
+                except Exception as e_port:
+                    print(f"⚠️ [V238] Порт {p_num} занят/пропущен ({e_port}), работает авто-фоллбэк на 8080")
+
+    print(f"🚀 [V238] ГЛАВНЫЙ VIP-ПОРТ 8080 АКТИВЕН (кластер портов: {sorted(_ACTIVE_CLUSTER_PORTS_V238)})")
+    main_wrapped = JennyCorsWsgiMiddlewareV238(base_app, 8080)
+    try:
+        main_srv = _create_waitress_instance_v238(main_wrapped, 8080, max(24, cfg_pool // 2))
+        main_srv.run()
+    except Exception:
+        run(app=main_wrapped, host='127.0.0.1', port=8080, quiet=True, server='waitress', threads=max(24, cfg_pool // 2))
+
+
+start_server = start_server_v238
+# ================= END JENNY_V238_MULTI_PORT_CLUSTER_AND_CORS_PATCH =================

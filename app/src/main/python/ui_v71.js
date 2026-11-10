@@ -32862,3 +32862,361 @@ let vsyncTicks = 0;
     };
 })();
 /* ================= END JENNY_V237_KILL_SWITCH_ZERO_TWITCH_INSTANT_FOLDERS_DATASYNC_AND_EXT_PAUSE_PATCH ================= */
+
+/* ================= BEGIN JENNY_V238_MULTI_PORT_SMART_ROUTER_AND_JNI_FOLDERS_PATCH ================= */
+(function() {
+    if (window._jennyV238MultiPortInstalled) return;
+    window._jennyV238MultiPortInstalled = true;
+
+    // Active local cluster ports (bound synchronously in player.py BEFORE :8080 serves index.html)
+    window._jennyClusterPortsV238 = {
+        8080: true, // VIP UI / Folders / Config / Metadata
+        8081: true, // Deck A Audio / xFLAC / PCM Chunks (+ WebView shouldInterceptRequest Direct Disk!)
+        8082: true, // Deck B Video / FFmpeg Live Remux / Reverse Remux / Torrent Video Stream
+        8083: true  // Heavy Background: P2P Status/Search/Download, YouTube, OST, SoundCloud, Radio, Export
+    };
+
+    window._jennyRouterTelemetryV238 = {
+        p8080: 0,
+        p8081: 0,
+        p8082: 0,
+        p8083: 0,
+        jniFolders: 0
+    };
+
+    // Strip http://127.0.0.1:<port> or http://localhost:<port> back to relative "/api/..."
+    window.stripJennyLocalOriginV238 = function(u) {
+        if (!u || typeof u !== 'string') return u;
+        var m = u.match(/^https?:\/\/(?:127\.0\.0\.1|localhost):\d+(\/.*)$/i);
+        return m ? m[1] : u;
+    };
+
+    // Choose optimal dedicated port (8080..8083) for a given "/api/..." path
+    window.pickJennyPortForPathV238 = function(relPath, mediaTagHint) {
+        if (!relPath || typeof relPath !== 'string' || relPath.charAt(0) !== '/') return 8080;
+
+        // Explicit HTMLMediaElement hint (<video> vs <audio>)
+        if (mediaTagHint === 'VIDEO') {
+            return window._jennyClusterPortsV238[8082] ? 8082 : 8080;
+        }
+        if (mediaTagHint === 'AUDIO') {
+            if (
+                relPath.indexOf('/api/radio/') === 0 ||
+                relPath.indexOf('/api/soundcloud/') === 0 ||
+                relPath.indexOf('/api/khinsider/') === 0 ||
+                relPath.indexOf('/api/youtube/') === 0
+            ) {
+                return window._jennyClusterPortsV238[8083] ? 8083 : 8080;
+            }
+            return window._jennyClusterPortsV238[8081] ? 8081 : 8080;
+        }
+
+        // 1. Deck B Video & Live Remux & Torrent Video Stream -> :8082
+        if (
+            relPath.indexOf('/api/video/') === 0 ||
+            relPath.indexOf('/api/torrent/stream/') === 0 ||
+            relPath.indexOf('/api/torrent/seek_boost') === 0
+        ) {
+            return window._jennyClusterPortsV238[8082] ? 8082 : 8080;
+        }
+
+        // 2. Deck A Audio & PCM Chunk Engine -> :8081
+        // Note: GET /api/media/<local_file> is ALSO intercepted in 0ms by MainActivity.shouldInterceptRequest!
+        if (
+            relPath.indexOf('/api/media/') === 0 ||
+            relPath.indexOf('/api/pcm_meta_v71/') === 0 ||
+            relPath.indexOf('/api/pcm_chunk_v71/') === 0 ||
+            relPath.indexOf('/api/track_rev_data/') === 0
+        ) {
+            return window._jennyClusterPortsV238[8081] ? 8081 : 8080;
+        }
+
+        // 3. Heavy Background Modules (P2P Torrent polling/search/add, YouTube, OST, SoundCloud, Radio, Export) -> :8083
+        if (
+            relPath.indexOf('/api/torrent/') === 0 ||
+            relPath.indexOf('/api/sources/') === 0 ||
+            relPath.indexOf('/api/youtube/') === 0 ||
+            relPath.indexOf('/api/khinsider/') === 0 ||
+            relPath.indexOf('/api/soundcloud/') === 0 ||
+            relPath.indexOf('/api/radio/') === 0 ||
+            relPath.indexOf('/api/export') === 0
+        ) {
+            return window._jennyClusterPortsV238[8083] ? 8083 : 8080;
+        }
+
+        // 4. VIP Instant UI (/api/folders_v71, /api/data, /api/config, /api/user_data/*, /api/track_info, /api/threads/config) -> :8080
+        return 8080;
+    };
+
+    window.routeJennyApiUrlV238 = function(rawUrl, mediaTagHint) {
+        if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+        if (rawUrl.indexOf('blob:') === 0 || rawUrl.indexOf('data:') === 0) return rawUrl;
+        var rel = window.stripJennyLocalOriginV238(rawUrl);
+        if (!rel || rel.indexOf('/api/') !== 0) {
+            return rawUrl;
+        }
+        var targetPort = window.pickJennyPortForPathV238(rel, mediaTagHint);
+        var counterKey = 'p' + targetPort;
+        if (window._jennyRouterTelemetryV238[counterKey] !== undefined) {
+            window._jennyRouterTelemetryV238[counterKey]++;
+        }
+        // Keep port 8080 requests same-origin when page itself is on 127.0.0.1:8080,
+        // and use explicit IPv4 127.0.0.1:<port> for dedicated worker ports (zero DNS/IPv6 ::1 lookup delay!)
+        if (targetPort === 8080 && window.location && window.location.port === '8080') {
+            return rel;
+        }
+        return 'http://127.0.0.1:' + targetPort + rel;
+    };
+
+    // -------------------------------------------------------------------------
+    // 1. TRANSPARENT MULTI-PORT FETCH & XHR ROUTER WITH AUTOMATIC :8080 FALLBACK
+    // -------------------------------------------------------------------------
+    var _nativeFetchV238 = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+        if (typeof input === 'string') {
+            var rel = window.stripJennyLocalOriginV238(input);
+            if (rel && rel.indexOf('/api/') === 0) {
+                if (rel.indexOf('/api/folders_v71') === 0 && init && String(init.method || 'GET').toUpperCase() === 'POST') {
+                    if (window.AndroidBridge && typeof window.AndroidBridge.invalidatePresetFolderCache === 'function') {
+                        try { window.AndroidBridge.invalidatePresetFolderCache(); } catch (e) {}
+                    }
+                }
+                var routedUrl = window.routeJennyApiUrlV238(rel, null);
+                var isSecondaryPort = (routedUrl.indexOf('http://127.0.0.1:808') === 0 && routedUrl.indexOf('http://127.0.0.1:8080/') !== 0);
+                if (!isSecondaryPort) {
+                    return _nativeFetchV238(routedUrl, init);
+                }
+                return _nativeFetchV238(routedUrl, init).catch(function(err) {
+                    if (err && (err.name === 'AbortError' || (init && init.signal && init.signal.aborted))) {
+                        throw err;
+                    }
+                    return _nativeFetchV238('http://127.0.0.1:8080' + rel, init);
+                });
+            }
+        }
+        return _nativeFetchV238(input, init);
+    };
+
+    if (window.XMLHttpRequest && window.XMLHttpRequest.prototype && window.XMLHttpRequest.prototype.open) {
+        var _origXhrOpenV238 = window.XMLHttpRequest.prototype.open;
+        window.XMLHttpRequest.prototype.open = function(method, url) {
+            if (typeof url === 'string') {
+                var rel = window.stripJennyLocalOriginV238(url);
+                if (rel && rel.indexOf('/api/') === 0) {
+                    var args = Array.prototype.slice.call(arguments);
+                    args[1] = window.routeJennyApiUrlV238(rel, null);
+                    return _origXhrOpenV238.apply(this, args);
+                }
+            }
+            return _origXhrOpenV238.apply(this, arguments);
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. HTMLMediaElement (<audio> & <video>) MULTI-PORT ROUTER + CORS SAFETY
+    // -------------------------------------------------------------------------
+    try {
+        var mediaProto = window.HTMLMediaElement && window.HTMLMediaElement.prototype;
+        var origSrcDesc = mediaProto ? Object.getOwnPropertyDescriptor(mediaProto, 'src') : null;
+        if (origSrcDesc && typeof origSrcDesc.set === 'function' && typeof origSrcDesc.get === 'function') {
+            Object.defineProperty(mediaProto, 'src', {
+                configurable: true,
+                enumerable: origSrcDesc.enumerable,
+                get: function() {
+                    return origSrcDesc.get.call(this);
+                },
+                set: function(val) {
+                    if (typeof val === 'string' && val.length > 0 && val.indexOf('blob:') !== 0 && val.indexOf('data:') !== 0) {
+                        var rel = window.stripJennyLocalOriginV238(val);
+                        if (rel && rel.indexOf('/api/') === 0) {
+                            if (this.crossOrigin !== 'anonymous') {
+                                try { this.crossOrigin = 'anonymous'; } catch (e) {}
+                            }
+                            var tagHint = (this.tagName === 'VIDEO' || this.id === 'jennyVideoElV130') ? 'VIDEO' : 'AUDIO';
+                            var routed = window.routeJennyApiUrlV238(rel, tagHint);
+                            return origSrcDesc.set.call(this, routed);
+                        }
+                    }
+                    return origSrcDesc.set.call(this, val);
+                }
+            });
+        }
+    } catch (e) {}
+
+    // Verify active cluster ports once on boot via /api/multiport/ping
+    setTimeout(function() {
+        _nativeFetchV238('/api/multiport/ping').then(function(r) { return r.json(); }).then(function(info) {
+            if (info && Array.isArray(info.ports)) {
+                [8081, 8082, 8083].forEach(function(p) {
+                    window._jennyClusterPortsV238[p] = (info.ports.indexOf(p) !== -1);
+                });
+            }
+        }).catch(function() {});
+    }, 800);
+
+    // -------------------------------------------------------------------------
+    // 3. 1ms NATIVE JNI FOLDER SCANNER (ZERO SOCKETS WHEN OPENING FOLDER PICKER!)
+    // -------------------------------------------------------------------------
+    window.renderFolderManagerRowsHTMLV237 = function(saved, active, ft, folderCounts) {
+        return saved.map(function(p) {
+            var isSel = active.indexOf(p) !== -1;
+            var sp = String(p).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            var shortN = String(p).split('/').filter(Boolean).pop() || p;
+            var cntStr = '…';
+            if (folderCounts && typeof folderCounts[p] === 'number') {
+                cntStr = String(folderCounts[p]);
+            } else if (ft && Array.isArray(ft[p])) {
+                cntStr = String(ft[p].length);
+            }
+            var delBtn = saved.length > 1
+                ? '<button type="button" onclick="event.stopPropagation();window.removeFolderFromPoolV71(\'' + sp + '\')" style="padding:5px 8px;color:#f85149;background:#161b22;border:1px solid rgba(248,81,73,0.4);border-radius:7px;">🗑️</button>'
+                : '';
+            return '<div onclick="window.toggleFolderActivePoolV71(\'' + sp + '\',event)" style="display:flex;align-items:center;background:#0d1117;border:1px solid ' + (isSel ? '#3fb950' : '#262c36') + ';border-radius:8px;padding:9px 10px;gap:8px;cursor:pointer;">' +
+                '<input type="checkbox" ' + (isSel ? 'checked' : '') + ' style="pointer-events:none;width:16px;height:16px;accent-color:#3fb950;">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="color:' + (isSel ? '#3fb950' : '#e6edf3') + ';font-weight:bold;">📁 ' + shortN + ' (' + cntStr + ')</div>' +
+                    '<div style="color:#8b949e;font-size:10.5px;word-break:break-all;">' + p + '</div>' +
+                '</div>' +
+                delBtn +
+            '</div>';
+        }).join('');
+    };
+
+    window.openFolderManagerModalV62 = async function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        if (typeof window.closeAllV71Modals === 'function') window.closeAllV71Modals();
+
+        // Layer 3 Fast-Path: Read live folders & exact file counts directly from Java File.list() via JNI in ~1ms!
+        var jniData = null;
+        if (window.AndroidBridge && typeof window.AndroidBridge.getFoldersFastJson === 'function') {
+            try {
+                var rawJni = window.AndroidBridge.getFoldersFastJson();
+                if (rawJni) {
+                    var parsed = JSON.parse(rawJni);
+                    if (parsed && parsed.status === 'ok') {
+                        jniData = parsed;
+                        window._jennyRouterTelemetryV238.jniFolders++;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        var cached = window._cachedFoldersDataV237 || {};
+        var saved = (jniData && jniData.saved_folders)
+            || cached.saved_folders
+            || (window.lastData && window.lastData.saved_folders)
+            || (window.getSavedFoldersListV62 ? window.getSavedFoldersListV62() : ['/storage/emulated/0/Music']);
+        var active = (jniData && jniData.active_folders)
+            || cached.active_folders
+            || (window.lastData && window.lastData.active_folders)
+            || (window.appConfig && window.appConfig.activeFolders)
+            || [saved[0]];
+        var ft = cached.folder_tracks || {};
+        var fCounts = (jniData && jniData.folder_counts) || cached.folder_counts || null;
+
+        var m = document.getElementById('jennyFolderManagerModal');
+        if (m) m.remove();
+
+        m = document.createElement('div');
+        m.id = 'jennyFolderManagerModal';
+        m.className = 'jenny-modal-backdrop-v71';
+        m.onclick = function(e) { if (e.target === m) m.remove(); };
+
+        m.innerHTML =
+            '<div class="jenny-modal-card-v71" onclick="event.stopPropagation()">' +
+                '<div class="jenny-modal-hdr-v71">' +
+                    '<span style="color:#58a6ff;font-weight:bold;">📁 ' + window.tr('Музыкальные папки (Слияние)', 'Music Folders (Multi-Pool)') + '</span>' +
+                    '<button type="button" onclick="document.getElementById(\'jennyFolderManagerModal\').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>' +
+                '</div>' +
+                '<div class="jenny-modal-body-v71">' +
+                    '<div id="jennyFolderRowsBoxV237" style="display:flex;flex-direction:column;gap:7px;">' +
+                        window.renderFolderManagerRowsHTMLV237(saved, active, ft, fCounts) +
+                    '</div>' +
+                    '<div style="display:flex;gap:6px;margin-top:6px;">' +
+                        '<input type="text" id="newFolderInputV62" placeholder="/storage/emulated/0/..." style="flex:1;padding:7px;text-align:left !important;">' +
+                        '<button type="button" onclick="window.addFolderToPoolV71()" style="padding:7px 12px;color:#3fb950;">➕</button>' +
+                        '<button type="button" onclick="window.triggerSystemFolderPickerV62()" style="padding:7px 10px;color:#58a6ff;">📂</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(m);
+
+        // Background sync over VIP port :8080
+        try {
+            var d = await window.fetch('/api/folders_v71').then(function(r) { return r.json(); });
+            if (d && d.status === 'ok') {
+                window._cachedFoldersDataV237 = d;
+                var box = document.getElementById('jennyFolderRowsBoxV237');
+                if (box) {
+                    box.innerHTML = window.renderFolderManagerRowsHTMLV237(
+                        d.saved_folders || saved,
+                        d.active_folders || active,
+                        d.folder_tracks || {},
+                        null
+                    );
+                }
+            }
+        } catch (e) {}
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. LIVE CLUSTER & DIRECT DISK TELEMETRY BADGE INSIDE THREAD SETTINGS
+    // -------------------------------------------------------------------------
+    window.refreshClusterTelemetryBadgeV238 = function() {
+        var el = document.getElementById('jennyClusterStatusBadgeV238');
+        if (!el) return;
+        var directHits = 0;
+        if (window.AndroidBridge && typeof window.AndroidBridge.getDirectEngineStatsJson === 'function') {
+            try {
+                var st = JSON.parse(window.AndroidBridge.getDirectEngineStatsJson() || '{}');
+                directHits = Number(st.direct_hits || 0);
+            } catch (e) {}
+        }
+        var p = window._jennyClusterPortsV238;
+        var pill = function(port, label, color) {
+            var ok = Boolean(p[port]);
+            return '<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:5px;background:#161b22;border:1px solid ' + (ok ? color : '#30363d') + ';color:' + (ok ? color : '#8b949e') + ';font-size:10.5px;font-weight:bold;">' +
+                (ok ? '●' : '○') + ' :' + port + ' ' + label +
+            '</span>';
+        };
+        el.innerHTML =
+            '<div style="font-weight:bold;color:#3fb950;font-size:11.5px;margin-bottom:5px;">🚀 Движок V238: Прямой диск Java + 4 независимых порта (24 канала без очереди)</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px;">' +
+                pill(8080, 'VIP UI/Папки', '#39c5cf') +
+                pill(8081, 'Дека А', '#58a6ff') +
+                pill(8082, 'Дека Б', '#ff7b72') +
+                pill(8083, 'Фон/P2P', '#d2a8ff') +
+            '</div>' +
+            '<div style="font-size:10.5px;color:#8b949e;">⚡ Прямых чтений треков с диска в обход Python/сети: <b style="color:#e6edf3;">' + directHits + '</b> • Мгновенный сканер папок: <b style="color:#3fb950;">JNI Native</b></div>';
+    };
+
+    var _origRenderThreadsSettingsBoxV216 = window.renderThreadsSettingsBoxV216;
+    if (typeof _origRenderThreadsSettingsBoxV216 === 'function') {
+        window.renderThreadsSettingsBoxV216 = function() {
+            _origRenderThreadsSettingsBoxV216.apply(this, arguments);
+            var box = document.getElementById('jennyThreadsSettingsBoxV216');
+            if (!box) return;
+            var gc = box.querySelector('.group-content');
+            if (gc && !document.getElementById('jennyClusterStatusBadgeV238')) {
+                var badge = document.createElement('div');
+                badge.id = 'jennyClusterStatusBadgeV238';
+                badge.style.cssText = 'margin-bottom:8px;padding:8px 9px;background:#090d14;border:1px solid rgba(63,185,80,0.45);border-radius:8px;line-height:1.35;';
+                gc.insertBefore(badge, gc.firstChild);
+            }
+            window.refreshClusterTelemetryBadgeV238();
+        };
+        setTimeout(function() {
+            if (document.getElementById('jennyThreadsSettingsBoxV216')) {
+                window.renderThreadsSettingsBoxV216();
+            }
+        }, 400);
+    }
+
+    setInterval(function() {
+        var sm = document.getElementById('settingsModal');
+        if (sm && sm.classList.contains('open')) {
+            window.refreshClusterTelemetryBadgeV238();
+        }
+    }, 2000);
+})();
+/* ================= END JENNY_V238_MULTI_PORT_SMART_ROUTER_AND_JNI_FOLDERS_PATCH ================= */

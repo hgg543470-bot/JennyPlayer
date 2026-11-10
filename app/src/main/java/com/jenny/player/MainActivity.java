@@ -30,6 +30,20 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
 import org.json.JSONObject;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import java.io.ByteArrayInputStream;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import org.json.JSONArray;
 
 public class MainActivity extends AppCompatActivity {
     private static final int REQ_PERM_STORAGE = 1;
@@ -37,6 +51,12 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_PICK_FOLDER = 42;
     private static final int REQ_PICK_TORRENT = 43;
     private static final int REQ_OVERLAY_PERM = 44;
+    // === BEGIN JENNY_V238_DIRECT_MEDIA_FIELDS ===
+    private static final AtomicLong directMediaHitsV238 = new AtomicLong(0L);
+    private static volatile long cachedPresetMtimeV238 = -1L;
+    private static volatile List<String> cachedLookupDirsV238 = null;
+    private static final Object presetCacheLockV238 = new Object();
+    // === END JENNY_V238_DIRECT_MEDIA_FIELDS ===
     private static MainActivity instance;
     private static WebView webView;
     private static boolean isPageLoaded = false;
@@ -939,7 +959,10 @@ public class MainActivity extends AppCompatActivity {
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         webView.clearCache(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        webView.setWebViewClient(new WebViewClient());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        }
+        webView.setWebViewClient(new JennyDirectMediaWebViewClientV238());
         webView.setWebChromeClient(new WebChromeClient());
 
         webView.addJavascriptInterface(new WebAppInterface(), "AndroidBridge");
@@ -954,6 +977,31 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public class WebAppInterface {
+        // === BEGIN JENNY_V238_JNI_BRIDGE_METHODS ===
+        @JavascriptInterface
+        public String getFoldersFastJson() {
+            return buildFastFoldersJsonV238();
+        }
+
+        @JavascriptInterface
+        public String getDirectEngineStatsJson() {
+            try {
+                JSONObject o = new JSONObject();
+                o.put("status", "ok");
+                o.put("direct_hits", directMediaHitsV238.get());
+                o.put("jni_folders", true);
+                return o.toString();
+            } catch (Exception e) {
+                return "{\"status\":\"ok\",\"direct_hits\":0,\"jni_folders\":true}";
+            }
+        }
+
+        @JavascriptInterface
+        public void invalidatePresetFolderCache() {
+            cachedPresetMtimeV238 = -1L;
+        }
+        // === END JENNY_V238_JNI_BRIDGE_METHODS ===
+
                 @JavascriptInterface
         public void setVideoFullscreenLock(boolean fullscreen, boolean locked) {
             isVideoFullscreenV132 = fullscreen;
@@ -1501,4 +1549,474 @@ public class MainActivity extends AppCompatActivity {
             webView.loadUrl("http://127.0.0.1:8080");
         }
     }
+
+    // === BEGIN JENNY_V238_DIRECT_MEDIA_CLIENT ===
+    private static String normDirPathV238(String raw) {
+        if (raw == null) return "/storage/emulated/0/Music";
+        String p = raw.trim();
+        if (p.isEmpty()) return "/storage/emulated/0/Music";
+        if (!p.startsWith("/")) {
+            p = "/storage/emulated/0/" + p;
+        }
+        while (p.length() > 1 && p.endsWith("/")) {
+            p = p.substring(0, p.length() - 1);
+        }
+        return p;
+    }
+
+    private static String readSmallUtf8FileV238(File f) {
+        if (f == null || !f.isFile()) return null;
+        FileInputStream fis = null;
+        try {
+            long len = f.length();
+            if (len <= 0L || len > 4L * 1024L * 1024L) return null;
+            fis = new FileInputStream(f);
+            ByteArrayOutputStream bos = new ByteArrayOutputStream((int) Math.min(len, 65536L));
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = fis.read(buf)) != -1) {
+                bos.write(buf, 0, n);
+            }
+            return new String(bos.toByteArray(), "UTF-8");
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (fis != null) {
+                try { fis.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private static List<String> getLookupMediaDirsV238() {
+        File preset = new File("/storage/emulated/0/Music/jenny_dsp_preset.json");
+        long mtime = preset.exists() ? preset.lastModified() : 0L;
+        List<String> cur = cachedLookupDirsV238;
+        if (cur != null && cachedPresetMtimeV238 == mtime) {
+            return cur;
+        }
+        synchronized (presetCacheLockV238) {
+            if (cachedLookupDirsV238 != null && cachedPresetMtimeV238 == mtime) {
+                return cachedLookupDirsV238;
+            }
+            LinkedHashSet<String> dirs = new LinkedHashSet<String>();
+            if (preset.isFile()) {
+                String txt = readSmallUtf8FileV238(preset);
+                if (txt != null && !txt.isEmpty()) {
+                    try {
+                        JSONObject j = new JSONObject(txt);
+                        JSONArray act = j.optJSONArray("activeFolders");
+                        if (act != null) {
+                            for (int i = 0; i < act.length(); i++) {
+                                String d = normDirPathV238(act.optString(i, ""));
+                                if (!d.isEmpty()) dirs.add(d);
+                            }
+                        }
+                        String cDir = j.optString("customMusicDir", "");
+                        if (cDir != null && !cDir.trim().isEmpty()) {
+                            dirs.add(normDirPathV238(cDir));
+                        }
+                        JSONArray sav = j.optJSONArray("savedFolders");
+                        if (sav != null) {
+                            for (int i = 0; i < sav.length(); i++) {
+                                String d = normDirPathV238(sav.optString(i, ""));
+                                if (!d.isEmpty()) dirs.add(d);
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+            dirs.add("/storage/emulated/0/Music");
+            dirs.add("/storage/emulated/0/JennyVideo");
+            dirs.add("/storage/emulated/0/Download");
+            dirs.add("/storage/emulated/0/Movies");
+            List<String> built = new ArrayList<String>(dirs);
+            cachedLookupDirsV238 = built;
+            cachedPresetMtimeV238 = mtime;
+            return built;
+        }
+    }
+
+    private static String buildFastFoldersJsonV238() {
+        try {
+            File preset = new File("/storage/emulated/0/Music/jenny_dsp_preset.json");
+            LinkedHashSet<String> savedSet = new LinkedHashSet<String>();
+            LinkedHashSet<String> activeSet = new LinkedHashSet<String>();
+            LinkedHashSet<String> extSet = new LinkedHashSet<String>();
+            String[] baseExts = new String[] {
+                ".mp3", ".flac", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".xflac",
+                ".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".3gp", ".ts", ".m2ts", ".wmv", ".flv"
+            };
+            for (int i = 0; i < baseExts.length; i++) {
+                extSet.add(baseExts[i]);
+            }
+
+            if (preset.isFile()) {
+                String txt = readSmallUtf8FileV238(preset);
+                if (txt != null && !txt.isEmpty()) {
+                    try {
+                        JSONObject j = new JSONObject(txt);
+                        JSONArray sav = j.optJSONArray("savedFolders");
+                        if (sav != null) {
+                            for (int i = 0; i < sav.length(); i++) {
+                                String d = normDirPathV238(sav.optString(i, ""));
+                                if (!d.isEmpty()) savedSet.add(d);
+                            }
+                        }
+                        JSONArray act = j.optJSONArray("activeFolders");
+                        if (act != null) {
+                            for (int i = 0; i < act.length(); i++) {
+                                String d = normDirPathV238(act.optString(i, ""));
+                                File df = new File(d);
+                                if (df.isDirectory()) {
+                                    activeSet.add(d);
+                                    savedSet.add(d);
+                                }
+                            }
+                        }
+                        if (activeSet.isEmpty()) {
+                            String cDir = j.optString("customMusicDir", "");
+                            if (cDir != null && !cDir.trim().isEmpty()) {
+                                String nd = normDirPathV238(cDir);
+                                if (new File(nd).isDirectory()) {
+                                    activeSet.add(nd);
+                                    savedSet.add(nd);
+                                }
+                            }
+                        }
+                        String[] extraKeys = new String[] { "customFormats", "customVideoFormats" };
+                        for (int k = 0; k < extraKeys.length; k++) {
+                            JSONArray arr = j.optJSONArray(extraKeys[k]);
+                            if (arr != null) {
+                                for (int i = 0; i < arr.length(); i++) {
+                                    String ex = arr.optString(i, "").trim().toLowerCase(Locale.ROOT);
+                                    if (!ex.isEmpty()) {
+                                        if (!ex.startsWith(".")) ex = "." + ex;
+                                        extSet.add(ex);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            if (savedSet.isEmpty()) {
+                savedSet.add("/storage/emulated/0/Music");
+            }
+            if (activeSet.isEmpty()) {
+                activeSet.add(savedSet.iterator().next());
+            }
+
+            JSONArray savedArr = new JSONArray();
+            JSONArray activeArr = new JSONArray();
+            JSONObject folderCounts = new JSONObject();
+
+            for (String d : savedSet) {
+                savedArr.put(d);
+                int count = 0;
+                try {
+                    File dirFile = new File(d);
+                    String[] names = dirFile.list();
+                    if (names != null) {
+                        for (int i = 0; i < names.length; i++) {
+                            String fn = names[i];
+                            if (fn == null || fn.isEmpty() || fn.charAt(0) == '.') continue;
+                            String low = fn.toLowerCase(Locale.ROOT);
+                            if (low.startsWith("temp_")) continue;
+                            int dot = low.lastIndexOf('.');
+                            if (dot > 0) {
+                                String ext = low.substring(dot);
+                                if (extSet.contains(ext)) {
+                                    count++;
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+                folderCounts.put(d, count);
+            }
+
+            String currentFolder = "/storage/emulated/0/Music";
+            boolean firstAct = true;
+            for (String d : activeSet) {
+                if (firstAct) {
+                    currentFolder = d;
+                    firstAct = false;
+                }
+                activeArr.put(d);
+            }
+
+            JSONObject out = new JSONObject();
+            out.put("status", "ok");
+            out.put("fast_jni", true);
+            out.put("saved_folders", savedArr);
+            out.put("active_folders", activeArr);
+            out.put("current_folder", currentFolder);
+            out.put("folder_counts", folderCounts);
+            return out.toString();
+        } catch (Exception e) {
+            return "{\"status\":\"error\"}";
+        }
+    }
+
+    private static boolean hasJennyRevTrailerV238(File f, long len) {
+        if (len <= 88L) return false;
+        RandomAccessFile raf = null;
+        try {
+            raf = new RandomAccessFile(f, "r");
+            raf.seek(len - 24L);
+            byte[] tail = new byte[24];
+            raf.readFully(tail);
+            if (tail[0] == 'J' && tail[1] == 'R' && tail[2] == 'E' && tail[3] == 'V' &&
+                tail[16] == 'J' && tail[17] == 'E' && tail[18] == 'N' && tail[19] == 'N' &&
+                tail[20] == 'Y' && tail[21] == 'V' && tail[22] == '6' && tail[23] == '7') {
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (raf != null) {
+                try { raf.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private static String guessMediaMimeV238(String lowName) {
+        if (lowName.endsWith(".mp3")) return "audio/mpeg";
+        if (lowName.endsWith(".flac")) return "audio/flac";
+        if (lowName.endsWith(".wav")) return "audio/wav";
+        if (lowName.endsWith(".m4a")) return "audio/mp4";
+        if (lowName.endsWith(".aac")) return "audio/aac";
+        if (lowName.endsWith(".ogg") || lowName.endsWith(".opus")) return "audio/ogg";
+        if (lowName.endsWith(".mp4") || lowName.endsWith(".m4v")) return "video/mp4";
+        if (lowName.endsWith(".mkv")) return "video/x-matroska";
+        if (lowName.endsWith(".webm")) return "video/webm";
+        if (lowName.endsWith(".mov")) return "video/quicktime";
+        if (lowName.endsWith(".3gp")) return "video/3gpp";
+        if (lowName.endsWith(".avi")) return "video/x-msvideo";
+        return null;
+    }
+
+    private static Map<String, String> buildCorsMediaHeadersV238(long contentLength, String contentRange, boolean acceptRanges) {
+        Map<String, String> h = new HashMap<String, String>();
+        h.put("Access-Control-Allow-Origin", "*");
+        h.put("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+        h.put("Access-Control-Allow-Headers", "Origin, Accept, Content-Type, X-Requested-With, Range, Cache-Control");
+        h.put("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Type, X-Jenny-Direct");
+        h.put("Timing-Allow-Origin", "*");
+        h.put("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        h.put("X-Jenny-Direct", "java-disk-v238");
+        if (acceptRanges) {
+            h.put("Accept-Ranges", "bytes");
+        }
+        if (contentLength >= 0L) {
+            h.put("Content-Length", String.valueOf(contentLength));
+        }
+        if (contentRange != null && !contentRange.isEmpty()) {
+            h.put("Content-Range", contentRange);
+        }
+        return h;
+    }
+
+    private static final class BoundedRandomAccessStreamV238 extends InputStream {
+        private final RandomAccessFile raf;
+        private long remaining;
+        private boolean closed = false;
+
+        BoundedRandomAccessStreamV238(File file, long startOffset, long length) throws IOException {
+            this.raf = new RandomAccessFile(file, "r");
+            if (startOffset > 0L) {
+                this.raf.seek(startOffset);
+            }
+            this.remaining = length;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (closed || remaining <= 0L) return -1;
+            int b = raf.read();
+            if (b >= 0) {
+                remaining--;
+            } else {
+                remaining = 0L;
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] buffer, int byteOffset, int byteCount) throws IOException {
+            if (closed) return -1;
+            if (byteCount == 0) return 0;
+            if (remaining <= 0L) return -1;
+            int toRead = (int) Math.min((long) byteCount, remaining);
+            int n = raf.read(buffer, byteOffset, toRead);
+            if (n > 0) {
+                remaining -= n;
+            } else {
+                remaining = 0L;
+            }
+            return n;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (!closed) {
+                closed = true;
+                remaining = 0L;
+                raf.close();
+            }
+        }
+    }
+
+    private static final class JennyDirectMediaWebViewClientV238 extends WebViewClient {
+        @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            if (request == null) return null;
+            Uri uri = request.getUrl();
+            if (uri == null) return null;
+            String host = uri.getHost();
+            if (host == null || (!"127.0.0.1".equals(host) && !"localhost".equalsIgnoreCase(host))) {
+                return null;
+            }
+            String encPath = uri.getEncodedPath();
+            if (encPath == null || !encPath.startsWith("/api/media/") || encPath.length() <= 11) {
+                return null;
+            }
+            String method = request.getMethod();
+            if ("OPTIONS".equalsIgnoreCase(method)) {
+                Map<String, String> optHeaders = buildCorsMediaHeadersV238(0L, null, true);
+                return new WebResourceResponse(
+                    "text/plain",
+                    "UTF-8",
+                    204,
+                    "No Content",
+                    optHeaders,
+                    new ByteArrayInputStream(new byte[0])
+                );
+            }
+            if (!"GET".equalsIgnoreCase(method)) {
+                return null;
+            }
+
+            String rawRel = encPath.substring(11);
+            String filename = Uri.decode(rawRel);
+            if (filename == null || filename.isEmpty() || filename.contains("..") || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
+                return null;
+            }
+
+            String low = filename.toLowerCase(Locale.ROOT);
+            if (low.endsWith(".xflac")) {
+                return null;
+            }
+            String mime = guessMediaMimeV238(low);
+            if (mime == null) {
+                return null;
+            }
+
+            File matched = null;
+            List<String> dirs = getLookupMediaDirsV238();
+            for (int i = 0; i < dirs.size(); i++) {
+                File cand = new File(dirs.get(i), filename);
+                if (cand.isFile() && cand.canRead()) {
+                    matched = cand;
+                    break;
+                }
+            }
+            if (matched == null) {
+                return null;
+            }
+
+            long totalLen = matched.length();
+            if (totalLen <= 0L) {
+                return null;
+            }
+
+            if ((low.endsWith(".opus") || low.endsWith(".ogg")) && hasJennyRevTrailerV238(matched, totalLen)) {
+                return null;
+            }
+
+            String rangeHeader = null;
+            Map<String, String> reqHeaders = request.getRequestHeaders();
+            if (reqHeaders != null) {
+                rangeHeader = reqHeaders.get("Range");
+                if (rangeHeader == null) {
+                    for (Map.Entry<String, String> e : reqHeaders.entrySet()) {
+                        if (e.getKey() != null && "range".equalsIgnoreCase(e.getKey())) {
+                            rangeHeader = e.getValue();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            try {
+                if (rangeHeader != null && rangeHeader.trim().toLowerCase(Locale.ROOT).startsWith("bytes=")) {
+                    String spec = rangeHeader.trim().substring(6);
+                    int comma = spec.indexOf(',');
+                    if (comma >= 0) {
+                        spec = spec.substring(0, comma).trim();
+                    }
+                    int dash = spec.indexOf('-');
+                    if (dash >= 0) {
+                        String sPart = spec.substring(0, dash).trim();
+                        String ePart = spec.substring(dash + 1).trim();
+                        long startB;
+                        long endB;
+                        if (sPart.isEmpty()) {
+                            long suffixLen = Long.parseLong(ePart);
+                            if (suffixLen <= 0L) suffixLen = 1L;
+                            startB = Math.max(0L, totalLen - suffixLen);
+                            endB = totalLen - 1L;
+                        } else {
+                            startB = Long.parseLong(sPart);
+                            endB = ePart.isEmpty() ? (totalLen - 1L) : Long.parseLong(ePart);
+                            if (endB >= totalLen) endB = totalLen - 1L;
+                        }
+
+                        if (startB < 0L || startB >= totalLen || startB > endB) {
+                            Map<String, String> errH = buildCorsMediaHeadersV238(0L, "bytes */" + totalLen, true);
+                            return new WebResourceResponse(
+                                mime,
+                                null,
+                                416,
+                                "Requested Range Not Satisfiable",
+                                errH,
+                                new ByteArrayInputStream(new byte[0])
+                            );
+                        }
+
+                        long chunkLen = (endB - startB) + 1L;
+                        String cRange = "bytes " + startB + "-" + endB + "/" + totalLen;
+                        Map<String, String> partH = buildCorsMediaHeadersV238(chunkLen, cRange, true);
+                        BoundedRandomAccessStreamV238 stream = new BoundedRandomAccessStreamV238(matched, startB, chunkLen);
+                        directMediaHitsV238.incrementAndGet();
+                        return new WebResourceResponse(
+                            mime,
+                            null,
+                            206,
+                            "Partial Content",
+                            partH,
+                            stream
+                        );
+                    }
+                }
+
+                Map<String, String> okH = buildCorsMediaHeadersV238(totalLen, null, true);
+                BoundedRandomAccessStreamV238 fullStream = new BoundedRandomAccessStreamV238(matched, 0L, totalLen);
+                directMediaHitsV238.incrementAndGet();
+                return new WebResourceResponse(
+                    mime,
+                    null,
+                    200,
+                    "OK",
+                    okH,
+                    fullStream
+                );
+            } catch (Exception e) {
+                return null;
+            }
+        }
+    }
+    // === END JENNY_V238_DIRECT_MEDIA_CLIENT ===
 }
