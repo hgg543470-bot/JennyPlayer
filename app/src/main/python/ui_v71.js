@@ -31913,3 +31913,952 @@ let vsyncTicks = 0;
     }
 })();
 /* ================= END JENNY_V236_TORRENT_FOOTER_PIN_LOCK_AND_BOTTOM_HELP_ROW_PATCH ================= */
+
+/* ================= JENNY_V237_KILL_SWITCH_ZERO_TWITCH_INSTANT_FOLDERS_DATASYNC_AND_EXT_PAUSE_PATCH (#336 / V237) ================= */
+(function() {
+    if (window._jennyV237Installed) return;
+    window._jennyV237Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. CSS FOR ZERO-TWITCH TORRENT FILE CARDS (FIXED GEOMETRY + FILL LAYER)
+    // -------------------------------------------------------------------------
+    var stV237 = document.createElement('style');
+    stV237.id = 'jennyStyleV237';
+    stV237.textContent = [
+        '.tor-file-row-v237 {',
+        '  position: relative !important;',
+        '  overflow: hidden !important;',
+        '  display: flex !important;',
+        '  align-items: center !important;',
+        '  gap: 8px !important;',
+        '  padding: 7px 9px !important;',
+        '  background: #0b0f16 !important;',
+        '  border: 1px solid #21262d;',
+        '  border-radius: 8px !important;',
+        '  box-sizing: border-box !important;',
+        '  contain: layout style !important;',
+        '}',
+        '.tor-row-fill-layer-v237 {',
+        '  position: absolute !important;',
+        '  left: 0 !important;',
+        '  top: 0 !important;',
+        '  bottom: 0 !important;',
+        '  width: 0%;',
+        '  pointer-events: none !important;',
+        '  z-index: 0 !important;',
+        '  transition: width 0.25s linear !important;',
+        '}',
+        '.tor-row-content-v237 {',
+        '  position: relative !important;',
+        '  z-index: 1 !important;',
+        '  display: flex !important;',
+        '  align-items: center !important;',
+        '  gap: 8px !important;',
+        '  width: 100% !important;',
+        '  min-width: 0 !important;',
+        '}',
+        '.tor-row-meta-line-v237 {',
+        '  display: flex !important;',
+        '  align-items: center !important;',
+        '  gap: 6px !important;',
+        '  height: 19px !important;',
+        '  min-height: 19px !important;',
+        '  max-height: 19px !important;',
+        '  line-height: 19px !important;',
+        '  margin-top: 2px !important;',
+        '  white-space: nowrap !important;',
+        '  overflow: hidden !important;',
+        '  text-overflow: ellipsis !important;',
+        '  font-size: 10.5px !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(stV237);
+
+    // -------------------------------------------------------------------------
+    // 2. RESTORE MASTER KILL SWITCH (#btnKillAllSourcesV94) AT BOTTOM OF #jennySourcesDropMenuV91 (72444.jpg)
+    // -------------------------------------------------------------------------
+    window.computeSourcesActiveStatusLabelV237 = function() {
+        var activeDomCnt = [
+            'jennyKhinsiderModalV88',
+            'jennyFlacRadioModalV91',
+            'jennySoundCloudModalV93',
+            'jennyTorrentModalV91',
+            'jennyTorInspectorModalV128',
+            'jennyYoutubeModalV230'
+        ].filter(function(id) { return Boolean(document.getElementById(id)); }).length;
+
+        var anyTorDl = Object.values(window._torMapV112 || {}).some(function(j) { return Boolean(j && j.dlActive); });
+        var isPlayingStream = Boolean(
+            anyTorDl ||
+            (window._khStateV88 && window._khStateV88.previewAudio && !window._khStateV88.previewAudio.paused) ||
+            (window._radioStateV91 && window._radioStateV91.audio && !window._radioStateV91.audio.paused) ||
+            (window._khStateV88 && window._khStateV88.isDownloading) ||
+            (window._radioStateV91 && window._radioStateV91.isRecording)
+        );
+
+        return (activeDomCnt > 0 || isPlayingStream)
+            ? ('В фоне: ' + activeDomCnt + (isPlayingStream ? ' • 🔊 АКТИВЕН' : ''))
+            : 'Всё чисто';
+    };
+
+    window.updateKillAllSourcesButtonStatusV237 = function() {
+        var lbl = document.getElementById('lblKillAllSourcesStatusV94');
+        if (lbl) {
+            lbl.textContent = window.computeSourcesActiveStatusLabelV237();
+        }
+    };
+
+    window.killAllSourceModulesV94 = async function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+
+        if (typeof window.stopKhPreviewV88 === 'function') { try { window.stopKhPreviewV88(); } catch (e) {} }
+        if (typeof window.stopFlacRadioStreamV91 === 'function') { try { window.stopFlacRadioStreamV91(); } catch (e) {} }
+        if (typeof window.stopKhProgressPollV89 === 'function') { try { window.stopKhProgressPollV89(); } catch (e) {} }
+        if (typeof window.stopAllExternalStreamsV97 === 'function') { try { window.stopAllExternalStreamsV97(); } catch (e) {} }
+
+        if (window._khStateV88) {
+            window._khStateV88.abortDownload = true;
+            window._khStateV88.isDownloading = false;
+        }
+        if (window._radioStateV91) {
+            if (window._radioStateV91.recTimer) clearInterval(window._radioStateV91.recTimer);
+            window._radioStateV91.isRecording = false;
+            window._radioStateV91.currentStation = null;
+        }
+        if (window._torGlobalTimerV112) {
+            clearInterval(window._torGlobalTimerV112);
+            window._torGlobalTimerV112 = null;
+        }
+        Object.values(window._torMapV112 || {}).forEach(function(j) {
+            if (j) j.dlActive = false;
+        });
+        if (window._torStateV96) {
+            window._torStateV96.dlActive = false;
+            window._torStateV96.dlOverallPct = 0;
+        }
+        ['ost', 'archive', 'radio', 'soundcloud', 'torrent', 'youtube'].forEach(function(k) {
+            if (typeof window.applyHeaderIconBadgeV99 === 'function') {
+                window.applyHeaderIconBadgeV99(k, '');
+            }
+        });
+
+        [
+            'jennyKhinsiderModalV88',
+            'jennyFlacRadioModalV91',
+            'jennySoundCloudModalV93',
+            'jennyTorrentModalV91',
+            'jennyTorInspectorModalV128',
+            'jennyYoutubeModalV230'
+        ].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.remove();
+        });
+
+        var menu = document.getElementById('jennySourcesDropMenuV91');
+        if (menu) menu.style.display = 'none';
+
+        window.updateKillAllSourcesButtonStatusV237();
+        if (window.AndroidBridge && typeof window.AndroidBridge.updateDataSyncState === 'function') {
+            try { window.AndroidBridge.updateDataSyncState(false, '', '', -1); } catch (e) {}
+        }
+
+        try { await fetch('/api/sources/kill_all', { method: 'POST' }); } catch (e) {}
+
+        if (typeof window.showToast === 'function') {
+            window.showToast('🔌 Все внешние модули и фоновые потоки выгружены');
+        }
+    };
+
+    var _origBuildDropDOMOnceV236 = window.buildSourcesDropdownDOMOnceV236;
+    window.buildSourcesDropdownDOMOnceV236 = function(menu) {
+        if (!menu) menu = document.getElementById('jennySourcesDropMenuV91');
+        if (!menu) return;
+        if (typeof _origBuildDropDOMOnceV236 === 'function') {
+            _origBuildDropDOMOnceV236(menu);
+        }
+        if (!document.getElementById('btnKillAllSourcesV94')) {
+            var killBtn = document.createElement('button');
+            killBtn.type = 'button';
+            killBtn.id = 'btnKillAllSourcesV94';
+            killBtn.onclick = function(e) { window.killAllSourceModulesV94(e); };
+            killBtn.style.cssText = 'margin-top:4px;width:100%;padding:8px 10px;border-radius:8px;background:linear-gradient(90deg,rgba(218,54,51,0.25),rgba(115,65,190,0.2));border:1px solid #ff7b72;color:#ff7b72;font-size:11.5px;font-weight:900;display:flex;justify-content:space-between;align-items:center;cursor:pointer;box-sizing:border-box;';
+            killBtn.innerHTML = '<span>🔌 ВЫРУБИТЬ ВСЕ МОДУЛИ</span><span id="lblKillAllSourcesStatusV94" style="font-size:10px;color:#e6edf3;background:rgba(0,0,0,0.45);padding:2px 6px;border-radius:5px;">' + window.computeSourcesActiveStatusLabelV237() + '</span>';
+            menu.appendChild(killBtn);
+        }
+
+        // Also add quick toggle for locking the Android background notification right inside the hub menu!
+        if (!document.getElementById('btnLockBgNotifV237')) {
+            var isLocked = localStorage.getItem('jenny_notif_locked_v237') !== '0';
+            var lockBtn = document.createElement('button');
+            lockBtn.type = 'button';
+            lockBtn.id = 'btnLockBgNotifV237';
+            lockBtn.onclick = function(e) {
+                if (e && e.stopPropagation) e.stopPropagation();
+                window.toggleAndroidNotifLockFromUIV237(e);
+            };
+            lockBtn.style.cssText = 'width:100%;padding:6px 10px;border-radius:8px;background:#0d1117;border:1px solid ' + (isLocked ? '#3fb950' : '#30363d') + ';color:' + (isLocked ? '#3fb950' : '#8b949e') + ';font-size:10.5px;font-weight:800;display:flex;justify-content:space-between;align-items:center;cursor:pointer;box-sizing:border-box;';
+            lockBtn.innerHTML = '<span>🛡️ Уведомление DataSync (Защита от закрытия)</span><span id="lblLockBgNotifStateV237">' + (isLocked ? '🔒 ЗАКРЕПЛЕНО' : '🔓 СВОБОДНО') + '</span>';
+            menu.appendChild(lockBtn);
+        }
+    };
+
+    var _origToggleDropMenuV236 = window.toggleSourcesDropdownMenuV91;
+    window.toggleSourcesDropdownMenuV91 = function(ev) {
+        var r = (typeof _origToggleDropMenuV236 === 'function')
+            ? _origToggleDropMenuV236.apply(this, arguments)
+            : undefined;
+        var menu = document.getElementById('jennySourcesDropMenuV91');
+        if (menu && menu.style.display === 'flex') {
+            if (!document.getElementById('btnKillAllSourcesV94')) {
+                window.buildSourcesDropdownDOMOnceV236(menu);
+            } else {
+                window.updateKillAllSourcesButtonStatusV237();
+            }
+        }
+        return r;
+    };
+
+    window.onAndroidNotifLockChangedV237 = function(locked) {
+        try { localStorage.setItem('jenny_notif_locked_v237', locked ? '1' : '0'); } catch (e) {}
+        var btn = document.getElementById('btnLockBgNotifV237');
+        var lbl = document.getElementById('lblLockBgNotifStateV237');
+        if (btn) {
+            btn.style.borderColor = locked ? '#3fb950' : '#30363d';
+            btn.style.color = locked ? '#3fb950' : '#8b949e';
+        }
+        if (lbl) {
+            lbl.textContent = locked ? '🔒 ЗАКРЕПЛЕНО' : '🔓 СВОБОДНО';
+        }
+    };
+
+    window.toggleAndroidNotifLockFromUIV237 = function(ev) {
+        var cur = localStorage.getItem('jenny_notif_locked_v237') !== '0';
+        var next = !cur;
+        window.onAndroidNotifLockChangedV237(next);
+        if (window.AndroidBridge && typeof window.AndroidBridge.setNotificationLockState === 'function') {
+            try { window.AndroidBridge.setNotificationLockState(next); } catch (e) {}
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(next ? '🔒 Уведомление заблокировано от смахивания (DataSync 24/7)' : '🔓 Блокировка уведомления снята', ev);
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 3. ZERO-TWITCH TORRENT FILE CARDS (#torBodyListV96):
+    //    Replace #torFileProgV96_* with fixed-height .tor-row-meta-line-v237 + .tor-row-fill-layer-v237
+    //    so old 500ms V215 timer finds nothing and ONLY fill width & numbers update in-place!
+    // -------------------------------------------------------------------------
+    window.renderTorrentFilesListV96 = function() {
+        window._torScreenModeV112 = 'files';
+        var body = document.getElementById('torBodyListV96');
+        if (!body) return;
+
+        var h = window._torStateV96 && window._torStateV96.currentHash;
+        var job = (h && window._torMapV112) ? window._torMapV112[h] : null;
+        if (job) {
+            window._torStateV96.files = job.files;
+            window._torStateV96.selectedFiles = job.selectedFiles;
+            job.hasLossless = window.computeJobHasLosslessV236 ? window.computeJobHasLosslessV236(job) : false;
+        }
+
+        var files = (window._torStateV96 && window._torStateV96.files) || [];
+        var selSet = (window._torStateV96 && window._torStateV96.selectedFiles) || new Set();
+
+        body.innerHTML = files.map(function(f) {
+            var idx = Number(f.index);
+            var chk = selSet.has(idx) ? 'checked' : '';
+            var mb = ((f.length || 0) / (1024 * 1024)).toFixed(1);
+            var cleanTitle = String(f.path || f.name || '').split('/').pop() || f.path || ('Track #' + idx);
+            return '<div id="torFileRowV96_' + idx + '" class="tor-file-row-v237">' +
+                '<div id="torRowFillV237_' + idx + '" class="tor-row-fill-layer-v237"></div>' +
+                '<div class="tor-row-content-v237">' +
+                    '<input type="checkbox" ' + chk + ' onchange="if(this.checked) window._torStateV96.selectedFiles.add(' + idx + '); else window._torStateV96.selectedFiles.delete(' + idx + '); if(window.updateTorrentSelectAllBtnUIV117) window.updateTorrentSelectAllBtnUIV117();" style="width:17px;height:17px;accent-color:#3fb950;flex-shrink:0;cursor:pointer;">' +
+                    '<div style="flex:1;min-width:0;">' +
+                        '<div style="color:#e6edf3;font-size:11.5px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.28;">' + cleanTitle + '</div>' +
+                        '<div class="tor-row-meta-line-v237">' +
+                            '<span id="torRowSizeV237_' + idx + '" style="color:#8b949e;flex-shrink:0;">💾 ' + mb + ' МБ</span>' +
+                            '<span id="torRowStatV237_' + idx + '" style="font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>' +
+                        '</div>' +
+                    '</div>' +
+                    '<button type="button" class="tor-prev-btn-v97" onclick="window.previewSingleTorrentTrackV97(' + idx + ', this, event)" title="Слушать / смотреть поток сразу" style="padding:5px 9px;background:#161b22;color:#58a6ff;border:1px solid #30363d;border-radius:7px;font-size:11px;font-weight:bold;flex-shrink:0;">▶</button>' +
+                    '<button type="button" id="torDlSingleBtnV98_' + idx + '" onclick="window.downloadSingleTorrentTrackV98(' + idx + ', this, event)" title="Скачать этот трек в плеер" style="padding:5px 9px;background:rgba(63,185,80,0.16);color:#3fb950;border:1px solid rgba(63,185,80,0.6);border-radius:7px;font-size:11px;font-weight:bold;flex-shrink:0;">⬇️</button>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+
+        if (typeof window.ensureTorrentFooterStructureV236 === 'function') {
+            window.ensureTorrentFooterStructureV236();
+        }
+        if (job) {
+            window.paintOpenedTorrentJobProgressV112(job, window._lastTorEncBadgeV212 || null);
+        }
+    };
+
+    // In-place update of ONLY the fill layer width and digit text on each torrent card (0 layout shift, 0 twitching!)
+    window.cleanAndHighlightTorrentFileRowsV218 = function() {
+        var curH = window._torStateV96 && window._torStateV96.currentHash;
+        if (!curH || window._torScreenModeV112 !== 'files') return;
+
+        var ftr = document.getElementById('torFooterBarV96');
+        if (ftr && (ftr.style.display === 'none' || getComputedStyle(ftr).display === 'none')) {
+            ftr.style.setProperty('display', 'flex', 'important');
+        }
+
+        var job = window._torMapV112 && window._torMapV112[curH];
+        var te = window._lastTorEncBadgeV212 || {};
+        var vidSt = window._vidStateV130 || {};
+        var activeStreamHash = (vidSt.active && vidSt.torHash) ? String(vidSt.torHash).toLowerCase() : (window._activeStreamSessionV143 ? String(window._activeStreamSessionV143.hash || '').toLowerCase() : '');
+        var activeStreamIdx = (vidSt.active && vidSt.torHash) ? Number(vidSt.torFileIdx) : (window._activeStreamSessionV143 ? Number(window._activeStreamSessionV143.fileIdx) : -1);
+
+        var rows = document.querySelectorAll('#torBodyListV96 [id^="torFileRowV96_"]');
+        rows.forEach(function(rowEl) {
+            var fIdx = Number(String(rowEl.id).replace('torFileRowV96_', ''));
+            var fillEl = document.getElementById('torRowFillV237_' + fIdx);
+            var sizeEl = document.getElementById('torRowSizeV237_' + fIdx);
+            var statEl = document.getElementById('torRowStatV237_' + fIdx);
+            var dlBtn = document.getElementById('torDlSingleBtnV98_' + fIdx);
+            var playBtn = rowEl.querySelector('.tor-prev-btn-v97');
+
+            var fMeta = (job && job.files || []).find(function(x) { return Number(x.index) === fIdx; });
+            var st = (job && job.fileStatusMap && job.fileStatusMap[fIdx]) || {};
+            var totMb = (((st.length || (fMeta && fMeta.length) || 0)) / (1024 * 1024)).toFixed(1);
+            var doneMb = (((st.completed || 0)) / (1024 * 1024)).toFixed(1);
+            var pct = Math.max(0, Math.min(100, Number(st.percent || 0)));
+            var readyFile = st.xflac_file || (fMeta && fMeta.xflac_file) || '';
+            var fPath = (fMeta && (fMeta.path || fMeta.full_path)) || st.full_path || '';
+            var isLosslessFile = window.isLosslessAudioPathV236 ? window.isLosslessAudioPathV236(fPath) : false;
+            var impKey = String(curH).toLowerCase() + '_' + fIdx;
+
+            var isStreamingNow = (activeStreamHash === String(curH).toLowerCase() && activeStreamIdx === fIdx);
+            var isExplicitDl = Boolean(job && job.explicitDlSet && job.explicitDlSet.has(fIdx));
+            var isTarget = Boolean(isExplicitDl || (job && job.targetSet && job.targetSet.has(fIdx)));
+            var isActivelyDownloading = Boolean(job && job.dlActive && (isExplicitDl || (isTarget && Number(st.completed || 0) > 0)));
+            var isEncodingNow = Boolean(isLosslessFile && !readyFile && ((te.active && te.current_key === impKey) || (window._torImportWorkerBusyV112 && (st.done || pct >= 100) && isTarget)));
+            var isQueuedForXflac = Boolean(isLosslessFile && !readyFile && (st.done || pct >= 100) && isTarget);
+
+            if (sizeEl) {
+                var wantSize = '💾 ' + totMb + ' МБ';
+                if (sizeEl._lastTxt !== wantSize) {
+                    sizeEl._lastTxt = wantSize;
+                    sizeEl.textContent = wantSize;
+                }
+            }
+
+            var wantFillWidth = '0%';
+            var wantFillBg = 'transparent';
+            var wantBorder = '#21262d';
+            var wantStatTxt = '';
+            var wantStatColor = '#8b949e';
+
+            if (readyFile) {
+                wantFillWidth = '100%';
+                wantFillBg = 'rgba(63,185,80,0.22)';
+                wantBorder = 'rgba(63,185,80,0.65)';
+                wantStatTxt = '• ✅ В плеере: ' + readyFile;
+                wantStatColor = '#3fb950';
+            } else if (isEncodingNow) {
+                var ep = (te.active && te.current_key === impKey) ? Number(te.track_pct || 15) : 25;
+                wantFillWidth = ep + '%';
+                wantFillBg = 'rgba(63,185,80,0.34)';
+                wantBorder = '#3fb950';
+                wantStatTxt = '• 🧬 Сжатие xFLAC: ' + ep + '%';
+                wantStatColor = '#3fb950';
+            } else if (isQueuedForXflac) {
+                wantFillWidth = '100%';
+                wantFillBg = 'rgba(137,87,229,0.24)';
+                wantBorder = '#a371f7';
+                wantStatTxt = '• 🧬 Очередь xFLAC...';
+                wantStatColor = '#d2a8ff';
+            } else if (isStreamingNow && isActivelyDownloading) {
+                wantFillWidth = pct + '%';
+                wantFillBg = 'rgba(137,87,229,0.32)';
+                wantBorder = '#00e5ff';
+                wantStatTxt = '• 📡 Поток • ⬇️ ' + doneMb + ' МБ (' + pct + '%)';
+                wantStatColor = '#00e5ff';
+            } else if (isStreamingNow) {
+                wantFillWidth = pct + '%';
+                wantFillBg = 'rgba(0,229,255,0.20)';
+                wantBorder = '#00e5ff';
+                wantStatTxt = '• 📡 Поток (' + pct + '%)';
+                wantStatColor = '#00e5ff';
+            } else if (isActivelyDownloading) {
+                wantFillWidth = pct + '%';
+                wantFillBg = 'rgba(137,87,229,0.32)';
+                wantBorder = '#8957e5';
+                wantStatTxt = '• ⬇️ Качается: ' + doneMb + ' МБ (' + pct + '%)' + (isLosslessFile ? ' ➔ xFLAC' : '');
+                wantStatColor = '#3fb950';
+            } else if (pct >= 100) {
+                wantFillWidth = '100%';
+                wantFillBg = 'rgba(63,185,80,0.16)';
+                wantBorder = 'rgba(63,185,80,0.45)';
+                wantStatTxt = '• ✅ Скачан (100%)';
+                wantStatColor = '#3fb950';
+            } else if (pct > 0) {
+                wantFillWidth = pct + '%';
+                wantFillBg = 'rgba(137,87,229,0.16)';
+                wantStatTxt = '• Пауза: ' + doneMb + ' МБ (' + pct + '%)';
+                wantStatColor = '#8b949e';
+            }
+
+            if (fillEl) {
+                if (fillEl._lastW !== wantFillWidth) {
+                    fillEl._lastW = wantFillWidth;
+                    fillEl.style.width = wantFillWidth;
+                }
+                if (fillEl._lastBg !== wantFillBg) {
+                    fillEl._lastBg = wantFillBg;
+                    fillEl.style.background = wantFillBg;
+                }
+            }
+            if (rowEl && rowEl._lastBorder !== wantBorder) {
+                rowEl._lastBorder = wantBorder;
+                rowEl.style.borderColor = wantBorder;
+            }
+            if (statEl) {
+                if (statEl._lastTxt !== wantStatTxt) {
+                    statEl._lastTxt = wantStatTxt;
+                    statEl.textContent = wantStatTxt;
+                }
+                if (statEl._lastClr !== wantStatColor) {
+                    statEl._lastClr = wantStatColor;
+                    statEl.style.color = wantStatColor;
+                }
+            }
+            if (playBtn) {
+                var wantPlayClr = isStreamingNow ? '#00e5ff' : '#58a6ff';
+                if (playBtn._lastClr !== wantPlayClr) {
+                    playBtn._lastClr = wantPlayClr;
+                    playBtn.style.color = wantPlayClr;
+                    playBtn.style.borderColor = isStreamingNow ? '#00e5ff' : '#30363d';
+                }
+            }
+            if (dlBtn) {
+                var wantDlTxt = readyFile ? '✅' : ((isEncodingNow || isQueuedForXflac) ? '🧬' : (isActivelyDownloading ? '⏳' : '⬇️'));
+                if (dlBtn._lastTxt !== wantDlTxt) {
+                    dlBtn._lastTxt = wantDlTxt;
+                    dlBtn.textContent = wantDlTxt;
+                }
+            }
+        });
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. INSTANT 0ms FOLDER MANAGER (#jennyFolderManagerModal) + COALESCED BACKGROUND fetchData
+    //    SO THE 6-SOCKET HTTP POOL IS NEVER CLOGGED BY 355-TRACK TORRENT IMPORTS!
+    // -------------------------------------------------------------------------
+    window._cachedFoldersDataV237 = null;
+    window._fetchDataInFlightPromiseV237 = null;
+    window._coalescedFetchTimerV237 = null;
+
+    var _rawFetchDataV237 = window.fetchData;
+    window.fetchData = async function() {
+        if (window._fetchDataInFlightPromiseV237) {
+            return window._fetchDataInFlightPromiseV237;
+        }
+        window._fetchDataInFlightPromiseV237 = (async function() {
+            try {
+                if (typeof _rawFetchDataV237 === 'function') {
+                    return await _rawFetchDataV237.apply(window, arguments);
+                }
+            } finally {
+                window._fetchDataInFlightPromiseV237 = null;
+            }
+        })();
+        return window._fetchDataInFlightPromiseV237;
+    };
+
+    window.scheduleCoalescedFetchDataV237 = function(delayMs) {
+        if (window._coalescedFetchTimerV237) return;
+        window._coalescedFetchTimerV237 = setTimeout(function() {
+            window._coalescedFetchTimerV237 = null;
+            // Don't compete with an active track load into Deck A
+            if (window._trackActivelyLoadingToRamV237) {
+                window.scheduleCoalescedFetchDataV237(1500);
+                return;
+            }
+            window.fetchData();
+        }, delayMs || 2200);
+    };
+
+    // Override processNextTorrentImportV112 so 355-track torrents coalesce fetchData() instead of firing 355 back-to-back /api/data scans!
+    window.processNextTorrentImportV112 = async function() {
+        if (window._torImportWorkerBusyV112 || !window._torImportQueueV112 || window._torImportQueueV112.length === 0) return;
+        window._torImportWorkerBusyV112 = true;
+        var item = window._torImportQueueV112.shift();
+        try {
+            var res = await fetch('/api/torrent/import_track', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    hash: item.hash,
+                    index: item.index,
+                    full_path: item.full_path,
+                    torrent_name: item.torrent_name,
+                    format_mode: 'xflac_psycho'
+                })
+            }).then(function(r) { return r.json(); });
+
+            if (res && res.status === 'ok') {
+                item.job.fileStatusMap[item.index] = Object.assign(item.job.fileStatusMap[item.index] || {}, {
+                    xflac_file: res.filename,
+                    size_mb: res.size_mb
+                });
+                window.scheduleCoalescedFetchDataV237(2200);
+            } else {
+                item.job.importedSet.delete(item.impKey);
+            }
+        } catch (e) {
+            item.job.importedSet.delete(item.impKey);
+        } finally {
+            window._torImportWorkerBusyV112 = false;
+            if (window._torImportQueueV112 && window._torImportQueueV112.length > 0) {
+                setTimeout(window.processNextTorrentImportV112, 80);
+            } else {
+                window.scheduleCoalescedFetchDataV237(400);
+            }
+        }
+    };
+
+    window.renderFolderManagerRowsHTMLV237 = function(saved, active, ft) {
+        return saved.map(function(p) {
+            var isSel = active.indexOf(p) !== -1;
+            var sp = String(p).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            var shortN = String(p).split('/').filter(Boolean).pop() || p;
+            var hasCount = ft && Array.isArray(ft[p]);
+            var cntStr = hasCount ? String(ft[p].length) : '…';
+            var delBtn = saved.length > 1
+                ? '<button type="button" onclick="event.stopPropagation();window.removeFolderFromPoolV71(\'' + sp + '\')" style="padding:5px 8px;color:#f85149;background:#161b22;border:1px solid rgba(248,81,73,0.4);border-radius:7px;">🗑️</button>'
+                : '';
+            return '<div onclick="window.toggleFolderActivePoolV71(\'' + sp + '\',event)" style="display:flex;align-items:center;background:#0d1117;border:1px solid ' + (isSel ? '#3fb950' : '#262c36') + ';border-radius:8px;padding:9px 10px;gap:8px;cursor:pointer;">' +
+                '<input type="checkbox" ' + (isSel ? 'checked' : '') + ' style="pointer-events:none;width:16px;height:16px;accent-color:#3fb950;">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="color:' + (isSel ? '#3fb950' : '#e6edf3') + ';font-weight:bold;">📁 ' + shortN + ' (' + cntStr + ')</div>' +
+                    '<div style="color:#8b949e;font-size:10.5px;word-break:break-all;">' + p + '</div>' +
+                '</div>' +
+                delBtn +
+            '</div>';
+        }).join('');
+    };
+
+    // Opens Folder Manager modal IMMEDIATELY in 0ms using cached data, then updates track counts asynchronously!
+    window.openFolderManagerModalV62 = async function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        if (typeof window.closeAllV71Modals === 'function') window.closeAllV71Modals();
+
+        var cached = window._cachedFoldersDataV237 || {};
+        var saved = cached.saved_folders
+            || (window.lastData && window.lastData.saved_folders)
+            || (window.getSavedFoldersListV62 ? window.getSavedFoldersListV62() : ['/storage/emulated/0/Music']);
+        var active = cached.active_folders
+            || (window.lastData && window.lastData.active_folders)
+            || (window.appConfig && window.appConfig.activeFolders)
+            || [saved[0]];
+        var ft = cached.folder_tracks || {};
+
+        var m = document.getElementById('jennyFolderManagerModal');
+        if (m) m.remove();
+
+        m = document.createElement('div');
+        m.id = 'jennyFolderManagerModal';
+        m.className = 'jenny-modal-backdrop-v71';
+        m.onclick = function(e) { if (e.target === m) m.remove(); };
+
+        m.innerHTML =
+            '<div class="jenny-modal-card-v71" onclick="event.stopPropagation()">' +
+                '<div class="jenny-modal-hdr-v71">' +
+                    '<span style="color:#58a6ff;font-weight:bold;">📁 ' + window.tr('Музыкальные папки (Слияние)', 'Music Folders (Multi-Pool)') + '</span>' +
+                    '<button type="button" onclick="document.getElementById(\'jennyFolderManagerModal\').remove()" style="background:transparent;border:none;color:#8b949e;font-size:16px;">✖</button>' +
+                '</div>' +
+                '<div class="jenny-modal-body-v71">' +
+                    '<div id="jennyFolderRowsBoxV237" style="display:flex;flex-direction:column;gap:7px;">' +
+                        window.renderFolderManagerRowsHTMLV237(saved, active, ft) +
+                    '</div>' +
+                    '<div style="display:flex;gap:6px;margin-top:6px;">' +
+                        '<input type="text" id="newFolderInputV62" placeholder="/storage/emulated/0/..." style="flex:1;padding:7px;text-align:left !important;">' +
+                        '<button type="button" onclick="window.addFolderToPoolV71()" style="padding:7px 12px;color:#3fb950;">➕</button>' +
+                        '<button type="button" onclick="window.triggerSystemFolderPickerV62()" style="padding:7px 10px;color:#58a6ff;">📂</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(m);
+
+        // Fetch fresh folder counts in the background and update #jennyFolderRowsBoxV237 in-place
+        try {
+            var d = await fetch('/api/folders_v71').then(function(r) { return r.json(); });
+            if (d && d.status === 'ok') {
+                window._cachedFoldersDataV237 = d;
+                var box = document.getElementById('jennyFolderRowsBoxV237');
+                if (box) {
+                    box.innerHTML = window.renderFolderManagerRowsHTMLV237(
+                        d.saved_folders || saved,
+                        d.active_folders || active,
+                        d.folder_tracks || {}
+                    );
+                }
+            }
+        } catch (e) {}
+    };
+
+    // -------------------------------------------------------------------------
+    // 5. FOREGROUND SERVICE DATASYNC NOTIFICATION SYNC (KEEP ALIVE WHEN DOWNLOADING WITHOUT PLAYBACK)
+    // -------------------------------------------------------------------------
+    var _origSyncPermNotifV237 = window.syncPermanentForegroundNotificationV212;
+    window.syncPermanentForegroundNotificationV212 = function(force) {
+        if (typeof _origSyncPermNotifV237 === 'function') {
+            try { _origSyncPermNotifV237.apply(this, arguments); } catch (e) {}
+        }
+        if (!window.AndroidBridge || typeof window.AndroidBridge.updateDataSyncState !== 'function') return;
+
+        var activeJobs = Object.values(window._torMapV112 || {}).filter(function(j) { return Boolean(j && j.dlActive); });
+        var te = window._lastTorEncBadgeV212 || {};
+        var khBusy = Boolean(window._khStateV88 && window._khStateV88.isDownloading);
+        var radRec = Boolean(window._radioStateV91 && window._radioStateV91.isRecording);
+        var isDlActive = Boolean(activeJobs.length > 0 || (te && te.active) || khBusy || radRec);
+
+        var dlTitle = '🧲 Jenny DataSync • Закачка в фоне';
+        var dlStatus = 'Фоновый сервис активен';
+        var dlPct = -1;
+
+        if (activeJobs.length > 0) {
+            var j0 = activeJobs[0];
+            var totT = Math.max(1, (j0.targetSet && j0.targetSet.size) || (j0.files && j0.files.length) || 1);
+            var rdy = j0.readyCnt || 0;
+            dlPct = Math.max(0, Math.min(100, Number(j0.netPct || 0)));
+            dlTitle = (te && te.active)
+                ? ('🧬 Пережатие xFLAC [' + rdy + '/' + totT + '] • ' + (te.track_pct || 0) + '%')
+                : ('🧲 P2P Загрузка: ' + dlPct + '% (в плеере: ' + rdy + '/' + totT + ')');
+            var spd = j0.speedKbps > 0 ? ('⚡ ' + j0.speedKbps + ' КБ/с • ') : '';
+            dlStatus = spd + 'Сидов: ' + (j0.seeders || 0) + ' • Пиров: ' + (j0.peers || 0) + (activeJobs.length > 1 ? (' • Раздач: ' + activeJobs.length) : '');
+        } else if (te && te.active) {
+            dlPct = Math.max(0, Math.min(100, Number(te.track_pct || 0)));
+            dlTitle = '🧬 Пережатие в .xFLAC: ' + dlPct + '%';
+            dlStatus = te.current_track || 'Упаковка Lossless в .xFLAC...';
+        } else if (khBusy) {
+            dlTitle = '🎮 Загрузка треков OST / Архива...';
+            dlStatus = 'Фоновая закачка в медиатеку';
+        } else if (radRec) {
+            dlTitle = '📻 Запись радиоэфира...';
+            dlStatus = 'Фоновая запись потока';
+        }
+
+        var sig = [isDlActive, dlTitle, dlStatus, dlPct].join('|');
+        if (!force && window._lastDataSyncNotifSigV237 === sig) return;
+        window._lastDataSyncNotifSigV237 = sig;
+
+        try {
+            window.AndroidBridge.updateDataSyncState(isDlActive, dlTitle, dlStatus, dlPct);
+        } catch (e) {}
+    };
+
+    setInterval(function() {
+        window.syncPermanentForegroundNotificationV212(false);
+    }, 1500);
+
+    // -------------------------------------------------------------------------
+    // 6. EXTERNAL AUDIO FOCUS LOSS -> CLEAN PAUSE (ICON SWITCHES TO ▶ AT EXACT SECOND SO 1 CLICK ON ▶ RESUMES!)
+    //    AND FAST SINGLE-CONNECTION AUDIO / .xFLAC START (NO STUCK "⏳ RAM (пока играет сжатый...)")
+    // -------------------------------------------------------------------------
+    window.onExternalAudioInterruptV237 = function() {
+        var player = document.getElementById('audioPlayer');
+        var curTrack = window.currentPlayingTrack || '';
+        // Preserve current playback position and cleanly switch Deck A into Paused state (▶ icon!)
+        window.forceStopPauseDeckAAudioV232(false);
+        var titleEl = document.getElementById('nowPlaying');
+        if (titleEl && curTrack) {
+            var curTxt = String(titleEl.innerText || '');
+            if (curTxt.indexOf('⏳ RAM') !== -1) {
+                titleEl.innerText = (window.studioBuffer ? 'RAM ⏸: ' : '🎵 ⏸: ') + curTrack;
+            }
+        }
+        if (player && isFinite(player.currentTime) && player.currentTime > 0) {
+            var dur = (window.studioBuffer && window.studioBuffer.duration) || (isFinite(player.duration) ? player.duration : 0);
+            var isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+            if (typeof window.updateProgressUI === 'function') window.updateProgressUI(player.currentTime, dur, isRev);
+            if (typeof window.updateCenterCurrentTime === 'function') window.updateCenterCurrentTime(player.currentTime, dur, isRev);
+        }
+    };
+
+    // Bind native <audio id="audioPlayer"> pause event so when Android pauses <audio> due to external audio,
+    // Deck A immediately calls onExternalAudioInterruptV237() and switches the button from ⏸ to ▶!
+    var bindExternalAudioPauseSyncV237 = function() {
+        var player = document.getElementById('audioPlayer');
+        if (player && !player._v237ExtPauseBound) {
+            player._v237ExtPauseBound = true;
+            player.addEventListener('pause', function() {
+                if (player.ended || window._resumingFromUserPlayV232) return;
+                if (!window._userPausedV75_2) {
+                    window.onExternalAudioInterruptV237();
+                } else {
+                    if (typeof window.updateTrackListPlayIcons === 'function') {
+                        window.updateTrackListPlayIcons();
+                    }
+                }
+            });
+        }
+    };
+    bindExternalAudioPauseSyncV237();
+    setTimeout(bindExternalAudioPauseSyncV237, 400);
+
+    // Upgrade playTrack so .xflac and standard tracks use a single non-blocking stream/decode pipeline
+    // and never get stuck on "0:00 | ⏳ RAM (пока играет сжатый...)" even during 355-track torrent downloads!
+    window.playTrack = async function(filename, listContext) {
+        if (!filename) return;
+        listContext = listContext || 'main';
+
+        if (window.isVideoFileNameV130 && window.isVideoFileNameV130(filename)) {
+            if (typeof window.captureActiveVideoQueueFromUIContextV229 === 'function') {
+                window.captureActiveVideoQueueFromUIContextV229(filename, listContext);
+            }
+            window.openJennyVideoPlayerV130('/api/media/' + encodeURIComponent(filename), filename, {});
+            return;
+        }
+
+        if (typeof window.stopAllExternalStreamsV97 === 'function') {
+            try { window.stopAllExternalStreamsV97(); } catch (e) {}
+        }
+
+        var mySeq = ++window._audioTrackLoadSeqV216;
+        window.abortPendingAudioRamLoadsV216();
+        window._trackActivelyLoadingToRamV237 = true;
+
+        window._jennyDualDeckV211 = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music' };
+        window._jennyDualDeckV211.deckA = true;
+        if (typeof window.saveDualDeckStateV211 === 'function') window.saveDualDeckStateV211();
+        if (typeof window.syncDualDeckVisibilityAndAudioV211 === 'function') window.syncDualDeckVisibilityAndAudioV211();
+        if (typeof window.renderDeckSwitchBannersV131 === 'function') window.renderDeckSwitchBannersV131();
+
+        if (typeof window.ensurePlaylistStateV71 === 'function') window.ensurePlaylistStateV71();
+        if (window.appConfig && window.appConfig.trackPlayStatsV71) {
+            var stStat = window.appConfig.trackPlayStatsV71[filename] || { count: 0, last: 0 };
+            stStat.count = (stStat.count || 0) + 1;
+            stStat.last = Date.now();
+            window.appConfig.trackPlayStatsV71[filename] = stStat;
+            try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        }
+
+        if (window.dnaDirect1xActiveV76 && filename !== window.currentPlayingTrack && typeof window.resetDnaModeOnTrackChangeV83 === 'function') {
+            window.resetDnaModeOnTrackChangeV83();
+        }
+
+        if (listContext !== 'queue' && (!window.playingQueueListV73 || !window.playingQueueListV73.includes(filename))) {
+            if (typeof window.lockCurrentViewAsPlayingQueueV73_1 === 'function') {
+                window.lockCurrentViewAsPlayingQueueV73_1(filename);
+            }
+        }
+        var savedQueue = (window.playingQueueListV73 && window.playingQueueListV73.length > 0)
+            ? window.playingQueueListV73.slice()
+            : null;
+
+        if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+        if (window.audioCtx && window.audioCtx.state === 'suspended') {
+            try { window.audioCtx.resume(); } catch (e) {}
+        }
+        if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
+            try {
+                var nowCtx = window.audioCtx.currentTime;
+                window.inputMixer.gain.cancelScheduledValues(nowCtx);
+                window.inputMixer.gain.setValueAtTime(1.0, nowCtx);
+                window.inputMixer.gain.value = 1.0;
+            } catch (e) {}
+        }
+        if (typeof window.applyEQSettings === 'function') window.applyEQSettings();
+        if (typeof window.changeVolume === 'function') window.changeVolume();
+
+        var targetSpeed = typeof window.getTargetPlaybackSpeed === 'function' ? window.getTargetPlaybackSpeed() : 1.0;
+        var keepLocked = Boolean((window.scrubState && window.scrubState.locked) || (window.persistedPlaybackSpeed && window.persistedPlaybackSpeed !== 1.0));
+        var activeSide = (window.scrubState && window.scrubState.side) || window.persistedPlaybackSide || 'right';
+
+        window.currentPlayingTrack = filename;
+        window.currentListContext = listContext;
+        if (savedQueue) {
+            window.playingQueueListV73 = savedQueue;
+            window.currentTrackList = savedQueue;
+        }
+
+        var player = document.getElementById('audioPlayer');
+        var titleEl = document.getElementById('nowPlaying');
+
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(0); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+            window.studioSourceNode = null;
+        }
+        if (window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.forEach === 'function') {
+            window._activeBufferSourcesV71.forEach(function(n) {
+                try { n.onended = null; n.stop(0); n.disconnect(); } catch (e) {}
+            });
+            window._activeBufferSourcesV71.clear();
+        }
+        window.isStudioPlaying = false;
+        window.studioBuffer = null;
+        window.reversedStudioBuffer = null;
+        window.reconstructedMasterBufferV67 = null;
+        window.reconstructedReversedBufferV67 = null;
+        window.currentTrackRevMapV67 = null;
+        window._userPausedV75_2 = false;
+        window._resumingFromUserPlayV232 = true;
+
+        if (keepLocked && window.scrubState) {
+            window.scrubState.locked = true;
+            window.scrubState.active = false;
+            window.scrubState.speed = targetSpeed;
+            window.scrubState.side = activeSide;
+            window.scrubState.isPhysicallyReversed = (activeSide === 'left');
+            var lockEl = document.getElementById('speedLockIndicator');
+            if (lockEl) {
+                lockEl.style.display = 'block';
+                lockEl.innerText = '🔒 ' + (activeSide === 'left' ? '⏪' : '⏩') + ' x' + targetSpeed;
+            }
+        } else if (window.scrubState && window.scrubState.active) {
+            if (typeof window.stopScrub === 'function') window.stopScrub(false);
+        }
+
+        var knownMeta = (window.lastData && window.lastData.track_meta && window.lastData.track_meta[filename]) || {};
+        var initDur = Number(knownMeta.dur || 0);
+        var isRevMode = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        if (typeof window.updateProgressUI === 'function') window.updateProgressUI(0, initDur, isRevMode);
+        if (typeof window.updateCenterCurrentTime === 'function') window.updateCenterCurrentTime(0, initDur, isRevMode);
+
+        window._ramTrackHistoryV71 = window._ramTrackHistoryV71 || [];
+        var cachedEntry = window._ramTrackHistoryV71.find(function(x) { return x.name === filename && x.buf; });
+        var isXflac = /\.xflac$/i.test(filename);
+        var mediaUrl = (cachedEntry && cachedEntry.blobUrl) ? cachedEntry.blobUrl : ('/api/media/' + encodeURIComponent(filename));
+
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+
+        // For non-.xflac files (or cached blobUrl), start <audio> immediately;
+        // for .xflac files without cached blobUrl, we fetch /api/media/<filename> once below and feed both <audio> blobUrl and decodeAudioData so we don't double-lock _XFLAC_CACHE_LOCK_V87!
+        if (player && (!isXflac || (cachedEntry && cachedEntry.blobUrl))) {
+            player.loop = false;
+            player.src = mediaUrl;
+            player.currentTime = 0;
+            try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch (e) {}
+            player.preservesPitch = true;
+            var playProm = player.play();
+            if (playProm && typeof playProm.catch === 'function') {
+                playProm.catch(function() {});
+            }
+        }
+
+        var startPlayWallMs = performance.now();
+        var useStudioRam = Boolean(!window.appConfig || window.appConfig.studioMode !== false);
+        if (titleEl) {
+            titleEl.innerText = (useStudioRam ? '⏳ RAM (пока играет сжатый...): ' : '🎵 ') + filename;
+        }
+        if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+
+        if (!useStudioRam && !isXflac) {
+            window._resumingFromUserPlayV232 = false;
+            window._trackActivelyLoadingToRamV237 = false;
+            return;
+        }
+
+        var abortCtrl = new AbortController();
+        window._audioRamAbortCtrlV216 = abortCtrl;
+
+        try {
+            var decodedBuffer = null;
+            if (cachedEntry && cachedEntry.buf) {
+                decodedBuffer = cachedEntry.buf;
+            } else {
+                var metaCheck = { duration: initDur, size: Number(knownMeta.size || 0) };
+                if (!metaCheck.size && !isXflac) {
+                    try {
+                        var mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
+                        if (mr.ok) metaCheck = await mr.json();
+                    } catch (e) {
+                        if (abortCtrl.signal.aborted || mySeq !== window._audioTrackLoadSeqV216) return;
+                    }
+                }
+                if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+
+                if (!metaCheck.size || metaCheck.size <= 95 * 1024 * 1024 || isXflac) {
+                    try {
+                        var response = await fetch('/api/media/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
+                        if (response.ok) {
+                            var arrayBuffer = await response.arrayBuffer();
+                            if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+                            var blobUrl = null;
+                            try {
+                                var mime = isXflac ? 'audio/wav' : (response.headers.get('Content-Type') || 'audio/mpeg');
+                                blobUrl = URL.createObjectURL(new Blob([arrayBuffer], { type: mime }));
+                            } catch (e) {}
+
+                            if (isXflac && player && blobUrl && !window._userPausedV75_2) {
+                                player.loop = false;
+                                player.src = blobUrl;
+                                player.currentTime = 0;
+                                try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch (e) {}
+                                player.preservesPitch = true;
+                                player.play().catch(function() {});
+                            }
+
+                            decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
+                            if (decodedBuffer) {
+                                window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(function(x) { return x.name !== filename; }).slice(0, 1);
+                                window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: blobUrl });
+                            }
+                        }
+                    } catch (decErr) {
+                        if (abortCtrl.signal.aborted || mySeq !== window._audioTrackLoadSeqV216) return;
+                        decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+                    }
+                } else {
+                    decodedBuffer = await window.decodeHugeTrackToRamV71(filename, titleEl, player, metaCheck);
+                    if (decodedBuffer && mySeq === window._audioTrackLoadSeqV216) {
+                        window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(function(x) { return x.name !== filename; }).slice(0, 1);
+                        window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: null });
+                    }
+                }
+            }
+
+            if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+
+            if (!decodedBuffer) {
+                if (titleEl) titleEl.innerText = '🎵 ' + filename;
+                return;
+            }
+
+            var elapsedMs = performance.now() - startPlayWallMs;
+            if (elapsedMs < 1100 && !isRevMode && !isXflac) {
+                await new Promise(function(r) { setTimeout(r, 1100 - elapsedMs); });
+            }
+            if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+
+            window.studioBuffer = decodedBuffer;
+            if (typeof window.loadTrackReversibleDataV67 === 'function') {
+                window.loadTrackReversibleDataV67(filename, decodedBuffer);
+            }
+
+            var isHugeTrack = (decodedBuffer.duration > 900);
+            if (!isHugeTrack && !window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+                window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
+            }
+            if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
+
+            if (!window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+            if (titleEl) {
+                var hasRev = Boolean(window.reversedStudioBuffer);
+                titleEl.innerText = (hasRev ? 'RAM ⏩⏪ 🚀: ' : 'RAM 🚀: ') + filename;
+            }
+            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+        } catch (err) {
+            if (mySeq === window._audioTrackLoadSeqV216 && window.currentPlayingTrack === filename && titleEl) {
+                if (player && !player.paused) titleEl.innerText = '🎵 ' + filename;
+                else titleEl.innerText = '🎵 ⏸ ' + filename;
+            }
+        } finally {
+            if (mySeq === window._audioTrackLoadSeqV216) {
+                window._resumingFromUserPlayV232 = false;
+                window._trackActivelyLoadingToRamV237 = false;
+                if (window._userPausedV75_2) {
+                    window.forceStopPauseDeckAAudioV232(false);
+                }
+            }
+        }
+    };
+})();
+/* ================= END JENNY_V237_KILL_SWITCH_ZERO_TWITCH_INSTANT_FOLDERS_DATASYNC_AND_EXT_PAUSE_PATCH ================= */

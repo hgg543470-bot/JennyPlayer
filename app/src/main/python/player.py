@@ -11147,3 +11147,129 @@ def get_track_info_v234():
 
 _override_bottle_route_v212('/api/track_info', 'POST', get_track_info_v234)
 
+# ================= JENNY_V237_FAST_SCANDIR_FOLDERS_AND_DATA_CACHE_PATCH (#336 / V237) =================
+_FOLDERS_CACHE_V237 = {"ts": 0.0, "sig": "", "payload": None}
+_DATA_CACHE_V237 = {"ts": 0.0, "sig": "", "payload": None}
+
+def _invalidate_fs_caches_v237():
+    _FOLDERS_CACHE_V237["ts"] = 0.0
+    _DATA_CACHE_V237["ts"] = 0.0
+
+def _fast_list_dir_tracks_v237(d_path: str, exts_tuple: tuple):
+    out = []
+    if not d_path or not os.path.isdir(d_path):
+        return out
+    try:
+        with os.scandir(d_path) as it:
+            for entry in it:
+                name = entry.name
+                if name.startswith(('temp_stretcher_', 'temp_final_', '.')):
+                    continue
+                if name.lower().endswith(exts_tuple):
+                    try:
+                        if entry.is_file():
+                            out.append((name, entry.path))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return out
+
+def api_folders_v237():
+    global MUSIC_DIR, ACTIVE_MUSIC_DIRS, SAVED_MUSIC_DIRS
+    response.content_type = 'application/json; charset=utf-8'
+    load_multi_dirs_v71()
+    if request.method == 'POST':
+        try:
+            req = json.loads(request.body.read().decode('utf-8') or "{}")
+            act = req.get('action', '')
+            target = norm_dir_v71(req.get('path', ''))
+            if act in ('toggle', 'add') and not os.path.isdir(target):
+                response.status = 404
+                return json.dumps({"status": "error", "error": f"Папка не найдена: {target}"}, ensure_ascii=False)
+            if act == 'toggle':
+                if target not in SAVED_MUSIC_DIRS:
+                    SAVED_MUSIC_DIRS.append(target)
+                if target in ACTIVE_MUSIC_DIRS:
+                    if len(ACTIVE_MUSIC_DIRS) > 1:
+                        ACTIVE_MUSIC_DIRS.remove(target)
+                else:
+                    ACTIVE_MUSIC_DIRS.append(target)
+            elif act == 'add':
+                if target not in SAVED_MUSIC_DIRS:
+                    SAVED_MUSIC_DIRS.insert(0, target)
+                if target not in ACTIVE_MUSIC_DIRS:
+                    ACTIVE_MUSIC_DIRS.append(target)
+            elif act == 'remove':
+                if target in SAVED_MUSIC_DIRS and len(SAVED_MUSIC_DIRS) > 1:
+                    SAVED_MUSIC_DIRS.remove(target)
+                if target in ACTIVE_MUSIC_DIRS and len(ACTIVE_MUSIC_DIRS) > 1:
+                    ACTIVE_MUSIC_DIRS.remove(target)
+                if not ACTIVE_MUSIC_DIRS and SAVED_MUSIC_DIRS:
+                    ACTIVE_MUSIC_DIRS = [SAVED_MUSIC_DIRS[0]]
+            MUSIC_DIR = ACTIVE_MUSIC_DIRS[0]
+            save_multi_dirs_v71()
+            _invalidate_fs_caches_v237()
+        except Exception as e:
+            response.status = 500
+            return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+    now = time.time()
+    exts = get_allowed_extensions()
+    sig = f"{','.join(SAVED_MUSIC_DIRS)}|{','.join(ACTIVE_MUSIC_DIRS)}|{','.join(exts)}"
+    if request.method == 'GET' and _FOLDERS_CACHE_V237["payload"] and _FOLDERS_CACHE_V237["sig"] == sig and (now - _FOLDERS_CACHE_V237["ts"] < 2.0):
+        return _FOLDERS_CACHE_V237["payload"]
+
+    f_tracks = {}
+    for d in SAVED_MUSIC_DIRS:
+        pairs = _fast_list_dir_tracks_v237(d, exts)
+        f_tracks[d] = [fn for fn, _ in pairs]
+
+    out_json = json.dumps({
+        "status": "ok",
+        "saved_folders": SAVED_MUSIC_DIRS,
+        "active_folders": ACTIVE_MUSIC_DIRS,
+        "current_folder": MUSIC_DIR,
+        "folder_tracks": f_tracks
+    }, ensure_ascii=False)
+    _FOLDERS_CACHE_V237["ts"] = now
+    _FOLDERS_CACHE_V237["sig"] = sig
+    _FOLDERS_CACHE_V237["payload"] = out_json
+    return out_json
+
+_override_bottle_route_v212('/api/folders_v71', 'GET', api_folders_v237)
+_override_bottle_route_v212('/api/folders_v71', 'POST', api_folders_v237)
+
+def get_data_v237():
+    response.content_type = 'application/json; charset=utf-8'
+    load_multi_dirs_v71()
+    allowed_exts = get_allowed_extensions()
+    now = time.time()
+    sig = f"{','.join(ACTIVE_MUSIC_DIRS)}|{','.join(SAVED_MUSIC_DIRS)}|{','.join(allowed_exts)}"
+    if _DATA_CACHE_V237["payload"] and _DATA_CACHE_V237["sig"] == sig and (now - _DATA_CACHE_V237["ts"] < 1.2):
+        return _DATA_CACHE_V237["payload"]
+
+    all_tracks, seen, track_meta = [], set(), {}
+    for d in ACTIVE_MUSIC_DIRS:
+        for fn, fp in _fast_list_dir_tracks_v237(d, allowed_exts):
+            if fn not in seen:
+                seen.add(fn)
+                all_tracks.append(fn)
+                track_meta[fn] = quick_parse_artist_album_v71(fn, fp)
+
+    all_tracks.sort(key=lambda x: track_meta.get(x, {}).get("mtime", 0), reverse=True)
+    out_json = json.dumps({
+        "all_tracks": all_tracks,
+        "session_tracks": all_tracks,
+        "current_folder": MUSIC_DIR,
+        "active_folders": ACTIVE_MUSIC_DIRS,
+        "saved_folders": SAVED_MUSIC_DIRS,
+        "track_meta": track_meta
+    }, ensure_ascii=False)
+    _DATA_CACHE_V237["ts"] = now
+    _DATA_CACHE_V237["sig"] = sig
+    _DATA_CACHE_V237["payload"] = out_json
+    return out_json
+
+_override_bottle_route_v212('/api/data', 'GET', get_data_v237)
+# ================= END JENNY_V237_FAST_SCANDIR_FOLDERS_AND_DATA_CACHE_PATCH =================

@@ -1233,6 +1233,39 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
+        // === JENNY_V237_DATASYNC_BRIDGE_START ===
+        @JavascriptInterface
+        public void updateDataSyncState(boolean active, String title, String status, int progressPct) {
+            try {
+                Intent svc = new Intent(MainActivity.this, PlaybackService.class);
+                svc.setAction(PlaybackService.ACTION_UPDATE_DATASYNC);
+                svc.putExtra("dl_active", active);
+                svc.putExtra("dl_title", title != null ? title : "");
+                svc.putExtra("dl_status", status != null ? status : "");
+                svc.putExtra("dl_pct", progressPct);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(svc);
+                } else {
+                    startService(svc);
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        @JavascriptInterface
+        public void setNotificationLockState(boolean locked) {
+            try {
+                Intent svc = new Intent(MainActivity.this, PlaybackService.class);
+                svc.setAction(PlaybackService.ACTION_UPDATE_DATASYNC);
+                svc.putExtra("notif_locked", locked);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(svc);
+                } else {
+                    startService(svc);
+                }
+            } catch (Throwable ignored) {}
+        }
+        // === JENNY_V237_DATASYNC_BRIDGE_END ===
+
         @JavascriptInterface
         public void updateMediaStateFull(String title, String subtitle, boolean isPlaying, double posSec, double durSec, double speed) {
             Intent svc = new Intent(MainActivity.this, PlaybackService.class);
