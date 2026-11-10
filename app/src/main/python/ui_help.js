@@ -635,9 +635,10 @@ window.mountJennyStudioUI = function() {
     guideBtn.onclick = (e) => window.showFullHelpGuide(e);
     guideBtn.style.cssText = "flex:1;background:#161b22;border:1px solid #7341be;color:#d2a8ff;font-weight:bold;padding:11px;border-radius:8px;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 0 10px rgba(115,65,190,0.25);";
     guideBtn.innerHTML = window.tr("📖 СПРАВОЧНИК НАСТРОЕК (❓)", "📖 FULL DSP MANUAL (❓)");
-    const langSwitchBtn = document.createElement('button'); langSwitchBtn.type = 'button';
+    // JENNY_V242_STRICT_SETTINGS_LANG_HIDE
+    const langSwitchBtn = document.createElement('button'); langSwitchBtn.type = 'button'; langSwitchBtn.id = 'settingsDockedLangBtn';
     langSwitchBtn.onclick = (e) => window.toggleLanguage(e);
-    langSwitchBtn.style.cssText = "background:#161b22;border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;padding:0 14px;border-radius:8px;font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;";
+    langSwitchBtn.style.cssText = "background:#161b22;border:1px solid #58a6ff;color:#58a6ff;font-weight:bold;padding:0 14px;border-radius:8px;font-size:12.5px;cursor:pointer;display:" + (window._hasLangRunAway ? "flex" : "none") + ";align-items:center;justify-content:center;flex-shrink:0;";
     langSwitchBtn.innerHTML = window.getLang() === 'en' ? '🌐 EN' : '🌐 RU';
     const onbBtn = document.createElement('button'); onbBtn.type = 'button'; onbBtn.id = 'jennyOpenOnboardingBtnV165';
     onbBtn.onclick = (e) => { if (window.openOnboardingGuideV165) window.openOnboardingGuideV165(0, e); };
@@ -1639,8 +1640,9 @@ var findNearestStandardColorV39 = window.findNearestStandardColorV39 = window.fi
 // 1. УПРАВЛЕНИЕ ВИДИМОСТЬЮ И СТЫКОВКОЙ КНОПКИ RU / EN В НАСТРОЙКАХ
 window.syncSettingsLangBtnVisibilityV39 = function(animateDock) {
     const topRow = document.getElementById('jennyTopBarRow');
-    if (!topRow || topRow.children.length < 2) return;
-    const langBtnInSettings = topRow.lastElementChild;
+    if (!topRow) return;
+    const langBtnInSettings = document.getElementById('settingsDockedLangBtn') || topRow.lastElementChild;
+    if (!langBtnInSettings) return;
     langBtnInSettings.id = 'settingsDockedLangBtn';
 
     if (!window._hasLangRunAway) {

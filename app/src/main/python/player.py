@@ -22,6 +22,59 @@ DEFAULT_MUSIC_DIR = "/storage/emulated/0/Music/"
 MUSIC_DIR = DEFAULT_MUSIC_DIR
 PRESET_FILE = os.path.join(DEFAULT_MUSIC_DIR, "jenny_dsp_preset.json")
 
+# === JENNY V242: PERSISTENT EXTERNAL STORAGE HUB (/storage/emulated/0/JENNY) ===
+_JENNY_HUB_INIT_LOCK_V242 = threading.Lock()
+_JENNY_HUB_MIGRATED_V242 = False
+
+def get_jenny_hub_root_v242() -> str:
+    ext_base = "/storage/emulated/0"
+    if os.path.isdir(ext_base) and os.access(ext_base, os.W_OK):
+        root = os.path.join(ext_base, "JENNY")
+    else:
+        root = os.path.join(os.path.dirname(DEFAULT_MUSIC_DIR.rstrip("/")), "JENNY")
+    for sub in ("Torrents", os.path.join("Torrents", "data"), "SoundCloud", "OST", "Archive", "Radio", "YouTube"):
+        try:
+            os.makedirs(os.path.join(root, sub), exist_ok=True)
+        except Exception:
+            pass
+    return root
+
+def get_jenny_torrents_data_dir_v242() -> str:
+    global _JENNY_HUB_MIGRATED_V242
+    hub_root = get_jenny_hub_root_v242()
+    tor_data = os.path.join(hub_root, "Torrents", "data")
+    try:
+        os.makedirs(tor_data, exist_ok=True)
+    except Exception:
+        pass
+    if not _JENNY_HUB_MIGRATED_V242:
+        with _JENNY_HUB_INIT_LOCK_V242:
+            if not _JENNY_HUB_MIGRATED_V242:
+                _JENNY_HUB_MIGRATED_V242 = True
+                # Migrate legacy jenny_torrent_downloads.json -> /storage/emulated/0/JENNY/Torrents/torrent_downloads_state.json
+                new_state_p = os.path.join(hub_root, "Torrents", "torrent_downloads_state.json")
+                for old_dir in {DEFAULT_MUSIC_DIR, globals().get("MUSIC_DIR") or DEFAULT_MUSIC_DIR}:
+                    if not old_dir:
+                        continue
+                    old_state_p = os.path.join(old_dir, "jenny_torrent_downloads.json")
+                    if os.path.isfile(old_state_p) and not os.path.isfile(new_state_p):
+                        try:
+                            shutil.copy2(old_state_p, new_state_p)
+                        except Exception:
+                            pass
+                    old_tmp = os.path.join(old_dir, "torrents_tmp")
+                    if os.path.isdir(old_tmp) and os.path.abspath(old_tmp) != os.path.abspath(tor_data):
+                        try:
+                            for entry_name in os.listdir(old_tmp):
+                                src_e = os.path.join(old_tmp, entry_name)
+                                dst_e = os.path.join(tor_data, entry_name)
+                                if not os.path.exists(dst_e):
+                                    shutil.move(src_e, dst_e)
+                        except Exception:
+                            pass
+    return tor_data
+
+
 # ==============================================================================
 # ⚙️ КОНФИГУРАЦИЯ ПОИСКОВОГО ЯДРА OMNITORRENT (ТАЙМАУТЫ, ПРОФИЛИ, ФОРМАТЫ, ГОД)
 # ==============================================================================
@@ -2694,7 +2747,7 @@ def ensure_jtorrent_daemon_v96():
     except Exception:
         pass
     bin_p = find_jtorrent_binary_v96()
-    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    tor_dir = get_jenny_torrents_data_dir_v242()
     os.makedirs(tor_dir, exist_ok=True)
     try:
         os.chmod(bin_p, 0o755)
@@ -3399,7 +3452,7 @@ def api_torrent_add_file_v113():
                             if u_tr and u_tr not in file_trackers:
                                 file_trackers.append(u_tr)
 
-        tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+        tor_dir = get_jenny_torrents_data_dir_v242()
         os.makedirs(tor_dir, exist_ok=True)
         saved_tor_path = os.path.join(tor_dir, f"{info_hash}.torrent")
         with open(saved_tor_path, "wb") as tf:
@@ -3493,7 +3546,7 @@ def api_torrent_download_v96():
 
         res_json = json.loads(res_str)
         if res_json.get("status") != "ok" and h:
-            saved_tor = os.path.join(MUSIC_DIR, "torrents_tmp", f"{h}.torrent")
+            saved_tor = os.path.join(get_jenny_torrents_data_dir_v242(), f"{h}.torrent")
             if os.path.isfile(saved_tor):
                 add_req = urllib.request.Request(
                     f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add",
@@ -3750,7 +3803,7 @@ def api_torrent_add_file_v127():
       if isinstance(item, bytes):
        u_tr = item.decode('utf-8', errors='ignore').strip()
        if u_tr and u_tr not in file_trackers: file_trackers.append(u_tr)
-  tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+  tor_dir = get_jenny_torrents_data_dir_v242()
   os.makedirs(tor_dir, exist_ok=True)
   saved_tor_path = os.path.join(tor_dir, f"{info_hash}.torrent")
   with open(saved_tor_path, "wb") as tf: tf.write(raw_bytes)
@@ -3781,7 +3834,7 @@ def api_torrent_download_v127():
     _ensure_torrent_registered_in_daemon_v145(h, str(req_obj.get('magnet') or ''))
    _JTORRENT_ACTIVE_FILES_V106[h] = set(flist)
    if req_obj.get("explicit", True):
-    _register_explicit_download_v143(h, flist, torrent_path=os.path.join(MUSIC_DIR, "torrents_tmp", f"{h}.torrent"))
+    _register_explicit_download_v143(h, flist, torrent_path=os.path.join(get_jenny_torrents_data_dir_v242(), f"{h}.torrent"))
   cached_trs, _, _ = _load_trackers_state_v110()
   req_obj["trackers"] = list(cached_trs or [])
   payload = json.dumps(req_obj).encode("utf-8")
@@ -3789,7 +3842,7 @@ def api_torrent_download_v127():
   with urllib.request.urlopen(req, timeout=10) as r: res_str = r.read().decode("utf-8")
   res_json = json.loads(res_str)
   if res_json.get("status") != "ok" and h:
-   saved_tor = os.path.join(MUSIC_DIR, "torrents_tmp", f"{h}.torrent")
+   saved_tor = os.path.join(get_jenny_torrents_data_dir_v242(), f"{h}.torrent")
    if os.path.isfile(saved_tor):
     add_req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add", data=json.dumps({"torrent_path": saved_tor, "trackers": list(cached_trs or [])}).encode("utf-8"), headers={"Content-Type": "application/json"})
     urllib.request.urlopen(add_req, timeout=8).read()
@@ -3804,7 +3857,7 @@ def api_torrent_download_v127():
 def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = False, keep_torrent_meta: bool = False) -> float:
     freed_bytes = 0
     h = (target_hash or "").strip().lower()
-    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    tor_dir = get_jenny_torrents_data_dir_v242()
     target_names = set()
     target_paths = set()
 
@@ -4103,7 +4156,7 @@ def _collect_video_scan_dirs_v137():
     for d in list(ACTIVE_MUSIC_DIRS) + [VIDEO_DIR_V137]:
         if d and os.path.isdir(d) and d not in roots:
             roots.append(d)
-    tor_tmp = os.path.join(MUSIC_DIR, "torrents_tmp")
+    tor_tmp = get_jenny_torrents_data_dir_v242()
     if os.path.isdir(tor_tmp) and tor_tmp not in roots:
         roots.append(tor_tmp)
     return roots
@@ -4600,7 +4653,7 @@ def api_omni_live_wave_poll_v141():
 
 
 # === 🎯🧲 JENNY V143: STREAM-ONLY AUTO-CLEANUP VS EXPLICIT DOWNLOAD AUTO-RESUME ===
-TORRENT_DL_STATE_FILE_V143 = os.path.join(DEFAULT_MUSIC_DIR, "jenny_torrent_downloads.json")
+TORRENT_DL_STATE_FILE_V143 = os.path.join(get_jenny_hub_root_v242(), "Torrents", "torrent_downloads_state.json")
 _TORRENT_DL_LOCK_V143 = threading.Lock()
 _STREAM_ONLY_ACTIVE_V143 = {}   # hash -> set(file_idx)
 _KNOWN_TORRENT_META_V143 = {}   # hash -> {"magnet": str, "torrent_path": str, "name": str}
@@ -4724,7 +4777,7 @@ def _stop_and_clean_stream_data_v143(h: str, file_idx=None) -> dict:
                     if (tor.get("hash") or "").strip().lower() == h:
                         for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
                             if int(fobj.get("index", -1)) == int(file_idx):
-                                fp = fobj.get("full_path") or os.path.join(MUSIC_DIR, "torrents_tmp", (fobj.get("path") or "").lstrip("/"))
+                                fp = fobj.get("full_path") or os.path.join(get_jenny_torrents_data_dir_v242(), (fobj.get("path") or "").lstrip("/"))
                                 if fp and os.path.isfile(fp):
                                     freed_mb = round(os.path.getsize(fp) / (1024.0 * 1024.0), 1)
                                     os.remove(fp)
@@ -4761,7 +4814,7 @@ def _startup_resume_downloads_and_clean_streams_v143():
     if not ensure_jtorrent_daemon_v96():
         return
     st = _load_persisted_dl_state_v143()
-    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    tor_dir = get_jenny_torrents_data_dir_v242()
     active_hashes = set()
     to_resume = []
 
@@ -4851,7 +4904,7 @@ def _ensure_torrent_registered_in_daemon_v145(h: str, magnet_hint: str = ""):
         pass
 
     cached_trs, _, _ = _load_trackers_state_v110()
-    tor_file = os.path.join(MUSIC_DIR, "torrents_tmp", f"{h}.torrent")
+    tor_file = os.path.join(get_jenny_torrents_data_dir_v242(), f"{h}.torrent")
     meta = _KNOWN_TORRENT_META_V143.get(h, {}) if "_KNOWN_TORRENT_META_V143" in globals() else {}
     mag = magnet_hint or meta.get("magnet") or f"magnet:?xt=urn:btih:{h}"
 
@@ -4877,7 +4930,7 @@ def _ensure_torrent_registered_in_daemon_v145(h: str, magnet_hint: str = ""):
 _P2P_COMPARE_ADDED_V163 = {}  # key -> {"orig": filename, "wav": filename}
 
 def _locate_downloaded_p2p_file_v163(target_name: str, target_hash: str = "", target_idx: int = -1):
-    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    tor_dir = get_jenny_torrents_data_dir_v242()
     target_base = os.path.basename((target_name or "").strip())
     h_low = (target_hash or "").strip().lower()
 
@@ -5391,7 +5444,7 @@ def _instant_import_completed_file_v212(h_low: str, f_idx: int, full_p: str, rel
         if os.path.isfile(v_cand) or os.path.isfile(m_cand) or (existing in _discovered_video_paths_v134 and os.path.isfile(_discovered_video_paths_v134[existing])):
             return existing
 
-    tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+    tor_dir = get_jenny_torrents_data_dir_v242()
     base_fn = os.path.basename((full_p or rel_path or "").strip())
     if not base_fn:
         return ""
@@ -5666,7 +5719,7 @@ def sync_downloaded_videos_to_library_v134(force=False):
 
     _migrate_videos_from_music_dir_v137()
     scan_dirs = _collect_video_scan_dirs_v137()
-    tor_tmp = os.path.abspath(os.path.join(MUSIC_DIR, "torrents_tmp"))
+    tor_tmp = os.path.abspath(get_jenny_torrents_data_dir_v242())
 
     incomplete_basenames = set()
     completed_tor_videos = {}  # bn -> (cand_full, sz_mb, h, f_idx)
@@ -5717,7 +5770,7 @@ def sync_downloaded_videos_to_library_v134(force=False):
             for r, dirs, files in os.walk(root_d):
                 if os.path.abspath(r).startswith(tor_tmp):
                     continue
-                dirs[:] = [d for d in dirs if d not in ('.git', 'Android', 'proc', 'sys', 'usr', 'lib', 'torrents_tmp')]
+                dirs[:] = [d for d in dirs if d not in ('.git', 'Android', 'proc', 'sys', 'usr', 'lib', 'torrents_tmp', 'JENNY')]
                 for fn in files:
                     if fn.lower().endswith(_VIDEO_EXTS_V134) and not fn.startswith('.'):
                         if fn in incomplete_basenames:
@@ -6367,7 +6420,7 @@ def api_torrent_add_v214():
                 pass
 
             # 2. Если на диске сохранён .torrent файл этой раздачи — открываем с диска мгновенно!
-            saved_tor = os.path.join(MUSIC_DIR, "torrents_tmp", f"{btih}.torrent")
+            saved_tor = os.path.join(get_jenny_torrents_data_dir_v242(), f"{btih}.torrent")
             if os.path.isfile(saved_tor):
                 req_obj["torrent_path"] = saved_tor
 
@@ -6480,7 +6533,7 @@ def _stop_and_clean_stream_data_v143(h: str, file_idx=None) -> dict:
                     if (tor.get("hash") or "").strip().lower() == h:
                         for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
                             if int(fobj.get("index", -1)) == int(file_idx):
-                                fp = fobj.get("full_path") or os.path.join(MUSIC_DIR, "torrents_tmp", (fobj.get("path") or "").lstrip("/"))
+                                fp = fobj.get("full_path") or os.path.join(get_jenny_torrents_data_dir_v242(), (fobj.get("path") or "").lstrip("/"))
                                 if fp and os.path.isfile(fp):
                                     freed_mb = round(os.path.getsize(fp) / (1024.0 * 1024.0), 1)
                                     os.remove(fp)
@@ -11858,6 +11911,727 @@ def api_video_live_remux_v240():
 _override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v240)
 # ================= END JENNY_V240_RADIO_PCM_VIDEO_SYNC_AND_SMART_REMUX_PATCH =================
 
+# ================= BEGIN JENNY_V242_EXTERNAL_HUB_AND_RADIO_BUFFER_PATCH =================
+import collections
+import queue as _py_queue_v242
+
+_JENNY_HUB_FILE_LOCK_V242 = threading.Lock()
+_JENNY_HUB_BACKFILLED_MODS_V242 = set()
+
+_JENNY_MODULE_FOLDER_MAP_V242 = {
+    "soundcloud": "SoundCloud",
+    "ost": "OST",
+    "archive": "Archive",
+    "radio": "Radio",
+    "youtube": "YouTube",
+}
+
+
+def _get_module_history_path_v242(mod_key: str) -> str:
+    m = (mod_key or "").strip().lower()
+    sub = _JENNY_MODULE_FOLDER_MAP_V242.get(m, "OST")
+    d = os.path.join(get_jenny_hub_root_v242(), sub)
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "history.json")
+
+
+def _get_module_queue_path_v242(mod_key: str) -> str:
+    m = (mod_key or "").strip().lower()
+    sub = _JENNY_MODULE_FOLDER_MAP_V242.get(m, "OST")
+    d = os.path.join(get_jenny_hub_root_v242(), sub)
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "queue.json")
+
+
+def _load_json_list_safe_v242(path_str: str) -> list:
+    if os.path.isfile(path_str):
+        try:
+            with open(path_str, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict) and isinstance(data.get("items"), list):
+                return data["items"]
+        except Exception:
+            pass
+    return []
+
+
+def _save_json_list_safe_v242(path_str: str, items: list):
+    try:
+        os.makedirs(os.path.dirname(path_str), exist_ok=True)
+        tmp_p = path_str + ".tmp"
+        with open(tmp_p, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_p, path_str)
+    except Exception:
+        pass
+
+
+def record_jenny_hub_item_v242(mod_key: str, filename: str, title: str = "", subtitle: str = "", size_mb: float = 0.0, extra: dict = None):
+    m = (mod_key or "").strip().lower()
+    if m not in _JENNY_MODULE_FOLDER_MAP_V242 or not filename:
+        return
+    bn = os.path.basename(filename)
+    now_ts = round(time.time(), 2)
+    with _JENNY_HUB_FILE_LOCK_V242:
+        hp = _get_module_history_path_v242(m)
+        items = _load_json_list_safe_v242(hp)
+        # Deduplicate by filename (update timestamp/info & move to top)
+        kept = [x for x in items if isinstance(x, dict) and os.path.basename(str(x.get("filename") or "")) != bn]
+        entry = {
+            "filename": bn,
+            "title": (title or os.path.splitext(bn)[0]).strip(),
+            "subtitle": (subtitle or "").strip(),
+            "size_mb": round(float(size_mb or 0.0), 2),
+            "ts": now_ts,
+            "module": m,
+        }
+        if isinstance(extra, dict):
+            entry.update(extra)
+        kept.insert(0, entry)
+        if len(kept) > 1000:
+            kept = kept[:1000]
+        _save_json_list_safe_v242(hp, kept)
+
+
+def _collect_all_media_lookup_dirs_v242() -> list:
+    dirs = []
+    try:
+        load_multi_dirs_v71()
+    except Exception:
+        pass
+    for d in list(globals().get("ACTIVE_MUSIC_DIRS_V71") or []) + list(globals().get("SAVED_MUSIC_DIRS_V71") or []) + [MUSIC_DIR, DEFAULT_MUSIC_DIR]:
+        if d and os.path.isdir(d) and d not in dirs:
+            dirs.append(d)
+    v_dir = globals().get("VIDEO_DIR_V137") or "/storage/emulated/0/JennyVideo"
+    if v_dir and os.path.isdir(v_dir) and v_dir not in dirs:
+        dirs.append(v_dir)
+    return dirs
+
+
+def _find_file_on_disk_v242(bn: str) -> str:
+    if not bn:
+        return ""
+    for d in _collect_all_media_lookup_dirs_v242():
+        cand = os.path.join(d, bn)
+        if os.path.isfile(cand):
+            return cand
+    vp = (globals().get("_discovered_video_paths_v134") or {}).get(bn)
+    if vp and os.path.isfile(vp):
+        return vp
+    return ""
+
+
+def _reconcile_module_history_v242(mod_key: str) -> list:
+    m = (mod_key or "").strip().lower()
+    if m not in _JENNY_MODULE_FOLDER_MAP_V242:
+        return []
+    hp = _get_module_history_path_v242(m)
+    with _JENNY_HUB_FILE_LOCK_V242:
+        items = _load_json_list_safe_v242(hp)
+        known_fns = {os.path.basename(str(x.get("filename") or "")) for x in items if isinstance(x, dict) and x.get("filename")}
+        changed = False
+
+        # Smart one-time disk backfill per session so already-downloaded files appear immediately!
+        if m not in _JENNY_HUB_BACKFILLED_MODS_V242:
+            _JENNY_HUB_BACKFILLED_MODS_V242.add(m)
+            tags_db = {}
+            try:
+                tags_db = load_custom_tags_db_v74() or {}
+            except Exception:
+                tags_db = {}
+            for d in _collect_all_media_lookup_dirs_v242():
+                try:
+                    for fn in os.listdir(d):
+                        if not fn or fn.startswith(".") or fn.startswith("temp_") or fn in known_fns:
+                            continue
+                        fp = os.path.join(d, fn)
+                        if not os.path.isfile(fp):
+                            continue
+                        low = fn.lower()
+                        tmeta = tags_db.get(fn) if isinstance(tags_db, dict) else None
+                        genre_str = str((tmeta or {}).get("GENRE") or "").strip()
+                        matched = False
+                        title_str = os.path.splitext(fn)[0]
+                        sub_str = ""
+                        if m == "soundcloud" and (fn.startswith("SoundCloud - ") or genre_str == "SoundCloud"):
+                            matched = True
+                            title_str = re.sub(r"^SoundCloud\s*-\s*(\d+\.\s*)?", "", title_str).strip() or title_str
+                            sub_str = "SoundCloud"
+                        elif m == "radio" and (fn.startswith("Radio - ") or genre_str == "Radio"):
+                            matched = True
+                            title_str = re.sub(r"^Radio\s*-\s*", "", title_str).strip() or title_str
+                            sub_str = "Запись радиоэфира"
+                        elif m == "ost" and genre_str == "Game OST":
+                            matched = True
+                            title_str = str((tmeta or {}).get("TITLE") or title_str)
+                            sub_str = str((tmeta or {}).get("ALBUM") or "Game OST")
+                        elif m == "archive" and genre_str in ("Archive.org", "Lossless Archive"):
+                            matched = True
+                            title_str = str((tmeta or {}).get("TITLE") or title_str)
+                            sub_str = str((tmeta or {}).get("ALBUM") or "Archive.org")
+                        elif m == "youtube" and re.search(r"\[\d{3,4}p\]\.(mp4|webm|mkv)$", low):
+                            matched = True
+                            sub_str = "YouTube Video"
+                        if matched:
+                            st_f = os.stat(fp)
+                            items.append({
+                                "filename": fn,
+                                "title": title_str,
+                                "subtitle": sub_str,
+                                "size_mb": round(st_f.st_size / (1024.0 * 1024.0), 2),
+                                "ts": round(st_f.st_mtime, 2),
+                                "module": m,
+                            })
+                            known_fns.add(fn)
+                            changed = True
+                except Exception:
+                    pass
+            if changed:
+                items.sort(key=lambda x: float(x.get("ts") or 0.0), reverse=True)
+                _save_json_list_safe_v242(hp, items)
+
+    out = []
+    for x in items:
+        if not isinstance(x, dict):
+            continue
+        fn = os.path.basename(str(x.get("filename") or ""))
+        if not fn:
+            continue
+        fp = _find_file_on_disk_v242(fn)
+        row = dict(x)
+        row["exists"] = bool(fp)
+        row["is_video"] = fn.lower().endswith((".mp4", ".mkv", ".webm", ".avi", ".mov", ".3gp", ".m4v"))
+        if fp:
+            try:
+                if not row.get("size_mb"):
+                    row["size_mb"] = round(os.path.getsize(fp) / (1024.0 * 1024.0), 2)
+            except Exception:
+                pass
+        out.append(row)
+    out.sort(key=lambda r: float(r.get("ts") or 0.0), reverse=True)
+    return out
+
+
+def _load_module_queue_v242(mod_key: str) -> dict:
+    qp = _get_module_queue_path_v242(mod_key)
+    if os.path.isfile(qp):
+        try:
+            with open(qp, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict) and d.get("pending_tracks"):
+                return d
+        except Exception:
+            pass
+    return {}
+
+
+def _save_module_queue_v242(mod_key: str, q_obj: dict):
+    qp = _get_module_queue_path_v242(mod_key)
+    try:
+        if not q_obj or not q_obj.get("pending_tracks"):
+            if os.path.isfile(qp):
+                os.remove(qp)
+            return
+        tmp_p = qp + ".tmp"
+        with open(tmp_p, "w", encoding="utf-8") as f:
+            json.dump(q_obj, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_p, qp)
+    except Exception:
+        pass
+
+
+def api_jenny_hub_summary_v242():
+    response.content_type = "application/json; charset=utf-8"
+    counts = {}
+    queues = {}
+    for mk in _JENNY_MODULE_FOLDER_MAP_V242:
+        hist = _reconcile_module_history_v242(mk)
+        q = _load_module_queue_v242(mk)
+        pend_n = len(q.get("pending_tracks") or []) if isinstance(q, dict) else 0
+        counts[mk] = len(hist)
+        queues[mk] = pend_n
+    return json.dumps({
+        "status": "ok",
+        "hub_root": get_jenny_hub_root_v242(),
+        "counts": counts,
+        "queues": queues,
+    }, ensure_ascii=False)
+
+
+def api_jenny_hub_history_v242(mod_key):
+    response.content_type = "application/json; charset=utf-8"
+    m = (mod_key or "").strip().lower()
+    items = _reconcile_module_history_v242(m)
+    q = _load_module_queue_v242(m)
+    return json.dumps({
+        "status": "ok",
+        "module": m,
+        "folder": os.path.join(get_jenny_hub_root_v242(), _JENNY_MODULE_FOLDER_MAP_V242.get(m, "OST")),
+        "count": len(items),
+        "items": items,
+        "queue": q,
+    }, ensure_ascii=False)
+
+
+def api_jenny_hub_save_queue_v242(mod_key):
+    response.content_type = "application/json; charset=utf-8"
+    m = (mod_key or "").strip().lower()
+    try:
+        body = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    if body.get("clear"):
+        _save_module_queue_v242(m, {})
+        return json.dumps({"status": "ok", "cleared": True}, ensure_ascii=False)
+    _save_module_queue_v242(m, body)
+    return json.dumps({"status": "ok", "pending": len(body.get("pending_tracks") or [])}, ensure_ascii=False)
+
+
+def api_jenny_hub_delete_item_v242():
+    response.content_type = "application/json; charset=utf-8"
+    try:
+        body = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    m = str(body.get("module") or "").strip().lower()
+    fn = os.path.basename(str(body.get("filename") or "").strip())
+    del_disk = bool(body.get("delete_file"))
+    if m in _JENNY_MODULE_FOLDER_MAP_V242 and fn:
+        with _JENNY_HUB_FILE_LOCK_V242:
+            hp = _get_module_history_path_v242(m)
+            items = _load_json_list_safe_v242(hp)
+            items = [x for x in items if isinstance(x, dict) and os.path.basename(str(x.get("filename") or "")) != fn]
+            _save_json_list_safe_v242(hp, items)
+        if del_disk:
+            fp = _find_file_on_disk_v242(fn)
+            if fp and os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+    return json.dumps({"status": "ok"}, ensure_ascii=False)
+
+
+_override_bottle_route_v212('/api/jenny_hub/summary', 'GET', api_jenny_hub_summary_v242)
+_override_bottle_route_v212('/api/jenny_hub/history/<mod_key>', 'GET', api_jenny_hub_history_v242)
+_override_bottle_route_v212('/api/jenny_hub/queue/<mod_key>', 'POST', api_jenny_hub_save_queue_v242)
+_override_bottle_route_v212('/api/jenny_hub/delete_item', 'POST', api_jenny_hub_delete_item_v242)
+
+
+# Wrap studio download & radio recording endpoints so every completed item is persisted in /storage/emulated/0/JENNY/<Module>/history.json!
+_orig_kh_dl_v242 = api_khinsider_download_track_v88
+def api_khinsider_download_track_v242():
+    raw_b = request.body.read()
+    try:
+        req_preview = json.loads(raw_b.decode("utf-8") or "{}")
+    except Exception:
+        req_preview = {}
+    src_mode = str(req_preview.get("source_mode") or "ost").strip().lower()
+    if src_mode not in ("ost", "archive"):
+        src_mode = "archive" if "archive.org" in str(req_preview.get("page_path") or "").lower() else "ost"
+    # Rewind request body for original handler
+    import io as _io_v242
+    request.environ['wsgi.input'] = _io_v242.BytesIO(raw_b)
+    request.environ['CONTENT_LENGTH'] = str(len(raw_b))
+    res_raw = _orig_kh_dl_v242()
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else {}
+        if d.get("status") == "ok" and d.get("filename"):
+            fn = d["filename"]
+            # Fix GENRE tag when downloaded from Archive.org so OST and Archive never mix!
+            if src_mode == "archive":
+                try:
+                    db = load_custom_tags_db_v74()
+                    if fn in db and isinstance(db[fn], dict):
+                        db[fn]["GENRE"] = "Archive.org"
+                        save_custom_tags_db_v74(db)
+                except Exception:
+                    pass
+            record_jenny_hub_item_v242(
+                src_mode,
+                fn,
+                title=str(req_preview.get("track_title") or fn),
+                subtitle=str(req_preview.get("album_title") or ("Archive.org" if src_mode == "archive" else "Game OST")),
+                size_mb=float(d.get("size_mb") or 0.0),
+                extra={"ext": d.get("ext") or ""},
+            )
+    except Exception:
+        pass
+    return res_raw
+
+_override_bottle_route_v212('/api/khinsider/download_track', 'POST', api_khinsider_download_track_v242)
+
+
+_orig_sc_dl_v242 = api_soundcloud_download_track_v105
+def api_soundcloud_download_track_v242():
+    raw_b = request.body.read()
+    try:
+        req_preview = json.loads(raw_b.decode("utf-8") or "{}")
+    except Exception:
+        req_preview = {}
+    import io as _io_v242
+    request.environ['wsgi.input'] = _io_v242.BytesIO(raw_b)
+    request.environ['CONTENT_LENGTH'] = str(len(raw_b))
+    res_raw = _orig_sc_dl_v242()
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else {}
+        if d.get("status") == "ok" and d.get("filename"):
+            record_jenny_hub_item_v242(
+                "soundcloud",
+                d["filename"],
+                title=str(req_preview.get("track_title") or d["filename"]),
+                subtitle="SoundCloud",
+                size_mb=float(d.get("size_mb") or 0.0),
+                extra={"ext": d.get("ext") or ""},
+            )
+    except Exception:
+        pass
+    return res_raw
+
+_override_bottle_route_v212('/api/soundcloud/download_track', 'POST', api_soundcloud_download_track_v242)
+
+
+_orig_rad_stop_v242 = api_radio_rec_stop_v240
+def api_radio_rec_stop_v242():
+    st_title = str(_RADIO_REC_V91.get("title") or "Radio Stream")
+    is_ll = bool(_RADIO_REC_V91.get("lossless", True))
+    res_raw = _orig_rad_stop_v242()
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else {}
+        if d.get("status") == "ok" and d.get("filename"):
+            dur_s = float(d.get("duration_sec") or 0.0)
+            sub_lbl = f"{'Lossless xFLAC' if is_ll else 'MP3 Direct'}" + (f" • {int(dur_s)}с" if dur_s > 0 else "")
+            record_jenny_hub_item_v242(
+                "radio",
+                d["filename"],
+                title=st_title,
+                subtitle=sub_lbl,
+                size_mb=float(d.get("size_mb") or 0.0),
+                extra={"duration_sec": dur_s, "lossless": is_ll},
+            )
+    except Exception:
+        pass
+    return res_raw
+
+_override_bottle_route_v212('/api/radio/record_stop', 'POST', api_radio_rec_stop_v242)
+
+
+_orig_yt_dl_v242 = api_youtube_download_v230
+def api_youtube_download_v242():
+    res_raw = _orig_yt_dl_v242()
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else {}
+        if d.get("status") == "ok" and d.get("filename"):
+            h_lbl = f"{d.get('selected_height')}p" if d.get("selected_height") else "Video"
+            record_jenny_hub_item_v242(
+                "youtube",
+                d["filename"],
+                title=os.path.splitext(d["filename"])[0],
+                subtitle=f"YouTube • {h_lbl}",
+                size_mb=float(d.get("size_mb") or 0.0),
+                extra={"height": d.get("selected_height") or 0},
+            )
+    except Exception:
+        pass
+    return res_raw
+
+_override_bottle_route_v212('/api/youtube/download', 'POST', api_youtube_download_v242)
+
+
+# ==============================================================================
+# 🧲 FULL P2P TORRENT PERSISTENCE IN /storage/emulated/0/JENNY/Torrents/
+#    (Survives APK uninstall/reinstall; keeps paused, active & completed jobs!)
+# ==============================================================================
+_orig_tor_add_v242 = api_torrent_add_v214
+def api_torrent_add_v242():
+    raw_b = request.body.read()
+    try:
+        req_p = json.loads(raw_b.decode("utf-8") or "{}")
+    except Exception:
+        req_p = {}
+    import io as _io_v242
+    request.environ['wsgi.input'] = _io_v242.BytesIO(raw_b)
+    request.environ['CONTENT_LENGTH'] = str(len(raw_b))
+    res_raw = _orig_tor_add_v242()
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else {}
+        if d.get("status") == "ok" and d.get("hash"):
+            h = str(d["hash"]).strip().lower()
+            mag = str(req_p.get("magnet") or "")
+            t_path = os.path.join(get_jenny_torrents_data_dir_v242(), f"{h}.torrent")
+            with _TORRENT_DL_LOCK_V143:
+                st = _load_persisted_dl_state_v143()
+                ent = st.get(h) or {
+                    "hash": h,
+                    "name": d.get("name") or "Torrent",
+                    "magnet": mag,
+                    "torrent_path": t_path if os.path.isfile(t_path) else "",
+                    "explicit_files": [],
+                    "completed_files": [],
+                    "paused": False,
+                }
+                if mag:
+                    ent["magnet"] = mag
+                if d.get("name"):
+                    ent["name"] = d["name"]
+                if os.path.isfile(t_path):
+                    ent["torrent_path"] = t_path
+                ent["updated_ts"] = round(time.time(), 2)
+                st[h] = ent
+                _save_persisted_dl_state_v143(st)
+    except Exception:
+        pass
+    return res_raw
+
+_override_bottle_route_v212('/api/torrent/add', 'POST', api_torrent_add_v242)
+
+
+if 'api_torrent_control_v128' in globals():
+    _orig_tor_ctrl_v242 = api_torrent_control_v128
+    def api_torrent_control_v242():
+        raw_b = request.body.read()
+        try:
+            data = json.loads(raw_b.decode("utf-8") or "{}")
+        except Exception:
+            data = {}
+        act = str(data.get("action") or "").strip().lower()
+        h = str(data.get("hash") or "").strip().lower()
+        if h and act in ("pause", "stop_or_pause", "resume", "start"):
+            with _TORRENT_DL_LOCK_V143:
+                st = _load_persisted_dl_state_v143()
+                if h in st and isinstance(st[h], dict):
+                    st[h]["paused"] = act in ("pause", "stop_or_pause")
+                    _save_persisted_dl_state_v143(st)
+        import io as _io_v242
+        request.environ['wsgi.input'] = _io_v242.BytesIO(raw_b)
+        request.environ['CONTENT_LENGTH'] = str(len(raw_b))
+        return _orig_tor_ctrl_v242()
+    _override_bottle_route_v212('/api/torrent/control', 'POST', api_torrent_control_v242)
+
+
+def _rehydrate_persisted_torrents_v242():
+    """Restores saved torrents from /storage/emulated/0/JENNY/Torrents/ after restart or APK reinstall without wiping completed/paused torrents."""
+    time.sleep(2.6)
+    if not ensure_jtorrent_daemon_v96():
+        return
+    st = _load_persisted_dl_state_v143()
+    if not st:
+        return
+    tor_dir = get_jenny_torrents_data_dir_v242()
+    cached_trs, _, _ = _load_trackers_state_v110()
+
+    existing_in_daemon = set()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=2.0) as r:
+            d_st = json.loads(r.read().decode("utf-8", "ignore"))
+            for tor in (d_st.get("torrents") or []):
+                th = (tor.get("hash") or "").strip().lower()
+                if th:
+                    existing_in_daemon.add(th)
+    except Exception:
+        pass
+
+    for h_raw, entry in list(st.items()):
+        if not isinstance(entry, dict):
+            continue
+        h = (h_raw or "").strip().lower()
+        if not h:
+            continue
+        exp = sorted(list(set(int(x) for x in (entry.get("explicit_files") or []))))
+        comp = sorted(list(set(int(x) for x in (entry.get("completed_files") or []))))
+        pending = sorted(list(set(exp) - set(comp)))
+        is_paused = bool(entry.get("paused", False))
+
+        # Only auto-register torrents that had explicit downloads or a saved .torrent file
+        t_path = entry.get("torrent_path") or os.path.join(tor_dir, f"{h}.torrent")
+        mag = entry.get("magnet") or ""
+        if not exp and not os.path.isfile(t_path):
+            continue
+
+        _KNOWN_TORRENT_META_V143[h] = {
+            "name": entry.get("name") or "Torrent",
+            "magnet": mag,
+            "torrent_path": t_path if os.path.isfile(t_path) else "",
+        }
+
+        try:
+            if h not in existing_in_daemon:
+                add_payload = {"trackers": list(cached_trs or [])}
+                if os.path.isfile(t_path):
+                    add_payload["torrent_path"] = t_path
+                elif mag:
+                    add_payload["magnet"] = enrich_magnet_with_cached_trackers_v109(mag)
+                else:
+                    continue
+                add_req = urllib.request.Request(
+                    f"http://127.0.0.1:{_JTORRENT_PORT_V96}/add",
+                    data=json.dumps(add_payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(add_req, timeout=15).read()
+
+            if pending and not is_paused:
+                _JTORRENT_ACTIVE_FILES_V106[h] = set(pending)
+                dl_req = urllib.request.Request(
+                    f"http://127.0.0.1:{_JTORRENT_PORT_V96}/download",
+                    data=json.dumps({"hash": h, "files": pending, "trackers": list(cached_trs or [])}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(dl_req, timeout=8).read()
+            elif is_paused or not pending:
+                p_req = urllib.request.Request(
+                    f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                    data=json.dumps({"hash": h, "action": "pause"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(p_req, timeout=4).read()
+        except Exception:
+            pass
+
+# Override the old destructive startup cleaner so it never wipes completed/paused torrents!
+_startup_resume_downloads_and_clean_streams_v143 = _rehydrate_persisted_torrents_v242
+threading.Thread(target=_rehydrate_persisted_torrents_v242, daemon=True).start()
+
+
+# ==============================================================================
+# 📻 4 MB RAM PRE-BUFFERED LOSSLESS FLAC RADIO ENGINE (/api/radio/buffered_stream_v242)
+#    Eliminates Icecast socket underruns & chained Ogg-FLAC song-boundary stutters!
+# ==============================================================================
+_ACTIVE_RADIO_BUF_LOCK_V242 = threading.Lock()
+_ACTIVE_RADIO_BUF_PROCS_V242 = []
+_RADIO_MAX_RAM_BYTES_V242 = 4 * 1024 * 1024   # 4 MB RAM cushion (~38 sec of lossless FLAC!)
+_RADIO_PREROLL_BYTES_V242 = 180 * 1024        # ~180 KB fast initial burst (~1.6 sec) before starting playback
+
+
+def _kill_active_radio_buf_procs_v242():
+    with _ACTIVE_RADIO_BUF_LOCK_V242:
+        while _ACTIVE_RADIO_BUF_PROCS_V242:
+            p = _ACTIVE_RADIO_BUF_PROCS_V242.pop()
+            try:
+                p.kill()
+            except Exception:
+                pass
+
+
+def api_radio_buffered_stream_v242():
+    raw_url = (request.query.get("url") or "").strip()
+    is_lossless = (request.query.get("lossless") != "0")
+    if not raw_url or not raw_url.startswith(("http://", "https://")):
+        response.status = 400
+        return "Invalid radio URL"
+
+    _kill_active_radio_buf_procs_v242()
+    ff_bin = find_ffmpeg_binary()
+
+    # Decode upstream (including chained Ogg-FLAC or 96kHz/24-bit Hi-Res) into a single unbroken continuous stream
+    cmd = [
+        ff_bin, "-hide_banner", "-loglevel", "error",
+        "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "4",
+        "-rw_timeout", "15000000",
+        "-probesize", "262144", "-analyzeduration", "500000",
+        "-i", raw_url,
+        "-vn", "-sn", "-dn",
+    ]
+    if is_lossless:
+        mime_type = "audio/flac"
+        cmd.extend([
+            "-ac", "2", "-ar", "44100", "-sample_fmt", "s16",
+            "-c:a", "flac", "-compression_level", "3",
+            "-flush_packets", "1", "-f", "flac", "-"
+        ])
+    else:
+        mime_type = "audio/mpeg"
+        cmd.extend([
+            "-ac", "2", "-ar", "44100",
+            "-c:a", "libmp3lame", "-b:a", "256k",
+            "-flush_packets", "1", "-f", "mp3", "-"
+        ])
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
+    with _ACTIVE_RADIO_BUF_LOCK_V242:
+        _ACTIVE_RADIO_BUF_PROCS_V242.append(proc)
+
+    chunk_q = _py_queue_v242.Queue()
+    buffered_bytes = [0]
+    buf_cond = threading.Condition()
+    eof_flag = [False]
+    stop_flag = [False]
+
+    def _upstream_ram_reader():
+        try:
+            while not stop_flag[0]:
+                data = proc.stdout.read(16384)
+                if not data:
+                    break
+                with buf_cond:
+                    while buffered_bytes[0] >= _RADIO_MAX_RAM_BYTES_V242 and not stop_flag[0]:
+                        buf_cond.wait(timeout=0.25)
+                    if stop_flag[0]:
+                        break
+                    chunk_q.put(data)
+                    buffered_bytes[0] += len(data)
+                    buf_cond.notify_all()
+        except Exception:
+            pass
+        finally:
+            with buf_cond:
+                eof_flag[0] = True
+                buf_cond.notify_all()
+
+    t_reader = threading.Thread(target=_upstream_ram_reader, name="JennyRadioRamBufV242", daemon=True)
+    t_reader.start()
+
+    # Wait briefly (up to 1.8s) for initial pre-roll cushion so playback starts rock-solid without stutter
+    preroll_deadline = time.time() + 1.8
+    with buf_cond:
+        while buffered_bytes[0] < _RADIO_PREROLL_BYTES_V242 and not eof_flag[0]:
+            rem = preroll_deadline - time.time()
+            if rem <= 0:
+                break
+            buf_cond.wait(timeout=min(0.2, rem))
+
+    hdrs = {
+        "Content-Type": mime_type,
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none",
+        "X-Jenny-Radio-Buffer": "4MB-RAM-V242",
+    }
+
+    def _stream_from_ram_v242():
+        try:
+            while True:
+                try:
+                    chunk = chunk_q.get(timeout=0.35)
+                    with buf_cond:
+                        buffered_bytes[0] = max(0, buffered_bytes[0] - len(chunk))
+                        buf_cond.notify_all()
+                    yield chunk
+                except _py_queue_v242.Empty:
+                    if eof_flag[0] and chunk_q.empty():
+                        break
+        finally:
+            stop_flag[0] = True
+            with buf_cond:
+                buf_cond.notify_all()
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    return bottle.HTTPResponse(body=_stream_from_ram_v242(), status=200, headers=hdrs)
+
+_override_bottle_route_v212('/api/radio/buffered_stream_v242', 'GET', api_radio_buffered_stream_v242)
+
+def api_radio_stop_buffered_v242():
+    response.content_type = "application/json; charset=utf-8"
+    _kill_active_radio_buf_procs_v242()
+    return json.dumps({"status": "ok"})
+
+_override_bottle_route_v212('/api/radio/stop_buffered_v242', 'POST', api_radio_stop_buffered_v242)
+# ================= END JENNY_V242_EXTERNAL_HUB_AND_RADIO_BUFFER_PATCH =================
+
 # ================= BEGIN JENNY_V238_MULTI_PORT_CLUSTER_AND_CORS_PATCH =================
 _ACTIVE_CLUSTER_PORTS_V238 = [8080]
 _CLUSTER_STARTED_LOCK_V238 = threading.Lock()
@@ -12016,3 +12790,556 @@ def start_server_v238():
 
 start_server = start_server_v238
 # ================= END JENNY_V238_MULTI_PORT_CLUSTER_AND_CORS_PATCH =================
+
+# ================= BEGIN JENNY_V238_P2P_TURBO_DIAG =================
+import collections as _col_v238
+import random as _rnd_v238
+import struct as _struct_v238
+
+_JTORRENT_LOG_RING_V238 = _col_v238.deque(maxlen=250)
+_JTORRENT_DRAINED_PIDS_V238 = set()
+_JTORRENT_START_LOCK_V238 = threading.Lock()
+_TORRENT_STATUS_OBJ_CACHE_V238 = {"ts": 0.0, "obj": None}
+_HEAD_TAIL_ONCE_V238 = set()
+_TRACKER_ALIVE_CACHE_V238 = {}
+
+
+def _append_jtorrent_log_v238(prefix: str, raw_line):
+    try:
+        txt = _safe_decode_bytes_v218(raw_line).strip() if "_safe_decode_bytes_v218" in globals() else raw_line.decode("utf-8", errors="replace").strip()
+        if not txt:
+            return
+        ts_str = time.strftime("%H:%M:%S")
+        _JTORRENT_LOG_RING_V238.append(f"[{ts_str}] {prefix}{txt}")
+    except Exception:
+        pass
+
+
+def _attach_jtorrent_pipe_drainer_v238(proc):
+    if proc is None or getattr(proc, "pid", None) is None:
+        return
+    if proc.pid in _JTORRENT_DRAINED_PIDS_V238:
+        return
+    _JTORRENT_DRAINED_PIDS_V238.add(proc.pid)
+
+    def _drain_stream(stream_obj, tag):
+        if stream_obj is None:
+            return
+        try:
+            for raw_ln in iter(stream_obj.readline, b""):
+                if not raw_ln:
+                    break
+                _append_jtorrent_log_v238(tag, raw_ln)
+        except Exception:
+            pass
+
+    if getattr(proc, "stdout", None) is not None:
+        threading.Thread(target=_drain_stream, args=(proc.stdout, ""), daemon=True).start()
+    if getattr(proc, "stderr", None) is not None and getattr(proc, "stderr", None) is not getattr(proc, "stdout", None):
+        threading.Thread(target=_drain_stream, args=(proc.stderr, "[ERR] "), daemon=True).start()
+
+
+def find_jtorrent_binary_v96():
+    cands = []
+    if "_get_native_lib_dirs_v140" in globals():
+        try:
+            for nd in _get_native_lib_dirs_v140():
+                cands.append(os.path.join(nd, "libjtorrent.so"))
+        except Exception:
+            pass
+    ff_dir = os.path.dirname(find_ffmpeg_binary())
+    if ff_dir:
+        cands.append(os.path.join(ff_dir, "libjtorrent.so"))
+    for env_k in ("JENNY_NATIVE_DIR", "PATH", "LD_LIBRARY_PATH"):
+        for d in os.environ.get(env_k, "").split(":"):
+            if d:
+                cands.append(os.path.join(d, "libjtorrent.so"))
+    cands.append(os.path.abspath(os.path.join(BASE_DIR, "..", "jniLibs", "arm64-v8a", "libjtorrent.so")))
+
+    for cand in cands:
+        if cand and os.path.isfile(cand):
+            if cand.startswith("/storage/"):
+                exec_dir = os.environ.get("JENNY_FILES_DIR") or tempfile.gettempdir()
+                if exec_dir and os.path.isdir(exec_dir):
+                    exec_bin = os.path.join(exec_dir, "libjtorrent_exec.so")
+                    stamp_file = exec_bin + ".stamp"
+                    try:
+                        st = os.stat(cand)
+                        cur_sig = f"{st.st_size}:{int(st.st_mtime)}"
+                        old_sig = ""
+                        if os.path.isfile(stamp_file):
+                            old_sig = open(stamp_file, "r", encoding="utf-8").read().strip()
+                        if (not os.path.isfile(exec_bin)) or (os.path.getsize(exec_bin) != st.st_size) or (old_sig != cur_sig):
+                            shutil.copy2(cand, exec_bin)
+                            open(stamp_file, "w", encoding="utf-8").write(cur_sig)
+                        os.chmod(exec_bin, 0o755)
+                        return exec_bin
+                    except Exception:
+                        pass
+            return cand
+    return "libjtorrent.so"
+
+
+def ensure_jtorrent_daemon_v96():
+    global _JTORRENT_PROC_V96
+    if _JTORRENT_PROC_V96 is not None:
+        _attach_jtorrent_pipe_drainer_v238(_JTORRENT_PROC_V96)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.8) as r:
+            if r.status == 200:
+                return True
+    except Exception:
+        pass
+
+    with _JTORRENT_START_LOCK_V238:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.6) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            pass
+
+        bin_p = find_jtorrent_binary_v96()
+        tor_dir = os.path.join(MUSIC_DIR, "torrents_tmp")
+        os.makedirs(tor_dir, exist_ok=True)
+        try:
+            os.chmod(bin_p, 0o755)
+        except Exception:
+            pass
+
+        _append_jtorrent_log_v238("[INIT] ", f"Запуск демона {bin_p} на порту {_JTORRENT_PORT_V96}".encode("utf-8"))
+        _JTORRENT_PROC_V96 = subprocess.Popen(
+            [bin_p, "-port", _JTORRENT_PORT_V96, "-dir", tor_dir],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
+        _attach_jtorrent_pipe_drainer_v238(_JTORRENT_PROC_V96)
+
+        for _ in range(25):
+            time.sleep(0.15)
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.5) as r:
+                    if r.status == 200:
+                        _append_jtorrent_log_v238("[READY] ", b"Go P2P Engine online")
+                        return True
+            except Exception:
+                pass
+    return False
+
+
+def _upgrade_running_daemon_if_old_v238():
+    global _JTORRENT_PROC_V96
+    time.sleep(0.4)
+    if _JTORRENT_PROC_V96 is not None:
+        _attach_jtorrent_pipe_drainer_v238(_JTORRENT_PROC_V96)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.9) as r:
+            st = json.loads(r.read().decode("utf-8", errors="ignore"))
+        if st.get("version") != "2.0-diag" and len(st.get("torrents") or []) == 0:
+            if _JTORRENT_PROC_V96 is not None:
+                try:
+                    _JTORRENT_PROC_V96.kill()
+                except Exception:
+                    pass
+                _JTORRENT_PROC_V96 = None
+                time.sleep(0.2)
+                ensure_jtorrent_daemon_v96()
+    except Exception:
+        ensure_jtorrent_daemon_v96()
+
+threading.Thread(target=_upgrade_running_daemon_if_old_v238, daemon=True).start()
+
+
+def _check_tracker_host_alive_v238(tr_url: str) -> bool:
+    try:
+        p = urllib.parse.urlparse((tr_url or "").strip())
+        scheme = (p.scheme or "").lower()
+        host = p.hostname
+        if not host or scheme not in ("udp", "http", "https"):
+            return False
+        port = p.port or (443 if scheme == "https" else 80)
+        cache_k = f"{scheme}://{host.lower()}:{port}"
+        now = time.time()
+        cached = _TRACKER_ALIVE_CACHE_V238.get(cache_k)
+        if cached is not None and (now - cached[0] < 600.0):
+            return cached[1]
+
+        alive = False
+        if scheme == "udp":
+            ips = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)
+            if ips:
+                tx_id = _rnd_v238.randint(1, 0x7FFFFFFF)
+                pkt = _struct_v238.pack(">QII", 0x41727101980, 0, tx_id)
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.settimeout(0.95)
+                try:
+                    s.sendto(pkt, (ips[0][4][0], port))
+                    resp, _ = s.recvfrom(64)
+                    if len(resp) >= 16:
+                        act, rx_tx, _ = _struct_v238.unpack(">IIQ", resp[:16])
+                        alive = (act == 0 and rx_tx == tx_id)
+                finally:
+                    s.close()
+        else:
+            ips = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+            if ips:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1.1)
+                try:
+                    s.connect((ips[0][4][0], port))
+                    alive = True
+                finally:
+                    s.close()
+
+        _TRACKER_ALIVE_CACHE_V238[cache_k] = (now, alive)
+        return alive
+    except Exception:
+        return False
+
+_check_tracker_host_alive_v110 = _check_tracker_host_alive_v238
+
+
+def _temporarily_prioritize_torrent_v238(focus_hash: str, duration_sec: float = 14.0):
+    """Удаляет только пустые зависшие хэши без метаданных, НЕ разрывая слоты активных закачек паузами."""
+    focus_h = (focus_hash or "").strip().lower()
+    try:
+        st = _TORRENT_STATUS_OBJ_CACHE_V238["obj"]
+        if not st or (time.time() - _TORRENT_STATUS_OBJ_CACHE_V238["ts"] > 1.5):
+            with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=0.9) as r:
+                st = json.loads(r.read().decode("utf-8", "ignore"))
+        for tor in (st.get("torrents") or []):
+            th = (tor.get("hash") or "").strip().lower()
+            if not th or th == focus_h:
+                continue
+            t_files = tor.get("files") or tor.get("all_files") or []
+            idle_ms = int(tor.get("last_data_ms") or 0)
+            if len(t_files) == 0 and int(tor.get("num_pieces") or 0) == 0 and th not in _CURRENTLY_ADDING_HASHES_V214 and idle_ms > 28000:
+                try:
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                        data=json.dumps({"hash": th, "action": "drop"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}
+                    ), timeout=0.7).read()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+_temporarily_prioritize_torrent_v214 = _temporarily_prioritize_torrent_v238
+
+
+def _boost_torrent_file_and_pieces_v238(h_low: str, f_idx: int, ratio: float = -1.0, byte_offset: int = -1, sync_start: bool = False):
+    h_low = (h_low or "").strip().lower()
+    if not h_low:
+        return
+    f_idx = int(f_idx)
+    _cancel_stream_hold_release_v216()
+
+    cached_st = _TORRENT_STATUS_OBJ_CACHE_V238["obj"] if (time.time() - _TORRENT_STATUS_OBJ_CACHE_V238["ts"] < 1.2) else None
+    already_known = False
+    if cached_st:
+        for tor in (cached_st.get("torrents") or []):
+            if (tor.get("hash") or "").strip().lower() == h_low and int(tor.get("num_pieces") or 0) > 0:
+                already_known = True
+                break
+    if not already_known and "_ensure_torrent_registered_in_daemon_v145" in globals():
+        _ensure_torrent_registered_in_daemon_v145(h_low)
+
+    persisted_st = _load_persisted_dl_state_v143() if "_load_persisted_dl_state_v143" in globals() else {}
+    exp_files = set(int(x) for x in (persisted_st.get(h_low, {}).get("explicit_files") or []))
+    comp_files = set(int(x) for x in (persisted_st.get(h_low, {}).get("completed_files") or []))
+    pending_exp = exp_files - comp_files
+
+    active_files = sorted(list(pending_exp | {f_idx})) if pending_exp else [f_idx]
+    _STREAM_ONLY_ACTIVE_V143.setdefault(h_low, set()).add(f_idx)
+    _JTORRENT_ACTIVE_FILES_V106[h_low] = set(active_files)
+
+    def _do_boost():
+        try:
+            now_b = time.time()
+            if not hasattr(_boost_torrent_file_and_pieces_v238, "_recent_file_select"):
+                _boost_torrent_file_and_pieces_v238._recent_file_select = {}
+            if not hasattr(_boost_torrent_file_and_pieces_v238, "_recent_boosts"):
+                _boost_torrent_file_and_pieces_v238._recent_boosts = {}
+
+            sel_key = f"{h_low}_{f_idx}"
+            if now_b - _boost_torrent_file_and_pieces_v238._recent_file_select.get(sel_key, 0.0) > 8.0:
+                _boost_torrent_file_and_pieces_v238._recent_file_select[sel_key] = now_b
+                cached_trs, _, _ = _load_trackers_state_v110()
+                for route_p, body_d, tout in (
+                    ("/control", {"hash": h_low, "action": "resume"}, 0.9),
+                    ("/download", {"hash": h_low, "files": active_files, "trackers": list(cached_trs or [])}, 1.8),
+                    ("/control", {"hash": h_low, "action": "boost_file", "file_index": f_idx}, 1.0),
+                ):
+                    try:
+                        urllib.request.urlopen(urllib.request.Request(
+                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}{route_p}",
+                            data=json.dumps(body_d).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        ), timeout=tout).read()
+                    except Exception:
+                        pass
+
+            st_obj = _TORRENT_STATUS_OBJ_CACHE_V238["obj"] if (now_b - _TORRENT_STATUS_OBJ_CACHE_V238["ts"] < 0.8) else None
+            if not st_obj:
+                with urllib.request.urlopen(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status", timeout=1.1) as sr:
+                    st_obj = json.loads(sr.read().decode("utf-8", "ignore"))
+
+            beg_p, end_p, f_len = 0, 0, 0
+            p_map_str = ""
+            for tor in (st_obj.get("torrents") or []):
+                if (tor.get("hash") or "").strip().lower() == h_low:
+                    p_map_str = tor.get("pieces_map") or ""
+                    for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+                        if int(fobj.get("index", -1)) == f_idx:
+                            beg_p = int(fobj.get("begin_piece") or 0)
+                            end_p = int(fobj.get("end_piece") or 0)
+                            f_len = int(fobj.get("length") or fobj.get("size") or 0)
+                            break
+                    break
+
+            if end_p > beg_p:
+                calc_ratio = ratio
+                if calc_ratio < 0.0 and byte_offset > 0 and f_len > 0:
+                    calc_ratio = float(byte_offset) / float(f_len)
+
+                lookahead = max(2, min(20, int(_THREAD_CFG_V216.get("torrentPrebufferPieces", 8))))
+                span = max(1, end_p - beg_p)
+                center_p = max(beg_p, min(end_p - 1, beg_p + int(calc_ratio * span))) if (0.0 < calc_ratio <= 1.0) else beg_p
+
+                missing_ahead = []
+                # Хвостовой кусок с индексами Cues/idx1 запрашиваем ОДИН РАЗ на старте файла, не дёргая сидов каждые 2.5 сек!
+                if sel_key not in _HEAD_TAIL_ONCE_V238:
+                    _HEAD_TAIL_ONCE_V238.add(sel_key)
+                    if beg_p < end_p and (not p_map_str or (beg_p < len(p_map_str) and p_map_str[beg_p] != '4')):
+                        missing_ahead.append(beg_p)
+                    tail_p = end_p - 1
+                    if tail_p > beg_p and (not p_map_str or (tail_p < len(p_map_str) and p_map_str[tail_p] != '4')):
+                        missing_ahead.append(tail_p)
+
+                for cand_p in range(center_p, min(end_p, center_p + lookahead * 2)):
+                    if cand_p in missing_ahead:
+                        continue
+                    if p_map_str and 0 <= cand_p < len(p_map_str) and p_map_str[cand_p] == '4':
+                        continue
+                    missing_ahead.append(cand_p)
+                    if len(missing_ahead) >= lookahead:
+                        break
+
+                pieces_to_boost = list(reversed(missing_ahead))
+                recent_map = _boost_torrent_file_and_pieces_v238._recent_boosts
+                for idx_order, p_idx in enumerate(pieces_to_boost):
+                    b_key = f"{h_low}_{p_idx}"
+                    cooldown = 2.0 if idx_order == len(pieces_to_boost) - 1 else 5.5
+                    if now_b - recent_map.get(b_key, 0.0) < cooldown:
+                        continue
+                    recent_map[b_key] = now_b
+                    try:
+                        urllib.request.urlopen(urllib.request.Request(
+                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                            data=json.dumps({"hash": h_low, "action": "boost_piece", "piece_index": int(p_idx)}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        ), timeout=0.45).read()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    if sync_start:
+        _do_boost()
+    else:
+        threading.Thread(target=_do_boost, daemon=True).start()
+
+_boost_torrent_file_and_pieces_v214 = _boost_torrent_file_and_pieces_v238
+_boost_torrent_file_and_pieces_v218 = _boost_torrent_file_and_pieces_v238
+
+
+_orig_del_tor_v238 = _delete_torrent_files_from_disk_v142
+def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = False, keep_torrent_meta: bool = False) -> float:
+    h = (target_hash or "").strip().lower()
+    if nuke_all:
+        _HEAD_TAIL_ONCE_V238.clear()
+    elif h:
+        for k in [x for x in list(_HEAD_TAIL_ONCE_V238) if x.startswith(h + "_")]:
+            _HEAD_TAIL_ONCE_V238.discard(k)
+    _TORRENT_STATUS_OBJ_CACHE_V238["obj"] = None
+    return _orig_del_tor_v238(target_hash, nuke_all=nuke_all, keep_torrent_meta=keep_torrent_meta)
+
+
+@route('/api/torrent/engine_log', method='GET')
+def api_torrent_engine_log_v238():
+    response.content_type = 'application/json; charset=utf-8'
+    trs, last_s, auto_u = _load_trackers_state_v110()
+    return json.dumps({
+        "status": "ok",
+        "lines": list(_JTORRENT_LOG_RING_V238),
+        "trackers_cached": len(trs or []),
+        "last_sync": last_s,
+        "auto_update": bool(auto_u),
+        "daemon_bin": find_jtorrent_binary_v96()
+    }, ensure_ascii=False)
+_override_bottle_route_v212('/api/torrent/engine_log', 'GET', api_torrent_engine_log_v238)
+
+
+@route('/api/torrent/status', method='GET')
+def api_torrent_status_v238():
+    response.content_type = 'application/json; charset=utf-8'
+    now = time.time()
+    if _TORRENT_STATUS_CACHE_V212["data"] is not None and (now - _TORRENT_STATUS_CACHE_V212["ts"] < 0.30):
+        return _TORRENT_STATUS_CACHE_V212["data"]
+
+    if not ensure_jtorrent_daemon_v96():
+        return json.dumps({"status": "error", "torrents": []})
+
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{_JTORRENT_PORT_V96}/status")
+        with urllib.request.urlopen(req, timeout=2.5) as r:
+            data = json.loads(r.read().decode("utf-8", errors="replace"))
+
+        persisted_st = _load_persisted_dl_state_v143() if "_load_persisted_dl_state_v143" in globals() else {}
+        trs_list, _, _ = _load_trackers_state_v110()
+        data["trackers_cached"] = len(trs_list or [])
+        clean_torrents = []
+
+        for t in data.get("torrents", []):
+            th = (t.get("hash") or "").lower()
+            t_files = t.get("files") or []
+            t_all_files = t.get("all_files") or []
+
+            if len(t_files) == 0 and len(t_all_files) == 0 and int(t.get("num_pieces") or 0) == 0:
+                is_actively_adding = (th in _CURRENTLY_ADDING_HASHES_V214) or (t.get("stage") == "metadata" and int(t.get("last_data_ms") or 0) < 27000)
+                if is_actively_adding:
+                    t["is_adding"] = True
+                    known_nm = (_KNOWN_TORRENT_META_V143.get(th) or {}).get("name") if "_KNOWN_TORRENT_META_V143" in globals() else ""
+                    if known_nm:
+                        t["name"] = known_nm
+                    clean_torrents.append(t)
+                    continue
+                if th:
+                    def _drop_dead(dead_h):
+                        try:
+                            urllib.request.urlopen(urllib.request.Request(
+                                f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                data=json.dumps({"hash": dead_h, "action": "drop"}).encode("utf-8"),
+                                headers={"Content-Type": "application/json"}
+                            ), timeout=0.8).read()
+                        except Exception:
+                            pass
+                    threading.Thread(target=_drop_dead, args=(th,), daemon=True).start()
+                continue
+
+            t_name = (t.get("name") or "Torrent").strip()
+            act_set = _JTORRENT_ACTIVE_FILES_V106.get(th, set())
+            exp_list = set(int(x) for x in persisted_st.get(th, {}).get("explicit_files", []))
+            stream_set = _STREAM_ONLY_ACTIVE_V143.get(th, set()) if "_STREAM_ONLY_ACTIVE_V143" in globals() else set()
+            p_map_str = t.get("pieces_map") or ""
+            piece_len = int(t.get("piece_length") or 0)
+            t["has_explicit_dl"] = bool(exp_list)
+
+            for f in t_files:
+                f_idx = int(f.get("index", 0))
+                key = f"{th}_{f_idx}"
+                f_len = int(f.get("length") or f.get("size") or 0)
+                raw_comp = int(f.get("completed") or 0)
+                raw_done = bool(f.get("done")) or (f_len > 0 and raw_comp >= f_len)
+
+                if p_map_str:
+                    beg_p = max(0, int(f.get("begin_piece") or 0))
+                    end_p = min(len(p_map_str), int(f.get("end_piece") or len(p_map_str)))
+                    if end_p > beg_p:
+                        f_slice = p_map_str[beg_p:end_p]
+                        done_p_cnt = f_slice.count('4')
+                        part_p_cnt = f_slice.count('3')
+                        if done_p_cnt == 0 and part_p_cnt == 0 and not _JTORRENT_CONVERTED_V96.get(key):
+                            raw_comp = 0
+                            raw_done = False
+                        elif piece_len > 0 and not _JTORRENT_CONVERTED_V96.get(key):
+                            max_valid_comp = (done_p_cnt + part_p_cnt) * piece_len
+                            if raw_comp > max_valid_comp and done_p_cnt < (end_p - beg_p):
+                                raw_comp = min(f_len, max_valid_comp)
+                                raw_done = False
+
+                prev_rec = _TORRENT_MAX_PROGRESS_V212.get(key)
+                if prev_rec:
+                    if prev_rec.get("done") and _JTORRENT_CONVERTED_V96.get(key):
+                        raw_done = True
+                        raw_comp = f_len if f_len > 0 else max(raw_comp, prev_rec.get("completed", 0))
+                    elif raw_comp > 0:
+                        raw_comp = max(raw_comp, prev_rec.get("completed", 0))
+                        if f_len > 0 and raw_comp >= f_len:
+                            raw_done = True
+                    else:
+                        _TORRENT_MAX_PROGRESS_V212.pop(key, None)
+                        prev_rec = None
+
+                if raw_done and f_len > 0:
+                    raw_comp = f_len
+
+                eff_pct = 100 if raw_done else (min(99, int((raw_comp * 100) // f_len)) if f_len > 0 else 0)
+                if prev_rec and not raw_done and raw_comp > 0:
+                    eff_pct = max(eff_pct, min(99, int(prev_rec.get("percent", 0))))
+
+                _TORRENT_MAX_PROGRESS_V212[key] = {
+                    "completed": raw_comp,
+                    "percent": eff_pct,
+                    "done": raw_done,
+                    "length": f_len
+                }
+
+                f["completed"] = raw_comp
+                f["percent"] = eff_pct
+                f["done"] = raw_done
+
+                is_exp = (f_idx in exp_list) or (f_idx in act_set and f_idx not in stream_set)
+                f["is_selected"] = (f_idx in act_set) or is_exp
+                f["is_explicit_dl"] = is_exp
+                f["explicit_dl"] = is_exp
+                f["is_stream_only"] = (f_idx in stream_set) and not is_exp
+
+                f_path = f.get("full_path") or f.get("path") or ""
+                if raw_done and not _JTORRENT_CONVERTED_V96.get(key):
+                    ext_f = os.path.splitext(f_path)[1].lower()
+                    if ext_f in _VIDEO_EXTS_V134 or (is_exp and ext_f in ('.mp3', '.m4a', '.ogg', '.opus', '.aac')):
+                        _instant_import_completed_file_v212(th, f_idx, f.get("full_path") or "", f.get("path") or "", t_name)
+
+                f["xflac_file"] = _JTORRENT_CONVERTED_V96.get(key, "")
+
+                if not raw_done and (f.get("is_lead") or is_exp) and eff_pct >= 94 and p_map_str:
+                    last_b = _TORRENT_ENDGAME_BOOST_TS_V212.get(key, 0.0)
+                    if now - last_b >= 4.0:
+                        _TORRENT_ENDGAME_BOOST_TS_V212[key] = now
+                        beg_p = max(0, int(f.get("begin_piece") or 0))
+                        end_p = min(len(p_map_str), int(f.get("end_piece") or len(p_map_str)))
+                        missing_p = [p_i for p_i in range(beg_p, end_p) if p_map_str[p_i] != '4'][:3]
+                        if missing_p:
+                            def _boost_tail(h_target, p_list, f_target):
+                                try:
+                                    urllib.request.urlopen(urllib.request.Request(
+                                        f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                        data=json.dumps({"hash": h_target, "action": "boost_file", "file_index": f_target}).encode("utf-8"),
+                                        headers={"Content-Type": "application/json"}
+                                    ), timeout=1.0).read()
+                                    for mp in p_list:
+                                        urllib.request.urlopen(urllib.request.Request(
+                                            f"http://127.0.0.1:{_JTORRENT_PORT_V96}/control",
+                                            data=json.dumps({"hash": h_target, "action": "boost_piece", "piece_index": mp}).encode("utf-8"),
+                                            headers={"Content-Type": "application/json"}
+                                        ), timeout=1.0).read()
+                                except Exception:
+                                    pass
+                            threading.Thread(target=_boost_tail, args=(th, missing_p, f_idx), daemon=True).start()
+
+            clean_torrents.append(t)
+
+        data["torrents"] = clean_torrents
+        _TORRENT_STATUS_OBJ_CACHE_V238["ts"] = now
+        _TORRENT_STATUS_OBJ_CACHE_V238["obj"] = data
+        out_json = json.dumps(data, ensure_ascii=False)
+        _TORRENT_STATUS_CACHE_V212["ts"] = now
+        _TORRENT_STATUS_CACHE_V212["data"] = out_json
+        return out_json
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+_override_bottle_route_v212('/api/torrent/status', 'GET', api_torrent_status_v238)
+# ================= END JENNY_V238_P2P_TURBO_DIAG =================

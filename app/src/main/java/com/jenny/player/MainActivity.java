@@ -65,6 +65,7 @@ public class MainActivity extends AppCompatActivity {
     // === JENNY_V220_JAVA_PATCH ===
     private static boolean isVideoFullscreenV132 = false;
     private static boolean isVideoLockedV132 = false;
+    private static Runnable immersiveRehideRunnableV242 = null;
     private static boolean isVideoActiveV132 = false;
     private static boolean isVideoAudioOnlyModeV220 = false;
     private static float videoAspectRatioV220 = 16.0f / 9.0f;
@@ -167,46 +168,59 @@ public class MainActivity extends AppCompatActivity {
     }
 
     
+    // === JENNY_V242_GLOBAL_IMMERSIVE_STICKY ===
     private void applyVideoSystemUiLockV132() {
         runOnUiThread(() -> {
             try {
                 android.view.Window win = getWindow();
                 if (win == null) return;
                 View decor = win.getDecorView();
-                boolean hideBars = isVideoFullscreenV132 || isVideoLockedV132;
+                boolean keepAwake = isVideoFullscreenV132 || isVideoLockedV132;
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     android.view.WindowManager.LayoutParams lp = win.getAttributes();
-                    lp.layoutInDisplayCutoutMode = hideBars
-                        ? android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                        : android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-                    win.setAttributes(lp);
+                    if (lp.layoutInDisplayCutoutMode != android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES) {
+                        lp.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                        win.setAttributes(lp);
+                    }
                 }
 
-                if (hideBars) {
+                if (keepAwake) {
                     win.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                    int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-                    decor.setSystemUiVisibility(flags);
+                } else {
+                    win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                }
 
-                    if (Build.VERSION.SDK_INT >= 29 && webView != null) {
+                int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+                decor.setSystemUiVisibility(flags);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        win.setDecorFitsSystemWindows(false);
+                        android.view.WindowInsetsController wic = win.getInsetsController();
+                        if (wic != null) {
+                            wic.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                            wic.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
+                        }
+                    } catch (Throwable ignored) {}
+                }
+
+                if (Build.VERSION.SDK_INT >= 29 && webView != null) {
+                    if (isVideoLockedV132) {
                         int w = Math.max(1080, webView.getWidth());
                         int h = Math.max(2400, webView.getHeight());
-                        java.util.List<android.graphics.Rect> rects = new java.util.ArrayList<>();
+                        java.util.List<android.graphics.Rect> rects = new java.util.ArrayList<android.graphics.Rect>();
                         rects.add(new android.graphics.Rect(0, h - 220, w, h));
                         rects.add(new android.graphics.Rect(0, 0, w, 160));
                         rects.add(new android.graphics.Rect(0, h / 2 - 200, 120, h / 2 + 200));
                         rects.add(new android.graphics.Rect(w - 120, h / 2 - 200, w, h / 2 + 200));
                         webView.setSystemGestureExclusionRects(rects);
-                    }
-                } else {
-                    win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                    decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-                    if (Build.VERSION.SDK_INT >= 29 && webView != null) {
+                    } else {
                         webView.setSystemGestureExclusionRects(java.util.Collections.emptyList());
                     }
                 }
@@ -230,7 +244,7 @@ public class MainActivity extends AppCompatActivity {
         }
         restoreWebViewToActivityV135(false);
         }
-        if (hasFocus && (isVideoFullscreenV132 || isVideoLockedV132)) {
+        if (hasFocus) {
             applyVideoSystemUiLockV132();
         }
     }
@@ -966,9 +980,18 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebChromeClient(new WebChromeClient());
 
         webView.addJavascriptInterface(new WebAppInterface(), "AndroidBridge");
+        applyVideoSystemUiLockV132();
         getWindow().getDecorView().setOnSystemUiVisibilityChangeListener(visibility -> {
-            if ((isVideoFullscreenV132 || isVideoLockedV132) && (visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0) {
-                applyVideoSystemUiLockV132();
+            if ((visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0 || (visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                if (isVideoLockedV132) {
+                    applyVideoSystemUiLockV132();
+                } else {
+                    if (immersiveRehideRunnableV242 != null) {
+                        permWatchHandlerV147.removeCallbacks(immersiveRehideRunnableV242);
+                    }
+                    immersiveRehideRunnableV242 = () -> applyVideoSystemUiLockV132();
+                    permWatchHandlerV147.postDelayed(immersiveRehideRunnableV242, 2800L);
+                }
             }
         });
 
@@ -1476,6 +1499,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        applyVideoSystemUiLockV132();
         boolean granted = (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) || Settings.canDrawOverlays(this);
 
         if (waitingForPermScreenV148 && !subSettingsLaunchedV154 && !granted && isVideoActiveV132) {
