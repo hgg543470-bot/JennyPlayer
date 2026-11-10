@@ -33704,3 +33704,312 @@ let vsyncTicks = 0;
     }
 })();
 /* ================= END JENNY_V240_ISOLATION_RADIO_OST_AND_SMART_VIDEO_PATCH ================= */
+
+/* ================= BEGIN JENNY_V241_ISOLATED_STUDIO_MINI_PLAYERS_PATCH ================= */
+(function() {
+    if (window._jennyV241MiniIsolationInstalled) return;
+    window._jennyV241MiniIsolationInstalled = true;
+
+    // Helper: hide ALL studio preview mini-players cleanly (including #khMiniPlayerBarV90 so it never stays stuck as a zombie!)
+    window.hideAllStudioMiniPlayersV241 = function() {
+        var khBar = document.getElementById('khMiniPlayerBarV90');
+        if (khBar) khBar.style.display = 'none';
+        document.querySelectorAll('.jenny-univ-mini-player-v98').forEach(function(b) {
+            b.style.display = 'none';
+        });
+    };
+
+    // Ensure #khMiniPlayerBarV90 inside Game OST Studio also has its own ✖ close button!
+    window.ensureKhMiniCloseBtnV241 = function() {
+        var khBar = document.getElementById('khMiniPlayerBarV90');
+        if (!khBar) return;
+        var row2 = khBar.children && khBar.children[1];
+        if (row2 && !khBar.querySelector('.kh-mini-close-v241')) {
+            var closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
+            closeBtn.className = 'kh-mini-close-v241';
+            closeBtn.title = 'Закрыть предпрослушку';
+            closeBtn.onclick = function(e) {
+                if (e && e.stopPropagation) e.stopPropagation();
+                window.stopAllExternalStreamsV97();
+            };
+            closeBtn.style.cssText = 'padding:2px 7px;font-size:10px;background:rgba(248,81,73,0.18);border:1px solid #f85149;color:#ff7b72;border-radius:5px;flex-shrink:0;';
+            closeBtn.innerText = '✖';
+            row2.appendChild(closeBtn);
+        }
+    };
+
+    // Wrap stopAllExternalStreamsV97 so closing ✖ in SoundCloud / Torrent / OST ALWAYS hides #khMiniPlayerBarV90 too
+    var _prevStopAllStreamsV241 = window.stopAllExternalStreamsV97;
+    window.stopAllExternalStreamsV97 = function() {
+        if (typeof _prevStopAllStreamsV241 === 'function') {
+            _prevStopAllStreamsV241.apply(this, arguments);
+        }
+        window.hideAllStudioMiniPlayersV241();
+        document.querySelectorAll('.sc-prev-btn-v241').forEach(function(b) { b.innerText = '▶'; });
+    };
+    window.stopKhPreviewV88 = window.stopAllExternalStreamsV97;
+
+    // Bind audio ONLY to the single target modal's mini-player (never broadcast SoundCloud into Game OST or Torrent!)
+    window.bindAudioToSingleModalMiniPlayerV241 = function(aud, titleText, targetModalId) {
+        window.hideAllStudioMiniPlayersV241();
+
+        if (targetModalId === 'jennyKhinsiderModalV88') {
+            window.ensureKhMiniCloseBtnV241();
+            var khBar = document.getElementById('khMiniPlayerBarV90');
+            var tEl = document.getElementById('khMiniTitleV90');
+            var curEl = document.getElementById('khMiniCurV90');
+            var durEl = document.getElementById('khMiniDurV90');
+            var seekEl = document.getElementById('khMiniSeekV90');
+            var mpBtn = document.getElementById('khMiniPlayBtnV90');
+            if (khBar) khBar.style.display = 'flex';
+            if (tEl) tEl.innerText = '🎧 ' + titleText;
+            if (mpBtn) mpBtn.innerText = '⏸';
+
+            if (seekEl && !seekEl._dragHookedV241) {
+                seekEl._dragHookedV241 = true;
+                seekEl.addEventListener('touchstart', function() { window._umpUserDraggingSeekV106 = true; }, { passive: true });
+                seekEl.addEventListener('mousedown', function() { window._umpUserDraggingSeekV106 = true; });
+                var endKhDrag = function() {
+                    if (window._umpUserDraggingSeekV106) {
+                        window._umpUserDraggingSeekV106 = false;
+                        window.seekKhMiniPlayerV90(seekEl.value);
+                    }
+                };
+                seekEl.addEventListener('touchend', endKhDrag, { passive: true });
+                seekEl.addEventListener('mouseup', endKhDrag);
+                seekEl.addEventListener('change', endKhDrag);
+            }
+
+            aud.ontimeupdate = function() {
+                if (window._umpUserDraggingSeekV106) return;
+                if (curEl) curEl.innerText = window.fmtKhSecV90(aud.currentTime);
+                if (durEl) durEl.innerText = (isFinite(aud.duration) && aud.duration > 0) ? window.fmtKhSecV90(aud.duration) : 'Поток';
+                if (seekEl && isFinite(aud.duration) && aud.duration > 0) {
+                    seekEl.value = Math.round((aud.currentTime / aud.duration) * 1000);
+                }
+            };
+            return;
+        }
+
+        // SoundCloud or Torrent Studio: ensure & show ONLY that specific modal's .jenny-univ-mini-player-v98!
+        var anchorBodyId = (targetModalId === 'jennySoundCloudModalV93') ? 'scDedicatedBodyV93' : 'torBodyListV96';
+        var bodyEl = document.getElementById(anchorBodyId);
+        var bar = null;
+        if (bodyEl && bodyEl.previousElementSibling && typeof window.ensureModalMiniPlayerV98 === 'function') {
+            bar = window.ensureModalMiniPlayerV98(targetModalId, bodyEl.previousElementSibling);
+        } else {
+            var m = document.getElementById(targetModalId);
+            if (m) bar = m.querySelector('.jenny-univ-mini-player-v98');
+        }
+        if (!bar) return;
+
+        bar.style.display = 'flex';
+        var ut = bar.querySelector('.ump-title');
+        if (ut) ut.innerText = '🎧 ' + titleText;
+        var pBtn = bar.querySelector('.ump-play-btn');
+        if (pBtn) pBtn.innerText = '⏸';
+
+        var sEl = bar.querySelector('.ump-seek');
+        if (sEl && !sEl._dragHookedV241) {
+            sEl._dragHookedV241 = true;
+            sEl.addEventListener('touchstart', function() { window._umpUserDraggingSeekV106 = true; }, { passive: true });
+            sEl.addEventListener('mousedown', function() { window._umpUserDraggingSeekV106 = true; });
+            var endUmpDrag = function() {
+                if (window._umpUserDraggingSeekV106) {
+                    window._umpUserDraggingSeekV106 = false;
+                    window.seekKhMiniPlayerV90(sEl.value);
+                }
+            };
+            sEl.addEventListener('touchend', endUmpDrag, { passive: true });
+            sEl.addEventListener('mouseup', endUmpDrag);
+            sEl.addEventListener('change', endUmpDrag);
+        }
+
+        aud.ontimeupdate = function() {
+            if (window._umpUserDraggingSeekV106) return;
+            var curStr = window.fmtKhSecV90(aud.currentTime);
+            var durStr = (isFinite(aud.duration) && aud.duration > 0) ? window.fmtKhSecV90(aud.duration) : 'Поток';
+            var pct = (isFinite(aud.duration) && aud.duration > 0) ? Math.round((aud.currentTime / aud.duration) * 1000) : 0;
+            var cEl = bar.querySelector('.ump-cur');
+            var dEl = bar.querySelector('.ump-dur');
+            if (cEl) cEl.innerText = curStr;
+            if (dEl) dEl.innerText = durStr;
+            if (sEl && pct > 0) sEl.value = pct;
+        };
+
+        if (typeof window.syncMiniPlayerTorrentBtnVisibilityV108 === 'function') {
+            window.syncMiniPlayerTorrentBtnVisibilityV108();
+        }
+    };
+
+    // Override bindAudioToAllMiniPlayersV98 so any legacy caller (e.g. Torrent preview) ONLY lights up its own modal!
+    window.bindAudioToAllMiniPlayersV98 = function(aud, titleText) {
+        var pPath = String((aud && aud._pagePath) || '');
+        var targetModal = 'jennyKhinsiderModalV88';
+        if (pPath.indexOf('/api/torrent/stream/') === 0) {
+            targetModal = 'jennyTorrentModalV91';
+        } else if (aud && aud._previewOwnerModalV241) {
+            targetModal = aud._previewOwnerModalV241;
+        }
+        window.bindAudioToSingleModalMiniPlayerV241(aud, titleText, targetModal);
+    };
+
+    // Dedicated isolated preview for SoundCloud Studio (NEVER touches Game OST #khMiniPlayerBarV90 or _khStateV88.currentAlbum!)
+    window.previewScTrackV96 = async function(idx, btnEl, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var t = (window._scDedicatedTracksV96 || []).find(function(x) { return Number(x.index) === Number(idx); });
+        if (!t) return;
+
+        var curAud = window._khStateV88 && window._khStateV88.previewAudio;
+        if (curAud && curAud._pagePath === t.page_path) {
+            if (!curAud.paused) {
+                window.stopAllExternalStreamsV97();
+            } else {
+                if (typeof window.pauseMainPlayerForOstV90 === 'function') window.pauseMainPlayerForOstV90();
+                curAud.volume = window.getKhPreviewVolumeV90();
+                try {
+                    await curAud.play();
+                    if (btnEl) btnEl.innerText = '⏹';
+                } catch (e) {}
+            }
+            return;
+        }
+
+        window.stopAllExternalStreamsV97();
+        if (typeof window.pauseMainPlayerForOstV90 === 'function') window.pauseMainPlayerForOstV90();
+        var myReqId = ++window._previewReqIdV97;
+        if (btnEl) btnEl.innerText = '⏳';
+        window._khStateV88.previewBtn = btnEl;
+
+        try {
+            var res = await window.fetch('/api/khinsider/resolve_stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ page_path: t.page_path })
+            });
+            var data = await res.json();
+            if (myReqId !== window._previewReqIdV97) return;
+            if (!res.ok || !data || !data.stream_url) throw new Error((data && data.error) || 'Нет потока SoundCloud');
+
+            var aud = new Audio(data.stream_url);
+            aud._pagePath = t.page_path;
+            aud._previewOwnerModalV241 = 'jennySoundCloudModalV93';
+            aud.volume = window.getKhPreviewVolumeV90();
+            window._khStateV88.previewAudio = aud;
+
+            window.bindAudioToSingleModalMiniPlayerV241(aud, t.index + '. ' + t.title, 'jennySoundCloudModalV93');
+
+            aud.onended = function() {
+                if (btnEl) btnEl.innerText = '▶';
+                var scModal = document.getElementById('jennySoundCloudModalV93');
+                var pBtn = scModal ? scModal.querySelector('.jenny-univ-mini-player-v98 .ump-play-btn') : null;
+                if (pBtn) pBtn.innerText = '▶';
+            };
+
+            await aud.play();
+            if (myReqId !== window._previewReqIdV97) {
+                aud.pause();
+                return;
+            }
+            if (btnEl) btnEl.innerText = '⏹';
+        } catch (e) {
+            if (myReqId === window._previewReqIdV97) {
+                if (btnEl) btnEl.innerText = '▶';
+                if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+            }
+        }
+    };
+
+    // Dedicated isolated preview for Game OST / Archive Studio (strictly inside #khMiniPlayerBarV90 only!)
+    window.previewKhTrackV88 = async function(trackIdx, btnEl, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var alb = window._khStateV88 && window._khStateV88.currentAlbum;
+        var t = (alb && alb.tracks) ? alb.tracks.find(function(x) { return Number(x.index) === Number(trackIdx); }) : null;
+        if (!t) return;
+
+        var curAud = window._khStateV88.previewAudio;
+        if (curAud && curAud._pagePath === t.page_path) {
+            if (!curAud.paused) {
+                window.stopAllExternalStreamsV97();
+            } else {
+                if (typeof window.pauseMainPlayerForOstV90 === 'function') window.pauseMainPlayerForOstV90();
+                curAud.volume = window.getKhPreviewVolumeV90();
+                try {
+                    await curAud.play();
+                    if (btnEl) btnEl.innerText = '⏹';
+                    var mpBtn = document.getElementById('khMiniPlayBtnV90');
+                    if (mpBtn) mpBtn.innerText = '⏸';
+                } catch (e) {}
+            }
+            return;
+        }
+
+        window.stopAllExternalStreamsV97();
+        if (typeof window.pauseMainPlayerForOstV90 === 'function') window.pauseMainPlayerForOstV90();
+        var myReqId = ++window._previewReqIdV97;
+        if (btnEl) btnEl.innerText = '⏳';
+        window._khStateV88.previewBtn = btnEl;
+
+        try {
+            var res = await window.fetch('/api/khinsider/resolve_stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ page_path: t.page_path })
+            });
+            var data = await res.json();
+            if (myReqId !== window._previewReqIdV97) return;
+            if (!res.ok || !data || !data.stream_url) throw new Error((data && data.error) || 'Нет потока');
+
+            var aud = new Audio(data.stream_url);
+            aud._pagePath = t.page_path;
+            aud._previewOwnerModalV241 = 'jennyKhinsiderModalV88';
+            aud.volume = window.getKhPreviewVolumeV90();
+            window._khStateV88.previewAudio = aud;
+
+            window.bindAudioToSingleModalMiniPlayerV241(aud, t.index + '. ' + t.title, 'jennyKhinsiderModalV88');
+
+            aud.onended = function() {
+                if (btnEl) btnEl.innerText = '▶';
+                var mpBtn = document.getElementById('khMiniPlayBtnV90');
+                if (mpBtn) mpBtn.innerText = '▶';
+            };
+
+            await aud.play();
+            if (myReqId !== window._previewReqIdV97) {
+                aud.pause();
+                return;
+            }
+            if (btnEl) btnEl.innerText = '⏹';
+        } catch (e) {
+            if (myReqId === window._previewReqIdV97) {
+                if (btnEl) btnEl.innerText = '▶';
+                if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+            }
+        }
+    };
+
+    // Sync Play/Pause button across whichever single mini-player is active
+    window.toggleKhMiniPlayPauseV90 = function() {
+        var aud = window._khStateV88 && window._khStateV88.previewAudio;
+        if (!aud) {
+            window.hideAllStudioMiniPlayersV241();
+            return;
+        }
+        if (aud.paused) {
+            if (typeof window.pauseMainPlayerForOstV90 === 'function') window.pauseMainPlayerForOstV90();
+            aud.play().catch(function() {});
+            document.querySelectorAll('#khMiniPlayBtnV90, .jenny-univ-mini-player-v98 .ump-play-btn').forEach(function(b) {
+                b.innerText = '⏸';
+            });
+            if (window._khStateV88.previewBtn) window._khStateV88.previewBtn.innerText = '⏹';
+        } else {
+            aud.pause();
+            document.querySelectorAll('#khMiniPlayBtnV90, .jenny-univ-mini-player-v98 .ump-play-btn').forEach(function(b) {
+                b.innerText = '▶';
+            });
+            if (window._khStateV88.previewBtn) window._khStateV88.previewBtn.innerText = '▶';
+        }
+    };
+})();
+/* ================= END JENNY_V241_ISOLATED_STUDIO_MINI_PLAYERS_PATCH ================= */
