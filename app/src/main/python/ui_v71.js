@@ -36606,3 +36606,579 @@ let vsyncTicks = 0;
     }, 220);
 })();
 /* ================= END JENNY_V245_GLOBAL_SCAN_TOGGLE_AND_STICKY_ONBOARDING_PERMS ================= */
+
+
+/* ================= BEGIN JENNY_V246_BUGFIXES_347 ================= */
+(function() {
+    if (window._jennyV246Installed) return;
+    window._jennyV246Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. HIGH-PRIORITY CSS: FULL-WIDTH #trackSearchInput & ZERO PHANTOM LANG GAP
+    // -------------------------------------------------------------------------
+    var st246 = document.getElementById('jennyStyleV246Fixes');
+    if (!st246) {
+        st246 = document.createElement('style');
+        st246.id = 'jennyStyleV246Fixes';
+        document.head.appendChild(st246);
+    }
+    st246.textContent = [
+        '.jenny-search-wrap-v73.jenny-search-flex-row-v235 {',
+        '  display: flex !important;',
+        '  flex-direction: row !important;',
+        '  align-items: center !important;',
+        '  width: 100% !important;',
+        '  max-width: 100% !important;',
+        '  gap: 6px !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        '.jenny-search-wrap-v73.jenny-search-flex-row-v235 #trackSearchInput {',
+        '  flex: 1 1 0% !important;',
+        '  width: 100% !important;',
+        '  min-width: 0 !important;',
+        '  max-width: none !important;',
+        '  margin: 0 !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        '#searchRightSlotV235 {',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: flex-end !important;',
+        '  gap: 5px !important;',
+        '  flex: 0 0 auto !important;',
+        '  width: auto !important;',
+        '  max-width: none !important;',
+        '  margin: 0 !important;',
+        '  padding: 0 !important;',
+        '}',
+        '#searchRightSlotV235.jenny-slot-empty-v246,',
+        '#searchRightSlotV235:empty {',
+        '  display: none !important;',
+        '}',
+        '#searchRightSlotV235 #mainLangToggleBtn.jenny-lang-hidden-v246,',
+        '#mainLangToggleBtn.jenny-lang-hidden-v246 {',
+        '  display: none !important;',
+        '  width: 0 !important;',
+        '  min-width: 0 !important;',
+        '  padding: 0 !important;',
+        '  margin: 0 !important;',
+        '  border: 0 !important;',
+        '  overflow: hidden !important;',
+        '}'
+    ].join('\n');
+
+    // Fix ensureSearchRowStretchV243: target #trackSearchInput & collapse hidden #mainLangToggleBtn
+    // while dynamically shrinking/expanding around ANY buttons placed inside #searchRightSlotV235!
+    window.ensureSearchRowStretchV243 = function() {
+        var sInp = document.getElementById('trackSearchInput') || document.getElementById('searchInput');
+        if (!sInp || !sInp.parentElement) return;
+        var wrap = sInp.parentElement;
+        wrap.classList.add('jenny-search-wrap-v73', 'jenny-search-flex-row-v235');
+
+        var langBtn = document.getElementById('mainLangToggleBtn');
+        if (langBtn) {
+            var shouldHideLang = Boolean(
+                window._hasLangRunAway ||
+                window._refreshButtonsRelocatedToSearchV235 ||
+                langBtn.style.opacity === '0'
+            );
+            if (shouldHideLang) {
+                langBtn.classList.add('jenny-lang-hidden-v246');
+                langBtn.style.setProperty('display', 'none', 'important');
+                if (langBtn.parentElement && langBtn.parentElement.id === 'searchRightSlotV235') {
+                    try { langBtn.remove(); } catch (e) {}
+                }
+            } else {
+                langBtn.classList.remove('jenny-lang-hidden-v246');
+            }
+        }
+
+        var rightSlot = document.getElementById('searchRightSlotV235');
+        if (rightSlot) {
+            var isInpHidden = (sInp.style.display === 'none');
+            if (isInpHidden) {
+                rightSlot.style.setProperty('display', 'none', 'important');
+            } else {
+                var visibleRightCount = 0;
+                Array.from(rightSlot.children).forEach(function(ch) {
+                    if (ch.classList.contains('jenny-lang-hidden-v246')) return;
+                    var cs = window.getComputedStyle(ch);
+                    if (cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') {
+                        visibleRightCount++;
+                    }
+                });
+                if (visibleRightCount > 0) {
+                    rightSlot.classList.remove('jenny-slot-empty-v246');
+                    rightSlot.style.setProperty('display', 'inline-flex', 'important');
+                } else {
+                    rightSlot.classList.add('jenny-slot-empty-v246');
+                    rightSlot.style.setProperty('display', 'none', 'important');
+                }
+            }
+        }
+    };
+
+    var _prevEnsureRightSlotV246 = window.ensureSearchRightSlotAndLangBtnV235;
+    if (typeof _prevEnsureRightSlotV246 === 'function') {
+        window.ensureSearchRightSlotAndLangBtnV235 = function() {
+            var r = _prevEnsureRightSlotV246.apply(this, arguments);
+            window.ensureSearchRowStretchV243();
+            return r;
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. ONBOARDING STEP 2: "🛡️ ФОН 24/7 (БЕЗ СНА БАТАРЕИ)" TURNS GREEN IMMEDIATELY
+    // -------------------------------------------------------------------------
+    window.refreshBgUnrestrictedFromBridgeV246 = function() {
+        if (window.AndroidBridge && typeof window.AndroidBridge.isIgnoringBatteryOptimizations === 'function') {
+            try {
+                window._bgUnrestrictedGrantedV212 = Boolean(window.AndroidBridge.isIgnoringBatteryOptimizations());
+            } catch (e) {}
+        }
+        return Boolean(window._bgUnrestrictedGrantedV212);
+    };
+
+    window.syncOnboardingBgBtnDOMV246 = function() {
+        var okBg = Boolean(window._bgUnrestrictedGrantedV212);
+        var btnBg = document.getElementById('onbBgUnrestrictedBtnV214');
+        if (btnBg) {
+            btnBg.style.border = '1px solid ' + (okBg ? '#3fb950' : '#58a6ff');
+            btnBg.style.background = okBg ? 'rgba(63,185,80,0.18)' : 'rgba(88,166,255,0.16)';
+            btnBg.style.color = okBg ? '#3fb950' : '#58a6ff';
+            btnBg.innerHTML = okBg
+                ? '✅ Фоновый режим 24/7 без ограничений батареи активен'
+                : '🛡️ Разрешить работу в фоне 24/7 (Без сна батареи)';
+        }
+        var pillBg4 = document.getElementById('onbQuickPillBgV246');
+        if (pillBg4) {
+            pillBg4.style.borderColor = okBg ? '#3fb950' : '#e3b341';
+            pillBg4.style.background = okBg ? 'rgba(63,185,80,0.16)' : 'rgba(227,179,65,0.15)';
+            pillBg4.style.color = okBg ? '#3fb950' : '#e3b341';
+            pillBg4.innerHTML = (okBg ? '✅ ' : '🔓 ') + 'Фон 24/7';
+        }
+    };
+
+    window.syncBgUnrestrictedSilentV246 = function(granted) {
+        window._bgUnrestrictedGrantedV212 = Boolean(granted);
+        if (typeof window.updateBgShieldButtonsUIV212 === 'function') {
+            window.updateBgShieldButtonsUIV212();
+        }
+        window.syncOnboardingBgBtnDOMV246();
+    };
+
+    var _prevUpdateBgShieldUIV246 = window.updateBgShieldButtonsUIV212;
+    window.updateBgShieldButtonsUIV212 = function() {
+        if (typeof _prevUpdateBgShieldUIV246 === 'function') {
+            _prevUpdateBgShieldUIV246.apply(this, arguments);
+        }
+        window.syncOnboardingBgBtnDOMV246();
+    };
+
+    window.onBatteryOptUpdatedV212 = function(granted) {
+        window._bgUnrestrictedGrantedV212 = Boolean(granted);
+        window.updateBgShieldButtonsUIV212();
+        window.syncOnboardingBgBtnDOMV246();
+        if (granted && typeof window.showToast === 'function') {
+            window.showToast('✅ Фоновый режим 24/7 без ограничений батареи активирован!');
+        }
+    };
+
+    var _prevCheckPermStatusV246 = window.checkPermStatusV165;
+    if (typeof _prevCheckPermStatusV246 === 'function') {
+        window.checkPermStatusV165 = function() {
+            window.refreshBgUnrestrictedFromBridgeV246();
+            return _prevCheckPermStatusV246.apply(this, arguments);
+        };
+    }
+
+    var _prevSyncOnbPermsV246 = window.syncOnboardingPermsV165;
+    if (typeof _prevSyncOnbPermsV246 === 'function') {
+        window.syncOnboardingPermsV165 = function() {
+            window.refreshBgUnrestrictedFromBridgeV246();
+            var r = _prevSyncOnbPermsV246.apply(this, arguments);
+            window.syncOnboardingBgBtnDOMV246();
+            return r;
+        };
+    }
+
+    var _prevRenderOnbPageV246 = window.renderOnboardingPageV165;
+    if (typeof _prevRenderOnbPageV246 === 'function') {
+        window.renderOnboardingPageV165 = function(pageIdx) {
+            window.refreshBgUnrestrictedFromBridgeV246();
+            var r = _prevRenderOnbPageV246.apply(this, arguments);
+            window.syncOnboardingBgBtnDOMV246();
+            var p = Math.max(0, Math.min(3, Number(pageIdx) || 0));
+            if (p === 3) {
+                var dockEl = document.getElementById('onbPinnedActionDockV245');
+                var row = dockEl ? dockEl.querySelector('div[style*="display:flex"]') : null;
+                if (row && !document.getElementById('onbQuickPillBgV246')) {
+                    var okBg = Boolean(window._bgUnrestrictedGrantedV212);
+                    var bPill = document.createElement('button');
+                    bPill.type = 'button';
+                    bPill.id = 'onbQuickPillBgV246';
+                    bPill.onclick = function(ev) {
+                        if (window.requestBackgroundUnrestrictedV212) window.requestBackgroundUnrestrictedV212(ev);
+                    };
+                    bPill.style.cssText = 'flex:1;min-width:0;padding:8px 5px;border-radius:9px;border:1px solid ' +
+                        (okBg ? '#3fb950' : '#e3b341') + ';background:' +
+                        (okBg ? 'rgba(63,185,80,0.16)' : 'rgba(227,179,65,0.15)') + ';color:' +
+                        (okBg ? '#3fb950' : '#e3b341') + ';font-size:10.5px;font-weight:900;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                    bPill.innerHTML = (okBg ? '✅ ' : '🔓 ') + 'Фон 24/7';
+                    row.appendChild(bPill);
+                }
+            }
+            return r;
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. STRICT AUDIO-ONLY IN "🎵 Все" + UNLOCKED CONTEXT-ACCURATE "🔄 N" COUNTER
+    // -------------------------------------------------------------------------
+    window.isVideoFileNameV130 = function(fn) {
+        return /\.(mp4|mkv|webm|avi|mov|m4v|3gp|3g2|ts|m2ts|mts|wmv|flv|mpg|mpeg|vob|ogv)(\?|$)/i.test(String(fn || ''));
+    };
+
+    // Remove the old V229 Object.defineProperty(cntA, 'innerText') trap that forced audio count (5486) on Video tab!
+    window.unlockTracksCountElementV246 = function() {
+        var cntA = document.getElementById('tracksCount');
+        if (cntA) {
+            try { delete cntA.innerText; } catch (e) {}
+            try { delete cntA.textContent; } catch (e) {}
+            cntA._v229Locked = false;
+        }
+    };
+    window.installTracksCountAntiBlinkLockV229 = function() {};
+    window.unlockTracksCountElementV246();
+
+    // Filter any stray video filenames out of window.lastData.all_tracks on the client side too
+    var _prevFetchDataV246 = window.fetchData;
+    if (typeof _prevFetchDataV246 === 'function') {
+        window.fetchData = async function() {
+            var r = await _prevFetchDataV246.apply(this, arguments);
+            if (window.lastData && Array.isArray(window.lastData.all_tracks)) {
+                var pureAudio = window.lastData.all_tracks.filter(function(fn) {
+                    return !window.isVideoFileNameV130(fn);
+                });
+                if (pureAudio.length !== window.lastData.all_tracks.length) {
+                    window.lastData.all_tracks = pureAudio;
+                    window.lastData.session_tracks = pureAudio.slice();
+                    if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                    if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+                }
+            }
+            if (typeof window.syncContextRefreshCounterV242 === 'function') {
+                window.syncContextRefreshCounterV242();
+            }
+            return r;
+        };
+    }
+
+    // Make syncContextRefreshCounterV242 write directly to unlocked #tracksCount (shows video count on 🎬 Видео, audio count on 🎵 Все!)
+    window.syncContextRefreshCounterV242 = function() {
+        window.unlockTracksCountElementV246();
+        var cnt = window.computeActiveViewCountV242 ? window.computeActiveViewCountV242() : 0;
+        var isVidCtx = window.isCurrentViewVideoContextV242 ? window.isCurrentViewVideoContextV242() : (window.activePlaylistTabV71 === 'videos');
+
+        var cntSpanA = document.getElementById('tracksCount');
+        var refBtnA = document.getElementById('btnRefreshDeckAV235') || (cntSpanA ? cntSpanA.closest('button') : null);
+        var refBtnB = document.getElementById('btnRefreshDeckBV216');
+        var cntSpanB = document.getElementById('tracksCountDeckBV216');
+
+        if (cntSpanA && cntSpanA.textContent !== '⏳') {
+            cntSpanA.textContent = String(cnt);
+        }
+        if (cntSpanB && cntSpanB.textContent !== '⏳') {
+            var vItems = window.getFilteredVideoItemsV150 ? window.getFilteredVideoItemsV150() : [];
+            cntSpanB.textContent = String(isVidCtx ? cnt : vItems.length);
+        }
+
+        if (window._refreshButtonsRelocatedToSearchV235) {
+            if (refBtnB && refBtnB.parentElement && refBtnB.parentElement.id === 'searchRightSlotV235') {
+                refBtnB.style.setProperty('display', 'none', 'important');
+            }
+            if (refBtnA) {
+                refBtnA.style.setProperty('display', 'inline-flex', 'important');
+                if (isVidCtx) {
+                    refBtnA.classList.remove('ref-audio-v235');
+                    refBtnA.classList.add('ref-video-v235');
+                    if (cntSpanA) cntSpanA.style.color = '#60a5fa';
+                } else {
+                    refBtnA.classList.remove('ref-video-v235');
+                    refBtnA.classList.add('ref-audio-v235');
+                    if (cntSpanA) cntSpanA.style.color = '#c084fc';
+                }
+            }
+        }
+        window.ensureSearchRowStretchV243();
+    };
+
+    window.syncDualDeckCountersV216 = function() {
+        window.syncContextRefreshCounterV242();
+    };
+
+    var _prevRenderActivePlV246 = window.renderActivePlaylistTracksV71;
+    if (typeof _prevRenderActivePlV246 === 'function') {
+        window.renderActivePlaylistTracksV71 = function() {
+            var r = _prevRenderActivePlV246.apply(this, arguments);
+            window.syncContextRefreshCounterV242();
+            return r;
+        };
+    }
+
+    var _prevSwitchTabV246 = window.switchPlaylistTabV71;
+    if (typeof _prevSwitchTabV246 === 'function') {
+        window.switchPlaylistTabV71 = function() {
+            var r = _prevSwitchTabV246.apply(this, arguments);
+            window.syncContextRefreshCounterV242();
+            return r;
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. INSTANT VIDEO START ON "🔊 ДОР. #1" (ZERO INFINITE SPINNER ON .MP4/MOVIES)
+    //    + REAL AUDIO TRACK COUNT & SWITCHING (ZERO FAKE INVENTED TRACK #2!)
+    // -------------------------------------------------------------------------
+    window.getRealVideoAudioTrackCountV246 = function(st) {
+        st = st || window._vidStateV130 || {};
+        if (st.audioStreamsProbedV218 && typeof st.audioStreamsCountV218 === 'number') {
+            return Math.max(0, Math.floor(st.audioStreamsCountV218));
+        }
+        var n = Number(st.audioStreamsCountV218);
+        return (isFinite(n) && n >= 1) ? Math.floor(n) : 1;
+    };
+
+    window.formatAudioTrackBtnLabelV246 = function(st, isCompact) {
+        var total = window.getRealVideoAudioTrackCountV246(st);
+        if (total <= 0) {
+            return isCompact ? '🔇 0' : '🔇 Без зв.';
+        }
+        if (total === 1) {
+            return isCompact ? '🔊 #1' : '🔊 1 дор.';
+        }
+        var cur = Math.min(total, Math.max(1, (Number(st.audioTrackIdxV216) || 0) + 1));
+        return isCompact ? ('🔊 #' + cur + '/' + total) : ('🔊 Дор. #' + cur + '/' + total);
+    };
+
+    var _prevSyncVidBtnsV246 = window.syncVideoPlayerButtonsUIV217;
+    if (typeof _prevSyncVidBtnsV246 === 'function') {
+        window.syncVideoPlayerButtonsUIV217 = function() {
+            var r = _prevSyncVidBtnsV246.apply(this, arguments);
+            var st = window._vidStateV130 || {};
+            var btnRemux = document.getElementById('v130BtnRemux');
+            if (btnRemux) {
+                var isCompact = window.isVideoCompactPipOrMiniV218 ? window.isVideoCompactPipOrMiniV218() : Boolean(st.pipMode || st.desktopOverlay);
+                var total = window.getRealVideoAudioTrackCountV246(st);
+                var svgs = window.VID_SVGS_V217 || {};
+                var lbl = window.formatAudioTrackBtnLabelV246(st, isCompact);
+                if (svgs.audioTrack) {
+                    var cleanTxt = lbl.replace(/^🔊\s*/, '').replace(/^🔇\s*/, '');
+                    btnRemux.innerHTML = svgs.audioTrack + '<span>' + cleanTxt + '</span>';
+                } else {
+                    btnRemux.innerText = lbl;
+                }
+                btnRemux.style.opacity = (total <= 1) ? '0.78' : '1';
+                btnRemux.title = (total <= 0)
+                    ? 'В этом видео нет звуковой дорожки'
+                    : (total === 1 ? 'В этом видео 1 аудиодорожка' : ('Переключить аудиодорожку (' + total + ' дор.)'));
+            }
+            return r;
+        };
+    }
+
+    // Override switchVideoToFfmpegRemuxV130: NEVER invent fake Track #2 on 1-track videos!
+    window.switchVideoToFfmpegRemuxV130 = function(ev, forceTranscodeVideo) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131 || {};
+        if (!vid || !st) return;
+
+        var totalTracks = window.getRealVideoAudioTrackCountV246(st);
+        var labels = Array.isArray(st.audioTrackLabelsV246) ? st.audioTrackLabelsV246 : [];
+
+        if (ev) {
+            if (totalTracks <= 0) {
+                if (typeof window.showVideoFeedbackV130 === 'function') {
+                    window.showVideoFeedbackV130('🔇 В этом видео нет аудиодорожки');
+                }
+                if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+                return;
+            }
+            if (totalTracks === 1) {
+                st.audioTrackIdxV216 = 0;
+                // If somehow video wasn't on live_remux yet and is stuck, kickstart it on Track #1!
+                if (!st.usingRemux && (vid.readyState < 2 || vid.paused || vid.error)) {
+                    var curKick = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : 0;
+                    st.usingRemux = true;
+                    window.seekDeckBAndPlayerSyncedV212(curKick, false, true);
+                }
+                window.syncVideoPlayerButtonsUIV217();
+                var singleTag = labels[0] ? (' (' + labels[0] + ')') : '';
+                if (typeof window.showVideoFeedbackV130 === 'function') {
+                    window.showVideoFeedbackV130('🔊 В этом видео только 1 аудиодорожка' + singleTag);
+                }
+                if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+                return;
+            }
+            st.audioTrackIdxV216 = ((Number(st.audioTrackIdxV216) || 0) + 1) % totalTracks;
+        } else {
+            st.audioTrackIdxV216 = Math.min(Math.max(0, totalTracks - 1), Number(st.audioTrackIdxV216) || 0);
+        }
+
+        var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+        if (typeof window.captureAndHoldVideoFrameV220 === 'function') {
+            window.captureAndHoldVideoFrameV220(2200);
+        }
+
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB);
+        var trackNum = (st.audioTrackIdxV216 || 0) + 1;
+        var tagStr = labels[st.audioTrackIdxV216] ? (' • ' + labels[st.audioTrackIdxV216]) : '';
+
+        if (isRev) {
+            window.startImmediateVideoReverseEngineV217(vd.speed || window._lastRevVideoSpeedV217 || 0.95, true, curSec);
+            window.syncVideoPlayerButtonsUIV217();
+            if (typeof window.showVideoFeedbackV130 === 'function') {
+                window.showVideoFeedbackV130('⏪🔊 Реверс: Дорожка #' + trackNum + ' из ' + totalTracks + tagStr);
+            }
+            if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+            return;
+        }
+
+        st.usingRemux = true;
+        window.seekDeckBAndPlayerSyncedV212(curSec, false, true);
+        window.syncVideoPlayerButtonsUIV217();
+
+        if (ev && typeof window.showVideoFeedbackV130 === 'function') {
+            window.showVideoFeedbackV130('🔊 Аудиодорожка #' + trackNum + ' из ' + totalTracks + tagStr);
+        }
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    // Start ALL videos (including .mp4 Screenrecorder, movies, YouTube) seamlessly on Track #1 (aidx=0)
+    // via zero-reencode FFmpeg fragmented live_remux (-c:v copy) so Track #1 starts in ~80ms with ZERO infinite spinner!
+    window.startSeamlessTrackOneVideoV246 = function(rawBaseUrl, forceTranscode) {
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!st || !vid || !st.active || !rawBaseUrl) return;
+
+        st.audioTrackIdxV216 = 0;
+        st.usingRemux = true;
+        st.remuxBaseOffset = 0;
+        st._pendingSeekSecV167 = 0;
+        st._pendingSeekTsV167 = performance.now();
+        st._v246ActiveTranscode = Boolean(forceTranscode);
+
+        var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : 0;
+        var tcFlag = forceTranscode ? '1' : '0';
+        var spd = window._jennyVideoSpeedV170 || (vd && vd.speed) || (window.getBaseSpeedDeckB ? window.getBaseSpeedDeckB() : 1.0);
+
+        window._vidPlayIntentV132 = true;
+        window._vidIsBufferingV132 = true;
+        if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+
+        vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+            '&start=0.00' +
+            '&dur=' + (dur || 0).toFixed(2) +
+            '&aidx=0' +
+            '&transcode=' + tcFlag +
+            '&t=' + Date.now();
+
+        try {
+            vid.defaultPlaybackRate = spd;
+            vid.playbackRate = spd;
+        } catch (e) {}
+        if (!st.userPaused) {
+            vid.play().catch(function() {});
+        }
+        if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
+            window.syncVideoPlayerButtonsUIV217();
+        }
+    };
+
+    var _prevOpenVidV246 = window.openJennyVideoPlayerV130;
+    if (typeof _prevOpenVidV246 === 'function' && !_prevOpenVidV246._v246Wrapped) {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            if (window._vidStateV130) {
+                window._vidStateV130.audioTrackIdxV216 = 0;
+                window._vidStateV130.audioStreamsCountV218 = 1;
+                window._vidStateV130.audioTrackLabelsV246 = [];
+                window._vidStateV130.audioStreamsProbedV218 = false;
+            }
+
+            var res = _prevOpenVidV246.apply(this, arguments);
+            var st = window._vidStateV130;
+            var vid = document.getElementById('jennyVideoElV130');
+            if (!st || !vid) return res;
+
+            var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || streamUrl || '';
+            var checkStr = String(st.currentTitle || titleStr || '') + ' ' + String(rawBaseUrl || '');
+            var openSessionTs = Date.now();
+            st._v246OpenSessionTs = openSessionTs;
+            st._v240OpenSessionTs = openSessionTs;
+
+            var isImmediateTranscodeExt = /\.(avi|3gp|3g2|wmv|flv|mpg|mpeg|vob|ogv)(\?|$)/i.test(checkStr);
+
+            // Launch immediately on real Track #1 (aidx=0) via fragmented live_remux (-c:v copy)
+            // so Screenrecorder .mp4, movies, and YouTube .mp4 never hang on EOF-moov!
+            window.startSeamlessTrackOneVideoV246(rawBaseUrl, isImmediateTranscodeExt);
+
+            // Fallback safety: if FFmpeg live_remux ever errors on a standard .mp4, fall back cleanly to direct HTTP :8082
+            var onRemuxFallbackError = function() {
+                if (!st.active || st._v246OpenSessionTs !== openSessionTs) return;
+                if (st.usingRemux && !isImmediateTranscodeExt && /\.(mp4|m4v|webm)(\?|$)/i.test(checkStr)) {
+                    st.usingRemux = false;
+                    st.remuxBaseOffset = 0;
+                    vid.src = rawBaseUrl;
+                    if (!st.userPaused) vid.play().catch(function() {});
+                }
+            };
+            vid.addEventListener('error', onRemuxFallbackError, { once: true });
+
+            // Probe exact real audio tracks count, codec labels, and duration in ~15ms
+            window.fetch('/api/video/smart_check_v240?src=' + encodeURIComponent(rawBaseUrl))
+                .then(function(r) { return r.json(); })
+                .then(function(info) {
+                    if (!info || info.status !== 'ok') return;
+                    if (!st.active || st._v246OpenSessionTs !== openSessionTs) return;
+
+                    if (typeof info.audio_tracks === 'number') {
+                        st.audioStreamsCountV218 = info.audio_tracks;
+                        st.audioStreamsProbedV218 = true;
+                    }
+                    if (Array.isArray(info.audio_labels)) {
+                        st.audioTrackLabelsV246 = info.audio_labels;
+                    }
+                    if (info.duration_sec && info.duration_sec > 0) {
+                        st.trueDuration = Number(info.duration_sec);
+                        st.knownDurationSec = Number(info.duration_sec);
+                        window._jennyFullMovieDurationSecV210 = Number(info.duration_sec);
+                        var curT = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : 0;
+                        if (typeof window.syncInternalVideoSliderUIV212 === 'function') window.syncInternalVideoSliderUIV212(curT, st.trueDuration);
+                        if (typeof window.updateProgressUIDeckB === 'function') window.updateProgressUIDeckB(curT, st.trueDuration, false);
+                    }
+                    if (info.needs_transcode && !st._v246ActiveTranscode) {
+                        window.startSeamlessTrackOneVideoV246(rawBaseUrl, true);
+                    }
+                    if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
+                        window.syncVideoPlayerButtonsUIV217();
+                    }
+                })
+                .catch(function() {});
+
+            return res;
+        };
+        window.openJennyVideoPlayerV130._v246Wrapped = true;
+    }
+
+    setTimeout(function() {
+        window.unlockTracksCountElementV246();
+        window.refreshBgUnrestrictedFromBridgeV246();
+        window.syncOnboardingBgBtnDOMV246();
+        window.ensureSearchRowStretchV243();
+        window.syncContextRefreshCounterV242();
+    }, 180);
+})();
+/* ================= END JENNY_V246_BUGFIXES_347 ================= */

@@ -13754,3 +13754,401 @@ def api_scan_mode_v245():
 _override_bottle_route_v212('/api/scan_mode_v245', 'GET', api_scan_mode_v245)
 _override_bottle_route_v212('/api/scan_mode_v245', 'POST', api_scan_mode_v245)
 # ================= END JENNY_V245_GLOBAL_ALL_FOLDERS_SCANNER =================
+
+
+# ================= BEGIN JENNY_V246_AUDIO_ONLY_AND_REAL_VIDEO_TRACKS =================
+_STRICT_VIDEO_EXTS_V246 = (
+    '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v',
+    '.3gp', '.3g2', '.ts', '.m2ts', '.mts', '.wmv',
+    '.flv', '.mpg', '.mpeg', '.vob', '.ogv'
+)
+_VIDEO_EXTS_V134 = _STRICT_VIDEO_EXTS_V246
+
+
+def get_pure_audio_extensions_v246():
+    """Returns allowed extensions for Deck A / '🎵 Все' strictly stripped of all video containers."""
+    raw_exts = get_allowed_extensions()
+    pure = tuple(
+        e for e in raw_exts
+        if e and str(e).lower() not in _STRICT_VIDEO_EXTS_V246
+    )
+    if not pure:
+        pure = ('.mp3', '.opus', '.m4a', '.flac', '.wav', '.xflac', '.ogg', '.aac')
+    return pure
+
+
+# Fast & complete recursive video scanner (disambiguates identical basenames across folders!)
+_SKIP_VID_DIR_NAMES_V246 = {
+    '.git', 'proc', 'sys', 'usr', 'lib', '.thumbnails', '.trash', '.Trash',
+    'Trash', 'thumbnails', 'cache', 'code_cache', 'app_webview'
+}
+
+
+def sync_downloaded_videos_to_library_v246(force=False):
+    global _last_vid_scan_ts_v136
+    now = time.time()
+    if not force and (now - _last_vid_scan_ts_v136 < 2.0) and (_discovered_video_paths_v134 or _discovered_video_meta_v137):
+        return list(_discovered_video_meta_v137.values())
+    _last_vid_scan_ts_v136 = now
+    if force:
+        _discovered_video_paths_v134.clear()
+        _discovered_video_meta_v137.clear()
+
+    scan_dirs = _collect_video_scan_dirs_v137()
+    visited_real = set()
+
+    def _walk_vid_dir(cur_dir, depth=0):
+        if depth > 12:
+            return
+        try:
+            real_d = os.path.realpath(cur_dir)
+            if real_d in visited_real:
+                return
+            visited_real.add(real_d)
+        except Exception:
+            pass
+
+        norm_cur = cur_dir.replace('\\', '/').rstrip('/')
+        if norm_cur in ('/storage/emulated/0/Android/data', '/storage/emulated/0/Android/obb'):
+            return
+
+        try:
+            with os.scandir(cur_dir) as it:
+                subdirs = []
+                for entry in it:
+                    name = entry.name
+                    if not name or name.startswith('.'):
+                        continue
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if name in _SKIP_VID_DIR_NAMES_V246:
+                                continue
+                            if norm_cur == '/storage/emulated/0/Android' and name in ('data', 'obb'):
+                                continue
+                            subdirs.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            if name.lower().endswith(_STRICT_VIDEO_EXTS_V246):
+                                full_p = entry.path
+                                try:
+                                    sz = entry.stat(follow_symlinks=False).st_size
+                                except Exception:
+                                    continue
+                                if sz < 16 * 1024:
+                                    continue
+                                key_name = name
+                                if key_name in _discovered_video_paths_v134 and _discovered_video_paths_v134[key_name] != full_p:
+                                    parent_lbl = os.path.basename(cur_dir) or "Video"
+                                    key_name = f"[{parent_lbl}] {name}"
+                                _discovered_video_paths_v134[key_name] = full_p
+                                if name not in _discovered_video_paths_v134:
+                                    _discovered_video_paths_v134[name] = full_p
+                                _discovered_video_meta_v137[key_name] = {
+                                    "name": key_name,
+                                    "size_mb": round(sz / (1024 * 1024), 1),
+                                    "in_video_dir": full_p.startswith(VIDEO_DIR_V137),
+                                    "is_ready_local": True,
+                                    "stream_url": "/api/media/" + urllib.parse.quote(key_name),
+                                }
+                    except Exception:
+                        pass
+                for sd in subdirs:
+                    _walk_vid_dir(sd, depth + 1)
+        except Exception:
+            pass
+
+    for root_d in scan_dirs:
+        if root_d and os.path.isdir(root_d):
+            _walk_vid_dir(root_d, 0)
+
+    # Also include active/downloaded P2P torrent videos
+    try:
+        ensure_jtorrent_daemon_v96()
+        port = globals().get('_JTORRENT_PORT_V96', 42070)
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/status")
+        with urllib.request.urlopen(req, timeout=0.6) as resp:
+            raw_txt = resp.read().decode('utf-8', 'ignore')
+            st_data = json.loads(raw_txt)
+            tor_list = st_data if isinstance(st_data, list) else (st_data.get('torrents') or [])
+            for tor in tor_list:
+                h = (tor.get('hash') or '').lower()
+                for f in (tor.get('files') or []):
+                    rel_p = f.get('path') or f.get('name') or ''
+                    if not rel_p or not rel_p.lower().endswith(_STRICT_VIDEO_EXTS_V246):
+                        continue
+                    bn = os.path.basename(rel_p)
+                    f_idx = f.get('index', 0)
+                    pct = f.get('percent', 0)
+                    sz_mb = round((f.get('size') or f.get('length') or 0) / (1024 * 1024), 1)
+                    for cand_root in scan_dirs:
+                        cand_full = os.path.join(cand_root, rel_p.lstrip('/'))
+                        if os.path.isfile(cand_full):
+                            _discovered_video_paths_v134[bn] = cand_full
+                            break
+                    if bn not in _discovered_video_meta_v137:
+                        _discovered_video_meta_v137[bn] = {
+                            "name": bn,
+                            "size_mb": sz_mb,
+                            "percent": pct,
+                            "tor_hash": h,
+                            "tor_file_idx": f_idx,
+                            "in_video_dir": False,
+                            "stream_url": f"/api/torrent/stream/{h}/{f_idx}",
+                        }
+                    else:
+                        _discovered_video_meta_v137[bn]["tor_hash"] = h
+                        _discovered_video_meta_v137[bn]["tor_file_idx"] = f_idx
+    except Exception:
+        pass
+
+    return list(_discovered_video_meta_v137.values())
+
+
+sync_downloaded_videos_to_library_v134 = sync_downloaded_videos_to_library_v246
+
+
+# Strict Audio-Only /api/data (excludes all .mp4 / .mkv / .webm / .avi / .mov / .3gp / etc.)
+def get_data_v246():
+    response.content_type = "application/json; charset=utf-8"
+    load_multi_dirs_v71()
+    scan_all = is_scan_all_folders_enabled_v245()
+    pure_audio_exts = get_pure_audio_extensions_v246()
+    now = time.time()
+    sig = f"V246|ALL={int(scan_all)}|{','.join(ACTIVE_MUSIC_DIRS)}|{','.join(SAVED_MUSIC_DIRS)}|{','.join(pure_audio_exts)}"
+    if _DATA_CACHE_V237["payload"] and _DATA_CACHE_V237["sig"] == sig and (now - _DATA_CACHE_V237["ts"] < 1.2):
+        return _DATA_CACHE_V237["payload"]
+
+    all_tracks, seen, track_meta = [], set(), {}
+    if scan_all:
+        pairs = _walk_all_storage_audio_files_v245(pure_audio_exts)
+    else:
+        pairs = []
+        for d in ACTIVE_MUSIC_DIRS:
+            for fn, fp in _fast_list_dir_tracks_v237(d, pure_audio_exts):
+                pairs.append((fn, fp))
+                _DISCOVERED_AUDIO_PATHS_V245[fn] = fp
+
+    for fn, fp in pairs:
+        if fn.lower().endswith(_STRICT_VIDEO_EXTS_V246):
+            continue
+        if fn not in seen:
+            seen.add(fn)
+            all_tracks.append(fn)
+            track_meta[fn] = quick_parse_artist_album_v71(fn, fp)
+
+    all_tracks.sort(key=lambda x: track_meta.get(x, {}).get("mtime", 0), reverse=True)
+    out_json = json.dumps({
+        "all_tracks": all_tracks,
+        "session_tracks": all_tracks,
+        "current_folder": MUSIC_DIR,
+        "active_folders": ACTIVE_MUSIC_DIRS,
+        "saved_folders": SAVED_MUSIC_DIRS,
+        "scan_all_folders": scan_all,
+        "track_meta": track_meta,
+    }, ensure_ascii=False)
+    _DATA_CACHE_V237["ts"] = now
+    _DATA_CACHE_V237["sig"] = sig
+    _DATA_CACHE_V237["payload"] = out_json
+    return out_json
+
+
+_override_bottle_route_v212('/api/data', 'GET', get_data_v246)
+
+
+# Accurate real audio-stream count & language/codec labels (NEVER invents fake Track #2!)
+_VIDEO_STREAM_INSPECT_CACHE_V246 = {}
+
+
+def _inspect_local_video_streams_v246(full_path: str) -> dict:
+    if not full_path or not os.path.isfile(full_path):
+        return {
+            "ok": False,
+            "needs_remux": True,
+            "needs_transcode": False,
+            "audio_tracks": 1,
+            "has_audio": True,
+            "audio_labels": [],
+            "duration_sec": 0.0,
+        }
+    try:
+        st = os.stat(full_path)
+        cache_key = (full_path, round(st.st_mtime, 2), st.st_size)
+        cached = _VIDEO_STREAM_INSPECT_CACHE_V246.get(cache_key)
+        if cached:
+            return cached
+    except Exception:
+        cache_key = None
+
+    ext_l = os.path.splitext(full_path)[1].lower()
+    container_fmt = ""
+    v_codec = ""
+    a_codecs = []
+    a_labels = []
+    dur_sec = 0.0
+    ff_probed_ok = False
+
+    spoofed_non_mp4 = False
+    try:
+        with open(full_path, "rb") as f:
+            hdr12 = f.read(12)
+        if ext_l in ('.mp4', '.m4v') and len(hdr12) >= 8:
+            if hdr12[:4] == b'\x1a\x45\xdf\xa3' or hdr12[:4] in (b'RIFF', b'OggS', b'FLV\x01'):
+                spoofed_non_mp4 = True
+    except Exception:
+        pass
+
+    try:
+        ff_bin = find_ffmpeg_binary()
+        res = subprocess.run(
+            [ff_bin, '-hide_banner', '-probesize', '1048576', '-analyzeduration', '1000000', '-i', full_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2.8,
+        )
+        info_txt = (res.stderr or b'').decode('utf-8', errors='replace')
+        if 'Input #0,' in info_txt or 'Duration:' in info_txt:
+            ff_probed_ok = True
+        m_in = re.search(r'Input #0,\s*([^,\s]+(?:,[^,\s]+)*)', info_txt)
+        if m_in:
+            container_fmt = m_in.group(1).lower()
+        m_dur = re.search(r'Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)', info_txt)
+        if m_dur:
+            dur_sec = int(m_dur.group(1)) * 3600 + int(m_dur.group(2)) * 60 + float(m_dur.group(3))
+        for line in info_txt.splitlines():
+            if 'Stream #' not in line:
+                continue
+            m_v = re.search(r'Video:\s*([a-zA-Z0-9_]+)', line)
+            if m_v and not v_codec:
+                v_codec = m_v.group(1).lower()
+            m_a = re.search(r'Stream #\d+:\d+(?:\(([a-zA-Z0-9_-]+)\))?.*?: Audio:\s*([a-zA-Z0-9_]+)', line)
+            if m_a:
+                lang_raw = (m_a.group(1) or '').strip().upper()
+                ac_raw = (m_a.group(2) or '').strip().lower()
+                a_codecs.append(ac_raw)
+                if lang_raw and lang_raw not in ('UND', 'UNK'):
+                    a_labels.append(f"{lang_raw} • {ac_raw.upper()}")
+                else:
+                    a_labels.append(ac_raw.upper())
+    except Exception:
+        pass
+
+    real_audio_cnt = len(a_codecs) if ff_probed_ok else max(1, len(a_codecs))
+    first_a = a_codecs[0] if a_codecs else ""
+    needs_transcode = bool(
+        ext_l in _TRANSCODE_REQUIRED_EXTS_V240
+        or (v_codec and v_codec in _LEGACY_TRANSCODE_VCODECS_V240)
+    )
+
+    out = {
+        "ok": True,
+        "probed": ff_probed_ok,
+        "container": container_fmt,
+        "v_codec": v_codec,
+        "a_codec": first_a,
+        "audio_tracks": real_audio_cnt,
+        "has_audio": real_audio_cnt > 0,
+        "audio_labels": a_labels,
+        "duration_sec": round(dur_sec, 2),
+        "spoofed": spoofed_non_mp4,
+        "needs_remux": True,
+        "needs_transcode": needs_transcode,
+    }
+    if cache_key is not None:
+        if len(_VIDEO_STREAM_INSPECT_CACHE_V246) > 256:
+            _VIDEO_STREAM_INSPECT_CACHE_V246.clear()
+        _VIDEO_STREAM_INSPECT_CACHE_V246[cache_key] = out
+    return out
+
+
+_inspect_local_video_streams_v240 = _inspect_local_video_streams_v246
+
+
+def api_video_smart_check_v246():
+    response.content_type = 'application/json; charset=utf-8'
+    raw_src = (request.query.get('src') or '').strip()
+    if not raw_src:
+        return json.dumps({"status": "error"}, ensure_ascii=False)
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
+    if src.startswith('/api/torrent/stream/'):
+        low_s = src.lower()
+        dur_t, a_cnt_t, _ = _probe_torrent_partial_file_duration_v218(src)
+        return json.dumps({
+            "status": "ok",
+            "probed": bool(dur_t > 0),
+            "is_torrent": True,
+            "needs_remux": True,
+            "needs_transcode": any(x in low_s for x in _TRANSCODE_REQUIRED_EXTS_V240),
+            "audio_tracks": max(1, int(a_cnt_t or 1)),
+            "has_audio": True,
+            "audio_labels": [],
+            "duration_sec": round(float(dur_t or 0.0), 2),
+        }, ensure_ascii=False)
+    fp = _resolve_any_media_path_v218(src)
+    info = _inspect_local_video_streams_v246(fp)
+    info["status"] = "ok"
+    return json.dumps(info, ensure_ascii=False)
+
+
+_override_bottle_route_v212('/api/video/smart_check_v240', 'GET', api_video_smart_check_v246)
+
+
+def api_video_pcm_meta_v246():
+    response.content_type = 'application/json; charset=utf-8'
+    raw_src = (request.query.get('src') or '').strip()
+    if not raw_src:
+        return json.dumps({"duration": 0, "size": 0, "audio_streams": 1, "audio_labels": []})
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
+    if not src.startswith('/api/torrent/stream/'):
+        fp = _resolve_any_media_path_v218(src)
+        if fp and os.path.isfile(fp):
+            info = _inspect_local_video_streams_v246(fp)
+            try:
+                sz_b = os.path.getsize(fp)
+            except Exception:
+                sz_b = 0
+            return json.dumps({
+                "duration": info.get("duration_sec", 0.0),
+                "size": sz_b,
+                "audio_streams": info.get("audio_tracks", 1),
+                "has_audio": info.get("has_audio", True),
+                "audio_labels": info.get("audio_labels", []),
+            }, ensure_ascii=False)
+    dur_sec, audio_cnt, sz_bytes = _probe_torrent_partial_file_duration_v218(src)
+    return json.dumps({
+        "duration": dur_sec,
+        "size": sz_bytes,
+        "audio_streams": max(1, int(audio_cnt or 1)),
+        "has_audio": True,
+        "audio_labels": [],
+    }, ensure_ascii=False)
+
+
+_override_bottle_route_v212('/api/video/pcm_meta', 'GET', api_video_pcm_meta_v246)
+
+
+# Wrap /api/video/live_remux so silent 0-audio videos automatically pass no_audio='1' (-an)
+_orig_live_remux_v240_ref = api_video_live_remux_v240
+
+
+def api_video_live_remux_v246():
+    raw_src = (request.query.get('src') or '').strip()
+    src = raw_src
+    if src.startswith(('http://127.0.0.1:', 'http://localhost:')) and src.count('/') >= 3:
+        src = '/' + src.split('/', 3)[3]
+    if src and not src.startswith('/api/torrent/stream/') and request.query.get('audio_only') != '1':
+        fp = _resolve_any_media_path_v218(src)
+        if fp and os.path.isfile(fp):
+            info = _inspect_local_video_streams_v246(fp)
+            if info.get("probed") and int(info.get("audio_tracks", 1)) == 0:
+                qs_cur = request.environ.get('QUERY_STRING', '')
+                request.environ['QUERY_STRING'] = (qs_cur + '&no_audio=1') if qs_cur else 'no_audio=1'
+                request.environ.pop('bottle.request.query', None)
+                request.environ.pop('bottle.get', None)
+    return _orig_live_remux_v240_ref()
+
+
+_override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v246)
+# ================= END JENNY_V246_AUDIO_ONLY_AND_REAL_VIDEO_TRACKS =================

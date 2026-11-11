@@ -1680,6 +1680,7 @@ public class MainActivity extends AppCompatActivity {
                 if (wasPermSettings) {
                     evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(" + granted + ");");
                 }
+                evalJs("if(window.syncBgUnrestrictedSilentV246) window.syncBgUnrestrictedSilentV246(" + isIgnoringBatteryOptimizationsInternalV212() + ");");
                 evalJs("if(window.syncOnboardingPermsV165) window.syncOnboardingPermsV165();");
                 if (isVideoFullscreenV132 || isVideoLockedV132) {
                     applyVideoSystemUiLockV132();
@@ -2032,8 +2033,8 @@ public class MainActivity extends AppCompatActivity {
         if (lowName.endsWith(".m4a")) return "audio/mp4";
         if (lowName.endsWith(".aac")) return "audio/aac";
         if (lowName.endsWith(".ogg") || lowName.endsWith(".opus")) return "audio/ogg";
-        if (lowName.endsWith(".mp4") || lowName.endsWith(".m4v")) return "video/mp4";
-        if (lowName.endsWith(".webm")) return "video/webm";
+        // V246: Never intercept video (.mp4/.m4v/.webm) in shouldInterceptRequest —
+        // video streams directly via dedicated HTTP port :8082 / FFmpeg live_remux without JNI Range stalls!
         return null;
     }
 
