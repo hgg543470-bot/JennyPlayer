@@ -15582,3 +15582,216 @@ def api_video_full_audio_ram_v249():
 
 _override_bottle_route_v212("/api/video/full_audio_ram", "GET", api_video_full_audio_ram_v249)
 # ================= END JENNY_V249_FULL_VIDEO_AUDIO_DUAL_RAM_BUFFER =================
+# ================= BEGIN JENNY_V250_STREAMING_INT16_DUAL_RAM_AND_TORRENT_PCM =================
+@route("/api/video/full_audio_ram", method="GET")
+def api_video_full_audio_ram_v250():
+    """
+    Universal full-file Int16LE PCM audio streamer for BOTH local videos AND P2P torrent episodes:
+      - Streams raw s16le chunks progressively so JS ReadableStream fills ONE compact Int16Array
+        (only ~60 MB for a 22-minute episode — 5x smaller than dual Float32 AudioBuffers!).
+      - Isolated process lock (_ACTIVE_FULL_RAM_AUDIO_LOCK_V249) so it NEVER collides with live_remux!
+    """
+    raw_src = (request.query.get("src") or "").strip()
+    if not raw_src:
+        response.status = 400
+        return b""
+    try:
+        audio_idx = max(0, int(request.query.get("aidx") or 0))
+    except Exception:
+        audio_idx = 0
+
+    src = _normalize_or_upgrade_torrent_src_v248(raw_src)
+    src_input = ""
+    dur = 0.0
+    a_cnt = 1
+    probed_ok = False
+
+    if src.startswith("/api/torrent/stream/"):
+        parts = src.strip("/").split("/")
+        if len(parts) >= 5:
+            h_low = parts[3].strip().lower()
+            try:
+                f_idx = int(parts[4].split("?")[0])
+            except Exception:
+                f_idx = 0
+            ensure_jtorrent_daemon_v96()
+            comp = _get_torrent_file_completion_v248(h_low, f_idx)
+            if comp.get("is_complete") and comp.get("disk_path") and os.path.isfile(comp["disk_path"]):
+                src_input = comp["disk_path"]
+                info = _inspect_local_video_streams_v246(src_input)
+                dur = float(info.get("duration_sec") or 0.0)
+                a_cnt = int(info.get("audio_tracks") or 0)
+                probed_ok = bool(info.get("probed"))
+            else:
+                t_info = _inspect_torrent_stream_v248(src, wait_piece0_sec=0.8)
+                dur = float(t_info.get("duration_sec") or 0.0)
+                a_cnt = int(t_info.get("audio_tracks") or 1)
+                probed_ok = bool(t_info.get("probed"))
+                internal_port = globals().get("_INTERNAL_STREAM_PORT_V238", 8080)
+                src_input = f"http://127.0.0.1:{internal_port}/api/torrent/stream/{h_low}/{f_idx}"
+    else:
+        local_fp = _resolve_any_media_path_v218(src)
+        if local_fp and os.path.isfile(local_fp):
+            src_input = local_fp
+            info = _inspect_local_video_streams_v246(local_fp)
+            dur = float(info.get("duration_sec") or 0.0)
+            a_cnt = int(info.get("audio_tracks") or 0)
+            probed_ok = bool(info.get("probed"))
+
+    if not src_input:
+        response.status = 204
+        response.set_header("X-Ram-Reason", "no-source")
+        return b""
+
+    if probed_ok and a_cnt == 0:
+        response.status = 204
+        response.set_header("X-Audio-Tracks", "0")
+        return b""
+    if a_cnt > 0 and audio_idx >= a_cnt:
+        audio_idx = audio_idx % a_cnt
+
+    if dur <= 0.0:
+        try:
+            dur = float(request.query.get("dur") or 0.0)
+        except Exception:
+            dur = 0.0
+
+    if dur > 6000.0:
+        response.status = 204
+        response.set_header("X-Ram-Reason", "too-long")
+        return b""
+
+    eff_dur = dur if dur > 1.0 else 1500.0
+    if eff_dur <= 360.0:
+        sr, ch = 44100, 2
+    elif eff_dur <= 1800.0:
+        sr, ch = 24000, 1
+    else:
+        sr, ch = 16000, 1
+
+    _kill_stale_full_ram_audio_procs_v249()
+
+    is_http = str(src_input).startswith(("http://", "https://"))
+    ff_bin = find_ffmpeg_binary()
+    cmd = [ff_bin, "-hide_banner", "-loglevel", "error", "-threads", "4"]
+    if is_http:
+        cmd.extend([
+            "-seekable", "0",
+            "-reconnect", "1",
+            "-reconnect_streamed", "1",
+            "-probesize", "1048576",
+            "-analyzeduration", "1000000",
+        ])
+    cmd.extend([
+        "-i", src_input,
+        "-vn",
+        "-map", f"0:a:{audio_idx}?",
+        "-sn", "-dn",
+        "-ac", str(ch),
+        "-ar", str(sr),
+        "-f", "s16le",
+        "-acodec", "pcm_s16le",
+        "-",
+    ])
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
+    with _ACTIVE_FULL_RAM_AUDIO_LOCK_V249:
+        _ACTIVE_FULL_RAM_AUDIO_PROCS_V249.append(proc)
+
+    resp_hdrs = {
+        "Content-Type": "application/octet-stream",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "X-Sample-Rate": str(sr),
+        "X-Channels": str(ch),
+        "X-Duration": f"{eff_dur:.3f}",
+        "X-Audio-Index": str(audio_idx),
+    }
+
+    def _pcm_stream_v250():
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            with _ACTIVE_FULL_RAM_AUDIO_LOCK_V249:
+                if proc in _ACTIVE_FULL_RAM_AUDIO_PROCS_V249:
+                    _ACTIVE_FULL_RAM_AUDIO_PROCS_V249.remove(proc)
+
+    return bottle.HTTPResponse(body=_pcm_stream_v250(), status=200, headers=resp_hdrs)
+
+
+_override_bottle_route_v212("/api/video/full_audio_ram", "GET", api_video_full_audio_ram_v250)
+
+
+@route("/api/video/pcm_chunk", method="GET")
+def api_video_pcm_chunk_v250():
+    raw_src = (request.query.get("src") or "").strip()
+    if not raw_src:
+        response.status = 400
+        return b""
+    try:
+        st_sec = max(0.0, float(request.query.get("start", 0.0)))
+    except Exception:
+        st_sec = 0.0
+    try:
+        dur_sec = max(0.5, min(60.0, float(request.query.get("dur", 16.0))))
+    except Exception:
+        dur_sec = 16.0
+    try:
+        sr = max(8000, min(48000, int(request.query.get("sr", 24000))))
+    except Exception:
+        sr = 24000
+    try:
+        aidx = max(0, int(request.query.get("aidx") or 0))
+    except Exception:
+        aidx = 0
+
+    src_input = _resolve_rev_src_input_v249(raw_src, st_sec)
+    if not src_input:
+        response.content_type = "application/octet-stream"
+        return b""
+
+    is_http = str(src_input).startswith(("http://", "https://"))
+    cmd = [find_ffmpeg_binary(), "-hide_banner", "-loglevel", "error", "-threads", "2"]
+    if is_http:
+        cmd.extend(["-seekable", "1", "-reconnect", "1", "-reconnect_streamed", "1", "-probesize", "524288", "-analyzeduration", "500000"])
+    cmd.extend([
+        "-ss", f"{st_sec:.3f}",
+        "-t", f"{dur_sec:.3f}",
+        "-i", src_input,
+        "-map", f"0:a:{aidx}?",
+        "-vn", "-ac", "2", "-ar", str(sr),
+        "-f", "f32le", "-acodec", "pcm_f32le", "-",
+    ])
+    proc = None
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        raw_interleaved, _ = proc.communicate(timeout=14)
+        raw_interleaved = raw_interleaved or b""
+        frames = (len(raw_interleaved) // 4) // 2
+        if frames <= 0:
+            response.content_type = "application/octet-stream"
+            return b""
+        import array
+        arr = array.array("f")
+        arr.frombytes(raw_interleaved[:frames * 8])
+        out_bytes = arr[0::2].tobytes() + arr[1::2].tobytes()
+        response.content_type = "application/octet-stream"
+        return out_bytes
+    except Exception:
+        if proc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        response.content_type = "application/octet-stream"
+        return b""
+
+
+_override_bottle_route_v212("/api/video/pcm_chunk", "GET", api_video_pcm_chunk_v250)
+# ================= END JENNY_V250_STREAMING_INT16_DUAL_RAM_AND_TORRENT_PCM =================

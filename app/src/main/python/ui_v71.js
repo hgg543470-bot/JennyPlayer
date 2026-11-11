@@ -39850,3 +39850,757 @@ let vsyncTicks = 0;
     };
 })();
 /* ================= END JENNY_V249_DECKB_PROGRESS_OVERLAY_EXPAND_AND_DUAL_RAM_VIDEO_BUFFERS ================= */
+
+/* ================= BEGIN JENNY_V250_REVERSE_VOLUME_PROGRESSIVE_INT16_RAM_AND_SEAMLESS_SEEK ================= */
+(function() {
+    if (window._jennyV250Installed) return;
+    window._jennyV250Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. UNIFIED DECK B VOLUME & MUTE ACROSS FORWARD, REVERSE RAM, AND STANDBY <VIDEO>
+    // -------------------------------------------------------------------------
+    window.connectStandbyVideoToWebAudioV250 = function(sbEl) {
+        var vd = window.videoDeckV131;
+        if (!sbEl || !vd) return;
+        if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+        if (!vd.ctx || sbEl._v250WebAudioConnected) return;
+        try {
+            sbEl._v250MediaSource = vd.ctx.createMediaElementSource(sbEl);
+            if (vd.htmlGain) sbEl._v250MediaSource.connect(vd.htmlGain);
+            if (vd.directBypassGain) sbEl._v250MediaSource.connect(vd.directBypassGain);
+            sbEl._v250WebAudioConnected = true;
+        } catch (e) {}
+    };
+
+    var _origApplyDeckBVolV250 = window.applyDeckBVolumeV216;
+    window.applyDeckBVolumeV216 = function(pctVal) {
+        if (typeof _origApplyDeckBVolV250 === 'function') {
+            _origApplyDeckBVolV250.apply(this, arguments);
+        }
+        var vd = window.videoDeckV131;
+        var st = window._vidStateV130 || {};
+        var pct = Math.max(0, Number(window._deckBVolumePercentV216 !== undefined ? window._deckBVolumePercentV216 : pctVal) || 0);
+        var gainVal = pct / 100.0;
+        var isMutedZero = (pct <= 0);
+        var isVOnly = (st.videoStreamModeV217 === 'v_only');
+
+        var mainVid = document.getElementById('jennyVideoElV130');
+        var sbVid = document.getElementById('jennyRevStandbyVidV249');
+        if (sbVid) window.connectStandbyVideoToWebAudioV250(sbVid);
+
+        if (vd && vd.ctx) {
+            if (mainVid && vd.mediaElementSource) {
+                try { mainVid.volume = isMutedZero ? 0.0 : 1.0; } catch (e) {}
+            } else if (mainVid) {
+                try { mainVid.volume = isMutedZero ? 0.0 : Math.min(1.0, gainVal); } catch (e) {}
+            }
+            if (sbVid && sbVid._v250WebAudioConnected) {
+                try { sbVid.volume = isMutedZero ? 0.0 : 1.0; } catch (e) {}
+            } else if (sbVid) {
+                try { sbVid.volume = isMutedZero ? 0.0 : Math.min(1.0, gainVal); } catch (e) {}
+            }
+
+            var effGain = (isMutedZero || isVOnly) ? 0.0 : gainVal;
+            if (vd.gainNode && vd.gainNode.gain) {
+                vd.gainNode.gain.value = effGain;
+            }
+            if (vd.masterAntiClickGain && vd.masterAntiClickGain.gain) {
+                vd.masterAntiClickGain.gain.value = (isMutedZero || isVOnly) ? 0.0 : 1.0;
+            }
+            if (vd.directBypassGain && vd.directBypassGain.gain) {
+                vd.directBypassGain.gain.value = st.dspBypass ? effGain : 0.0;
+            }
+            if (vd.htmlGain && vd.htmlGain.gain) {
+                var usingRamSource = Boolean(vd.isStudioPlaying && (vd.isReversed || window.isReversedDeckB));
+                vd.htmlGain.gain.value = (usingRamSource || st.dspBypass || isMutedZero || isVOnly) ? 0.0 : 1.0;
+            }
+        } else {
+            var clampedVol = isMutedZero ? 0.0 : Math.min(1.0, gainVal);
+            if (mainVid) { try { mainVid.volume = clampedVol; } catch (e) {} }
+            if (sbVid) { try { sbVid.volume = clampedVol; } catch (e) {} }
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. LIVE DECK B RAM BADGE UPDATER ("🎬 " -> "RAM ⏳ XX%: " -> "RAM ⏩⏪ 🚀: ")
+    // -------------------------------------------------------------------------
+    window.syncDeckBRamTitleBadgeV250 = function() {
+        var npEl = document.getElementById('nowPlayingDeckB');
+        if (!npEl) return;
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        if (!st.active) return;
+        var rawTitle = String(st.currentTitle || vd.title || '').trim();
+        if (!rawTitle) return;
+
+        var store = vd._fullPcmStoreV250;
+        var prefix = '🎬 ';
+        if (store && store.complete && store.loadedFrames > 256) {
+            prefix = 'RAM ⏩⏪ 🚀: ';
+        } else if (store && store.loading && store.loadedFrames > 0 && store.expectedFrames > 0) {
+            var pctLoad = Math.min(99, Math.max(1, Math.round((store.loadedFrames / store.expectedFrames) * 100)));
+            prefix = 'RAM ⏳ ' + pctLoad + '%: ';
+        } else if (vd.studioBuffer && vd.reversedStudioBuffer && !vd.studioBuffer._partialLoadingV250) {
+            prefix = 'RAM ⏩⏪ 🚀: ';
+        }
+        var wantText = prefix + rawTitle;
+        if (npEl.innerText !== wantText) {
+            npEl.innerText = wantText;
+        }
+    };
+
+    var _prevUpdateProgDeckBV250 = window.updateProgressUIDeckB;
+    window.updateProgressUIDeckB = function(currentTime, duration, isReverseVisual) {
+        var r = (typeof _prevUpdateProgDeckBV250 === 'function')
+            ? _prevUpdateProgDeckBV250.apply(this, arguments)
+            : undefined;
+        window.syncDeckBRamTitleBadgeV250();
+        if (isReverseVisual && typeof window.applyDeckBVolumeV216 === 'function') {
+            window.applyDeckBVolumeV216(window._deckBVolumePercentV216 !== undefined ? window._deckBVolumePercentV216 : 100);
+        }
+        return r;
+    };
+
+    // -------------------------------------------------------------------------
+    // 3. COMPACT STREAMING INT16 FULL-FILE DUAL-DIRECTION RAM STORE (5x LOWER RAM!)
+    // -------------------------------------------------------------------------
+    window.abortFullVideoAudioPreloadV249 = function(clearBuffers) {
+        window._vidFullAudioSessionV249 = (window._vidFullAudioSessionV249 || 0) + 1;
+        if (window._vidFullAudioAbortV249) {
+            try { window._vidFullAudioAbortV249.abort(); } catch (e) {}
+            window._vidFullAudioAbortV249 = null;
+        }
+        if (clearBuffers && window.videoDeckV131) {
+            window.videoDeckV131.studioBuffer = null;
+            window.videoDeckV131.reversedStudioBuffer = null;
+            window.videoDeckV131._fullPcmStoreV250 = null;
+            window.videoDeckV131._ramReadyKeyV249 = '';
+        }
+    };
+
+    window.preloadFullVideoDualAudioBuffersV249 = async function(rawBaseUrl, audioIdx) {
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        if (!st || !st.active || !vd || !rawBaseUrl) return null;
+
+        if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+        if (!vd.ctx) return null;
+
+        var aIdx = Math.max(0, Number(audioIdx) || 0);
+        var targetKey = String(rawBaseUrl) + '::a' + aIdx;
+        if (vd._fullPcmStoreV250 && vd._fullPcmStoreV250.key === targetKey && (vd._fullPcmStoreV250.complete || vd._fullPcmStoreV250.loading)) {
+            return vd._fullPcmStoreV250;
+        }
+
+        window.abortFullVideoAudioPreloadV249(false);
+        var mySess = window._vidFullAudioSessionV249;
+        var ctrl = new AbortController();
+        window._vidFullAudioAbortV249 = ctrl;
+
+        var knownDur = Number(st.trueDuration || st.knownDurationSec || 0);
+        var reqUrl = '/api/video/full_audio_ram?src=' + encodeURIComponent(rawBaseUrl) +
+            '&aidx=' + aIdx +
+            '&dur=' + (knownDur > 0 ? knownDur.toFixed(1) : '0') +
+            '&t=' + Date.now();
+
+        try {
+            var res = await window.fetch(reqUrl, { signal: ctrl.signal });
+            if (!res || res.status === 204 || !res.ok || !res.body) return null;
+            if (mySess !== window._vidFullAudioSessionV249 || !st.active) return null;
+
+            var sr = parseInt(res.headers.get('X-Sample-Rate') || '24000', 10) || 24000;
+            var ch = parseInt(res.headers.get('X-Channels') || '1', 10) || 1;
+            var hdrDur = parseFloat(res.headers.get('X-Duration') || '0') || knownDur || 1500.0;
+            var allocFrames = Math.max(sr * 10, Math.ceil((hdrDur + 8.0) * sr));
+
+            var pcmArr = null;
+            try {
+                pcmArr = new Int16Array(allocFrames * ch);
+            } catch (allocErr) {
+                allocFrames = Math.floor(allocFrames * 0.6);
+                pcmArr = new Int16Array(allocFrames * ch);
+            }
+
+            var proxyMetaFwd = {
+                duration: hdrDur,
+                sampleRate: sr,
+                numberOfChannels: ch,
+                length: allocFrames,
+                _allPiecesLoadedV72: false,
+                _partialLoadingV250: true,
+                _trueDurationV72: hdrDur,
+                _isV250Store: true,
+                _isV250RevProxy: false
+            };
+            var proxyMetaRev = {
+                duration: hdrDur,
+                sampleRate: sr,
+                numberOfChannels: ch,
+                length: allocFrames,
+                _allPiecesLoadedV72: false,
+                _partialLoadingV250: true,
+                _trueDurationV72: hdrDur,
+                _isV250Store: true,
+                _isV250RevProxy: true
+            };
+
+            var store = {
+                key: targetKey,
+                aIdx: aIdx,
+                sr: sr,
+                ch: ch,
+                samples: pcmArr,
+                expectedFrames: Math.max(1, Math.floor(hdrDur * sr)),
+                loadedFrames: 0,
+                loadedSec: 0,
+                loading: true,
+                complete: false
+            };
+            vd._fullPcmStoreV250 = store;
+            vd._ramAudioIdxV249 = aIdx;
+
+            var reader = res.body.getReader();
+            var leftoverByte = -1;
+            var sampleWritePos = 0;
+            var maxSamples = pcmArr.length;
+            var lastUiTick = 0;
+
+            while (true) {
+                var step = await reader.read();
+                if (mySess !== window._vidFullAudioSessionV249 || !st.active) {
+                    try { reader.cancel(); } catch (e) {}
+                    return null;
+                }
+                if (step.done) break;
+                var chunk = step.value;
+                if (!chunk || chunk.byteLength === 0) continue;
+
+                var offset = 0;
+                var byteLen = chunk.byteLength;
+
+                if (leftoverByte !== -1) {
+                    var combined = (leftoverByte & 0xff) | ((chunk[0] & 0xff) << 8);
+                    if (combined >= 0x8000) combined -= 0x10000;
+                    if (sampleWritePos < maxSamples) {
+                        pcmArr[sampleWritePos++] = combined;
+                    }
+                    leftoverByte = -1;
+                    offset = 1;
+                }
+
+                var remBytes = byteLen - offset;
+                var evenBytes = remBytes & ~1;
+                if (evenBytes > 0 && sampleWritePos < maxSamples) {
+                    var pairCount = evenBytes >> 1;
+                    var canCopy = Math.min(pairCount, maxSamples - sampleWritePos);
+                    if (((chunk.byteOffset + offset) & 1) === 0) {
+                        var view16 = new Int16Array(chunk.buffer, chunk.byteOffset + offset, canCopy);
+                        pcmArr.set(view16, sampleWritePos);
+                        sampleWritePos += canCopy;
+                    } else {
+                        for (var b = 0; b < canCopy; b++) {
+                            var bi = offset + (b << 1);
+                            var v16 = (chunk[bi] & 0xff) | ((chunk[bi + 1] & 0xff) << 8);
+                            if (v16 >= 0x8000) v16 -= 0x10000;
+                            pcmArr[sampleWritePos++] = v16;
+                        }
+                    }
+                }
+                if ((remBytes & 1) === 1) {
+                    leftoverByte = chunk[byteLen - 1];
+                }
+
+                store.loadedFrames = Math.floor(sampleWritePos / ch);
+                store.loadedSec = store.loadedFrames / sr;
+
+                if (store.loadedSec >= 2.0) {
+                    proxyMetaFwd.duration = store.loadedSec;
+                    proxyMetaFwd.length = store.loadedFrames;
+                    proxyMetaRev.duration = store.loadedSec;
+                    proxyMetaRev.length = store.loadedFrames;
+                    vd.studioBuffer = proxyMetaFwd;
+                    vd.reversedStudioBuffer = proxyMetaRev;
+                }
+
+                var nowP = performance.now();
+                if (nowP - lastUiTick > 220) {
+                    lastUiTick = nowP;
+                    window.syncDeckBRamTitleBadgeV250();
+                    if ((vd.isReversed || window.isReversedDeckB) && !st.userPaused && !vd._usingFullRamSliceV250) {
+                        var curM = window.getMasterReverseMediaSecV249();
+                        if (store.loadedSec >= curM + 0.5) {
+                            window.startContinuousRamReverseAudioV249(curM, vd.speed || 1.0);
+                        }
+                    }
+                }
+            }
+
+            store.loading = false;
+            store.complete = (store.loadedFrames > 256);
+            if (store.complete) {
+                var finalDur = store.loadedFrames / sr;
+                proxyMetaFwd.duration = finalDur;
+                proxyMetaFwd.length = store.loadedFrames;
+                proxyMetaFwd._allPiecesLoadedV72 = true;
+                proxyMetaFwd._partialLoadingV250 = false;
+                proxyMetaFwd._trueDurationV72 = finalDur;
+                proxyMetaRev.duration = finalDur;
+                proxyMetaRev.length = store.loadedFrames;
+                proxyMetaRev._allPiecesLoadedV72 = true;
+                proxyMetaRev._partialLoadingV250 = false;
+                proxyMetaRev._trueDurationV72 = finalDur;
+                vd.studioBuffer = proxyMetaFwd;
+                vd.reversedStudioBuffer = proxyMetaRev;
+                vd._ramReadyKeyV249 = targetKey;
+                window.syncDeckBRamTitleBadgeV250();
+
+                if ((vd.isReversed || window.isReversedDeckB) && !st.userPaused && !vd._usingFullRamSliceV250) {
+                    var curNow = window.getMasterReverseMediaSecV249();
+                    window.startContinuousRamReverseAudioV249(curNow, vd.speed || 1.0);
+                }
+            }
+            return store;
+        } catch (e) {
+            if (vd && vd._fullPcmStoreV250) vd._fullPcmStoreV250.loading = false;
+            return null;
+        }
+    };
+
+    window.sliceRamAudioWindowV250 = function(fromMediaSec, windowDurSec, isReverse) {
+        var vd = window.videoDeckV131;
+        if (!vd || !vd.ctx || !vd._fullPcmStoreV250) return null;
+        var store = vd._fullPcmStoreV250;
+        var availFrames = store.loadedFrames;
+        if (availFrames <= 256) return null;
+
+        var sr = store.sr;
+        var ch = store.ch;
+        var samples = store.samples;
+        var inv = 1.0 / 32768.0;
+
+        if (isReverse) {
+            var endFrame = Math.min(availFrames - 1, Math.floor(fromMediaSec * sr));
+            if (endFrame <= 64) return null;
+            var wantFrames = Math.min(endFrame, Math.floor(windowDurSec * sr));
+            var aBuf = vd.ctx.createBuffer(ch, wantFrames, sr);
+            var outL = aBuf.getChannelData(0);
+            if (ch === 2) {
+                var outR = aBuf.getChannelData(1);
+                for (var i = 0; i < wantFrames; i++) {
+                    var srcIdx = (endFrame - i) * 2;
+                    outL[i] = samples[srcIdx] * inv;
+                    outR[i] = samples[srcIdx + 1] * inv;
+                }
+            } else {
+                for (var j = 0; j < wantFrames; j++) {
+                    outL[j] = samples[endFrame - j] * inv;
+                }
+            }
+            return aBuf;
+        } else {
+            var startFrame = Math.max(0, Math.floor(fromMediaSec * sr));
+            if (startFrame >= availFrames - 64) return null;
+            var fwdFrames = Math.min(availFrames - startFrame, Math.floor(windowDurSec * sr));
+            var fBuf = vd.ctx.createBuffer(ch, fwdFrames, sr);
+            var fOutL = fBuf.getChannelData(0);
+            if (ch === 2) {
+                var fOutR = fBuf.getChannelData(1);
+                for (var fi = 0; fi < fwdFrames; fi++) {
+                    var fSrc = (startFrame + fi) * 2;
+                    fOutL[fi] = samples[fSrc] * inv;
+                    fOutR[fi] = samples[fSrc + 1] * inv;
+                }
+            } else {
+                for (var fj = 0; fj < fwdFrames; fj++) {
+                    fOutL[fj] = samples[startFrame + fj] * inv;
+                }
+            }
+            return fBuf;
+        }
+    };
+
+    var _origExtractVidWinV250 = window.extractVideoWindowBufferV131;
+    window.extractVideoWindowBufferV131 = function(srcBuf, curVideoSec, winSec, isRev) {
+        if (srcBuf && srcBuf._isV250Store) {
+            if (srcBuf._isV250RevProxy && !isRev) {
+                var mediaSec = Math.max(0.05, (Number(srcBuf.duration) || 0) - (Number(curVideoSec) || 0));
+                return window.sliceRamAudioWindowV250(mediaSec, winSec, true);
+            }
+            return window.sliceRamAudioWindowV250(curVideoSec, winSec, Boolean(isRev));
+        }
+        return (typeof _origExtractVidWinV250 === 'function')
+            ? _origExtractVidWinV250.apply(this, arguments)
+            : null;
+    };
+
+    window.stopRamReverseAudioSourceV249 = function() {
+        var vd = window.videoDeckV131;
+        if (!vd) return;
+        if (vd._v250SliceChainTimer) {
+            clearTimeout(vd._v250SliceChainTimer);
+            vd._v250SliceChainTimer = null;
+        }
+        if (vd._v250QuickChunkAbort) {
+            try { vd._v250QuickChunkAbort.abort(); } catch (e) {}
+            vd._v250QuickChunkAbort = null;
+        }
+        if (vd.sourceNode) {
+            vd.sourceNode.onended = null;
+            try { vd.sourceNode.stop(); } catch (e) {}
+            try { vd.sourceNode.disconnect(); } catch (e) {}
+            vd.sourceNode = null;
+        }
+        vd.isStudioPlaying = false;
+        vd._usingFullRamSliceV250 = false;
+    };
+
+    window.startContinuousRamReverseAudioV249 = function(fromMediaSec, spd) {
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        var mainVid = document.getElementById('jennyVideoElV130');
+        var sbVid = document.getElementById('jennyRevStandbyVidV249');
+        if (!st || !vd || !vd.ctx) return false;
+
+        if (vd.ctx.state === 'suspended') {
+            try { vd.ctx.resume(); } catch (e) {}
+        }
+        window.stopRamReverseAudioSourceV249();
+
+        var playRate = Math.max(0.1, Math.min(8.0, Number(spd) || 1.0));
+        var targetSec = Math.max(0.05, Number(fromMediaSec) || 0);
+        var aIdx = Number(st.audioTrackIdxV216) || 0;
+        var store = vd._fullPcmStoreV250;
+
+        if (store && store.aIdx === aIdx && store.loadedSec >= targetSec - 0.15) {
+            var clampedSec = Math.min(store.loadedSec, targetSec);
+            var sliceWinSec = Math.max(24.0, Math.min(45.0, 28.0 * playRate));
+            var sliceBuf = window.sliceRamAudioWindowV250(clampedSec, sliceWinSec, true);
+            if (sliceBuf) {
+                if (mainVid) mainVid.muted = true;
+                if (sbVid) sbVid.muted = true;
+                if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+
+                var isVOnly = (st.videoStreamModeV217 === 'v_only');
+                if (!isVOnly) {
+                    var srcNode = vd.ctx.createBufferSource();
+                    srcNode.buffer = sliceBuf;
+                    srcNode.playbackRate.value = playRate;
+                    srcNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+                    srcNode.start(0, 0);
+                    vd.sourceNode = srcNode;
+                }
+                vd.isStudioPlaying = true;
+                vd._usingFullRamSliceV250 = true;
+                st._revClockAnchorMediaSecV249 = clampedSec;
+                st._revClockAnchorCtxTimeV249 = vd.ctx.currentTime;
+                st._revClockRateV249 = playRate;
+                st._masterRevCurSecV249 = clampedSec;
+
+                window.applyDeckBVolumeV216(window._deckBVolumePercentV216 !== undefined ? window._deckBVolumePercentV216 : 100);
+
+                var realWallDurSec = sliceBuf.duration / playRate;
+                var nextBoundaryMediaSec = clampedSec - sliceBuf.duration;
+                if (nextBoundaryMediaSec > 0.12 && realWallDurSec > 1.2) {
+                    vd._v250SliceChainTimer = setTimeout(function() {
+                        if (!st.active || st.userPaused || !(vd.isReversed || window.isReversedDeckB)) return;
+                        var nowMedia = window.getMasterReverseMediaSecV249();
+                        if (nowMedia > 0.12) {
+                            window.startContinuousRamReverseAudioV249(nowMedia, vd.speed || playRate);
+                        }
+                    }, Math.max(300, (realWallDurSec - 0.65) * 1000));
+                }
+                return true;
+            }
+        }
+
+        // Fast 14s PCM window bridge if full-file stream hasn't reached targetSec yet
+        var rawUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        if (rawUrl && targetSec > 0.2) {
+            var qCtrl = new AbortController();
+            vd._v250QuickChunkAbort = qCtrl;
+            var chunkDur = Math.min(targetSec, Math.max(8.0, 14.0 * playRate));
+            var chunkStart = Math.max(0, targetSec - chunkDur);
+            var qSr = 24000;
+            var qUrl = '/api/video/pcm_chunk?src=' + encodeURIComponent(rawUrl) +
+                '&start=' + chunkStart.toFixed(2) +
+                '&dur=' + chunkDur.toFixed(2) +
+                '&sr=' + qSr +
+                '&aidx=' + aIdx +
+                '&t=' + Date.now();
+            window.fetch(qUrl, { signal: qCtrl.signal })
+                .then(function(r) { return r.ok ? r.arrayBuffer() : null; })
+                .then(function(ab) {
+                    if (!ab || ab.byteLength < 512 || !st.active || st.userPaused || !(vd.isReversed || window.isReversedDeckB)) return;
+                    if (vd._usingFullRamSliceV250) return;
+                    var frames = Math.floor(ab.byteLength / 8);
+                    if (frames <= 128) return;
+                    var cBuf = vd.ctx.createBuffer(2, frames, qSr);
+                    var cL = cBuf.getChannelData(0), cR = cBuf.getChannelData(1);
+                    var inL = new Float32Array(ab, 0, frames);
+                    var inR = new Float32Array(ab, frames * 4, frames);
+                    for (var k = 0; k < frames; k++) {
+                        cL[k] = inL[frames - 1 - k];
+                        cR[k] = inR[frames - 1 - k];
+                    }
+                    window.stopRamReverseAudioSourceV249();
+                    if (mainVid) mainVid.muted = true;
+                    if (sbVid) sbVid.muted = true;
+                    if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+                    var curSpdNow = Number(vd.speed || playRate);
+                    if (st.videoStreamModeV217 !== 'v_only') {
+                        var sn = vd.ctx.createBufferSource();
+                        sn.buffer = cBuf;
+                        sn.playbackRate.value = curSpdNow;
+                        sn.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+                        sn.start(0, 0);
+                        vd.sourceNode = sn;
+                    }
+                    vd.isStudioPlaying = true;
+                    st._revClockAnchorMediaSecV249 = chunkStart + (frames / qSr);
+                    st._revClockAnchorCtxTimeV249 = vd.ctx.currentTime;
+                    st._revClockRateV249 = curSpdNow;
+                    window.applyDeckBVolumeV216(window._deckBVolumePercentV216 !== undefined ? window._deckBVolumePercentV216 : 100);
+                })
+                .catch(function() {});
+        }
+        window.applyDeckBVolumeV216(window._deckBVolumePercentV216 !== undefined ? window._deckBVolumePercentV216 : 100);
+        return false;
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. ZERO-BLACK-FLASH CAPTURE & DEBOUNCED PING-PONG SEEK IN REVERSE
+    // -------------------------------------------------------------------------
+    window.captureAndHoldVideoFrameV220 = function(maxHoldMs) {
+        try {
+            var st = window._vidStateV130 || {};
+            if (!st.active || st.videoStreamModeV217 === 'a_only') return;
+            var mainVid = document.getElementById('jennyVideoElV130');
+            var sbVid = document.getElementById('jennyRevStandbyVidV249');
+            var srcVid = null;
+            if (st._activeRevVidElV249 && st._activeRevVidElV249.readyState >= 2 && st._activeRevVidElV249.videoWidth > 0) {
+                srcVid = st._activeRevVidElV249;
+            } else if (mainVid && mainVid.readyState >= 2 && mainVid.videoWidth > 0) {
+                srcVid = mainVid;
+            } else if (sbVid && sbVid.readyState >= 2 && sbVid.videoWidth > 0) {
+                srcVid = sbVid;
+            }
+            if (!srcVid) return;
+
+            var c = window.ensureSeamlessFrameHoldCanvasV220 ? window.ensureSeamlessFrameHoldCanvasV220() : null;
+            if (!c) return;
+            var w = Math.min(960, srcVid.videoWidth);
+            var h = Math.max(1, Math.round(w * (srcVid.videoHeight / srcVid.videoWidth)));
+            if (c.width !== w) c.width = w;
+            if (c.height !== h) c.height = h;
+
+            var ctx = c.getContext('2d');
+            if (!ctx) return;
+            ctx.drawImage(srcVid, 0, 0, w, h);
+
+            var isCompact = Boolean(st.pipMode || st.desktopOverlay);
+            c.style.objectFit = isCompact ? 'cover' : (st.fitMode || 'contain');
+            c.style.display = 'block';
+
+            if (c._hideTimerV220) clearTimeout(c._hideTimerV220);
+            c._hideTimerV220 = setTimeout(function() {
+                c.style.display = 'none';
+            }, maxHoldMs || 3200);
+        } catch (e) {}
+    };
+
+    var _origEnsureSbVidV250 = window.ensureStandbyReverseVideoElV249;
+    window.ensureStandbyReverseVideoElV249 = function() {
+        var sb = (typeof _origEnsureSbVidV250 === 'function') ? _origEnsureSbVidV250.apply(this, arguments) : null;
+        if (sb) {
+            window.connectStandbyVideoToWebAudioV250(sb);
+        }
+        return sb;
+    };
+
+    var _prevSeekV250 = window.seekDeckBAndPlayerSyncedV212;
+    window.seekDeckBAndPlayerSyncedV212 = function(targetSec, showToastMsg, fromExplicitUser) {
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131 || {};
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+
+        if (st && st.active && isRev) {
+            var mainVid = document.getElementById('jennyVideoElV130');
+            var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(mainVid) : 0;
+            var rawT = Math.max(0, Number(targetSec) || 0);
+            var clampedRev = (isFinite(dur) && dur > 0)
+                ? Math.max(0.1, Math.min(Math.max(0.1, dur - 0.2), rawT))
+                : Math.max(0.1, rawT);
+
+            st._lastTrueMediaSecV227 = clampedRev;
+            st._pendingSeekSecV167 = clampedRev;
+            st._pendingSeekTsV167 = performance.now();
+            st._masterRevCurSecV249 = clampedRev;
+            if (st.userPaused) st._pausedRevMediaSecV249 = clampedRev;
+
+            if (typeof window.updateProgressUIDeckB === 'function') window.updateProgressUIDeckB(clampedRev, dur, true);
+            if (typeof window.syncInternalVideoSliderUIV212 === 'function') window.syncInternalVideoSliderUIV212(clampedRev, dur);
+            if (showToastMsg === true && !fromExplicitUser && window._v130UserDraggingSeekV212) return;
+
+            var curRevSpd = Number(vd.speed || window._jennyVideoSpeedV170 || window._lastRevVideoSpeedV217 || 1.0);
+
+            if (!st.userPaused) {
+                window.startContinuousRamReverseAudioV249(clampedRev, curRevSpd);
+            }
+
+            var actEl = st._activeRevVidElV249 || mainVid;
+            if (st._playingHardwareRevStreamV219 && st._revStreamStartedPlayingV220 && actEl && isFinite(actEl.duration) && actEl.duration > 1.0) {
+                var curAnchor = Number(st._revAnchorSecV219 || 0);
+                var curWin = Math.min(Number(st._revWinLenV219 || 0), actEl.duration);
+                var offsetInChunk = curAnchor - clampedRev;
+                if (offsetInChunk >= 0.05 && offsetInChunk <= curWin - 0.2) {
+                    if (st._v250RevVisualSeekDebounce) {
+                        clearTimeout(st._v250RevVisualSeekDebounce);
+                        st._v250RevVisualSeekDebounce = null;
+                    }
+                    try {
+                        actEl.currentTime = offsetInChunk;
+                        if (!st.userPaused && actEl.paused) actEl.play().catch(function() {});
+                        return;
+                    } catch (e) {}
+                }
+            }
+
+            window.captureAndHoldVideoFrameV220(3400);
+            if (actEl && !actEl.paused) {
+                st._internalRevPause = true;
+                try { actEl.pause(); } catch (e) {}
+                st._internalRevPause = false;
+            }
+            if (st._v250RevVisualSeekDebounce) {
+                clearTimeout(st._v250RevVisualSeekDebounce);
+            }
+            st._v250RevVisualSeekDebounce = setTimeout(function() {
+                st._v250RevVisualSeekDebounce = null;
+                if (!st.active || !(vd.isReversed || window.isReversedDeckB)) return;
+                var latestTarget = (!st.userPaused && vd._usingFullRamSliceV250)
+                    ? window.getMasterReverseMediaSecV249()
+                    : clampedRev;
+                window.launchVisualOnlyReverseAtSecV250(latestTarget, curRevSpd);
+            }, 120);
+            return;
+        }
+        return (typeof _prevSeekV250 === 'function') ? _prevSeekV250.apply(this, arguments) : undefined;
+    };
+
+    window.launchVisualOnlyReverseAtSecV250 = function(anchorMediaSec, spd) {
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        var mainVid = document.getElementById('jennyVideoElV130');
+        var standbyVid = window.ensureStandbyReverseVideoElV249();
+        if (!st || !st.active || !vd || !mainVid) return;
+
+        if (!vd.isStudioPlaying) {
+            window.startImmediateVideoReverseEngineV217(spd, true, anchorMediaSec);
+            return;
+        }
+
+        if (st._v249PrestageAbort) {
+            try { st._v249PrestageAbort.abort(); } catch (e) {}
+            st._v249PrestageAbort = null;
+        }
+        st._prestagedRevMetaV249 = null;
+
+        var curVisibleEl = st._activeRevVidElV249 || mainVid;
+        var nextEl = (curVisibleEl === mainVid && standbyVid) ? standbyVid : mainVid;
+        var cleanPos = Math.max(0.25, Number(anchorMediaSec) || 0.25);
+        var winLen = Number(Math.min(cleanPos, Math.max(1.5, 9.0)).toFixed(1));
+        var aIdx = Number(st.audioTrackIdxV216) || 0;
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        var myRevSess = st._revTrackSessionIdV220;
+
+        nextEl.muted = true;
+        nextEl.style.display = 'block';
+        nextEl.style.setProperty('opacity', '0', 'important');
+
+        var vUrl = '/api/video/reverse_remux?src=' + encodeURIComponent(rawBaseUrl) +
+            '&pos=' + cleanPos.toFixed(1) +
+            '&win=' + winLen.toFixed(1) +
+            '&aidx=' + aIdx +
+            '&spd=' + Number(spd || 1.0).toFixed(2) +
+            '&no_audio=1' +
+            '&t=' + Date.now();
+
+        var onReadySwap = function() {
+            if (!st.active || !vd.isReversed || st._revTrackSessionIdV220 !== myRevSess) return;
+            st._activeRevVidElV249 = nextEl;
+            st._revAnchorSecV219 = cleanPos;
+            st._revWinLenV219 = winLen;
+            st._revNextBoundarySecV223 = Math.max(0, Number((cleanPos - winLen).toFixed(2)));
+            st._revLaunchWallTsV220 = performance.now();
+            st._revStreamStartedPlayingV220 = true;
+
+            var mNow = window.getMasterReverseMediaSecV249();
+            var wantOff = Math.max(0, Math.min(winLen - 0.1, cleanPos - mNow));
+            if (wantOff > 0.06) {
+                try { nextEl.currentTime = wantOff; } catch (e) {}
+            }
+            try {
+                nextEl.defaultPlaybackRate = spd;
+                nextEl.playbackRate = spd;
+            } catch (e) {}
+
+            nextEl.style.setProperty('opacity', '1', 'important');
+            if (curVisibleEl && curVisibleEl !== nextEl) {
+                curVisibleEl.style.setProperty('opacity', '0', 'important');
+                st._internalRevPause = true;
+                try { curVisibleEl.pause(); } catch (e) {}
+                st._internalRevPause = false;
+            }
+            if (typeof window.releaseHeldVideoFrameV220 === 'function') window.releaseHeldVideoFrameV220();
+            if (!st.userPaused) {
+                nextEl.play().catch(function() {});
+            }
+        };
+
+        nextEl.addEventListener('loadeddata', onReadySwap, { once: true });
+        window._lastInternalMediaSrcSwitchTsV239 = performance.now();
+        nextEl.src = vUrl;
+        nextEl.play().catch(function() {});
+    };
+
+    var _origStartRevV249 = window.startImmediateVideoReverseEngineV217;
+    window.startImmediateVideoReverseEngineV217 = function(revSpd, forceReloadTrackOrSeek, explicitStartSec) {
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        var wasAlreadyRev = Boolean(vd && (vd.isReversed || window.isReversedDeckB));
+        var prevRate = st ? Number(st._revClockRateV249 || 0) : 0;
+
+        var r = (typeof _origStartRevV249 === 'function')
+            ? _origStartRevV249.apply(this, arguments)
+            : undefined;
+
+        if (st && st.active && vd && (vd.isReversed || window.isReversedDeckB) && !st.userPaused) {
+            var newSpd = Number(vd.speed || revSpd || 1.0);
+            // If speed changed dynamically on speed-arc while playing RAM slice, re-slice at exact current media pos so chain timer matches new speed!
+            if (wasAlreadyRev && !forceReloadTrackOrSeek && vd._usingFullRamSliceV250 && Math.abs(newSpd - prevRate) > 0.02) {
+                window.startContinuousRamReverseAudioV249(window.getMasterReverseMediaSecV249(), newSpd);
+            } else if (!vd.isStudioPlaying) {
+                var pos = (explicitStartSec !== undefined && isFinite(explicitStartSec))
+                    ? Number(explicitStartSec)
+                    : window.getMasterReverseMediaSecV249();
+                window.startContinuousRamReverseAudioV249(pos, newSpd);
+            }
+            window.applyDeckBVolumeV216(window._deckBVolumePercentV216 !== undefined ? window._deckBVolumePercentV216 : 100);
+        }
+        return r;
+    };
+
+    var _origRestoreFwdV250 = window.restoreNormalVideoPlaybackV217;
+    window.restoreNormalVideoPlaybackV217 = function(ev, customTargetFwdSpeed) {
+        if (window._vidStateV130 && window._vidStateV130._v250RevVisualSeekDebounce) {
+            clearTimeout(window._vidStateV130._v250RevVisualSeekDebounce);
+            window._vidStateV130._v250RevVisualSeekDebounce = null;
+        }
+        var r = (typeof _origRestoreFwdV250 === 'function')
+            ? _origRestoreFwdV250.apply(this, arguments)
+            : undefined;
+        window.applyDeckBVolumeV216(window._deckBVolumePercentV216 !== undefined ? window._deckBVolumePercentV216 : 100);
+        return r;
+    };
+})();
+/* ================= END JENNY_V250_REVERSE_VOLUME_PROGRESSIVE_INT16_RAM_AND_SEAMLESS_SEEK ================= */
