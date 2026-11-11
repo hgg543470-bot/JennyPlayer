@@ -188,7 +188,7 @@ def index():
         return f"<pre>{traceback.format_exc()}</pre>"
 
 
-@route('/<filename:re:.*\\.(js|css)>')
+@route('/<filename:re:.*\\.(js|css|html|svg|json)>')
 def serve_static(filename):
     res = static_file(filename, root=BASE_DIR)
     res.set_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
@@ -12656,6 +12656,7 @@ class JennyCorsWsgiMiddlewareV238:
                 ('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, X-Jenny-Port'),
                 ('Access-Control-Max-Age', '86400'),
                 ('Timing-Allow-Origin', '*'),
+                ('Cross-Origin-Resource-Policy', 'cross-origin'),
                 ('X-Jenny-Port', self.port_str),
                 ('Content-Length', '0'),
             ]
@@ -12674,6 +12675,7 @@ class JennyCorsWsgiMiddlewareV238:
                     'access-control-allow-headers',
                     'access-control-expose-headers',
                     'timing-allow-origin',
+                    'cross-origin-resource-policy',
                     'x-jenny-port',
                 ):
                     continue
@@ -12684,6 +12686,7 @@ class JennyCorsWsgiMiddlewareV238:
                 ('Access-Control-Allow-Headers', 'Origin, Accept, Content-Type, X-Requested-With, Range, Cache-Control'),
                 ('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, X-Jenny-Port'),
                 ('Timing-Allow-Origin', '*'),
+                ('Cross-Origin-Resource-Policy', 'cross-origin'),
                 ('X-Jenny-Port', port_str),
             ])
             return start_response(status, filtered, exc_info)
@@ -12703,6 +12706,12 @@ def api_multiport_ping_v238():
         "version": "v238",
         "current_port": srv_port,
         "ports": sorted(list(set(_ACTIVE_CLUSTER_PORTS_V238))),
+        "iframe_origins": {
+            "shell": "http://127.0.0.1:8080",
+            "deck_a": "http://127.0.0.1:8081",
+            "deck_b": "http://127.0.0.1:8082",
+            "torrents": "http://127.0.0.1:8083"
+        },
         "roles": {
             "8080": "VIP UI / Folders / Presets",
             "8081": "Deck A Audio / xFLAC / PCM",

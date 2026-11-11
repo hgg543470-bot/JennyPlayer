@@ -9182,11 +9182,7 @@ if (document.getElementById('jennyTorInspectorModalV128')) window.renderTorrentI
 } catch (e) {}
 };
 
-window._onTorWorkerAutoPush = function() {
-    if (typeof window.refreshTorrentDaemonSnapV128 === 'function') {
-        window.refreshTorrentDaemonSnapV128(true);
-    }
-};
+setInterval(window.refreshTorrentDaemonSnapV128, 1000);
 setTimeout(window.mountTorrentHeaderHubMenuV128, 300);
 
 // === 🎬 JENNY V130: FULL-FEATURED VIDEO STUDIO & PIP PLAYER WITH DSP AUDIO BRIDGE ===
@@ -9352,13 +9348,11 @@ let cur = vd.inputMixer;
 cur.connect(vd.preAmpNode); cur = vd.preAmpNode;
 try { vd.preAmpNode.connect(vd.analyserPre); } catch (e) {}
 
-const savedAppCfg = window.appConfig;
-window.appConfig = cfg;
 try {
 if (cfg.firEnabled && cfg.firSettings) {
 vd.firNode = window.trackNode(vd.ctx.createConvolver(), vd.activeDynamicNodes);
 vd.firNode.normalize = false;
-vd.firNode.buffer = window.createFIRImpulse(vd.ctx, cfg.firSettings.decay);
+vd.firNode.buffer = window.createFIRImpulse(vd.ctx, cfg.firSettings.decay, cfg);
 vd.firGainNode.gain.value = parseFloat(cfg.firSettings.gain) || 1.5;
 cur.connect(vd.preFirPad); vd.preFirPad.connect(vd.firNode); vd.firNode.connect(vd.firGainNode);
 cur = vd.firGainNode;
@@ -9427,9 +9421,7 @@ let postOut = window.insertProStudioPostChain(vd.ctx, cur, cfg, vd.activeDynamic
 postOut.connect(vd.masterAntiClickGain);
 }
 try { vd.masterAntiClickGain.connect(vd.analyserPost); } catch (e) {}
-} finally {
-window.appConfig = savedAppCfg;
-}
+} catch (e) {}
 window.saveVideoConfigV131();
 };
 
@@ -9485,77 +9477,32 @@ window.renderDeckSwitchBannersV131();
 
 window.switchActiveUiDeckV131 = function(deckName, ev) {
 if (ev && ev.stopPropagation) ev.stopPropagation();
-if (deckName !== 'video') deckName = 'music';
-if (window._activeUiDeckV131 === 'music') window._musicConfigRefV131 = window.appConfig;
-window._activeUiDeckV131 = deckName;
+// БУНКЕР ДЕКИ А (#354): window.appConfig и штатные модалки навсегда закреплены исключительно за Аудиодекой А!
+window._activeUiDeckV131 = 'music';
+window._musicConfigRefV131 = window.appConfig;
 if (deckName === 'video') {
 window.initVideoDeckAudioV131();
-window.appConfig = window.videoDeckV131.config;
-} else {
-window.appConfig = window._musicConfigRefV131;
+if (ev && typeof window.openDeckBIsolatedEqModal === 'function') {
+window.openDeckBIsolatedEqModal(ev);
+}
+return;
 }
 window.syncAllControlsToActiveDeckV131();
-if (typeof window.showToast === 'function' && ev) {
-window.showToast(deckName === 'video' ? '🎬 Пульт переключён на Деку Б: ВИДЕО!' : '🎵 Пульт переключён на Деку А: МУЗЫКА');
-}
 };
 
 window.copyMusicDspToVideoV131 = function(ev) {
 if (ev && ev.stopPropagation) ev.stopPropagation();
-const mCfg = window._musicConfigRefV131 || {};
+const mCfg = window.appConfig || {};
 ['studioMode', 'phaseFixEnabled', 'gearKeyV66', 'engineModeV62', 'elasticHoseMode', 'hoseTensionPct', 'opt_midPhase', 'val_midPhase', 'opt_midQ', 'val_midQ', 'opt_deEsser', 'val_deEsser', 'opt_cleanFir', 'val_cleanFir', 'opt_masterCeil', 'val_masterCeil', 'opt_autoRms', 'val_autoRms', 'opt_monoBass', 'val_monoBass', 'opt_msWidth', 'val_msWidth', 'opt_punch', 'val_punch', 'opt_crossfeed', 'val_crossfeed', 'firEnabled', 'firSettings', 'multiBandEnabled', 'multiBandSettings', 'limiterEnabled', 'limiterSettings', 'eqEnabled', 'eq', 'boosterEnabled', 'boosterPower'].forEach(k => {
 if (mCfg[k] !== undefined) window.videoDeckV131.config[k] = JSON.parse(JSON.stringify(mCfg[k]));
 });
 window.saveVideoConfigV131();
-if (window._activeUiDeckV131 === 'video') { window.appConfig = window.videoDeckV131.config; window.syncAllControlsToActiveDeckV131(); }
 window.buildVideoAudioGraphV131();
 window.syncVideoRamEngineV131(false);
+if (typeof window.syncDeckBIsolatedEqModalUI === 'function') window.syncDeckBIsolatedEqModalUI();
 if (typeof window.showToast === 'function') window.showToast('✅ Все настройки DSP и РКПП скопированы из Музыки в Видео!');
 };
-
-(function hookDualDeckRoutingV131() {
-const origBuildGraph = window.buildAudioGraph;
-window.buildAudioGraph = function(immediate) {
-if (window._activeUiDeckV131 === 'video') { window.saveVideoConfigV131(); window.buildVideoAudioGraphV131(); return; }
-return origBuildGraph.apply(this, arguments);
-};
-const origChangeEQ = window.changeEQ;
-window.changeEQ = function() {
-if (window._activeUiDeckV131 === 'video') {
-window.initVideoDeckAudioV131();
-const vd = window.videoDeckV131; vd.config.eq = vd.config.eq || {};
-[60, 230, 910, 3600, 14000].forEach(freq => {
-const el = document.getElementById('eq_' + freq); const val = el ? parseInt(el.value, 10) || 0 : 0;
-vd.config.eq['b' + freq] = val;
-if (vd.eqNodes && vd.eqNodes['band' + freq]) vd.eqNodes['band' + freq].gain.value = val;
-});
-window.saveVideoConfigV131(); return;
-}
-return origChangeEQ.apply(this, arguments);
-};
-const origSetGear = window.setGearboxStateV66;
-window.setGearboxStateV66 = function(gearKey, ev) {
-if (window._activeUiDeckV131 === 'video') {
-const spec = window.GEAR_SPECS_V66[gearKey] || window.GEAR_SPECS_V66['jbuf-lock'];
-const vd = window.videoDeckV131;
-vd.config.gearKeyV66 = gearKey; vd.config.engineModeV62 = spec.mode; vd.config.gearPitchLockV66 = spec.pitchLock;
-vd.config.elasticHoseMode = (gearKey === 'jbuf-lock');
-vd.config.studioMode = (gearKey === 'jbuf-lock' || gearKey === 'jbuf-shift' || gearKey === 'vinyl-shift');
-window.saveVideoConfigV131(); window.syncEngineTumblerUIV62(); window.syncVideoRamEngineV131(false);
-if (typeof window.showToast === 'function' && ev) window.showToast('🎬 РКПП Видео: ' + window.tr(spec.labelRu, spec.labelEn), ev);
-return;
-}
-return origSetGear.apply(this, arguments);
-};
-const origSpecAnalysers = window.ensureSpectrumAnalysersV62;
-window.ensureSpectrumAnalysersV62 = function() {
-if (window._activeUiDeckV131 === 'video' && window.videoDeckV131.ctx) {
-const st = window._jennySpecStateV62;
-return st.sourceMode === 'pre' ? window.videoDeckV131.analyserPre : window.videoDeckV131.analyserPost;
-}
-return origSpecAnalysers.apply(this, arguments);
-};
-})();
+// hookDualDeckRoutingV131 удалён (#354): buildAudioGraph, changeEQ, setGearboxStateV66 и ensureSpectrumAnalysersV62 принадлежат на 100% только Аудиодеке А!
 
 window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
 window.initVideoDeckAudioV131();
@@ -10842,7 +10789,8 @@ window.installCleanStageTouchV133();
 // 1. Автоподхват всех скачанных торрент-видео (включая «Матрицу») прямо во вкладку «🎬 Видео»!
 var syncDiscoveredVideosIntoPlaylistV134 = window.syncDiscoveredVideosIntoPlaylistV134 = window.syncDiscoveredVideosIntoPlaylistV134 || function(){};
 
-setTimeout(function() { if (window.runIsolatedDeckB) window.runIsolatedDeckB(function() { window.syncDiscoveredVideosIntoPlaylistV134(false); }); }, 950);
+setInterval(window.syncDiscoveredVideosIntoPlaylistV134, 4500);
+setTimeout(window.syncDiscoveredVideosIntoPlaylistV134, 800);
 
 // 2. Полная и агрессивная распаковка ВСЕЙ аудиодорожки видео в RAM (в 3 параллельных потока FFmpeg без пауз!)
 window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
@@ -11404,14 +11352,8 @@ return;
 return _origHandleTrackPlayV130.apply(this, arguments);
 };
 
-setInterval(function() {
-    if (window.runIsolatedDeckB) window.runIsolatedDeckB(function() { window.syncDiscoveredVideosIntoPlaylistV134(false); });
-    else window.syncDiscoveredVideosIntoPlaylistV134(false);
-}, 5003);
-setTimeout(function() {
-    if (window.runIsolatedDeckB) window.runIsolatedDeckB(function() { window.syncDiscoveredVideosIntoPlaylistV134(true); });
-    else window.syncDiscoveredVideosIntoPlaylistV134(true);
-}, 520);
+setInterval(() => window.syncDiscoveredVideosIntoPlaylistV134(false), 3500);
+setTimeout(() => window.syncDiscoveredVideosIntoPlaylistV134(true), 500);
 
 // === ➕🎬 JENNY V138: FIX ADD FORMAT BUTTON (NO WEBVIEW PROMPT) & AUTO VIDEO EXTS ===
 window.ensureAllVideoFormatsInConfigV138 = function() {
@@ -14913,7 +14855,7 @@ let vsyncTicks = 0;
         if (!sm || !deckBar) return;
 
         let panel = document.getElementById('jv166VCoreDeckPanel');
-        const isVideoDeck = (window._activeUiDeckV131 === 'video');
+        const isVideoDeck = Boolean(window._jennyDualDeckV211 && window._jennyDualDeckV211.deckB);
         if (!isVideoDeck) {
             if (panel) panel.style.display = 'none';
             return;
@@ -15530,27 +15472,17 @@ let vsyncTicks = 0;
             lastVideoActiveStateV210 = true;
             fullStreamSeekOffsetSec = 0.0;
             fullStreamFallbackAppliedSrc = '';
-            window._activeUiDeckV131 = 'video';
-            if (typeof window.switchActiveUiDeckV131 === 'function') {
-                try { window.switchActiveUiDeckV131('video'); } catch (e) {}
-            }
-            var dualOn = Boolean(window._dualDeckModeV131 || (window.videoDeckV131 && window.videoDeckV131.dualMode));
-            var aud = window.audio || document.querySelector('audio');
-            /* V211: never pause Deck A audio when Deck B video starts */
+            /* #354: старт Видеодеки Б никогда не переключает пульт и window.appConfig Аудиодеки А! */
             window.wakeVideoHudControlsV209();
         } else if (!isNowActive && lastVideoActiveStateV210) {
             lastVideoActiveStateV210 = false;
-            window._activeUiDeckV131 = 'audio';
-            if (typeof window.switchActiveUiDeckV131 === 'function') {
-                try { window.switchActiveUiDeckV131('audio'); } catch (e) {}
-            }
         }
 
         if (!isNowActive) return;
 
         handleCompleteMoviesAndFullStreamV210();
 
-        if (window._activeUiDeckV131 === 'video') {
+        if (isNowActive) {
             var dualOnNow = Boolean(window._dualDeckModeV131 || (window.videoDeckV131 && window.videoDeckV131.dualMode));
             var audNow = window.audio || document.querySelector('audio');
             /* V211: allow Deck A and Deck B to play simultaneously */
@@ -16629,7 +16561,7 @@ let vsyncTicks = 0;
 
         var vcorePanel = document.getElementById('jv166VCoreDeckPanel');
         if (vcorePanel) {
-            var showPanel = Boolean(fl.core120 && window._activeUiDeckV131 === 'video');
+            var showPanel = Boolean(fl.core120 && window._jennyDualDeckV211 && window._jennyDualDeckV211.deckB);
             vcorePanel.style.setProperty('display', showPanel ? 'block' : 'none', 'important');
         }
 
@@ -16916,14 +16848,11 @@ let vsyncTicks = 0;
             }
         }
 
-        // Применяем выбранный фокус для настроек эквалайзера/DSP
-        if (window._activeUiDeckV131 === 'music') window._musicConfigRefV131 = window.appConfig;
-        window._activeUiDeckV131 = d.uiFocus;
-        if (d.uiFocus === 'video') {
-            if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
-            if (window.videoDeckV131 && window.videoDeckV131.config) window.appConfig = window.videoDeckV131.config;
-        } else if (window._musicConfigRefV131) {
-            window.appConfig = window._musicConfigRefV131;
+        // БУНКЕР ДЕКИ А (#354): window.appConfig всегда остаётся конфигом Аудиодеки А!
+        window._activeUiDeckV131 = 'music';
+        window._musicConfigRefV131 = window.appConfig;
+        if (d.deckB && typeof window.initVideoDeckAudioV131 === 'function') {
+            window.initVideoDeckAudioV131();
         }
 
         window.saveDualDeckStateV211();
@@ -18006,16 +17935,26 @@ let vsyncTicks = 0;
         return false; // запрещаем V210 перехватывать кнопки и прогресс-бар Деки А
     };
 
-    // РАЗНЕСЁННЫЕ ПО ФАЗЕ И ИЗОЛИРОВАННЫЕ ТАЙМЕРЫ ДЕКИ А (83 мс) И ДЕКИ Б (97 мс, сдвиг +41 мс)
-    // 1) Контур Аудиодеки А — никогда не вызывает функции Деки Б и защищён собственным автоматом runIsolatedDeckA
-    window._deckAIsolatedTimer = setInterval(function() {
-        var tickA = function() {
-            if (!document.getElementById('deckAProgressRow')) {
-                ensureDualProgressBarsDOMV211();
-                window.syncDualDeckVisibilityAndAudioV211();
-            }
-            var aEl = document.getElementById('audioPlayer');
-            if (!aEl || !window.currentPlayingTrack) return;
+    // Главный цикл независимого обновления двух шкал прогресса и 4 буферов RAM
+    setInterval(function() {
+        ensureDualProgressBarsDOMV211();
+        window.setupTimeBlockControlsDeckB();
+        window.setupSeekZoneDeckB();
+        window.syncDualDeckVisibilityAndAudioV211();
+
+        // 1) Обновляем шкалу Деки Б (#deckBProgressRow) строго по видеоэлементу
+        var vEl = document.getElementById('jennyVideoElV130');
+        var stVid = window._vidStateV130;
+        if (vEl && stVid && stVid.active) {
+            var curV = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vEl) : (vEl.currentTime || 0);
+            var durV = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vEl) : (vEl.duration || 0);
+            var isRevV = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+            window.updateProgressUIDeckB(curV, durV, isRevV);
+        }
+
+        // 2) Обновляем шкалу Деки А (#deckAProgressRow) строго по аудиоэлементу (и защищаем от перезаписи!)
+        var aEl = document.getElementById('audioPlayer');
+        if (aEl && window.currentPlayingTrack) {
             var npA = document.getElementById('nowPlaying');
             var hasFwdA = Boolean(window.studioBuffer);
             var hasRevA = Boolean(window.reversedStudioBuffer);
@@ -18035,34 +17974,8 @@ let vsyncTicks = 0;
                 var isRevA = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
                 window.updateProgressUI(aEl.currentTime || 0, effDurA, isRevA);
             }
-        };
-        if (window.runIsolatedDeckA) window.runIsolatedDeckA(tickA);
-        else tickA();
-    }, 83);
-
-    // 2) Контур Видеодеки Б — стартует со сдвигом фазы +41 мс, шаг 97 мс (некратный 83 мс), спит при закрытом видео
-    setTimeout(function() {
-        window._deckBIsolatedTimer = setInterval(function() {
-            var tickB = function() {
-                if (!document.getElementById('deckBProgressRow')) {
-                    ensureDualProgressBarsDOMV211();
-                    window.setupTimeBlockControlsDeckB();
-                    window.setupSeekZoneDeckB();
-                    window.syncDualDeckVisibilityAndAudioV211();
-                }
-                var stVid = window._vidStateV130;
-                if (!stVid || !stVid.active) return;
-                var vEl = document.getElementById('jennyVideoElV130');
-                if (!vEl) return;
-                var curV = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vEl) : (vEl.currentTime || 0);
-                var durV = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vEl) : (vEl.duration || 0);
-                var isRevV = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
-                window.updateProgressUIDeckB(curV, durV, isRevV);
-            };
-            if (window.runIsolatedDeckB) window.runIsolatedDeckB(tickB);
-            else tickB();
-        }, 97);
-    }, 41);
+        }
+    }, 80);
 
     setTimeout(function() {
         ensureDualProgressBarsDOMV211();
@@ -18715,18 +18628,10 @@ let vsyncTicks = 0;
     };
 
     var _origRefreshSnapV128 = window.refreshTorrentDaemonSnapV128;
-    window.refreshTorrentDaemonSnapV128 = async function(fromWorkerPush) {
+    window.refreshTorrentDaemonSnapV128 = async function() {
         try {
             window.mountTorrentHeaderHubMenuV128();
-            var d = null;
-            if (fromWorkerPush && window._latestTorWorkerSnap && window._latestTorWorkerSnap.statusObj) {
-                d = window._latestTorWorkerSnap.statusObj;
-            } else if (typeof window.requestTorrentWorkerSnapshot === 'function') {
-                d = await window.requestTorrentWorkerSnapshot(350);
-            }
-            if (!d) {
-                d = await fetch('/api/torrent/status').then(function(r) { return r.json(); });
-            }
+            var d = await fetch('/api/torrent/status').then(function(r) { return r.json(); });
             var list = (d && d.torrents) || [];
             list.forEach(function(t) {
                 var h = String(t.hash || '').toLowerCase();
@@ -18809,7 +18714,6 @@ let vsyncTicks = 0;
 
     window.ensureMultiTorrentWorkerV112 = function() {
         if (window._torGlobalTimerV112) return;
-        if (typeof window.setTorrentWorkerFastMode === 'function') window.setTorrentWorkerFastMode(true);
         window._torGlobalTimerV112 = setInterval(async function() {
             var allJobs = Object.values(window._torMapV112 || {});
             var activeJobs = allJobs.filter(function(j) { return j.dlActive; });
@@ -18817,13 +18721,12 @@ let vsyncTicks = 0;
                 clearInterval(window._torGlobalTimerV112);
                 window._torGlobalTimerV112 = null;
                 if (window._torStateV96) window._torStateV96.dlActive = false;
-                if (typeof window.setTorrentWorkerFastMode === 'function') window.setTorrentWorkerFastMode(false);
                 return;
             }
-            if (Date.now() - (window._lastTorStatusFetchTsV212 || 0) > 850) {
+            if (Date.now() - (window._lastTorStatusFetchTsV212 || 0) > 650) {
                 await window.refreshTorrentDaemonSnapV128();
             }
-        }, 1031);
+        }, 800);
     };
 
     window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
@@ -19352,8 +19255,8 @@ let vsyncTicks = 0;
         var videoSlots = slotsObj.videoSlots || [];
         var d = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music' };
 
-        var showAudio = Boolean(d.deckA || (!d.deckA && !d.deckB && d.uiFocus !== 'video'));
-        var showVideo = Boolean(d.deckB || d.uiFocus === 'video');
+        var showAudio = true;
+        var showVideo = true;
 
         var secAud = document.getElementById('customFormatsSection');
         if (!secAud) return;
@@ -19516,12 +19419,7 @@ let vsyncTicks = 0;
         };
         window.paintOpenedTorrentJobProgressV112._v215Wrapped = true;
     }
-    setInterval(function() {
-        var tm = document.getElementById('jennyTorrentModalV91');
-        if (!tm || tm.style.display === 'none') return;
-        if (window.runIsolatedTorrents) window.runIsolatedTorrents(cleanAndHighlightTorrentFileRowsV215);
-        else cleanAndHighlightTorrentFileRowsV215();
-    }, 613);
+    setInterval(cleanAndHighlightTorrentFileRowsV215, 500);
 
     // -------------------------------------------------------------------------
     // 6. ОЧИСТКА КЭША ПРОГРЕССА ПРИ СТОПЕ / УДАЛЕНИИ + ОНБОРДИНГ 24/7 + ФИЛЬТРЫ ТОРРЕНТА
@@ -20009,11 +19907,64 @@ let vsyncTicks = 0;
     // 2. СТИЛИ V216: КОМПАКТНЫЕ 9-КНОПОЧНЫЕ СТРОКИ УПРАВЛЕНИЯ ПОД ДЕКОЙ Б И ДЕКОЙ А
     //    (СЛЕГКА СКВАДРАЧЕННЫЕ С КРУГЛЫМИ УГЛАМИ, ВСЕ 9 КНОПОК В ОДНУ СТРОКУ!)
     // -------------------------------------------------------------------------
-    // Стили кнопок и шкал Деки А и Деки Б разнесены в независимые файлы deck_a_isolated.css и deck_b_isolated.css
     var styleV216 = document.createElement('style');
-    styleV216.id = 'jennyStyleV216HeaderOnly';
+    styleV216.id = 'jennyStyleV216';
     styleV216.textContent = [
         '#subDockBar { display: none !important; }',
+        '.jenny-deck-ctrl-row-v216 {',
+        '  display: flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: space-between !important;',
+        '  gap: 4px !important;',
+        '  width: 100% !important;',
+        '  padding: 0 2px !important;',
+        '  box-sizing: border-box !important;',
+        '}',
+        '#deckBControlsRowV216 {',
+        '  margin-top: -2px !important;',
+        '  margin-bottom: 7px !important;',
+        '}',
+        '#mainTransportBar.jenny-deck-ctrl-row-v216 {',
+        '  margin-top: -2px !important;',
+        '  margin-bottom: 2px !important;',
+        '}',
+        '.jenny-sq-btn-v216 {',
+        '  flex: 1 1 0 !important;',
+        '  min-width: 0 !important;',
+        '  height: 34px !important;',
+        '  padding: 0 2px !important;',
+        '  border-radius: 9px !important;',
+        '  background: rgba(16, 22, 31, 0.92) !important;',
+        '  border: 1.2px solid rgba(115, 65, 190, 0.55) !important;',
+        '  color: #c9d1d9 !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  gap: 2px !important;',
+        '  cursor: pointer !important;',
+        '  user-select: none !important;',
+        '  box-sizing: border-box !important;',
+        '  box-shadow: 0 2px 6px rgba(0,0,0,0.45) !important;',
+        '  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease !important;',
+        '}',
+        '.jenny-sq-btn-v216:active {',
+        '  transform: scale(0.93) !important;',
+        '}',
+        '.jenny-sq-btn-v216.play-accent-v216 {',
+        '  background: rgba(115, 65, 190, 0.32) !important;',
+        '  border-color: #a371f7 !important;',
+        '  color: #ffffff !important;',
+        '  box-shadow: 0 0 10px rgba(163, 113, 247, 0.35) !important;',
+        '}',
+        '.jenny-sq-btn-v216.deckb-accent-v216 {',
+        '  border-color: rgba(88, 166, 255, 0.52) !important;',
+        '}',
+        '.jenny-sq-btn-v216.deckb-play-v216 {',
+        '  background: rgba(31, 111, 235, 0.28) !important;',
+        '  border-color: #58a6ff !important;',
+        '  color: #ffffff !important;',
+        '  box-shadow: 0 0 10px rgba(88, 166, 255, 0.35) !important;',
+        '}',
         '#topHeaderCapsule .jenny-icon-pill {',
         '  width: 30px !important;',
         '  height: 30px !important;',
@@ -21427,7 +21378,188 @@ let vsyncTicks = 0;
     // 2. РАЗДЕЛЕНИЕ ЦВЕТОВ ДЕКИ Б (НАСЫЩЕННЫЙ СИНИЙ) И ДЕКИ А (100% ФИОЛЕТОВЫЙ)
     //    И ЕДИНЫЙ СТИЛЬ КНОПОК ВНУТРИ ВИДЕОПЛЕЕРА (#jennyVideoStudioRootV130)
     // -------------------------------------------------------------------------
-    // Цветовые схемы и геометрия Деки А и Деки Б физически разведены по deck_a_isolated.css и deck_b_isolated.css
+    var styleV217 = document.createElement('style');
+    styleV217.id = 'jennyStyleV217';
+    styleV217.textContent = [
+        /* === ДЕКА А (АУДИО — НИЖНЯЯ ШКАЛА И 9 КНОПОК): 100% ФИОЛЕТОВЫЙ === */
+        '#deckAProgressRow #leftTimeBlock, #deckAProgressRow #seekZone, #deckAProgressRow #rightTimeBlock {',
+        '  border-color: rgba(168, 85, 247, 0.72) !important;',
+        '  box-shadow: inset 0 0 8px rgba(168, 85, 247, 0.16) !important;',
+        '}',
+        '#deckAProgressRow #progressFill {',
+        '  background: rgba(147, 51, 234, 0.46) !important;',
+        '}',
+        '#deckAProgressRow #currentTime {',
+        '  color: #c084fc !important;',
+        '}',
+        '#deckAProgressRow #remainingTime {',
+        '  color: #d8b4fe !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216 {',
+        '  background: rgba(24, 12, 46, 0.94) !important;',
+        '  border: 1.3px solid rgba(168, 85, 247, 0.68) !important;',
+        '  color: #c084fc !important;',
+        '  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(192, 132, 252, 0.18) !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216.play-accent-v216 {',
+        '  background: rgba(126, 34, 206, 0.42) !important;',
+        '  border-color: #c084fc !important;',
+        '  color: #e9d5ff !important;',
+        '  box-shadow: 0 0 12px rgba(168, 85, 247, 0.48) !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216 svg {',
+        '  color: #c084fc !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216 svg[stroke] {',
+        '  stroke: #c084fc !important;',
+        '}',
+        '#mainTransportBar .jenny-sq-btn-v216 svg[fill="currentColor"] {',
+        '  fill: #c084fc !important;',
+        '}',
+        '#mainTransportBar #tracksCount {',
+        '  color: #c084fc !important;',
+        '}',
+
+        /* === ДЕКА Б (ВИДЕО — ВЕРХНЯЯ ШКАЛА И 9 КНОПОК): НАСЫЩЕННЫЙ СИНИЙ === */
+        '#deckBProgressRow #leftTimeBlockDeckB, #deckBProgressRow #seekZoneDeckB, #deckBProgressRow #rightTimeBlockDeckB {',
+        '  border-color: rgba(59, 130, 246, 0.78) !important;',
+        '  box-shadow: inset 0 0 8px rgba(59, 130, 246, 0.18) !important;',
+        '}',
+        '#deckBProgressRow #progressFillDeckB {',
+        '  background: rgba(37, 99, 235, 0.48) !important;',
+        '}',
+        '#deckBProgressRow #currentTimeDeckB {',
+        '  color: #60a5fa !important;',
+        '}',
+        '#deckBProgressRow #remainingTimeDeckB {',
+        '  color: #93c5fd !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216 {',
+        '  background: rgba(11, 24, 54, 0.94) !important;',
+        '  border: 1.3px solid rgba(59, 130, 246, 0.72) !important;',
+        '  color: #60a5fa !important;',
+        '  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(96, 165, 250, 0.18) !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216.deckb-play-v216 {',
+        '  background: rgba(37, 99, 235, 0.42) !important;',
+        '  border-color: #60a5fa !important;',
+        '  color: #dbeafe !important;',
+        '  box-shadow: 0 0 12px rgba(59, 130, 246, 0.48) !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg {',
+        '  color: #60a5fa !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg[stroke] {',
+        '  stroke: #60a5fa !important;',
+        '}',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg[fill="currentColor"] {',
+        '  fill: #60a5fa !important;',
+        '}',
+        '#deckBControlsRowV216 #tracksCountDeckBV216 {',
+        '  color: #60a5fa !important;',
+        '}',
+
+        /* === КНОПКИ ВНУТРИ ВИДЕОПЛЕЕРА (#jennyVideoStudioRootV130): ЕДИНЫЙ СИНИЙ СТИЛЬ === */
+        '#jennyVideoStudioRootV130 .v130-btn {',
+        '  background: rgba(11, 24, 54, 0.88) !important;',
+        '  border: 1.25px solid rgba(59, 130, 246, 0.62) !important;',
+        '  color: #60a5fa !important;',
+        '  border-radius: 9px !important;',
+        '  height: 32px !important;',
+        '  padding: 0 7px !important;',
+        '  font-size: 11px !important;',
+        '  font-weight: 800 !important;',
+        '  display: inline-flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  gap: 4px !important;',
+        '  box-shadow: 0 2px 6px rgba(0,0,0,0.55), inset 0 1px 2px rgba(96,165,250,0.16) !important;',
+        '  white-space: nowrap !important;',
+        '  box-sizing: border-box !important;',
+        '  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn svg {',
+        '  color: #60a5fa !important;',
+        '  flex-shrink: 0 !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-active-v217 {',
+        '  background: rgba(37, 99, 235, 0.44) !important;',
+        '  border-color: #60a5fa !important;',
+        '  color: #eff6ff !important;',
+        '  box-shadow: 0 0 11px rgba(59, 130, 246, 0.52), inset 0 1px 2px rgba(191, 219, 254, 0.25) !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-active-v217 svg {',
+        '  color: #93c5fd !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-off-v217 {',
+        '  background: rgba(15, 23, 42, 0.72) !important;',
+        '  border-color: rgba(100, 116, 139, 0.32) !important;',
+        '  color: #64748b !important;',
+        '  box-shadow: none !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-off-v217 svg {',
+        '  color: #64748b !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-close-v217 {',
+        '  background: rgba(185, 28, 28, 0.85) !important;',
+        '  border-color: #f87171 !important;',
+        '  color: #ffffff !important;',
+        '  width: 32px !important;',
+        '  padding: 0 !important;',
+        '}',
+        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-close-v217 svg {',
+        '  color: #ffffff !important;',
+        '}',
+        '#jennyVideoStudioRootV130 #v135BottomToolsRow {',
+        '  display: flex !important;',
+        '  align-items: center !important;',
+        '  justify-content: space-between !important;',
+        '  gap: 4px !important;',
+        '  width: 100% !important;',
+        '  flex-wrap: nowrap !important;',
+        '  overflow-x: auto !important;',
+        '  scrollbar-width: none !important;',
+        '}',
+        '#jennyVideoStudioRootV130 #v135BottomToolsRow::-webkit-scrollbar { display: none !important; }',
+        '#jennyVideoStudioRootV130 #v135BottomToolsRow .v130-btn {',
+        '  flex: 1 1 0 !important;',
+        '  min-width: 0 !important;',
+        '  padding: 0 4px !important;',
+        '  font-size: 10.5px !important;',
+        '}',
+        '#jennyVideoStudioRootV130 #v130SeekSlider {',
+        '  accent-color: #3b82f6 !important;',
+        '}',
+        '#jennyVideoStudioRootV130 #v130CurTime, #jennyVideoStudioRootV130 #v130DurTime {',
+        '  color: #60a5fa !important;',
+        '}',
+        /* === ПРАВИЛЬНЫЙ РАЗВОРОТ НА 90° ВО ВЕСЬ ЭКРАН БЕЗ ЧЁРНЫХ ПОЛОС === */
+        '#jennyVideoStageV130.rot90-v130 {',
+        '  position: fixed !important;',
+        '  left: 50% !important;',
+        '  top: 50% !important;',
+        '  width: 100dvh !important;',
+        '  height: 100dvw !important;',
+        '  max-width: none !important;',
+        '  max-height: none !important;',
+        '  transform: translate(-50%, -50%) rotate(90deg) !important;',
+        '  transform-origin: center center !important;',
+        '}',
+        '#jennyVideoStageV130.rot90-v130 #jennyVideoElV130 {',
+        '  width: 100% !important;',
+        '  height: 100% !important;',
+        '  max-width: none !important;',
+        '  max-height: none !important;',
+        '}',
+        '#jennyVideoStageV130.rot90-v130 #v130TopDragBar {',
+        '  padding: 6px 12px !important;',
+        '}',
+        '#jennyVideoStageV130.rot90-v130 #v135BottomToolsRow .v130-btn {',
+        '  height: 30px !important;',
+        '  font-size: 11px !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(styleV217);
 
     // -------------------------------------------------------------------------
     // 3. НАСТРОЙКИ ВИДЕО ("🎬 Настройки видео"): ОПЦИОНАЛЬНЫЕ КНОПКИ 90° И МАСШТАБА
@@ -23153,15 +23285,19 @@ let vsyncTicks = 0;
         });
     };
 
+    // БУНКЕР ДЕКИ А (#354): #eqModal, #specModal и #settingsModal привязаны на 100% ТОЛЬКО к Аудиодеке А!
+    // У Деки Б (Видео) — свои собственные синие окна #eqModalDeckB и #specModalDeckB (jenny_deck_b_modals.js).
+    window._activeUiDeckV131 = 'music';
+    window._musicConfigRefV131 = window.appConfig;
+
     window.syncEqSlidersToActiveDeckV218 = function() {
-        var isVid = (window._activeUiDeckV131 === 'video');
-        var eqObj = isVid ? window._deckBEqV218 : window._deckAEqV218;
+        var eqObj = window._deckAEqV218;
         [60, 230, 910, 3600, 14000].forEach(function(freq) {
             var v = parseFloat(eqObj['b' + freq]) || 0;
             var el = document.getElementById('eq_' + freq);
             if (el) {
                 el.value = String(v);
-                el.style.accentColor = isVid ? '#3b82f6' : '#a855f7';
+                el.style.accentColor = '#a855f7';
             }
             var lbl = document.getElementById('eq_val_lbl_' + freq);
             if (lbl) lbl.innerText = (v > 0 ? '+' : '') + v + ' dB';
@@ -23170,13 +23306,8 @@ let vsyncTicks = 0;
     };
 
     window.changeEQ = function() {
-        var isVid = (window._activeUiDeckV131 === 'video');
-        if (isVid) {
-            if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
-        } else {
-            if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
-        }
-        var targetEq = isVid ? window._deckBEqV218 : window._deckAEqV218;
+        if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+        var targetEq = window._deckAEqV218;
         [60, 230, 910, 3600, 14000].forEach(function(freq) {
             var el = document.getElementById('eq_' + freq);
             var val = el ? (parseInt(el.value, 10) || 0) : 0;
@@ -23184,20 +23315,11 @@ let vsyncTicks = 0;
             var lbl = document.getElementById('eq_val_lbl_' + freq);
             if (lbl) lbl.innerText = (val > 0 ? '+' : '') + val + ' dB';
         });
-
-        if (isVid) {
-            if (window.videoDeckV131 && window.videoDeckV131.config) {
-                window.videoDeckV131.config.eq = Object.assign({}, window._deckBEqV218);
-                if (typeof window.saveVideoConfigV131 === 'function') window.saveVideoConfigV131();
-            }
-            try { localStorage.setItem('jenny_eq_deckB_v218', JSON.stringify(window._deckBEqV218)); } catch (e) {}
-        } else {
-            if (window._musicConfigRefV131) {
-                window._musicConfigRefV131.eq = Object.assign({}, window._deckAEqV218);
-                try { localStorage.setItem('ytm_config', JSON.stringify(window._musicConfigRefV131)); } catch (e) {}
-            }
-            try { localStorage.setItem('jenny_eq_deckA_v218', JSON.stringify(window._deckAEqV218)); } catch (e) {}
+        if (window.appConfig) {
+            window.appConfig.eq = Object.assign({}, window._deckAEqV218);
+            try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
         }
+        try { localStorage.setItem('jenny_eq_deckA_v218', JSON.stringify(window._deckAEqV218)); } catch (e) {}
         window.applyBothDecksEQNodesV218();
         window.syncPersistentUserDataV218(false);
     };
@@ -23206,13 +23328,9 @@ let vsyncTicks = 0;
         window.syncEqSlidersToActiveDeckV218();
     };
 
-    // Раздельные радиальные зоны скраббинга для Деки А и Деки Б
     var _origSaveZonesV218 = window.saveZonesToConfig;
     window.saveZonesToConfig = function() {
-        var isVid = (window._activeUiDeckV131 === 'video');
-        var cfg = isVid
-            ? ((window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig)
-            : (window._musicConfigRefV131 || window.appConfig);
+        var cfg = window.appConfig;
         if (!cfg.scrubZones) cfg.scrubZones = [];
         for (var i = 1; i <= 6; i++) {
             var enEl = document.getElementById('cfg_z' + i + '_en');
@@ -23224,26 +23342,19 @@ let vsyncTicks = 0;
                 };
             }
         }
-        if (isVid) {
-            if (typeof window.saveVideoConfigV131 === 'function') window.saveVideoConfigV131();
-            if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') window.syncVideoPlayerButtonsUIV217();
-        } else {
-            try { localStorage.setItem('ytm_config', JSON.stringify(cfg)); } catch (e) {}
-        }
+        try { localStorage.setItem('ytm_config', JSON.stringify(cfg)); } catch (e) {}
         window.syncPersistentUserDataV218(false);
     };
 
     var _origSyncControlsToDeckV131 = window.syncAllControlsToActiveDeckV131;
     window.syncAllControlsToActiveDeckV131 = function() {
         if (window.isAnySettingsInputFocusedV218()) return;
+        window._activeUiDeckV131 = 'music';
+        window._musicConfigRefV131 = window.appConfig;
         if (typeof _origSyncControlsToDeckV131 === 'function') {
             _origSyncControlsToDeckV131.apply(this, arguments);
         }
-        var isVid = (window._activeUiDeckV131 === 'video');
-        var cfg = isVid
-            ? ((window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {})
-            : (window._musicConfigRefV131 || window.appConfig || {});
-
+        var cfg = window.appConfig || {};
         var defZones = [1.1, 1.0, 1.05, 0.95, 1.5, 0.9];
         if (!Array.isArray(cfg.scrubZones) || cfg.scrubZones.length !== 6) {
             cfg.scrubZones = defZones.map(function(v) { return { val: v, en: true }; });
@@ -23258,30 +23369,20 @@ let vsyncTicks = 0;
         window.syncEqSlidersToActiveDeckV218();
     };
 
-    // Чистый селектор активной деки для Эквалайзера (#eqModal) и Спектра (#specModal) — БЕЗ включения/выключения самих дек!
     window.selectUiDeckFocusOnlyV218 = function(whichDeck, ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
-        var targetFocus = (whichDeck === 'video' || whichDeck === 'B') ? 'video' : 'music';
-        if (window._activeUiDeckV131 === 'music' && window.appConfig && window.appConfig !== (window.videoDeckV131 && window.videoDeckV131.config)) {
-            window._musicConfigRefV131 = window.appConfig;
-        }
-        window._activeUiDeckV131 = targetFocus;
-        if (window._jennyDualDeckV211) {
-            window._jennyDualDeckV211.uiFocus = targetFocus;
-            window.saveDualDeckStateV211();
-        }
-        if (targetFocus === 'video') {
-            if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
-            if (window.videoDeckV131 && window.videoDeckV131.config) window.appConfig = window.videoDeckV131.config;
-        } else if (window._musicConfigRefV131) {
-            window.appConfig = window._musicConfigRefV131;
+        window._activeUiDeckV131 = 'music';
+        window._musicConfigRefV131 = window.appConfig;
+        if (whichDeck === 'video' || whichDeck === 'B') {
+            if (typeof window.openDeckBIsolatedEqModal === 'function') {
+                window.openDeckBIsolatedEqModal(ev);
+            }
+            return;
         }
         window.syncAllControlsToActiveDeckV131();
         window.renderDeckSwitchBannersV131();
     };
 
-    // Переключение ВКЛ/ВЫКЛ самих дек (только в #settingsModal!):
-    // Если вручную выключили Деку Б — закрываем и выгружаем окно с видео!
     window.toggleComplementDeckV211 = function(whichDeck, ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
         var d = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music', manualDeckB: false };
@@ -23290,10 +23391,7 @@ let vsyncTicks = 0;
         if (isVideoBtn) {
             d.deckB = !d.deckB;
             d.manualDeckB = Boolean(d.deckB);
-            if (d.deckB) {
-                d.uiFocus = 'video';
-            } else {
-                // При ручном выключении Деки Б закрываем и выгружаем окно с видео, как попросил Дмитрий!
+            if (!d.deckB) {
                 if (window._vidStateV130 && window._vidStateV130.active && typeof window.closeVideoPlayerV130 === 'function') {
                     window._closingFromManualDeckBOffV218 = true;
                     try { window.closeVideoPlayerV130(); } finally { window._closingFromManualDeckBOffV218 = false; }
@@ -23304,23 +23402,23 @@ let vsyncTicks = 0;
                         try { window.videoDeckV131.sourceNode.stop(); } catch (e) {}
                     }
                 }
-                if (d.deckA) d.uiFocus = 'music';
+            } else if (typeof window.initVideoDeckAudioV131 === 'function') {
+                window.initVideoDeckAudioV131();
             }
         } else {
             d.deckA = !d.deckA;
-            if (d.deckA) {
-                d.uiFocus = 'music';
-            } else {
+            if (!d.deckA) {
                 var aEl = document.getElementById('audioPlayer');
                 if (aEl && !aEl.paused) { try { aEl.pause(); } catch (e) {} }
                 if (window.studioSourceNode) {
                     try { window.studioSourceNode.stop(); } catch (e) {}
                 }
-                if (d.deckB) d.uiFocus = 'video';
             }
         }
 
-        window.selectUiDeckFocusOnlyV218(d.uiFocus);
+        d.uiFocus = 'music';
+        window._activeUiDeckV131 = 'music';
+        window._musicConfigRefV131 = window.appConfig;
         window.saveDualDeckStateV211();
         window.syncDualDeckVisibilityAndAudioV211();
         window.renderDeckSwitchBannersV131();
@@ -23333,14 +23431,8 @@ let vsyncTicks = 0;
         }
     };
 
-    // Отрисовка шапки дек:
-    // В #settingsModal — кнопки питания дек [ВКЛ/ВЫКЛ] + переключение фокуса пульта DSP.
-    // В #eqModal и #specModal — ЧИСТЫЙ взаимоисключающий переключатель (Дека А ↔ Дека Б) БЕЗ кнопок ВКЛ/ВЫКЛ!
     window.renderDeckSwitchBannersV131 = function() {
         var d = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music' };
-        var isVidFocus = (window._activeUiDeckV131 === 'video' || d.uiFocus === 'video');
-
-        // 1) Плашка для #settingsModal (с ВКЛ/ВЫКЛ самих дек и выбором чьи настройки DSP крутить ниже)
         var sm = document.getElementById('settingsModal');
         if (sm) {
             var contS = sm.querySelector('.container') || sm;
@@ -23349,8 +23441,8 @@ let vsyncTicks = 0;
                 exS = document.createElement('div');
                 contS.insertBefore(exS, contS.firstChild);
             }
-            var clsA = 'jenny-deck-ctrl-btn-v211 ' + (d.deckA ? 'deck-on-v211' : 'deck-off-v211') + (!isVidFocus ? ' deck-focused-v211' : '');
-            var clsB = 'jenny-deck-ctrl-btn-v211 ' + (d.deckB ? 'deck-on-v211' : 'deck-off-v211') + (isVidFocus ? ' deck-focused-v211' : '');
+            var clsA = 'jenny-deck-ctrl-btn-v211 ' + (d.deckA ? 'deck-on-v211 deck-focused-v211' : 'deck-off-v211');
+            var clsB = 'jenny-deck-ctrl-btn-v211 ' + (d.deckB ? 'deck-on-v211' : 'deck-off-v211');
             var statusA = d.deckA ? 'ВКЛ' : 'ВЫКЛ';
             var statusB = d.deckB ? 'ВКЛ' : 'ВЫКЛ';
 
@@ -23367,90 +23459,48 @@ let vsyncTicks = 0;
                         '</button>' +
                     '</div>' +
                     '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 0 4px;gap:6px;">' +
-                        '<div style="display:flex;align-items:center;gap:4px;">' +
-                            '<span style="font-size:10px;color:#8b949e;">Пульт:</span>' +
-                            '<button type="button" onclick="window.selectUiDeckFocusOnlyV218(\'music\', event)" style="padding:2px 7px;font-size:10px;font-weight:bold;border-radius:12px;border:1px solid ' + (!isVidFocus ? '#a855f7' : '#30363d') + ';background:' + (!isVidFocus ? 'rgba(168,85,247,0.28)' : 'transparent') + ';color:' + (!isVidFocus ? '#e9d5ff' : '#8b949e') + ';">🎵 Дека А</button>' +
-                            '<button type="button" onclick="window.selectUiDeckFocusOnlyV218(\'video\', event)" style="padding:2px 7px;font-size:10px;font-weight:bold;border-radius:12px;border:1px solid ' + (isVidFocus ? '#3b82f6' : '#30363d') + ';background:' + (isVidFocus ? 'rgba(59,130,246,0.28)' : 'transparent') + ';color:' + (isVidFocus ? '#dbeafe' : '#8b949e') + ';">🎬 Дека Б</button>' +
-                        '</div>' +
-                        (isVidFocus
-                            ? '<button type="button" onclick="window.copyMusicDspToVideoV131(event)" style="padding:3px 8px;font-size:10px;font-weight:bold;border-radius:20px;background:linear-gradient(145deg,#160d2e,#090514);border:1px solid #3fb950;color:#3fb950;">📋 Скопировать DSP из Музыки</button>'
-                            : '<span style="font-size:9.5px;color:#8b949e;">Настраивается: Дека А</span>') +
+                        '<span style="font-size:10px;color:#c084fc;font-weight:bold;">🔒 Все настройки ниже — строго Дека А (Музыка)</span>' +
+                        '<button type="button" onclick="if(window.openDeckBIsolatedEqModal) window.openDeckBIsolatedEqModal(event)" style="padding:3px 9px;font-size:10px;font-weight:bold;border-radius:14px;background:rgba(37,99,235,0.28);border:1px solid #60a5fa;color:#dbeafe;cursor:pointer;">🎬 Открыть пульт DSP Видео</button>' +
                     '</div>' +
                 '</div>';
         }
 
-        // 2) Плашка для #eqModal и #specModal — СТРОГО взаимоисключающий выбор чей эквалайзер/спектр открыт (БЕЗ ВКЛ/ВЫКЛ дек!)
-        [['eqModal', 'deckSwitchBarEqV131'], ['specModal', 'deckSwitchBarSpecV131']].forEach(function(pair) {
-            var m = document.getElementById(pair[0]);
-            if (!m) return;
-            var cont = m.querySelector('.container') || m;
-            var ex = document.getElementById(pair[1]);
-            if (!ex) {
-                ex = document.createElement('div');
-                cont.insertBefore(ex, cont.firstChild);
-            }
-            var isEq = (pair[0] === 'eqModal');
-            ex.outerHTML =
-                '<div id="' + pair[1] + '" style="display:flex;flex-direction:column;gap:5px;padding:7px 8px;background:#05070b;border:1.5px solid ' + (isVidFocus ? '#3b82f6' : '#a855f7') + ';border-radius:14px;margin-bottom:10px;box-shadow:inset 0 1px 4px rgba(0,0,0,0.9);">' +
-                    '<div style="display:flex;align-items:center;gap:8px;width:100%;">' +
-                        '<button type="button" onclick="window.selectUiDeckFocusOnlyV218(\'music\', event)" style="flex:1;padding:8px 8px;font-size:11.5px;font-weight:900;border-radius:10px;border:1.5px solid ' + (!isVidFocus ? '#a855f7' : 'rgba(168,85,247,0.22)') + ';background:' + (!isVidFocus ? 'rgba(126,34,206,0.38)' : 'rgba(15,10,28,0.65)') + ';color:' + (!isVidFocus ? '#f3e8ff' : '#8b949e') + ';box-shadow:' + (!isVidFocus ? '0 0 12px rgba(168,85,247,0.42)' : 'none') + ';cursor:pointer;">' +
-                            '🎵 Дека А: Музыка' +
-                        '</button>' +
-                        '<button type="button" onclick="window.selectUiDeckFocusOnlyV218(\'video\', event)" style="flex:1;padding:8px 8px;font-size:11.5px;font-weight:900;border-radius:10px;border:1.5px solid ' + (isVidFocus ? '#3b82f6' : 'rgba(59,130,246,0.22)') + ';background:' + (isVidFocus ? 'rgba(37,99,235,0.40)' : 'rgba(10,18,36,0.65)') + ';color:' + (isVidFocus ? '#eff6ff' : '#8b949e') + ';box-shadow:' + (isVidFocus ? '0 0 12px rgba(59,130,246,0.42)' : 'none') + ';cursor:pointer;">' +
-                            '🎬 Дека Б: Видео' +
-                        '</button>' +
-                    '</div>' +
-                    '<div style="text-align:center;font-size:10px;font-weight:bold;color:' + (isVidFocus ? '#60a5fa' : '#c084fc') + ';">' +
-                        (isEq
-                            ? (isVidFocus ? '🎚️ Ползунки настраивают эквалайзер: Деки Б (Видео)' : '🎚️ Ползунки настраивают эквалайзер: Деки А (Музыка)')
-                            : (isVidFocus ? '📊 Спектр сигнала: Дека Б (Видео)' : '📊 Спектр сигнала: Дека А (Музыка)')) +
-                    '</div>' +
-                '</div>';
+        // Удаляем любые старые общие переключатели из #eqModal и #specModal — они теперь 100% чистые окна Аудиодеки А!
+        ['deckSwitchBarEqV131', 'deckSwitchBarSpecV131'].forEach(function(barId) {
+            var oldBar = document.getElementById(barId);
+            if (oldBar) oldBar.remove();
         });
         if (typeof window.renderVCoreDeckPanelV166 === 'function') window.renderVCoreDeckPanelV166();
     };
 
-    // Открытие Эквалайзера (🎚️) и Спектра (📊) с первого нажатия:
-    // если модалка уже открыта для другой деки — не закрываем её, а мгновенно переключаем на нажатую деку!
     window.openEqForDeckV216 = function(whichDeck, ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
-        var targetDeck = (whichDeck === 'video') ? 'video' : 'music';
-        var prevDeck = window._activeUiDeckV131 || 'music';
-        var em = document.getElementById('eqModal');
-        var wasOpen = Boolean(em && em.classList.contains('open'));
-
-        window.selectUiDeckFocusOnlyV218(targetDeck);
-        if (wasOpen) {
-            if (prevDeck === targetDeck) {
-                em.classList.remove('open');
+        if (whichDeck === 'video') {
+            if (typeof window.openDeckBIsolatedEqModal === 'function') {
+                window.openDeckBIsolatedEqModal(ev);
             }
-        } else {
-            if (typeof window.toggleModal === 'function') window.toggleModal('eqModal');
-            else if (em) em.classList.add('open');
+            return;
         }
+        window._activeUiDeckV131 = 'music';
         window.syncEqSlidersToActiveDeckV218();
-        window.renderDeckSwitchBannersV131();
+        if (typeof window.toggleModal === 'function') window.toggleModal('eqModal');
     };
 
     window.openSpectrumForDeckV216 = function(whichDeck, ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
-        var targetDeck = (whichDeck === 'video') ? 'video' : 'music';
-        var prevDeck = window._activeUiDeckV131 || 'music';
-        var sp = document.getElementById('specModal');
-        var wasOpen = Boolean(sp && (sp.classList.contains('open') || sp.style.display === 'flex' || sp.style.display === 'block'));
-
-        window.selectUiDeckFocusOnlyV218(targetDeck);
-        if (wasOpen && prevDeck !== targetDeck) {
-            window.renderDeckSwitchBannersV131();
+        if (whichDeck === 'video') {
+            if (typeof window.openDeckBIsolatedSpecModal === 'function') {
+                window.openDeckBIsolatedSpecModal(ev);
+            }
             return;
         }
+        window._activeUiDeckV131 = 'music';
         if (typeof window.openSpectrumModalV62 === 'function') window.openSpectrumModalV62();
     };
 
-    // «📋 Скопировать DSP из Музыки» копирует только звуковые DSP-модули (не перезаписывая эквалайзер и радиальные скорости Деки Б!)
     window.copyMusicDspToVideoV131 = function(ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
-        var mCfg = window._musicConfigRefV131 || window.appConfig || {};
+        var mCfg = window.appConfig || {};
         var dspKeys = [
             'studioMode', 'phaseFixEnabled', 'gearKeyV66', 'engineModeV62', 'elasticHoseMode', 'hoseTensionPct',
             'opt_midPhase', 'val_midPhase', 'opt_midQ', 'val_midQ', 'opt_deEsser', 'val_deEsser',
@@ -23467,15 +23517,12 @@ let vsyncTicks = 0;
                 }
             });
             window.saveVideoConfigV131();
-            if (window._activeUiDeckV131 === 'video') {
-                window.appConfig = window.videoDeckV131.config;
-                window.syncAllControlsToActiveDeckV131();
-            }
             if (typeof window.buildVideoAudioGraphV131 === 'function') window.buildVideoAudioGraphV131();
             if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false);
+            if (typeof window.syncDeckBIsolatedEqModalUI === 'function') window.syncDeckBIsolatedEqModalUI();
         }
         if (typeof window.showToast === 'function') {
-            window.showToast('✅ Звуковые модули DSP скопированы из Музыки в Видео (Эквалайзер и скорости Деки Б сохранены)!');
+            window.showToast('✅ Звуковые модули DSP скопированы из Музыки в Видео (Аудиодека не затронута)!');
         }
     };
 
@@ -25127,26 +25174,10 @@ let vsyncTicks = 0;
     // меняет шкалу громкости ТОЛЬКО той деки, чей пульт сейчас выбран (Дека А или Дека Б), без пересечений!
     var _origUpdateSettingsV219 = window.updateSettings;
     window.updateSettings = function() {
-        var isVid = (window._activeUiDeckV131 === 'video');
-        if (isVid && window.videoDeckV131 && window.videoDeckV131.config) {
-            var cfgB = window.videoDeckV131.config;
-            var elBoosterEn = document.getElementById('cfg_boosterEnabled');
-            var elBoosterPw = document.getElementById('cfg_boosterPower');
-            if (elBoosterEn) cfgB.boosterEnabled = Boolean(elBoosterEn.checked);
-            if (elBoosterPw) cfgB.boosterPower = parseInt(elBoosterPw.value, 10) || 5;
-            if (typeof _origUpdateSettingsV219 === 'function') {
-                _origUpdateSettingsV219.apply(this, arguments);
-            }
-            window.saveVideoConfigV131();
-            window.applyVolumeSettingsDeckBV219();
-            window.applyVolumeSettings();
-            return;
-        }
         if (typeof _origUpdateSettingsV219 === 'function') {
             _origUpdateSettingsV219.apply(this, arguments);
         }
         window.applyVolumeSettings();
-        window.applyVolumeSettingsDeckBV219();
     };
 
     var _origBuildVideoAudioGraphV131 = window.buildVideoAudioGraphV131;
@@ -26273,19 +26304,11 @@ let vsyncTicks = 0;
             '&no_audio=' + noAud +
             '&t=' + Date.now();
 
-        (typeof window.fetchRevBlobInDeckBWorker === 'function'
-            ? window.fetchRevBlobInDeckBWorker(url, ctrl.signal).catch(function(wErr) {
-                if (ctrl.signal.aborted) throw wErr;
-                return fetch(url, { signal: ctrl.signal }).then(function(res) {
-                    if (!res.ok) throw new Error('Preload HTTP ' + res.status);
-                    return res.blob();
-                });
-            })
-            : fetch(url, { signal: ctrl.signal }).then(function(res) {
+        fetch(url, { signal: ctrl.signal })
+            .then(function(res) {
                 if (!res.ok) throw new Error('Preload HTTP ' + res.status);
                 return res.blob();
             })
-        )
             .then(function(blob) {
                 st._revPreloadingBusyV223 = false;
                 if (!blob || blob.size < 1024) return;
@@ -29986,7 +30009,21 @@ let vsyncTicks = 0;
         '  box-sizing: border-box !important;',
         '}',
 
-        /* Animation for old Refresh buttons vanishing from bottom deck rows (per-deck flex lives in deck_a_isolated.css & deck_b_isolated.css) */
+        /* Smooth width/flex transitions on all deck buttons so they expand fluidly when Refresh vacates */
+        '#mainTransportBar .jenny-sq-btn-v216,',
+        '#mainTransportBar #volUIWrapper,',
+        '#deckBControlsRowV216 .jenny-sq-btn-v216,',
+        '#deckBControlsRowV216 #volUIWrapperDeckBV216 {',
+        '  transition: flex 0.42s cubic-bezier(0.22, 1, 0.36, 1), max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1), padding 0.35s ease, margin 0.35s ease, opacity 0.3s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1) !important;',
+        '}',
+
+        /* Base 9-button state (before RU/EN leaves): Play/Pause slightly accentuated */
+        '#mainTransportBar:not(.jenny-deck-row-expanded-v235) #playPauseBtn,',
+        '#deckBControlsRowV216:not(.jenny-deck-row-expanded-v235) #playPauseBtnDeckBV216 {',
+        '  flex: 1.14 1 0 !important;',
+        '}',
+
+        /* Animation for old Refresh buttons vanishing from bottom deck rows */
         '.jenny-ref-btn-vacating-v235 {',
         '  flex: 0 0 0px !important;',
         '  max-width: 0px !important;',
@@ -29999,6 +30036,36 @@ let vsyncTicks = 0;
         '  transform: scale(0.15) translateY(-18px) !important;',
         '  overflow: hidden !important;',
         '  pointer-events: none !important;',
+        '}',
+
+        /* Expanded 8-button state under Deck A & Deck B after Refresh moves up to Search bar:
+           60% of the vacated space goes to Prev (+30%), Play/Pause (+15%), Next (+30%),
+           while the other 5 buttons smoothly share the remaining 40%! */
+        '#mainTransportBar.jenny-deck-row-expanded-v235,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 {',
+        '  gap: 4px !important;',
+        '}',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnPrev,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnNext,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnPrevDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnNextDeckBV216 {',
+        '  flex: 1.30 1 0 !important;',
+        '}',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #playPauseBtn,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #playPauseBtnDeckBV216 {',
+        '  flex: 1.32 1 0 !important;',
+        '}',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #volUIWrapper,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnExport,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-specModal,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-favModal,',
+        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-eqModal,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #volUIWrapperDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnExportDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnSpecDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnFavDeckBV216,',
+        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnEqDeckBV216 {',
+        '  flex: 1.08 1 0 !important;',
         '}',
 
         /* Pop-in animation & styling for Refresh buttons when they appear next to Search bar */
@@ -30569,6 +30636,7 @@ let vsyncTicks = 0;
             var m = document.getElementById(id);
             if (m) m.classList.remove('open');
         });
+        if (typeof window.closeDeckBIsolatedModals === 'function') window.closeDeckBIsolatedModals();
         if (typeof window.closeAllV71Modals === 'function') {
             try { window.closeAllV71Modals(); } catch (e) {}
         }
@@ -31200,19 +31268,17 @@ let vsyncTicks = 0;
 
     // Ensure refreshTorrentDaemonSnapV128 fetches BOTH /api/torrent/status AND /api/sources/live_badges so _lastTorEncBadgeV212 is always populated!
     var _origRefreshDaemonSnapV236 = window.refreshTorrentDaemonSnapV128;
-    window.refreshTorrentDaemonSnapV128 = async function(fromWorkerPush) {
-        if (!fromWorkerPush && (!window._latestTorWorkerSnap || (Date.now() - window._latestTorWorkerSnap.ts > 2500))) {
-            try {
-                fetch('/api/sources/live_badges')
-                    .then(function(r) { return r.json(); })
-                    .then(function(b) {
-                        if (b && b.torrent_enc) {
-                            window._lastTorEncBadgeV212 = b.torrent_enc;
-                        }
-                    })
-                    .catch(function() {});
-            } catch (e) {}
-        }
+    window.refreshTorrentDaemonSnapV128 = async function() {
+        try {
+            fetch('/api/sources/live_badges')
+                .then(function(r) { return r.json(); })
+                .then(function(b) {
+                    if (b && b.torrent_enc) {
+                        window._lastTorEncBadgeV212 = b.torrent_enc;
+                    }
+                })
+                .catch(function() {});
+        } catch (e) {}
         if (typeof _origRefreshDaemonSnapV236 === 'function') {
             return await _origRefreshDaemonSnapV236.apply(this, arguments);
         }
@@ -32686,9 +32752,10 @@ let vsyncTicks = 0;
             return window._jennyClusterPortsV238[8081] ? 8081 : 8080;
         }
 
-        // 1. Deck B Video & Live Remux & Torrent Video Stream -> :8082
+        // 1. Deck B Video & Live Remux & VCore .SO & Torrent Video Stream -> :8082
         if (
             relPath.indexOf('/api/video/') === 0 ||
+            relPath.indexOf('/api/vcore/') === 0 ||
             relPath.indexOf('/api/torrent/stream/') === 0 ||
             relPath.indexOf('/api/torrent/seek_boost') === 0
         ) {
