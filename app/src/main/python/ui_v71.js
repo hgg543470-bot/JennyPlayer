@@ -37182,3 +37182,1282 @@ let vsyncTicks = 0;
     }, 180);
 })();
 /* ================= END JENNY_V246_BUGFIXES_347 ================= */
+
+/* ================= BEGIN JENNY_V247_120FPS_VIRTUAL_LIST_AND_BLOCKING_SCAN_SHIELD ================= */
+(function() {
+    if (window._jennyV247Installed) return;
+    window._jennyV247Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. CSS FOR FULL-SCREEN BLOCKING SCAN SHIELD + GPU PROGRESS BAR + VIRTUAL LIST
+    // -------------------------------------------------------------------------
+    var st247 = document.getElementById('jennyStyleV247Perf');
+    if (!st247) {
+        st247 = document.createElement('style');
+        st247.id = 'jennyStyleV247Perf';
+        document.head.appendChild(st247);
+    }
+    st247.textContent = [
+        /* Keep Onboarding modal strictly above scan blocker on first-run permission grant */
+        '#jennyOnboardingModalV165 {',
+        '  z-index: 2147483645 !important;',
+        '}',
+        /* Full-screen UI-blocking library scan & refresh overlay */
+        '#jennyLibraryScanBlockerV247 {',
+        '  position: fixed !important;',
+        '  inset: 0 !important;',
+        '  width: 100vw !important;',
+        '  height: 100vh !important;',
+        '  z-index: 2147483500 !important;',
+        '  background: rgba(5, 8, 15, 0.94) !important;',
+        '  backdrop-filter: blur(8px) !important;',
+        '  -webkit-backdrop-filter: blur(8px) !important;',
+        '  display: none;',
+        '  flex-direction: column !important;',
+        '  align-items: center !important;',
+        '  justify-content: center !important;',
+        '  gap: 14px !important;',
+        '  padding: 24px !important;',
+        '  box-sizing: border-box !important;',
+        '  pointer-events: all !important;',
+        '  touch-action: none !important;',
+        '  user-select: none !important;',
+        '}',
+        '@keyframes jennyScanSpinV247 {',
+        '  0% { transform: rotate(0deg); }',
+        '  100% { transform: rotate(360deg); }',
+        '}',
+        '.jenny-scan-ring-v247 {',
+        '  width: 54px !important;',
+        '  height: 54px !important;',
+        '  border-radius: 50% !important;',
+        '  border: 3.5px solid rgba(88, 166, 255, 0.2) !important;',
+        '  border-top-color: #58a6ff !important;',
+        '  border-right-color: #c084fc !important;',
+        '  animation: jennyScanSpinV247 0.78s linear infinite !important;',
+        '  will-change: transform !important;',
+        '}',
+        /* GPU-composited progress bars (ZERO layout reflow on 80ms ticks & rapid seek taps!) */
+        '#deckAProgressRow #progressFill, #deckBProgressRow #progressFillDeckB {',
+        '  width: 100% !important;',
+        '  left: 0 !important;',
+        '  right: auto !important;',
+        '  transition: none !important;',
+        '  will-change: transform !important;',
+        '  transform-origin: left center;',
+        '  transform: scaleX(0);',
+        '}',
+        /* Offscreen layout/paint containment for playlist cards */
+        '#unifiedList > div {',
+        '  contain: layout style;',
+        '}',
+        '.middle-list-container {',
+        '  contain: layout paint style;',
+        '  -webkit-overflow-scrolling: touch;',
+        '}'
+    ].join('\n');
+
+    // -------------------------------------------------------------------------
+    // 2. FULL-SCREEN BLOCKING SCAN / REFRESH OVERLAY (#jennyLibraryScanBlockerV247)
+    // -------------------------------------------------------------------------
+    window._scanBlockerDepthV247 = 0;
+
+    window.ensureLibraryScanBlockerDOMV247 = function() {
+        var el = document.getElementById('jennyLibraryScanBlockerV247');
+        if (el) return el;
+        el = document.createElement('div');
+        el.id = 'jennyLibraryScanBlockerV247';
+        var stopAllEv = function(e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            if (e && e.cancelable && e.type !== 'touchstart') e.preventDefault();
+        };
+        ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'touchmove', 'touchend'].forEach(function(evName) {
+            el.addEventListener(evName, stopAllEv, { passive: false });
+        });
+        el.innerHTML =
+            '<div style="background:#0d1117;border:1.5px solid #30363d;border-radius:18px;padding:24px 22px;max-width:320px;width:100%;display:flex;flex-direction:column;align-items:center;gap:12px;box-shadow:0 12px 38px rgba(0,0,0,0.85);text-align:center;">' +
+                '<div class="jenny-scan-ring-v247"></div>' +
+                '<div id="jennyScanBlockerTitleV247" style="color:#e6edf3;font-size:15px;font-weight:900;line-height:1.3;">🔍 Поиск аудио и видео...</div>' +
+                '<div id="jennyScanBlockerSubV247" style="color:#8b949e;font-size:12px;line-height:1.45;">Сканирование папок памяти • Подождите завершения</div>' +
+            '</div>';
+        document.body.appendChild(el);
+        return el;
+    };
+
+    window.showLibraryScanBlockerV247 = function(titleText, subText) {
+        var el = window.ensureLibraryScanBlockerDOMV247();
+        window._scanBlockerDepthV247 = Math.max(0, window._scanBlockerDepthV247 || 0) + 1;
+        var tEl = document.getElementById('jennyScanBlockerTitleV247');
+        var sEl = document.getElementById('jennyScanBlockerSubV247');
+        if (tEl && titleText) tEl.textContent = titleText;
+        if (sEl && subText) sEl.textContent = subText;
+        el.style.display = 'flex';
+    };
+
+    window.updateLibraryScanBlockerSubV247 = function(subText) {
+        var sEl = document.getElementById('jennyScanBlockerSubV247');
+        if (sEl && subText) sEl.textContent = subText;
+    };
+
+    window.hideLibraryScanBlockerV247 = function(forceReset) {
+        if (forceReset) {
+            window._scanBlockerDepthV247 = 0;
+        } else {
+            window._scanBlockerDepthV247 = Math.max(0, (window._scanBlockerDepthV247 || 1) - 1);
+        }
+        if (window._scanBlockerDepthV247 <= 0) {
+            var el = document.getElementById('jennyLibraryScanBlockerV247');
+            if (el) el.style.display = 'none';
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 3. STOP CONTINUOUS BACKGROUND VIDEO SCAN POLLING (3.5s & 4.5s TIMERS!)
+    //    Scan ONLY once on boot, on folder/mode change, or on explicit 🔄 Refresh!
+    // -------------------------------------------------------------------------
+    window._hasCompletedInitialVideoScanV247 = false;
+    window._videoScanInFlightPromiseV247 = null;
+
+    window.syncDiscoveredVideosIntoPlaylistV134 = async function(forceScan) {
+        // Ignore background 3.5s / 4.5s polling ticks once initial scan has completed!
+        if (!forceScan && window._hasCompletedInitialVideoScanV247) {
+            // Only merge client-side live P2P torrent items if active torrents exist (0 HTTP / 0 DOM thrash!)
+            var liveTorSnap = window._torLiveDaemonSnapV128 || [];
+            if (liveTorSnap.length > 0 && typeof window.collectClientTorrentVideosV137 === 'function') {
+                var merged = window.collectClientTorrentVideosV137();
+                var nextNames = merged.map(function(x) { return x.name; }).sort();
+                var prevNames = window._dedicatedVideoListV137 || [];
+                if (nextNames.length !== prevNames.length) {
+                    window._dedicatedVideoListV137 = nextNames;
+                    if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                    if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+                }
+            }
+            return;
+        }
+
+        if (window._videoScanInFlightPromiseV247 && !forceScan) {
+            return window._videoScanInFlightPromiseV247;
+        }
+
+        var doScan = (async function() {
+            try {
+                var res = await window.fetch('/api/video/discovered_list' + (forceScan ? '?force=1' : ''));
+                if (res && res.ok) {
+                    var data = await res.json();
+                    if (data.video_dir) window._dedicatedVideoDirPathV137 = data.video_dir;
+                    var items = data.items || [];
+                    var nextMap = {};
+                    for (var i = 0; i < items.length; i++) {
+                        var it = items[i];
+                        if (it && it.name) nextMap[it.name] = it;
+                    }
+                    window._dedicatedVideoMetaMapV137 = nextMap;
+                    window._hasCompletedInitialVideoScanV247 = true;
+                }
+            } catch (e) {}
+
+            var mergedItems = window.collectClientTorrentVideosV137 ? window.collectClientTorrentVideosV137() : [];
+            window._dedicatedVideoListV137 = mergedItems.map(function(x) { return x.name; }).sort();
+
+            if (window.lastData && Array.isArray(window.lastData.all_tracks)) {
+                window.lastData.all_tracks = window.lastData.all_tracks.filter(function(fn) {
+                    return !window.isVideoFileNameV130(fn);
+                });
+            }
+
+            if (typeof window.renderPlaylistStripChipsV71 === 'function') {
+                window.renderPlaylistStripChipsV71();
+            }
+            if (window.activePlaylistTabV71 === 'videos' && typeof window.renderActivePlaylistTracksV71 === 'function') {
+                window.renderActivePlaylistTracksV71(false);
+            }
+            if (typeof window.syncContextRefreshCounterV242 === 'function') {
+                window.syncContextRefreshCounterV242();
+            }
+        })();
+
+        window._videoScanInFlightPromiseV247 = doScan;
+        try {
+            await doScan;
+        } finally {
+            if (window._videoScanInFlightPromiseV247 === doScan) {
+                window._videoScanInFlightPromiseV247 = null;
+            }
+        }
+    };
+
+    // Force-capable fetchData helper so normal fetchData() uses 0.1ms server cache,
+    // while explicit scans pass ?force=1 to /api/data!
+    window.fetchDataForcedV247 = async function() {
+        try {
+            var res = await window.fetch('/api/data?force=1');
+            if (res && res.ok) {
+                var d = await res.json();
+                if (d && Array.isArray(d.all_tracks)) {
+                    d.all_tracks = d.all_tracks.filter(function(fn) {
+                        return !window.isVideoFileNameV130(fn);
+                    });
+                    d.session_tracks = d.all_tracks.slice();
+                }
+                window.lastData = d;
+                window._initialLibraryLoadedV216 = true;
+                if (typeof d.scan_all_folders === 'boolean') {
+                    window.appConfig = window.appConfig || {};
+                    window.appConfig.scanAllFolders = d.scan_all_folders;
+                    if (typeof window.syncScanAllFoldersUIV245 === 'function') {
+                        window.syncScanAllFoldersUIV245();
+                    }
+                }
+            }
+        } catch (e) {}
+    };
+
+    // Unified blocking library scan runner (used on boot, folder toggle, and 🔄 Refresh button!)
+    window._activeBlockingScanPromiseV247 = null;
+    window.runBlockingFullLibraryScanV247 = async function(titleMsg, subMsg) {
+        if (window._activeBlockingScanPromiseV247) {
+            return window._activeBlockingScanPromiseV247;
+        }
+        var isAll = window.isScanAllFoldersEnabledV245 ? window.isScanAllFoldersEnabledV245() : true;
+        var hdr = titleMsg || '🔍 Поиск аудио и видео...';
+        var sub = subMsg || (isAll
+            ? 'Сканирование всех папок памяти телефона...'
+            : 'Сканирование выбранных музыкальных папок...');
+
+        window.showLibraryScanBlockerV247(hdr, sub);
+        // Yield 1 animation frame so the dark blocking shield paints on screen BEFORE any work starts!
+        await new Promise(function(resolve) {
+            requestAnimationFrame(function() { setTimeout(resolve, 16); });
+        });
+
+        var job = (async function() {
+            var startedAt = performance.now();
+            try {
+                await Promise.all([
+                    window.fetchDataForcedV247(),
+                    window.syncDiscoveredVideosIntoPlaylistV134(true)
+                ]);
+                var aCnt = (window.lastData && Array.isArray(window.lastData.all_tracks)) ? window.lastData.all_tracks.length : 0;
+                var vCnt = window.getFilteredVideoItemsV150 ? window.getFilteredVideoItemsV150().length : ((window._dedicatedVideoListV137 || []).length);
+                window.updateLibraryScanBlockerSubV247('✅ Найдено: ' + aCnt + ' аудио • ' + vCnt + ' видео');
+
+                if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
+                if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+                if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+
+                var elapsed = performance.now() - startedAt;
+                if (elapsed < 220) {
+                    await new Promise(function(r) { setTimeout(r, 220 - elapsed); });
+                }
+            } finally {
+                window.hideLibraryScanBlockerV247(true);
+            }
+        })();
+
+        window._activeBlockingScanPromiseV247 = job;
+        try {
+            return await job;
+        } finally {
+            window._activeBlockingScanPromiseV247 = null;
+        }
+    };
+
+    // Wire 🔄 Refresh button (refreshActiveContextListV242 & smartRefreshCurrentPlaylistV150) to Blocking Scan!
+    window.refreshActiveContextListV242 = async function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var savedTab = window.activePlaylistTabV71 || 'all';
+        var savedArtist = window.selectedArtistV71;
+        var savedAlbum = window.selectedAlbumV71;
+        var savedTag = window.selectedTagV74;
+        var savedFavSub = window._favSubTabV216;
+
+        await window.runBlockingFullLibraryScanV247(
+            '🔄 Обновление медиатеки...',
+            'Поиск новых аудио и видеофайлов в памяти...'
+        );
+
+        window.activePlaylistTabV71 = savedTab;
+        window.selectedArtistV71 = savedArtist;
+        window.selectedAlbumV71 = savedAlbum;
+        window.selectedTagV74 = savedTag;
+        window._favSubTabV216 = savedFavSub;
+
+        if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+        if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+        if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+
+        if (typeof window.showToast === 'function') {
+            window.showToast('✅ Медиатека обновлена (' + window.computeActiveViewCountV242() + ')', ev);
+        }
+    };
+    window.smartRefreshCurrentPlaylistV150 = window.refreshActiveContextListV242;
+
+    // Wire setScanAllFoldersModeV245 (🌍 toggle in Settings & Folder Manager) to Blocking Scan!
+    window.setScanAllFoldersModeV245 = async function(enabled, ev) {
+        try { navigator.vibrate(20); } catch (e) {}
+        var val = Boolean(enabled);
+        window.appConfig = window.appConfig || {};
+        window.appConfig.scanAllFolders = val;
+        try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        if (typeof window.syncScanAllFoldersUIV245 === 'function') {
+            window.syncScanAllFoldersUIV245();
+        }
+
+        // Close Folder Manager modal if open so user immediately sees the clean full-screen scan progress
+        var fmModal = document.getElementById('jennyFolderManagerModal');
+        if (fmModal) {
+            try { fmModal.remove(); } catch (e) {}
+        }
+
+        window.showLibraryScanBlockerV247(
+            val ? '🌍 Поиск аудио и видео во всех папках...' : '📁 Переключение на выбранные папки...',
+            'Индексация библиотеки • Интерфейс временно заблокирован до завершения'
+        );
+
+        try {
+            await window.fetch('/api/scan_mode_v245', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scan_all: val })
+            });
+            if (window.AndroidBridge && typeof window.AndroidBridge.invalidatePresetFolderCache === 'function') {
+                try { window.AndroidBridge.invalidatePresetFolderCache(); } catch (e) {}
+            }
+            await Promise.all([
+                window.fetchDataForcedV247(),
+                window.syncDiscoveredVideosIntoPlaylistV134(true)
+            ]);
+            if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+            if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+            if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+        } finally {
+            window.hideLibraryScanBlockerV247(true);
+        }
+
+        if (typeof window.showToast === 'function') {
+            window.showToast(
+                val
+                    ? window.tr('🌍 Автопоиск по всем папкам завершён!', '🌍 Full-storage scan complete!')
+                    : window.tr('📁 Включён режим выбранных папок!', '📁 Using selected folders only!'),
+                ev
+            );
+        }
+    };
+
+    // Also wrap folder pool mutations (toggle / add / remove folder) so changing folders scans cleanly once
+    ['toggleFolderActivePoolV71', 'addFolderToPoolV71', 'removeFolderFromPoolV71'].forEach(function(fnName) {
+        var origFn = window[fnName];
+        if (typeof origFn === 'function' && !origFn._v247Wrapped) {
+            var wrapped = async function() {
+                window.showLibraryScanBlockerV247('📁 Обновление выбранных папок...', 'Пересчёт списка аудио и видео...');
+                try {
+                    var r = await origFn.apply(this, arguments);
+                    await Promise.all([
+                        window.fetchDataForcedV247(),
+                        window.syncDiscoveredVideosIntoPlaylistV134(true)
+                    ]);
+                    if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                    if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+                    if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+                    return r;
+                } finally {
+                    window.hideLibraryScanBlockerV247(true);
+                }
+            };
+            wrapped._v247Wrapped = true;
+            window[fnName] = wrapped;
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // 4. 120 FPS PROGRESSIVE WINDOWED PLAYLIST RENDERER (BATCH = 160 CARDS)
+    //    Eliminates 40,000-node DOM lag on 5,500+ tracks while keeping 100% queue & search!
+    // -------------------------------------------------------------------------
+    var VLIST_BATCH_V247 = 160;
+    window._vlistStateV247 = {
+        fullSorted: [],
+        filtered: [],
+        renderedCount: 0,
+        listContext: 'main',
+        isFavTab: false,
+        favSet: new Set(),
+        scrollBoundEl: null,
+        observer: null
+    };
+
+    function decorateNewlyRenderedRowsV247(containerEl, startChildIdx) {
+        if (!containerEl) return;
+        var children = containerEl.children;
+        for (var i = Math.max(0, startChildIdx); i < children.length; i++) {
+            var wrap = children[i];
+            if (!wrap || wrap.id === 'jennyVirtualSentinelV247') continue;
+            var cap = wrap.querySelector ? wrap.querySelector('.track-row-capsule') : null;
+            if (!cap) continue;
+            var fn = cap.getAttribute('data-track') || '';
+            if (!fn) continue;
+
+            // Video icon badge
+            if (window.isVideoFileNameV130 && window.isVideoFileNameV130(fn)) {
+                var z = cap.querySelector('.track-title-zone');
+                var ic = z ? z.querySelector('span') : null;
+                if (ic && ic.textContent === '♪') {
+                    ic.textContent = '🎬';
+                    ic.style.color = '#ff7b72';
+                }
+            }
+
+            // Custom tags badge (only if track actually has custom tags)
+            if (typeof window.getTrackCustomTagsV74 === 'function') {
+                var ctags = window.getTrackCustomTagsV74(fn);
+                var keys = ctags ? Object.keys(ctags) : [];
+                if (keys.length > 0) {
+                    var tZone = cap.querySelector('.track-title-zone');
+                    if (tZone && !cap.querySelector('.jenny-custom-tag-badges-v74')) {
+                        tZone.style.flexWrap = 'wrap';
+                        var badgeBox = document.createElement('div');
+                        badgeBox.className = 'jenny-custom-tag-badges-v74';
+                        badgeBox.style.cssText = 'width:100%;display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;padding-left:18px;';
+                        badgeBox.innerHTML = keys.map(function(k) {
+                            return '<span style="font-size:10px;background:rgba(227,179,65,0.16);border:1px solid rgba(227,179,65,0.55);color:#f2cc60;padding:1px 6px;border-radius:6px;font-weight:bold;">🏷️ ' + k + ': ' + ctags[k] + '</span>';
+                        }).join('');
+                        tZone.appendChild(badgeBox);
+                    }
+                }
+            }
+
+            // Expanded action bar if currently expanded
+            if (window.expandedTracks && window.expandedTracks.has(fn) && typeof window.syncRowActionButtons === 'function') {
+                window.syncRowActionButtons(cap, fn, true);
+            }
+        }
+    }
+
+    window.appendNextVirtualTrackBatchV247 = function(targetMinCount) {
+        var unifiedBox = document.getElementById('unifiedList');
+        var st = window._vlistStateV247;
+        if (!unifiedBox || !st || !Array.isArray(st.filtered)) return;
+
+        var total = st.filtered.length;
+        if (st.renderedCount >= total) {
+            var oldSent = document.getElementById('jennyVirtualSentinelV247');
+            if (oldSent) oldSent.remove();
+            return;
+        }
+
+        var nextEnd = Math.min(total, Math.max(st.renderedCount + VLIST_BATCH_V247, targetMinCount || 0));
+        var sentinel = document.getElementById('jennyVirtualSentinelV247');
+        if (sentinel) sentinel.remove();
+
+        var startDomIdx = unifiedBox.children.length;
+        var chunks = [];
+        var favSet = st.favSet || new Set(window.favorites || []);
+        for (var i = st.renderedCount; i < nextEnd; i++) {
+            var fn = st.filtered[i];
+            var heart = st.isFavTab ? '❤️' : (favSet.has(fn) ? '❤️' : '🤍');
+            chunks.push(window.buildTrackRowHTML(fn, st.listContext, heart));
+        }
+        st.renderedCount = nextEnd;
+
+        if (chunks.length > 0) {
+            unifiedBox.insertAdjacentHTML('beforeend', chunks.join(''));
+            decorateNewlyRenderedRowsV247(unifiedBox, startDomIdx);
+        }
+
+        if (st.renderedCount < total) {
+            var newSent = document.createElement('div');
+            newSent.id = 'jennyVirtualSentinelV247';
+            newSent.style.cssText = 'height:28px;width:100%;display:flex;align-items:center;justify-content:center;color:#8b949e;font-size:11px;';
+            newSent.textContent = 'Показано ' + st.renderedCount + ' из ' + total + ' • прокрути ниже...';
+            unifiedBox.appendChild(newSent);
+            if (st.observer) {
+                try { st.observer.observe(newSent); } catch (e) {}
+            }
+        }
+
+        if (typeof window.updateTrackListPlayIcons === 'function') {
+            window.updateTrackListPlayIcons();
+        }
+    };
+
+    function ensureVirtualScrollBindingV247(unifiedBox) {
+        var st = window._vlistStateV247;
+        var scrollParent = unifiedBox ? (unifiedBox.closest('.middle-list-container') || unifiedBox.parentElement) : null;
+        if (!scrollParent) return;
+
+        if (st.scrollBoundEl !== scrollParent) {
+            st.scrollBoundEl = scrollParent;
+            scrollParent.addEventListener('scroll', function() {
+                if (st.renderedCount >= st.filtered.length) return;
+                if (scrollParent.scrollTop + scrollParent.clientHeight >= scrollParent.scrollHeight - 750) {
+                    window.appendNextVirtualTrackBatchV247(0);
+                }
+            }, { passive: true });
+        }
+
+        if (!st.observer && typeof IntersectionObserver === 'function') {
+            try {
+                st.observer = new IntersectionObserver(function(entries) {
+                    for (var i = 0; i < entries.length; i++) {
+                        if (entries[i].isIntersecting) {
+                            window.appendNextVirtualTrackBatchV247(0);
+                            break;
+                        }
+                    }
+                }, { root: scrollParent, rootMargin: '650px 0px' });
+            } catch (e) {}
+        }
+    }
+
+    function computeFilteredArrayForQueryV247(fullList, rawQuery) {
+        var rawQ = String(rawQuery || '');
+        var lowerQuery = rawQ.trim().toLowerCase();
+        var normQuery = window.normSearchV74 ? window.normSearchV74(rawQ) : lowerQuery;
+        if (!lowerQuery) {
+            return fullList.slice();
+        }
+        var out = [];
+        var trackMetaMap = (window.lastData && window.lastData.track_meta) || {};
+        for (var i = 0; i < fullList.length; i++) {
+            var trackName = fullList[i];
+            if (!trackName) continue;
+            var lowName = trackName.toLowerCase();
+            if (lowName.indexOf(lowerQuery) !== -1 || (normQuery && window.normSearchV74 && window.normSearchV74(lowName).indexOf(normQuery) !== -1)) {
+                out.push(trackName);
+                continue;
+            }
+            var m = trackMetaMap[trackName] || (window.getTrackMetaV71 ? window.getTrackMetaV71(trackName) : null) || {};
+            var ctags = window.getTrackCustomTagsV74 ? window.getTrackCustomTagsV74(trackName) : null;
+            var extra = (m.artist || '') + ' ' + (m.album || '');
+            if (ctags) {
+                for (var ck in ctags) {
+                    if (Object.prototype.hasOwnProperty.call(ctags, ck)) {
+                        extra += ' ' + ck + ' ' + ctags[ck];
+                    }
+                }
+            }
+            if (m.user_tags) {
+                for (var uk in m.user_tags) {
+                    if (Object.prototype.hasOwnProperty.call(m.user_tags, uk)) {
+                        extra += ' ' + uk + ' ' + m.user_tags[uk];
+                    }
+                }
+            }
+            var hay = extra.toLowerCase();
+            if (hay.indexOf(lowerQuery) !== -1 || (normQuery && window.normSearchV74 && window.normSearchV74(hay).indexOf(normQuery) !== -1)) {
+                out.push(trackName);
+            }
+        }
+        return out;
+    }
+
+    function renderWindowedTrackListV247(sortedList, listCtx, isFavMode, emptyHtml, preserveScroll) {
+        var unifiedBox = document.getElementById('unifiedList');
+        if (!unifiedBox) return;
+        ensureVirtualScrollBindingV247(unifiedBox);
+
+        var scrollParent = unifiedBox.closest('.middle-list-container') || unifiedBox.parentElement;
+        var prevScrollTop = (preserveScroll && scrollParent) ? scrollParent.scrollTop : 0;
+
+        var st = window._vlistStateV247;
+        st.fullSorted = Array.isArray(sortedList) ? sortedList : [];
+        st.listContext = listCtx || 'main';
+        st.isFavTab = Boolean(isFavMode);
+        st.favSet = new Set(window.favorites || []);
+
+        var sInp = document.getElementById('trackSearchInput');
+        var rawQ = sInp ? String(sInp.value || '') : '';
+        var clrBtn = document.getElementById('btnClearTrackSearchV73');
+        if (clrBtn) clrBtn.style.display = rawQ.length > 0 ? 'inline-flex' : 'none';
+
+        st.filtered = computeFilteredArrayForQueryV247(st.fullSorted, rawQ);
+        st.renderedCount = 0;
+        window._lastHighlightedRowElV247 = null;
+
+        if (st.fullSorted.length === 0) {
+            unifiedBox.innerHTML = emptyHtml || '<div style="padding:20px;color:#8b949e;text-align:center;">Список пуст</div>';
+        } else if (st.filtered.length === 0 && rawQ.trim().length > 0) {
+            unifiedBox.innerHTML = '<div id="jennyEmptySearchMsgV73" style="padding:18px 10px;color:#8b949e;text-align:center;font-size:12.5px;">' +
+                window.tr('По запросу «' + rawQ.trim() + '» в текущем разделе ничего не найдено', 'No tracks matching "' + rawQ.trim() + '" in current view') +
+                '</div>';
+        } else {
+            unifiedBox.innerHTML = '';
+            var minNeeded = preserveScroll ? Math.min(st.filtered.length, Math.max(VLIST_BATCH_V247, Math.ceil((prevScrollTop + 900) / 50))) : VLIST_BATCH_V247;
+            window.appendNextVirtualTrackBatchV247(minNeeded);
+            if (preserveScroll && scrollParent) {
+                scrollParent.scrollTop = prevScrollTop;
+            } else if (scrollParent) {
+                scrollParent.scrollTop = 0;
+            }
+        }
+
+        // Update counter (#tracksCount) accurately for search or full view
+        window.unlockTracksCountElementV246();
+        var cntEl = document.getElementById('tracksCount');
+        if (cntEl && cntEl.textContent !== '⏳') {
+            if (rawQ.trim().length > 0) {
+                cntEl.textContent = st.filtered.length + '/' + st.fullSorted.length;
+            } else {
+                window.syncContextRefreshCounterV242();
+            }
+        }
+    }
+
+    // Authoritative 120 FPS renderActivePlaylistTracksV71 across ALL tabs ('all', 'videos', 'fav', 'artists', 'albums', 'tags', 'pl_*')
+    window.renderActivePlaylistTracksV71 = function(preserveScrollOrCenter) {
+        var unifiedBox = document.getElementById('unifiedList');
+        if (!unifiedBox) return;
+        if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
+
+        var tabId = window.activePlaylistTabV71 || 'all';
+        var subWrap = document.getElementById('jennySubFilterWrapV71');
+        var oldSubBar = subWrap ? subWrap.querySelector('.jenny-subfilter-bar-v71') : null;
+        var prevSubScroll = oldSubBar ? oldSubBar.scrollLeft : 0;
+
+        // 1) VIDEO TAB ('videos')
+        if (tabId === 'videos') {
+            if (subWrap) subWrap.innerHTML = '';
+            if (typeof window.syncHeaderHeightWithModalsV71 === 'function') window.syncHeaderHeightWithModalsV71();
+            if (!window._initialLibraryLoadedV216 && !window._hasCompletedInitialVideoScanV247) {
+                unifiedBox.innerHTML = '<div style="padding:26px;color:#58a6ff;text-align:center;font-weight:bold;">⏳ Загрузка медиатеки...</div>';
+                return;
+            }
+            var vItems = window.getFilteredVideoItemsV150 ? window.getFilteredVideoItemsV150() : [];
+            var vids = vItems.map(function(x) { return x.name; });
+            var sortedV = window.sortTrackArrayForTabV71 ? window.sortTrackArrayForTabV71(vids, 'videos') : vids;
+            window.viewedFullTabListV73 = sortedV.slice();
+            if (typeof window.updateScopedSearchPlaceholderV73 === 'function') {
+                window.updateScopedSearchPlaceholderV73(sortedV.length);
+            }
+            var emptyVidHtml = '<div style="padding:22px;color:#8b949e;text-align:center;line-height:1.5;">🎬 Видеофайлов по выбранным форматам и папкам нет.<br>Нажми <b>🔄</b> для обновления или проверь настройки папок!</div>';
+            renderWindowedTrackListV247(sortedV, 'main', false, emptyVidHtml, Boolean(preserveScrollOrCenter));
+            if (typeof window.syncEdgeToEdgeLayoutBoundsV242 === 'function') window.syncEdgeToEdgeLayoutBoundsV242();
+            return;
+        }
+
+        // 2) FAVORITES TAB ('fav')
+        if (tabId === 'fav') {
+            var favAll = (window.favorites || []).slice();
+            var favVid = favAll.filter(function(fn) { return window.isVideoFileNameV130 && window.isVideoFileNameV130(fn); });
+            var favAud = favAll.filter(function(fn) { return !(window.isVideoFileNameV130 && window.isVideoFileNameV130(fn)); });
+
+            var mode = window._favSubTabV216 || 'audio';
+            if (!window._userExplicitFavSubTabV218) {
+                if (mode === 'audio' && favAud.length === 0 && favVid.length > 0) mode = 'video';
+                if (mode === 'video' && favVid.length === 0 && favAud.length > 0) mode = 'audio';
+                window._favSubTabV216 = mode;
+            }
+            if (subWrap) {
+                var isAud = (mode === 'audio');
+                subWrap.innerHTML =
+                    '<div id="jennySubFilterBarActiveV73" class="jenny-subfilter-bar-v71" style="display:flex;width:100%;gap:6px;padding:2px 0;">' +
+                        '<div class="jenny-pl-chip-v71' + (isAud ? ' active-pl-chip' : '') + '" onclick="window.selectFavSubTabExplicitV218(\'audio\')" style="flex:1;justify-content:center;text-align:center;cursor:pointer;">' +
+                            '🎵 Аудио <span class="jenny-pl-chip-count-v71">' + favAud.length + '</span>' +
+                        '</div>' +
+                        '<div class="jenny-pl-chip-v71' + (!isAud ? ' active-pl-chip' : '') + '" onclick="window.selectFavSubTabExplicitV218(\'video\')" style="flex:1;justify-content:center;text-align:center;cursor:pointer;">' +
+                            '🎬 Видео <span class="jenny-pl-chip-count-v71">' + favVid.length + '</span>' +
+                        '</div>' +
+                    '</div>';
+            }
+            if (typeof window.syncHeaderHeightWithModalsV71 === 'function') window.syncHeaderHeightWithModalsV71();
+
+            var targetFav = (mode === 'video') ? favVid : favAud;
+            var sortedFav = window.sortTrackArrayForTabV71 ? window.sortTrackArrayForTabV71(targetFav, 'fav') : targetFav;
+            window.viewedFullTabListV73 = sortedFav.slice();
+            window.currentTrackList = sortedFav;
+            if (typeof window.updateScopedSearchPlaceholderV73 === 'function') {
+                window.updateScopedSearchPlaceholderV73(sortedFav.length);
+            }
+            var emptyFavHtml = '<div style="padding:22px;color:#8b949e;text-align:center;">' +
+                (mode === 'video' ? '🎬 В избранном пока нет видеофайлов' : '🎵 В избранном пока нет аудиотреков') +
+                '</div>';
+            renderWindowedTrackListV247(sortedFav, 'fav', true, emptyFavHtml, Boolean(preserveScrollOrCenter));
+            if (typeof window.syncEdgeToEdgeLayoutBoundsV242 === 'function') window.syncEdgeToEdgeLayoutBoundsV242();
+            return;
+        }
+
+        // 3) AUDIO TABS ('all', 'artists', 'albums', 'tags', custom 'pl_*')
+        if (!window.lastData) return;
+        var prevQueue = (window.playingQueueListV73 && window.playingQueueListV73.length > 0)
+            ? window.playingQueueListV73.slice()
+            : null;
+
+        var allTracks = (window.lastData.all_tracks || []).filter(function(fn) {
+            if (window.isVideoFileNameV130 && window.isVideoFileNameV130(fn)) return false;
+            return window.isTrackAllowedByFormatSlots ? window.isTrackAllowedByFormatSlots(fn) : true;
+        });
+
+        var subHtml = '';
+        var baseList = [];
+
+        if (tabId === 'all') {
+            baseList = allTracks;
+        } else if (tabId === 'artists' || tabId === 'albums' || tabId === 'tags') {
+            var icon = tabId === 'artists' ? '🎤' : (tabId === 'albums' ? '💿' : '🏷️');
+            var prop = tabId === 'artists' ? 'selectedArtistV71' : (tabId === 'albums' ? 'selectedAlbumV71' : 'selectedTagV74');
+            var groups = window.collectActiveSubGroupsV73 ? window.collectActiveSubGroupsV73(tabId) : {};
+            var names = Object.keys(groups).sort(function(a, b) { return a.localeCompare(b); });
+
+            if (window[prop] && !groups[window[prop]]) {
+                window[prop] = null;
+            }
+
+            if (names.length > 0) {
+                var chips = names.map(function(n) {
+                    var isSel = (n === window[prop]);
+                    var safeN = n.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    var cls = 'jenny-pl-chip-v71' + (isSel ? ' active-pl-chip' : '');
+                    return '<div class="' + cls + '" data-subname="' + n.replace(/"/g, '&quot;') + '" onclick="window.toggleSubFilterChipV74_3(\'' + tabId + '\',\'' + safeN + '\',false)">' + icon + ' ' + n + ' <span class="jenny-pl-chip-count-v71">' + groups[n].length + '</span></div>';
+                }).join('');
+                subHtml = '<div id="jennySubFilterBarActiveV73" class="jenny-subfilter-bar-v71">' + chips + '</div>';
+            } else if (tabId === 'tags') {
+                subHtml = '<div class="jenny-subfilter-bar-v71"><span style="font-size:11.5px;color:#8b949e;">🏷️ ' + window.tr('Нет треков со своими тегами (добавь через кнопку МЕТА)', 'No tracks with custom tags yet (add via META)') + '</span></div>';
+            }
+
+            if (window[prop] && groups[window[prop]]) {
+                baseList = groups[window[prop]];
+            } else if (tabId === 'tags') {
+                var seenT = new Set();
+                names.forEach(function(n) {
+                    (groups[n] || []).forEach(function(fn) {
+                        if (!seenT.has(fn) && !(window.isVideoFileNameV130 && window.isVideoFileNameV130(fn))) {
+                            seenT.add(fn);
+                            baseList.push(fn);
+                        }
+                    });
+                });
+            } else {
+                baseList = allTracks;
+            }
+        } else {
+            var pl = ((window.appConfig && window.appConfig.customPlaylistsV71) || []).find(function(p) { return p.id === tabId; });
+            if (pl) {
+                baseList = Array.isArray(pl.tracks) ? pl.tracks : [];
+                subHtml = '<div id="jennySubFilterBarActiveV73" class="jenny-subfilter-bar-v71" style="justify-content:space-between;"><span style="font-size:11.5px;color:#79c0ff;font-weight:bold;">🎶 ' + pl.name + ' (' + baseList.length + ')</span><div style="display:flex;gap:6px;"><button type="button" onclick="window.openImportFolderToPlaylistModalV71(\'' + pl.id + '\')" style="padding:3px 8px;font-size:10.5px;color:#3fb950;">📁 +Папка</button><button type="button" onclick="window.deleteCustomPlaylistV71(\'' + pl.id + '\')" style="padding:3px 8px;font-size:10.5px;color:#ff7b72;">🗑️ Удалить</button></div></div>';
+            }
+        }
+
+        if (subWrap) {
+            subWrap.innerHTML = subHtml;
+            var newSubBar = document.getElementById('jennySubFilterBarActiveV73');
+            if (newSubBar) {
+                newSubBar.scrollLeft = prevSubScroll;
+                if (preserveScrollOrCenter === true) {
+                    var actChip = newSubBar.querySelector('.active-pl-chip');
+                    if (actChip && typeof actChip.scrollIntoView === 'function') {
+                        actChip.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                    }
+                }
+                if (typeof window.attachStripLongPressV73 === 'function') {
+                    window.attachStripLongPressV73(newSubBar, function() {
+                        if (window.openSubStripLongPressModalV73) window.openSubStripLongPressModalV73();
+                    });
+                }
+            }
+        }
+        if (typeof window.syncHeaderHeightWithModalsV71 === 'function') window.syncHeaderHeightWithModalsV71();
+
+        var sorted = window.sortTrackArrayForTabV71 ? window.sortTrackArrayForTabV71(baseList, tabId) : baseList;
+        window.viewedFullTabListV73 = sorted.slice();
+
+        var qCtx = window.playingQueueContextV73 || {};
+        var isSameContext = (
+            qCtx.tabId === tabId &&
+            (tabId !== 'artists' || qCtx.artist === (window.selectedArtistV71 || '')) &&
+            (tabId !== 'albums' || qCtx.album === (window.selectedAlbumV71 || ''))
+        );
+
+        if (!prevQueue || prevQueue.length === 0) {
+            window.playingQueueListV73 = sorted.slice();
+            window.playingQueueContextV73 = {
+                tabId: tabId,
+                artist: window.selectedArtistV71 || '',
+                album: window.selectedAlbumV71 || ''
+            };
+        } else if (isSameContext && sorted.indexOf(window.currentPlayingTrack) !== -1) {
+            window.playingQueueListV73 = sorted.slice();
+        } else {
+            window.playingQueueListV73 = prevQueue;
+        }
+
+        window.currentTrackList = window.playingQueueListV73;
+        window.topTrack = sorted[0] || null;
+        if (typeof window.updateScopedSearchPlaceholderV73 === 'function') {
+            window.updateScopedSearchPlaceholderV73(sorted.length);
+        }
+
+        var emptyAudHtml = '<div style="padding:20px;color:#8b949e;text-align:center;">' + window.tr('Список пуст', 'Playlist is empty') + '</div>';
+        renderWindowedTrackListV247(sorted, 'main', false, emptyAudHtml, false);
+        if (typeof window.syncEdgeToEdgeLayoutBoundsV242 === 'function') window.syncEdgeToEdgeLayoutBoundsV242();
+    };
+
+    // Fast in-memory filterTracks (filters all 5,500+ tracks in <1.5ms without 5,500 DOM nodes!)
+    window.filterTracks = function(query) {
+        var sInp = document.getElementById('trackSearchInput');
+        var rawQ = (query !== undefined && query !== null) ? String(query) : (sInp ? sInp.value : '');
+        var clrBtn = document.getElementById('btnClearTrackSearchV73');
+        if (clrBtn) clrBtn.style.display = rawQ.length > 0 ? 'inline-flex' : 'none';
+
+        var st = window._vlistStateV247;
+        var full = (st && st.fullSorted && st.fullSorted.length > 0) ? st.fullSorted : (window.viewedFullTabListV73 || []);
+        renderWindowedTrackListV247(full, st ? st.listContext : 'main', st ? st.isFavTab : false, null, false);
+
+        // Also filter second-row sub-strip chips when unfocused in Artists / Albums / Tags
+        var tabId = window.activePlaylistTabV71 || 'all';
+        if (tabId === 'artists' || tabId === 'albums' || tabId === 'tags') {
+            var prop = tabId === 'artists' ? 'selectedArtistV71' : (tabId === 'albums' ? 'selectedAlbumV71' : 'selectedTagV74');
+            var subBar = document.getElementById('jennySubFilterBarActiveV73');
+            if (subBar) {
+                var lowerQ = rawQ.trim().toLowerCase();
+                var normQ = window.normSearchV74 ? window.normSearchV74(rawQ) : lowerQ;
+                subBar.querySelectorAll('.jenny-pl-chip-v71').forEach(function(chip) {
+                    if (window[prop] || !lowerQ) {
+                        chip.style.display = 'inline-flex';
+                        return;
+                    }
+                    var subName = (chip.getAttribute('data-subname') || chip.textContent || '').toLowerCase();
+                    var match = subName.indexOf(lowerQ) !== -1 || (normQ && window.normSearchV74 && window.normSearchV74(subName).indexOf(normQ) !== -1);
+                    chip.style.display = match ? 'inline-flex' : 'none';
+                });
+            }
+        }
+    };
+
+    // Ensure lockCurrentViewAsPlayingQueueV73_1 uses in-memory filtered list (works across all 5,500+ tracks!)
+    window.lockCurrentViewAsPlayingQueueV73_1 = function(filename) {
+        var curTab = window.activePlaylistTabV71 || 'all';
+        var st = window._vlistStateV247;
+        var sInp = document.getElementById('trackSearchInput');
+        var q = sInp ? sInp.value.trim() : '';
+
+        var listToLock = [];
+        if (q && st && Array.isArray(st.filtered) && st.filtered.length > 1 && st.filtered.indexOf(filename) !== -1) {
+            listToLock = st.filtered.slice();
+        } else if (window.viewedFullTabListV73 && window.viewedFullTabListV73.length > 0) {
+            listToLock = window.viewedFullTabListV73.slice();
+        } else if (window.lastData && Array.isArray(window.lastData.all_tracks)) {
+            listToLock = window.lastData.all_tracks.slice();
+        }
+
+        window.playingQueueListV73 = listToLock;
+        window.currentTrackList = listToLock;
+        window.playingQueueContextV73 = {
+            tabId: curTab,
+            artist: window.selectedArtistV71 || '',
+            album: window.selectedAlbumV71 || ''
+        };
+    };
+
+    // Upgrade findTrackRowElementInListV235 & locateCurrentPlayingTrackV74_1 so jumping to track #4,500
+    // automatically expands the rendered window up to targetIdx + 40!
+    var _origFindTrackRowV247 = window.findTrackRowElementInListV235;
+    window.findTrackRowElementInListV235 = function(targetFilename) {
+        if (!targetFilename) return null;
+        var st = window._vlistStateV247;
+        if (st && Array.isArray(st.filtered) && st.renderedCount < st.filtered.length) {
+            var cleanT = String(targetFilename).trim();
+            var idx = st.filtered.indexOf(cleanT);
+            if (idx === -1) {
+                var lowT = cleanT.toLowerCase();
+                for (var i = 0; i < st.filtered.length; i++) {
+                    if (String(st.filtered[i] || '').trim().toLowerCase() === lowT) {
+                        idx = i;
+                        break;
+                    }
+                }
+            }
+            if (idx >= st.renderedCount) {
+                window.appendNextVirtualTrackBatchV247(idx + 40);
+            }
+        }
+        return _origFindTrackRowV247 ? _origFindTrackRowV247.apply(this, arguments) : null;
+    };
+
+    var _origLocateTrackV247 = window.locateCurrentPlayingTrackV74_1;
+    if (typeof _origLocateTrackV247 === 'function') {
+        window.locateCurrentPlayingTrackV74_1 = function() {
+            if (window.currentPlayingTrack && window._vlistStateV247) {
+                window.findTrackRowElementInListV235(window.currentPlayingTrack);
+            }
+            return _origLocateTrackV247.apply(this, arguments);
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. O(1) PLAY ICON UPDATES + GPU-COMPOSITED PROGRESS BARS + ZERO-REFLOW 80ms TICK
+    // -------------------------------------------------------------------------
+    var PLAY_ICON_MAIN_V247 = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    var PAUSE_ICON_MAIN_V247 = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+    var PLAY_ICON_ROW_V247 = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    var PAUSE_ICON_ROW_V247 = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+
+    window._lastHighlightedRowElV247 = null;
+    window.updateTrackListPlayIcons = function() {
+        var isPlayingNow = window.isDeckAActuallyPlayingV232 ? window.isDeckAActuallyPlayingV232() : false;
+        var btnMain = document.getElementById('playPauseBtn');
+        if (btnMain) {
+            var hasPausePath = btnMain.innerHTML.indexOf('M6 19h4V5H6v14') !== -1;
+            if (isPlayingNow && !hasPausePath) btnMain.innerHTML = PAUSE_ICON_MAIN_V247;
+            else if (!isPlayingNow && hasPausePath) btnMain.innerHTML = PLAY_ICON_MAIN_V247;
+        }
+
+        var prevRow = window._lastHighlightedRowElV247;
+        if (prevRow && prevRow.getAttribute('data-track') !== window.currentPlayingTrack) {
+            prevRow.style.border = '1px solid #30363d';
+            prevRow.style.boxShadow = 'none';
+            var prevBtn = prevRow.querySelector('.track-row-play-btn');
+            if (prevBtn && prevBtn.innerHTML.indexOf('M6 19h4V5H6v14') !== -1) {
+                prevBtn.innerHTML = PLAY_ICON_ROW_V247;
+            }
+            window._lastHighlightedRowElV247 = null;
+        }
+
+        if (!window.currentPlayingTrack) return;
+        var curRow = (prevRow && prevRow.isConnected && prevRow.getAttribute('data-track') === window.currentPlayingTrack)
+            ? prevRow
+            : null;
+        if (!curRow) {
+            var safeId = encodeURIComponent(window.currentPlayingTrack).replace(/[^a-zA-Z0-9]/g, '');
+            curRow = document.getElementById('track-main-' + safeId) || document.getElementById('track-fav-' + safeId);
+        }
+        if (curRow) {
+            window._lastHighlightedRowElV247 = curRow;
+            curRow.style.border = '1px solid #7341be';
+            curRow.style.boxShadow = '0 0 10px rgba(115, 65, 190, 0.4)';
+            var rBtn = curRow.querySelector('.track-row-play-btn');
+            if (rBtn && !(window.isVideoFileNameV130 && window.isVideoFileNameV130(window.currentPlayingTrack))) {
+                var rHasPause = rBtn.innerHTML.indexOf('M6 19h4V5H6v14') !== -1;
+                if (isPlayingNow && !rHasPause) rBtn.innerHTML = PAUSE_ICON_ROW_V247;
+                else if (!isPlayingNow && rHasPause) rBtn.innerHTML = PLAY_ICON_ROW_V247;
+            }
+        }
+    };
+
+    // GPU-composited scaleX() progress bar (zero layout reflow!) + cached textContent
+    var _lastCTimeAV247 = '';
+    var _lastRTimeAV247 = '';
+    var _lastCenterTimeAV247 = '';
+    var _lastOriginAV247 = '';
+
+    window.updateProgressUI = function(currentTime, duration, isReverseVisual) {
+        var pFill = document.getElementById('progressFill');
+        var cTime = document.getElementById('currentTime');
+        var rTime = document.getElementById('remainingTime');
+        var dTime = document.getElementById('durationTime');
+
+        if (pFill && isFinite(duration) && duration > 0) {
+            var ratio = Math.max(0, Math.min(1, currentTime / duration));
+            var wantOrigin = isReverseVisual ? 'right center' : 'left center';
+            if (_lastOriginAV247 !== wantOrigin) {
+                _lastOriginAV247 = wantOrigin;
+                pFill.style.transformOrigin = wantOrigin;
+            }
+            pFill.style.transform = 'scaleX(' + ratio.toFixed(4) + ')';
+        }
+
+        if (isFinite(duration) && typeof window.formatTime === 'function') {
+            var cStr = isReverseVisual ? ('-' + window.formatTime(Math.max(0, duration - currentTime))) : window.formatTime(Math.max(0, currentTime));
+            var rStr = isReverseVisual ? window.formatTime(Math.max(0, currentTime)) : ('-' + window.formatTime(Math.max(0, duration - currentTime)));
+            if (cTime && _lastCTimeAV247 !== cStr) {
+                _lastCTimeAV247 = cStr;
+                cTime.textContent = cStr;
+            }
+            if (rTime && _lastRTimeAV247 !== rStr) {
+                _lastRTimeAV247 = rStr;
+                rTime.textContent = rStr;
+            }
+            if (dTime && _lastCenterTimeAV247 !== cStr) {
+                _lastCenterTimeAV247 = cStr;
+                dTime.textContent = cStr;
+            }
+        }
+    };
+
+    // Neutralize V211's `if (pFillA.style.transform !== 'none') pFillA.style.transform = 'none'` inside the 80ms loop!
+    // Look at ui_v71.js line 18031: V211 cleared pFillA.style.transform right BEFORE calling window.updateProgressUI(...)!
+    // Since updateProgressUI runs immediately on line 18037 right after line 18032, setting transform inside updateProgressUI wins cleanly!
+    // Even better: cache syncDualDeckVisibilityAndAudioV211 so the 80ms timer doesn't touch DOM styles when unchanged!
+    var _origSyncDualVisV247 = window.syncDualDeckVisibilityAndAudioV211;
+    var _lastDualVisSigV247 = '';
+    if (typeof _origSyncDualVisV247 === 'function') {
+        window.syncDualDeckVisibilityAndAudioV211 = function(forceSync) {
+            var st = window._jennyDualDeckV211 || {};
+            var sig = (st.deckA ? '1' : '0') + '|' + (st.deckB ? '1' : '0') + '|' + (st.uiFocus || '');
+            var rowA = document.getElementById('deckAProgressRow');
+            var rowB = document.getElementById('deckBProgressRow');
+            if (!forceSync && sig === _lastDualVisSigV247 && rowA && rowB) {
+                var vd = window.videoDeckV131;
+                if (vd && vd.masterAntiClickGain && vd.masterAntiClickGain.gain) {
+                    vd.masterAntiClickGain.gain.value = st.deckB ? 1.0 : 0.0;
+                }
+                if (window.masterAntiClickGain && window.masterAntiClickGain.gain) {
+                    window.masterAntiClickGain.gain.value = st.deckA ? 1.0 : 0.0;
+                }
+                return;
+            }
+            _lastDualVisSigV247 = sig;
+            return _origSyncDualVisV247.apply(this, arguments);
+        };
+    }
+
+    // Also add smooth horizontal live-scrubbing on #seekZone so both tapping AND sliding finger across #seekZone run at 120 FPS!
+    (function upgradeDeckASeekZoneSmoothDragV247() {
+        var bindSmoothDrag = function() {
+            var zone = document.getElementById('seekZone');
+            if (!zone || zone._v247SmoothHorizontalBound) return;
+            zone._v247SmoothHorizontalBound = true;
+
+            var startX = 0, startY = 0, horizMode = false, touching = false;
+            var rafId = 0, pendingX = 0;
+
+            zone.addEventListener('touchstart', function(e) {
+                if (!e.touches || !e.touches[0]) return;
+                touching = true;
+                horizMode = false;
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+            }, { passive: true });
+
+            zone.addEventListener('touchmove', function(e) {
+                if (!touching || !e.touches || !e.touches[0]) return;
+                // Do not interfere if radial speed arc overlay is active
+                var ov = document.getElementById('scrubOverlay');
+                if (ov && ov.style.display === 'block') return;
+
+                var cx = e.touches[0].clientX;
+                var cy = e.touches[0].clientY;
+                var dx = Math.abs(cx - startX);
+                var dy = Math.abs(cy - startY);
+
+                if (!horizMode && dx > 10 && dx > dy * 1.35) {
+                    horizMode = true;
+                }
+                if (horizMode) {
+                    pendingX = cx;
+                    if (!rafId) {
+                        rafId = requestAnimationFrame(function() {
+                            rafId = 0;
+                            var rect = zone.getBoundingClientRect();
+                            var perc = Math.max(0, Math.min(1, (pendingX - rect.left) / Math.max(1, rect.width)));
+                            var player = document.getElementById('audioPlayer');
+                            var dur = (player && isFinite(player.duration) && player.duration > 0)
+                                ? player.duration
+                                : (window.studioBuffer ? window.studioBuffer.duration : 0);
+                            if (dur > 0) {
+                                var isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+                                var effPerc = isRev ? (1.0 - perc) : perc;
+                                var targetSec = effPerc * dur;
+                                window.updateProgressUI(targetSec, dur, isRev);
+                                if (player) {
+                                    try { player.currentTime = targetSec; } catch (err) {}
+                                }
+                            }
+                        });
+                    }
+                }
+            }, { passive: true });
+
+            var endHoriz = function() {
+                if (horizMode) {
+                    horizMode = false;
+                    if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                        window.syncMasterPlaybackEngineV59(false);
+                    }
+                }
+                touching = false;
+            };
+            zone.addEventListener('touchend', endHoriz, { passive: true });
+            zone.addEventListener('touchcancel', endHoriz, { passive: true });
+        };
+        setTimeout(bindSmoothDrag, 350);
+        setInterval(bindSmoothDrag, 2000);
+    })();
+
+    // -------------------------------------------------------------------------
+    // 6. BULLETPROOF DECK A RESUME FROM PAUSE (AUTO-RECOVER DROPPED IDLE SOCKET!)
+    //    + CLEAR VIDEO SPINNER IMMEDIATELY ON FIRST DECODED FRAME
+    // -------------------------------------------------------------------------
+    window.togglePlayV75_2 = function(ev) {
+        var nowMs = performance.now();
+        if (nowMs - (window._lastTogglePlayWallTsV232 || 0) < 120) {
+            return;
+        }
+        window._lastTogglePlayWallTsV232 = nowMs;
+        window._lastPhysicalTouchInAppTsV243 = nowMs;
+        window._lastActiveMediaSourceV243 = 'deckA';
+
+        var player = document.getElementById('audioPlayer');
+        if (!player) return;
+
+        if (!player.src && !window.currentPlayingTrack) {
+            var firstTrack = window.topTrack || (window.currentTrackList && window.currentTrackList[0]);
+            if (firstTrack && typeof window.playTrack === 'function') {
+                window.playTrack(firstTrack, 'main');
+            }
+            return;
+        }
+
+        var isPlayingNow = window.isDeckAActuallyPlayingV232 ? window.isDeckAActuallyPlayingV232() : (!player.paused);
+        if (isPlayingNow) {
+            window.forceStopPauseDeckAAudioV232(false);
+            return;
+        }
+
+        // Resuming Deck A from Pause:
+        if (typeof window.stopAllExternalStreamsV97 === 'function') {
+            try { window.stopAllExternalStreamsV97(); } catch (e) {}
+        }
+
+        window._userPausedV75_2 = false;
+        window._resumingFromUserPlayV232 = true;
+
+        if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+        if (window.audioCtx && window.audioCtx.state === 'suspended') {
+            try { window.audioCtx.resume(); } catch (e) {}
+        }
+        if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
+            try {
+                var nowCtx = window.audioCtx.currentTime;
+                window.inputMixer.gain.cancelScheduledValues(nowCtx);
+                window.inputMixer.gain.setValueAtTime(1.0, nowCtx);
+                window.inputMixer.gain.value = 1.0;
+            } catch (e) {}
+        }
+        if (window.masterAntiClickGain && window.masterAntiClickGain.gain) {
+            window.masterAntiClickGain.gain.value = 1.0;
+        }
+
+        if ((!player.src || player.error) && window.currentPlayingTrack) {
+            var savedTimeReload = Number(player.currentTime) || 0;
+            player.src = '/api/media/' + encodeURIComponent(window.currentPlayingTrack);
+            if (savedTimeReload > 0.2) {
+                player.addEventListener('loadedmetadata', function() {
+                    try { player.currentTime = savedTimeReload; } catch (e) {}
+                }, { once: true });
+            }
+        }
+
+        var btn = document.getElementById('playPauseBtn');
+        if (btn) btn.innerHTML = PAUSE_ICON_MAIN_V247;
+
+        var savedPosBeforePlay = Number(player.currentTime) || 0;
+
+        var onPlaySuccess = function() {
+            if (window._userPausedV75_2) {
+                window._resumingFromUserPlayV232 = false;
+                return;
+            }
+            // Keep _resumingFromUserPlayV232 = true WHILE syncMasterPlaybackEngineV59 runs!
+            try {
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+            } finally {
+                window._resumingFromUserPlayV232 = false;
+            }
+            window.updateTrackListPlayIcons();
+        };
+
+        var onPlayRejected = function() {
+            if (window._userPausedV75_2) {
+                window._resumingFromUserPlayV232 = false;
+                return;
+            }
+            // Idle HTTP socket or stale media decoder rejected play() -> reload src at exact paused second & retry!
+            if (window.currentPlayingTrack) {
+                window._lastInternalMediaSrcSwitchTsV239 = performance.now();
+                player.src = '/api/media/' + encodeURIComponent(window.currentPlayingTrack) + '?_resume=' + Date.now();
+                var restoreAndStart = function() {
+                    if (window._userPausedV75_2) {
+                        window._resumingFromUserPlayV232 = false;
+                        return;
+                    }
+                    if (savedPosBeforePlay > 0.2) {
+                        try { player.currentTime = savedPosBeforePlay; } catch (e) {}
+                    }
+                    player.play().then(onPlaySuccess).catch(function() {
+                        // Even if HTML5 <audio> fails, engage Studio RAM buffer if loaded!
+                        onPlaySuccess();
+                    });
+                };
+                player.addEventListener('loadedmetadata', restoreAndStart, { once: true });
+                player.load();
+            } else {
+                onPlaySuccess();
+            }
+        };
+
+        try {
+            var p = player.play();
+            if (p && typeof p.then === 'function') {
+                p.then(onPlaySuccess).catch(onPlayRejected);
+            } else {
+                onPlaySuccess();
+            }
+        } catch (e) {
+            onPlayRejected();
+        }
+    };
+
+    window.togglePlayPause = window.togglePlayV75_2;
+    window._origTogglePlayV243 = window.togglePlayV75_2;
+
+    // When closing Deck B video player, reset _lastActiveMediaSourceV243 back to 'deckA' so Deck A Play always targets Deck A
+    var _prevCloseVidV247 = window.closeVideoPlayerV130;
+    if (typeof _prevCloseVidV247 === 'function') {
+        window.closeVideoPlayerV130 = function() {
+            var r = _prevCloseVidV247.apply(this, arguments);
+            window._lastActiveMediaSourceV243 = 'deckA';
+            return r;
+        };
+    }
+
+    // Ensure video spinner (#v130CenterPlayBtn) clears the instant timeupdate advances (>0.02s)!
+    document.addEventListener('timeupdate', function(e) {
+        if (e && e.target && e.target.id === 'jennyVideoElV130') {
+            var vid = e.target;
+            if (!vid.paused && vid.readyState >= 2 && window._vidIsBufferingV132) {
+                window._vidIsBufferingV132 = false;
+                if (typeof window.syncVideoPlayBtnIconV132 === 'function') {
+                    window.syncVideoPlayBtnIconV132();
+                }
+            }
+        }
+    }, true);
+
+    var _prevOnbPermV247 = window.onOnboardingPermUpdatedV165;
+    if (typeof _prevOnbPermV247 === 'function') {
+        window.onOnboardingPermUpdatedV165 = function(which, granted) {
+            var r = _prevOnbPermV247.apply(this, arguments);
+            if (which === 'storage' && granted) {
+                Promise.all([
+                    window.fetchDataForcedV247(),
+                    window.syncDiscoveredVideosIntoPlaylistV134(true)
+                ]).then(function() {
+                    if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                    if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+                    if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+                }).catch(function() {});
+            }
+            return r;
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. INITIAL BOOT ONE-SHOT BLOCKING LIBRARY SCAN
+    // -------------------------------------------------------------------------
+    setTimeout(function() {
+        var hasStorage = true;
+        if (window.AndroidBridge && typeof window.AndroidBridge.hasStoragePermission === 'function') {
+            try { hasStorage = Boolean(window.AndroidBridge.hasStoragePermission()); } catch (e) {}
+        }
+        if (hasStorage) {
+            window.runBlockingFullLibraryScanV247(
+                '🔍 Поиск аудио и видео...',
+                'Индексация медиатеки • Подождите завершения'
+            );
+        }
+    }, 60);
+})();
+/* ================= END JENNY_V247_120FPS_VIRTUAL_LIST_AND_BLOCKING_SCAN_SHIELD ================= */

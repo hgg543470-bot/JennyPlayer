@@ -14152,3 +14152,293 @@ def api_video_live_remux_v246():
 
 _override_bottle_route_v212('/api/video/live_remux', 'GET', api_video_live_remux_v246)
 # ================= END JENNY_V246_AUDIO_ONLY_AND_REAL_VIDEO_TRACKS =================
+
+# ================= BEGIN JENNY_V247_ONESHOT_INDEXER_AND_ZERO_BG_IO =================
+_ONESHOT_AUDIO_INDEX_V247 = {
+    "sig": "",
+    "payload": None,
+    "pairs": [],
+}
+_ONESHOT_VIDEO_INDEX_V247 = {
+    "sig": "",
+    "items": None,
+}
+_TRACK_META_BY_PATH_CACHE_V247 = {}
+_GLOBAL_SCAN_LOCK_V247 = threading.Lock()
+
+
+def _fast_cached_track_meta_v247(fn: str, fp: str, known_mtime: float = -1.0) -> dict:
+    cached = _TRACK_META_BY_PATH_CACHE_V247.get(fp)
+    if cached is not None:
+        return cached
+    meta = quick_parse_artist_album_v71(fn, fp)
+    if known_mtime > 0 and isinstance(meta, dict):
+        meta["mtime"] = known_mtime
+    if len(_TRACK_META_BY_PATH_CACHE_V247) > 25000:
+        _TRACK_META_BY_PATH_CACHE_V247.clear()
+    _TRACK_META_BY_PATH_CACHE_V247[fp] = meta
+    return meta
+
+
+def _walk_storage_audio_fast_v247(pure_exts: tuple) -> list:
+    """Single-pass os.scandir audio walk capturing entry.stat().st_mtime with ZERO duplicate stat() calls."""
+    load_multi_dirs_v71()
+    roots = []
+    ext_root = "/storage/emulated/0"
+    if os.path.isdir(ext_root) and os.access(ext_root, os.R_OK):
+        roots.append(ext_root)
+    for d in list(ACTIVE_MUSIC_DIRS) + list(SAVED_MUSIC_DIRS):
+        if d and os.path.isdir(d):
+            nd = os.path.abspath(d)
+            if not any(nd == os.path.abspath(r) or nd.startswith(os.path.abspath(r) + os.sep) for r in roots):
+                roots.append(d)
+
+    tor_tmp_abs = os.path.abspath(_resolve_persistent_tor_data_dir_v243()) if "_resolve_persistent_tor_data_dir_v243" in globals() else ""
+    found_map = {}
+    found_sizes = {}
+    ordered_triples = []
+
+    # 1) Prioritize explicit ACTIVE_MUSIC_DIRS top-level files first
+    for pref_d in ACTIVE_MUSIC_DIRS:
+        if not pref_d or not os.path.isdir(pref_d):
+            continue
+        try:
+            with os.scandir(pref_d) as it_p:
+                for entry in it_p:
+                    name = entry.name
+                    if not name or name.startswith("."):
+                        continue
+                    low_n = name.lower()
+                    if low_n.endswith(_STRICT_VIDEO_EXTS_V246) or not low_n.endswith(pure_exts):
+                        continue
+                    if low_n.startswith(("temp_stretcher_", "temp_final_")) or low_n.endswith((".part", ".tmp", ".crdownload")):
+                        continue
+                    try:
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        st_e = entry.stat(follow_symlinks=False)
+                        if st_e.st_size < 4096 and not low_n.endswith(".xflac"):
+                            continue
+                        if name not in found_map:
+                            found_map[name] = entry.path
+                            found_sizes[name] = st_e.st_size
+                            ordered_triples.append((name, entry.path, st_e.st_mtime))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    visited_real = set()
+
+    def _walk_dir(cur_dir: str, depth: int):
+        if depth > 7:
+            return
+        try:
+            abs_cur = os.path.abspath(cur_dir)
+            if tor_tmp_abs and abs_cur.startswith(tor_tmp_abs):
+                return
+            real_d = os.path.realpath(cur_dir)
+            if real_d in visited_real:
+                return
+            visited_real.add(real_d)
+        except Exception:
+            pass
+
+        norm_cur = cur_dir.replace("\\", "/").rstrip("/")
+        if norm_cur in ("/storage/emulated/0/Android/data", "/storage/emulated/0/Android/obb"):
+            return
+
+        try:
+            with os.scandir(cur_dir) as it:
+                subdirs = []
+                for entry in it:
+                    name = entry.name
+                    if not name or name.startswith("."):
+                        continue
+                    low_n = name.lower()
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if low_n in _SKIP_GLOBAL_SCAN_DIRS_V245:
+                                continue
+                            if norm_cur == "/storage/emulated/0/Android" and low_n in ("data", "obb"):
+                                continue
+                            subdirs.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            if low_n.endswith(_STRICT_VIDEO_EXTS_V246) or not low_n.endswith(pure_exts):
+                                continue
+                            if low_n.startswith(("temp_stretcher_", "temp_final_")) or low_n.endswith((".part", ".tmp", ".crdownload")):
+                                continue
+                            st_e = entry.stat(follow_symlinks=False)
+                            if st_e.st_size < 4096 and not low_n.endswith(".xflac"):
+                                continue
+                            key_name = name
+                            if key_name in found_map:
+                                if found_map[key_name] == entry.path or found_sizes.get(key_name) == st_e.st_size:
+                                    continue
+                                parent_lbl = os.path.basename(cur_dir) or "Folder"
+                                key_name = f"[{parent_lbl}] {name}"
+                                if key_name in found_map:
+                                    continue
+                            found_map[key_name] = entry.path
+                            found_sizes[key_name] = st_e.st_size
+                            ordered_triples.append((key_name, entry.path, st_e.st_mtime))
+                    except Exception:
+                        pass
+                for sd in subdirs:
+                    _walk_dir(sd, depth + 1)
+        except Exception:
+            pass
+
+    for r_dir in roots:
+        _walk_dir(r_dir, 0)
+
+    _DISCOVERED_AUDIO_PATHS_V245.update(found_map)
+    return ordered_triples
+
+
+def _merge_active_torrent_videos_only_v247(scan_dirs: list):
+    """Lightweight P2P daemon status merge (0 disk walk) so active torrent streams appear without folder scanning."""
+    if not globals().get("_JTORRENT_PROC_V96"):
+        return
+    try:
+        port = globals().get('_JTORRENT_PORT_V96', 42070)
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/status")
+        with urllib.request.urlopen(req, timeout=0.35) as resp:
+            raw_txt = resp.read().decode('utf-8', 'ignore')
+            st_data = json.loads(raw_txt)
+            tor_list = st_data if isinstance(st_data, list) else (st_data.get('torrents') or [])
+            for tor in tor_list:
+                h = (tor.get('hash') or '').lower()
+                for f in (tor.get('files') or []):
+                    rel_p = f.get('path') or f.get('name') or ''
+                    if not rel_p or not rel_p.lower().endswith(_STRICT_VIDEO_EXTS_V246):
+                        continue
+                    bn = os.path.basename(rel_p)
+                    f_idx = f.get('index', 0)
+                    pct = f.get('percent', 0)
+                    sz_mb = round((f.get('size') or f.get('length') or 0) / (1024 * 1024), 1)
+                    if bn not in _discovered_video_meta_v137:
+                        _discovered_video_meta_v137[bn] = {
+                            "name": bn,
+                            "size_mb": sz_mb,
+                            "percent": pct,
+                            "tor_hash": h,
+                            "tor_file_idx": f_idx,
+                            "in_video_dir": False,
+                            "stream_url": f"/api/torrent/stream/{h}/{f_idx}",
+                        }
+                    else:
+                        _discovered_video_meta_v137[bn]["tor_hash"] = h
+                        _discovered_video_meta_v137[bn]["tor_file_idx"] = f_idx
+    except Exception:
+        pass
+
+
+def sync_downloaded_videos_to_library_v247(force=False):
+    """
+    One-shot video library indexer:
+      - Walks storage ONLY once per session/config signature or when force=True (boot / toggle / manual Refresh).
+      - NEVER walks /storage/emulated/0 on background timers!
+    """
+    load_multi_dirs_v71()
+    scan_all = is_scan_all_folders_enabled_v245()
+    vid_sig = f"VID247|ALL={int(scan_all)}|{','.join(ACTIVE_MUSIC_DIRS)}|{','.join(SAVED_MUSIC_DIRS)}"
+
+    if not force and _ONESHOT_VIDEO_INDEX_V247["sig"] == vid_sig and _ONESHOT_VIDEO_INDEX_V247["items"]:
+        if globals().get("_JTORRENT_ACTIVE_FILES_V106"):
+            _merge_active_torrent_videos_only_v247(_collect_video_scan_dirs_v137())
+            return list(_discovered_video_meta_v137.values())
+        return _ONESHOT_VIDEO_INDEX_V247["items"]
+
+    with _GLOBAL_SCAN_LOCK_V247:
+        if not force and _ONESHOT_VIDEO_INDEX_V247["sig"] == vid_sig and _ONESHOT_VIDEO_INDEX_V247["items"]:
+            return _ONESHOT_VIDEO_INDEX_V247["items"]
+        items = sync_downloaded_videos_to_library_v246(force=True)
+        _ONESHOT_VIDEO_INDEX_V247["sig"] = vid_sig
+        _ONESHOT_VIDEO_INDEX_V247["items"] = items
+        return items
+
+
+sync_downloaded_videos_to_library_v134 = sync_downloaded_videos_to_library_v247
+
+
+def _invalidate_oneshot_library_caches_v247():
+    _ONESHOT_AUDIO_INDEX_V247["sig"] = ""
+    _ONESHOT_AUDIO_INDEX_V247["payload"] = None
+    _ONESHOT_VIDEO_INDEX_V247["sig"] = ""
+    _ONESHOT_VIDEO_INDEX_V247["items"] = None
+
+
+_prev_invalidate_fs_v247 = _invalidate_fs_caches_v237
+def _invalidate_fs_caches_v247():
+    _prev_invalidate_fs_v247()
+    _invalidate_oneshot_library_caches_v247()
+_invalidate_fs_caches_v237 = _invalidate_fs_caches_v247
+
+
+def get_data_v247():
+    """
+    One-shot cached /api/data:
+      - Returns cached JSON in <0.1ms during normal playback/UI usage (zero stat() storms, zero disk walks!).
+      - Performs full folder/device scan ONLY on initial boot, folder/mode change, or explicit ?force=1 (🔄 Refresh).
+    """
+    response.content_type = "application/json; charset=utf-8"
+    force = (request.query.get("force") == "1")
+    load_multi_dirs_v71()
+    scan_all = is_scan_all_folders_enabled_v245()
+    pure_audio_exts = get_pure_audio_extensions_v246()
+    sig = f"V247|ALL={int(scan_all)}|{','.join(ACTIVE_MUSIC_DIRS)}|{','.join(SAVED_MUSIC_DIRS)}|{','.join(pure_audio_exts)}"
+
+    if not force and _ONESHOT_AUDIO_INDEX_V247["payload"] and _ONESHOT_AUDIO_INDEX_V247["sig"] == sig and _ONESHOT_AUDIO_INDEX_V247.get("count", 0) > 0:
+        return _ONESHOT_AUDIO_INDEX_V247["payload"]
+
+    with _GLOBAL_SCAN_LOCK_V247:
+        if not force and _ONESHOT_AUDIO_INDEX_V247["payload"] and _ONESHOT_AUDIO_INDEX_V247["sig"] == sig and _ONESHOT_AUDIO_INDEX_V247.get("count", 0) > 0:
+            return _ONESHOT_AUDIO_INDEX_V247["payload"]
+
+        if force:
+            _TRACK_META_BY_PATH_CACHE_V247.clear()
+
+        all_tracks, seen, track_meta = [], set(), {}
+        if scan_all:
+            triples = _walk_storage_audio_fast_v247(pure_audio_exts)
+        else:
+            triples = []
+            for d in ACTIVE_MUSIC_DIRS:
+                for fn, fp in _fast_list_dir_tracks_v237(d, pure_audio_exts):
+                    try:
+                        mt = os.path.getmtime(fp)
+                    except Exception:
+                        mt = 0.0
+                    triples.append((fn, fp, mt))
+                    _DISCOVERED_AUDIO_PATHS_V245[fn] = fp
+
+        for fn, fp, mt in triples:
+            if fn.lower().endswith(_STRICT_VIDEO_EXTS_V246):
+                continue
+            if fn not in seen:
+                seen.add(fn)
+                all_tracks.append(fn)
+                track_meta[fn] = _fast_cached_track_meta_v247(fn, fp, mt)
+
+        all_tracks.sort(key=lambda x: track_meta.get(x, {}).get("mtime", 0), reverse=True)
+        out_json = json.dumps({
+            "all_tracks": all_tracks,
+            "session_tracks": all_tracks,
+            "current_folder": MUSIC_DIR,
+            "active_folders": ACTIVE_MUSIC_DIRS,
+            "saved_folders": SAVED_MUSIC_DIRS,
+            "scan_all_folders": scan_all,
+            "track_meta": track_meta,
+        }, ensure_ascii=False)
+        _ONESHOT_AUDIO_INDEX_V247["sig"] = sig
+        _ONESHOT_AUDIO_INDEX_V247["payload"] = out_json
+        _ONESHOT_AUDIO_INDEX_V247["count"] = len(all_tracks)
+        _DATA_CACHE_V237["ts"] = time.time()
+        _DATA_CACHE_V237["sig"] = sig
+        _DATA_CACHE_V237["payload"] = out_json
+        return out_json
+
+
+_override_bottle_route_v212('/api/data', 'GET', get_data_v247)
+# ================= END JENNY_V247_ONESHOT_INDEXER_AND_ZERO_BG_IO =================
