@@ -183,6 +183,7 @@ window.computeBufferAutoGain = function(audioBuffer, targetDb) {
         let diffLocked = Math.max(-30, Math.min(24, tDb - refBuf._lockedRmsDbV72));
         return Math.pow(10, diffLocked / 20);
     }
+    if (typeof refBuf.getChannelData !== 'function') return 1.0;
 
     let ch0 = refBuf.getChannelData(0);
     let ch1 = refBuf.numberOfChannels > 1 ? refBuf.getChannelData(1) : ch0;

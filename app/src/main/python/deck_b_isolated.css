@@ -1,0 +1,232 @@
+/* ============================================================================
+ * 🎬 DECK_B_ISOLATED.CSS — ПОЛНОСТЬЮ АВТОНОМНЫЕ СТИЛИ ВИДЕОДЕКИ Б (СИНИЙ КОНТУР)
+ * Полная дублированная копия геометрии кнопок и шкалы, изолированная от Деки А.
+ * ============================================================================ */
+
+#deckBControlsRowV216 {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 4px !important;
+    width: 100% !important;
+    padding: 0 2px !important;
+    margin-top: -2px !important;
+    margin-bottom: 7px !important;
+    box-sizing: border-box !important;
+}
+
+#deckBProgressRow #leftTimeBlockDeckB,
+#deckBProgressRow #seekZoneDeckB,
+#deckBProgressRow #rightTimeBlockDeckB {
+    border-color: rgba(59, 130, 246, 0.78) !important;
+    box-shadow: inset 0 0 8px rgba(59, 130, 246, 0.18) !important;
+}
+
+#deckBProgressRow #progressFillDeckB {
+    background: rgba(37, 99, 235, 0.48) !important;
+}
+
+#deckBProgressRow #currentTimeDeckB {
+    color: #60a5fa !important;
+}
+
+#deckBProgressRow #remainingTimeDeckB {
+    color: #93c5fd !important;
+}
+
+#deckBControlsRowV216 .jenny-sq-btn-v216 {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    height: 34px !important;
+    padding: 0 2px !important;
+    border-radius: 9px !important;
+    background: rgba(11, 24, 54, 0.94) !important;
+    border: 1.3px solid rgba(59, 130, 246, 0.72) !important;
+    color: #60a5fa !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 2px !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    box-sizing: border-box !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(96, 165, 250, 0.18) !important;
+    transition: flex 0.42s cubic-bezier(0.22, 1, 0.36, 1), max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1), padding 0.35s ease, margin 0.35s ease, opacity 0.3s ease, transform 0.1s ease, border-color 0.15s ease, background 0.15s ease !important;
+}
+
+#deckBControlsRowV216 #volUIWrapperDeckBV216 {
+    transition: flex 0.42s cubic-bezier(0.22, 1, 0.36, 1), max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1), padding 0.35s ease, margin 0.35s ease, opacity 0.3s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+#deckBControlsRowV216 .jenny-sq-btn-v216:active {
+    transform: scale(0.93) !important;
+}
+
+#deckBControlsRowV216 .jenny-sq-btn-v216.deckb-accent-v216 {
+    border-color: rgba(88, 166, 255, 0.52) !important;
+}
+
+#deckBControlsRowV216 .jenny-sq-btn-v216.deckb-play-v216 {
+    background: rgba(37, 99, 235, 0.42) !important;
+    border-color: #60a5fa !important;
+    color: #dbeafe !important;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.48) !important;
+}
+
+#deckBControlsRowV216 .jenny-sq-btn-v216 svg {
+    color: #60a5fa !important;
+}
+
+#deckBControlsRowV216 .jenny-sq-btn-v216 svg[stroke] {
+    stroke: #60a5fa !important;
+}
+
+#deckBControlsRowV216 .jenny-sq-btn-v216 svg[fill="currentColor"] {
+    fill: #60a5fa !important;
+}
+
+#deckBControlsRowV216 #tracksCountDeckBV216 {
+    color: #60a5fa !important;
+}
+
+#deckBControlsRowV216:not(.jenny-deck-row-expanded-v235) #playPauseBtnDeckBV216 {
+    flex: 1.14 1 0 !important;
+}
+
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 {
+    gap: 4px !important;
+}
+
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnPrevDeckBV216,
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnNextDeckBV216 {
+    flex: 1.30 1 0 !important;
+}
+
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 #playPauseBtnDeckBV216 {
+    flex: 1.32 1 0 !important;
+}
+
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 #volUIWrapperDeckBV216,
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnExportDeckBV216,
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnSpecDeckBV216,
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnFavDeckBV216,
+#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnEqDeckBV216 {
+    flex: 1.08 1 0 !important;
+}
+
+#jennyVideoStudioRootV130 .v130-btn {
+    background: rgba(11, 24, 54, 0.88) !important;
+    border: 1.25px solid rgba(59, 130, 246, 0.62) !important;
+    color: #60a5fa !important;
+    border-radius: 9px !important;
+    height: 32px !important;
+    padding: 0 7px !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.55), inset 0 1px 2px rgba(96,165,250,0.16) !important;
+    white-space: nowrap !important;
+    box-sizing: border-box !important;
+    transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease !important;
+}
+
+#jennyVideoStudioRootV130 .v130-btn svg {
+    color: #60a5fa !important;
+    flex-shrink: 0 !important;
+}
+
+#jennyVideoStudioRootV130 .v130-btn.v130-btn-active-v217 {
+    background: rgba(37, 99, 235, 0.44) !important;
+    border-color: #60a5fa !important;
+    color: #eff6ff !important;
+    box-shadow: 0 0 11px rgba(59, 130, 246, 0.52), inset 0 1px 2px rgba(191, 219, 254, 0.25) !important;
+}
+
+#jennyVideoStudioRootV130 .v130-btn.v130-btn-active-v217 svg {
+    color: #93c5fd !important;
+}
+
+#jennyVideoStudioRootV130 .v130-btn.v130-btn-off-v217 {
+    background: rgba(15, 23, 42, 0.72) !important;
+    border-color: rgba(100, 116, 139, 0.32) !important;
+    color: #64748b !important;
+    box-shadow: none !important;
+}
+
+#jennyVideoStudioRootV130 .v130-btn.v130-btn-off-v217 svg {
+    color: #64748b !important;
+}
+
+#jennyVideoStudioRootV130 .v130-btn.v130-btn-close-v217 {
+    background: rgba(185, 28, 28, 0.85) !important;
+    border-color: #f87171 !important;
+    color: #ffffff !important;
+    width: 32px !important;
+    padding: 0 !important;
+}
+
+#jennyVideoStudioRootV130 .v130-btn.v130-btn-close-v217 svg {
+    color: #ffffff !important;
+}
+
+#jennyVideoStudioRootV130 #v135BottomToolsRow {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 4px !important;
+    width: 100% !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    scrollbar-width: none !important;
+}
+
+#jennyVideoStudioRootV130 #v135BottomToolsRow::-webkit-scrollbar {
+    display: none !important;
+}
+
+#jennyVideoStudioRootV130 #v135BottomToolsRow .v130-btn {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    padding: 0 4px !important;
+    font-size: 10.5px !important;
+}
+
+#jennyVideoStudioRootV130 #v130SeekSlider {
+    accent-color: #3b82f6 !important;
+}
+
+#jennyVideoStudioRootV130 #v130CurTime,
+#jennyVideoStudioRootV130 #v130DurTime {
+    color: #60a5fa !important;
+}
+
+#jennyVideoStageV130.rot90-v130 {
+    position: fixed !important;
+    left: 50% !important;
+    top: 50% !important;
+    width: 100dvh !important;
+    height: 100dvw !important;
+    max-width: none !important;
+    max-height: none !important;
+    transform: translate(-50%, -50%) rotate(90deg) !important;
+    transform-origin: center center !important;
+}
+
+#jennyVideoStageV130.rot90-v130 #jennyVideoElV130 {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+}
+
+#jennyVideoStageV130.rot90-v130 #v130TopDragBar {
+    padding: 6px 12px !important;
+}
+
+#jennyVideoStageV130.rot90-v130 #v135BottomToolsRow .v130-btn {
+    height: 30px !important;
+    font-size: 11px !important;
+}

@@ -273,6 +273,10 @@ window.playPreviousTrack = function() {
 
 window.cloneAndReverseBuffer = async function(originalBuffer) {
     if (!originalBuffer) return null;
+    if (typeof window.reverseAudioBufferInDeckAWorker === 'function') {
+        let workerRev = await window.reverseAudioBufferInDeckAWorker(originalBuffer, window.audioCtx);
+        if (workerRev) return workerRev;
+    }
     let newBuffer = window.audioCtx.createBuffer(
         originalBuffer.numberOfChannels,
         originalBuffer.length,

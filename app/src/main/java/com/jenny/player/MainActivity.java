@@ -977,138 +977,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     
-    // === BEGIN JENNY_V249_OVERLAY_EXPAND_FIX ===
-    private static volatile boolean pendingExpandToFullFromOverlayV249 = false;
-
-    private void bringMainActivityToFrontSafelyV249() {
-        try {
-            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(android.content.Context.ACTIVITY_SERVICE);
-            if (am != null) {
-                try {
-                    am.moveTaskToFront(getTaskId(), android.app.ActivityManager.MOVE_TASK_WITH_HOME);
-                } catch (Throwable ignored) {}
-            }
-        } catch (Throwable ignored) {}
-
-        try {
-            Intent launchIntent = new Intent(getApplicationContext(), MainActivity.class);
-            launchIntent.setAction(Intent.ACTION_MAIN);
-            launchIntent.addCategory(Intent.CATEGORY_LAUNCHER);
-            launchIntent.addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                    | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-            );
-
-            int piFlags = android.app.PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                piFlags |= android.app.PendingIntent.FLAG_IMMUTABLE;
-            }
-            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
-                    getApplicationContext(), 7249, launchIntent, piFlags
-            );
-            android.os.Bundle optsBundle = null;
-            if (Build.VERSION.SDK_INT >= 34) {
-                try {
-                    android.app.ActivityOptions ao = android.app.ActivityOptions.makeBasic();
-                    java.lang.reflect.Method m = android.app.ActivityOptions.class.getMethod(
-                            "setPendingIntentBackgroundActivityStartMode", int.class
-                    );
-                    m.invoke(ao, 1); // MODE_BACKGROUND_ACTIVITY_START_ALLOWED = 1
-                    optsBundle = ao.toBundle();
-                } catch (Throwable ignored) {}
-            }
-            try {
-                if (optsBundle != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-                    pi.send(getApplicationContext(), 0, null, null, null, null, optsBundle);
-                } else {
-                    pi.send();
-                }
-            } catch (Throwable ignored) {
-                getApplicationContext().startActivity(launchIntent);
-            }
-            try {
-                startActivity(launchIntent);
-                overridePendingTransition(0, 0);
-            } catch (Throwable ignored) {}
-        } catch (Throwable ignored) {}
-    }
-
-    private void attachWebViewIntoContentGroupV249() {
-        if (webView == null) return;
-        webView.setPivotX(0f);
-        webView.setPivotY(0f);
-        webView.setScaleX(1.0f);
-        webView.setScaleY(1.0f);
-        webView.setAlpha(1.0f);
-        webView.setVisibility(View.VISIBLE);
-
-        android.view.ViewGroup contentGroup = findViewById(android.R.id.content);
-        android.view.ViewParent parent = webView.getParent();
-        if (contentGroup != null) {
-            if (parent != contentGroup) {
-                if (parent instanceof android.view.ViewGroup) {
-                    ((android.view.ViewGroup) parent).removeView(webView);
-                }
-                contentGroup.removeAllViews();
-                android.widget.FrameLayout.LayoutParams flp = new android.widget.FrameLayout.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                );
-                contentGroup.addView(webView, flp);
-            }
-            contentGroup.setVisibility(View.VISIBLE);
-            contentGroup.requestLayout();
-            contentGroup.invalidate();
-        } else if (parent == null) {
-            setContentView(webView);
-        }
-
-        webView.onResume();
-        webView.resumeTimers();
-        applyPlayerViewportMarginsV244();
-        webView.requestLayout();
-        webView.invalidate();
-    }
-
     private void restoreWebViewToActivityV135(final boolean bringToFront) {
         runOnUiThread(() -> {
             try {
-                if (bringToFront && (isDesktopOverlayActiveV132 || overlayContainerV132 != null)) {
-                    // Bring MainActivity task to the foreground FIRST before tearing down overlayContainerV132
-                    // so Xiaomi HyperOS / Android 14+ never displays a detached black Activity shell!
-                    pendingExpandToFullFromOverlayV249 = true;
-                    overlayGrantProtectionUntilMsV153 = 0L;
-                    bringMainActivityToFrontSafelyV249();
-
-                    permWatchHandlerV147.postDelayed(() -> {
-                        if (hasWindowFocus()) {
-                            restoreWebViewToActivityV135(false);
-                        } else {
-                            bringMainActivityToFrontSafelyV249();
-                        }
-                    }, 140L);
-                    permWatchHandlerV147.postDelayed(() -> {
-                        if (hasWindowFocus() || !isFinishing()) {
-                            restoreWebViewToActivityV135(false);
-                        }
-                    }, 340L);
-                    return;
-                }
-
-                boolean wasOverlay = isDesktopOverlayActiveV132 || (overlayContainerV132 != null);
-                boolean shouldExpandFull = pendingExpandToFullFromOverlayV249;
+                boolean wasOverlay = isDesktopOverlayActiveV132;
                 isDesktopOverlayActiveV132 = false;
-                pendingExpandToFullFromOverlayV249 = false;
-
-                if (!wasOverlay && !shouldExpandFull) {
+                if (!wasOverlay && overlayContainerV132 == null) {
                     if (webView != null) {
-                        attachWebViewIntoContentGroupV249();
+                        webView.onResume();
+                        webView.resumeTimers();
                     }
                     return;
                 }
-
                 if (overlayContainerV132 != null) {
                     overlayContainerV132.removeAllViews();
                     if (wmV132 != null) {
@@ -1120,17 +1000,29 @@ public class MainActivity extends AppCompatActivity {
                     }
                     overlayContainerV132 = null;
                 }
-
-                attachWebViewIntoContentGroupV249();
+                if (webView != null) {
+                    webView.setScaleX(1.0f);
+                    webView.setScaleY(1.0f);
+                    android.view.ViewGroup contentGroup = findViewById(android.R.id.content);
+                    android.view.ViewParent parent = webView.getParent();
+                    if (parent != contentGroup) {
+                        if (parent instanceof android.view.ViewGroup) {
+                            ((android.view.ViewGroup) parent).removeView(webView);
+                        }
+                        setContentView(webView);
+                    }
+                    webView.onResume();
+                    webView.resumeTimers();
+                    webView.requestLayout();
+                    webView.invalidate();
+                }
                 applyVideoSystemUiLockV132();
-
-                if (shouldExpandFull) {
-                    evalJs("if(window.onExpandedFromDesktopOverlayToFullV249) window.onExpandedFromDesktopOverlayToFullV249(); else if(window.onDesktopOverlayStateChangedV133) window.onDesktopOverlayStateChangedV133(false);");
-                    permWatchHandlerV147.postDelayed(() -> {
-                        attachWebViewIntoContentGroupV249();
-                        evalJs("if(window.onExpandedFromDesktopOverlayToFullV249) window.onExpandedFromDesktopOverlayToFullV249();");
-                    }, 120L);
-                } else if (wasOverlay) {
+                if (bringToFront) {
+                    Intent i = new Intent(MainActivity.this, MainActivity.class);
+                    i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    startActivity(i);
+                }
+                if (wasOverlay) {
                     evalJs("if(window.onDesktopOverlayStateChangedV133) window.onDesktopOverlayStateChangedV133(false);");
                 }
             } catch (Exception e) {
@@ -1138,7 +1030,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
-    // === END JENNY_V249_OVERLAY_EXPAND_FIX ===
 
     public static void evalJs(final String script) {
         if (instance != null && instance.webView != null) {
@@ -1789,7 +1680,6 @@ public class MainActivity extends AppCompatActivity {
                 if (wasPermSettings) {
                     evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(" + granted + ");");
                 }
-                evalJs("if(window.syncBgUnrestrictedSilentV246) window.syncBgUnrestrictedSilentV246(" + isIgnoringBatteryOptimizationsInternalV212() + ");");
                 evalJs("if(window.syncOnboardingPermsV165) window.syncOnboardingPermsV165();");
                 if (isVideoFullscreenV132 || isVideoLockedV132) {
                     applyVideoSystemUiLockV132();
@@ -1854,65 +1744,23 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // === JENNY_V245_GLOBAL_SCAN_JAVA ===
-    private static volatile long lastGlobalDirWalkMsV245 = 0L;
-
-    private static boolean shouldSkipGlobalScanDirV245(String name) {
-        if (name == null || name.isEmpty() || name.charAt(0) == '.') return true;
-        return "Android".equalsIgnoreCase(name)
-                || "JENNY".equalsIgnoreCase(name)
-                || "torrents_tmp".equalsIgnoreCase(name)
-                || "proc".equalsIgnoreCase(name)
-                || "sys".equalsIgnoreCase(name)
-                || "LOST.DIR".equalsIgnoreCase(name)
-                || "$RECYCLE.BIN".equalsIgnoreCase(name)
-                || "Trash".equalsIgnoreCase(name);
-    }
-
-    private static void walkStorageDirsV245(File dir, int depth, int maxDepth, LinkedHashSet<String> out, int maxDirs) {
-        if (dir == null || depth > maxDepth || out.size() >= maxDirs) return;
-        String abs = normDirPathV238(dir.getAbsolutePath());
-        if (!abs.isEmpty()) out.add(abs);
-        if (depth == maxDepth) return;
-        File[] children = null;
-        try {
-            children = dir.listFiles();
-        } catch (Exception ignored) {}
-        if (children == null) return;
-        for (int i = 0; i < children.length; i++) {
-            if (out.size() >= maxDirs) break;
-            File ch = children[i];
-            if (ch != null && ch.isDirectory()) {
-                String nm = ch.getName();
-                if (!shouldSkipGlobalScanDirV245(nm)) {
-                    walkStorageDirsV245(ch, depth + 1, maxDepth, out, maxDirs);
-                }
-            }
-        }
-    }
-
     private static List<String> getLookupMediaDirsV238() {
         File preset = new File("/storage/emulated/0/Music/jenny_dsp_preset.json");
         long mtime = preset.exists() ? preset.lastModified() : 0L;
-        long nowMs = android.os.SystemClock.uptimeMillis();
         List<String> cur = cachedLookupDirsV238;
-        if (cur != null && cachedPresetMtimeV238 == mtime && (nowMs - lastGlobalDirWalkMsV245 < 12000L)) {
+        if (cur != null && cachedPresetMtimeV238 == mtime) {
             return cur;
         }
         synchronized (presetCacheLockV238) {
-            if (cachedLookupDirsV238 != null && cachedPresetMtimeV238 == mtime && (nowMs - lastGlobalDirWalkMsV245 < 12000L)) {
+            if (cachedLookupDirsV238 != null && cachedPresetMtimeV238 == mtime) {
                 return cachedLookupDirsV238;
             }
-            boolean scanAll = true;
             LinkedHashSet<String> dirs = new LinkedHashSet<String>();
             if (preset.isFile()) {
                 String txt = readSmallUtf8FileV238(preset);
                 if (txt != null && !txt.isEmpty()) {
                     try {
                         JSONObject j = new JSONObject(txt);
-                        if (j.has("scanAllFolders")) {
-                            scanAll = j.optBoolean("scanAllFolders", true);
-                        }
                         JSONArray act = j.optJSONArray("activeFolders");
                         if (act != null) {
                             for (int i = 0; i < act.length(); i++) {
@@ -1938,16 +1786,9 @@ public class MainActivity extends AppCompatActivity {
             dirs.add("/storage/emulated/0/JennyVideo");
             dirs.add("/storage/emulated/0/Download");
             dirs.add("/storage/emulated/0/Movies");
-            if (scanAll) {
-                File extRoot = new File("/storage/emulated/0");
-                if (extRoot.isDirectory() && extRoot.canRead()) {
-                    walkStorageDirsV245(extRoot, 0, 5, dirs, 600);
-                }
-            }
             List<String> built = new ArrayList<String>(dirs);
             cachedLookupDirsV238 = built;
             cachedPresetMtimeV238 = mtime;
-            lastGlobalDirWalkMsV245 = nowMs;
             return built;
         }
     }
@@ -2064,18 +1905,7 @@ public class MainActivity extends AppCompatActivity {
 
             JSONObject out = new JSONObject();
             out.put("status", "ok");
-            boolean scanAllFlag = true;
-            if (preset.isFile()) {
-                try {
-                    String pTxt = readSmallUtf8FileV238(preset);
-                    if (pTxt != null && !pTxt.isEmpty()) {
-                        JSONObject pj = new JSONObject(pTxt);
-                        if (pj.has("scanAllFolders")) scanAllFlag = pj.optBoolean("scanAllFolders", true);
-                    }
-                } catch (Exception ignored) {}
-            }
             out.put("fast_jni", true);
-            out.put("scan_all_folders", scanAllFlag);
             out.put("saved_folders", savedArr);
             out.put("active_folders", activeArr);
             out.put("current_folder", currentFolder);
@@ -2142,8 +1972,8 @@ public class MainActivity extends AppCompatActivity {
         if (lowName.endsWith(".m4a")) return "audio/mp4";
         if (lowName.endsWith(".aac")) return "audio/aac";
         if (lowName.endsWith(".ogg") || lowName.endsWith(".opus")) return "audio/ogg";
-        // V246: Never intercept video (.mp4/.m4v/.webm) in shouldInterceptRequest —
-        // video streams directly via dedicated HTTP port :8082 / FFmpeg live_remux without JNI Range stalls!
+        if (lowName.endsWith(".mp4") || lowName.endsWith(".m4v")) return "video/mp4";
+        if (lowName.endsWith(".webm")) return "video/webm";
         return null;
     }
 

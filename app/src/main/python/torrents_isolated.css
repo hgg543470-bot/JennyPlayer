@@ -1,0 +1,47 @@
+/* ============================================================================
+ * 🧲 TORRENTS_ISOLATED.CSS — ПОЛНОСТЬЮ АВТОНОМНЫЕ СТИЛИ ТОРРЕНТ-СТУДИИ И РАДАРА P2P
+ * Изолировано от Деки А и Деки Б.
+ * ============================================================================ */
+
+#jennyTorrentModalV91 .jenny-modal-card-v71 {
+    height: 94vh !important;
+    max-height: 94vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+}
+
+#jennyTorrentModalV91 .jenny-modal-hdr-v71 {
+    flex-shrink: 0 !important;
+    padding: 7px 10px !important;
+}
+
+#jennyTorrentModalV91 #torP2pCoreSwitchBoxV139 {
+    padding: 5px 8px !important;
+    margin-bottom: 2px !important;
+    gap: 4px !important;
+}
+
+#jennyTorrentModalV91 #torFilterPillsBarV99 {
+    gap: 4px !important;
+    margin: 1px 0 !important;
+}
+
+#jennyTorrentModalV91 #torBodyListV96 {
+    flex: 1 1 0px !important;
+    min-height: 80px !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    padding: 7px 10px !important;
+}
+
+#jennyTorrentModalV91 #torFooterBarV96 {
+    flex-shrink: 0 !important;
+    z-index: 20 !important;
+    padding: 8px 10px !important;
+    border-top: 1px solid #30363d !important;
+    background: #090c10 !important;
+    gap: 6px !important;
+    box-sizing: border-box !important;
+}
