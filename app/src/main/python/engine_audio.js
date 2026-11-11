@@ -82,7 +82,7 @@ window.createSoftClipWaveShaper = function(ctx, bucket) {
     return shaper;
 };
 
-window.calculateAutoMasterPadDb = function(cfg, silentOnly) {
+window.calculateAutoMasterPadDb = function(cfg) {
     let hotDb = 0.0;
     let parts = [];
 
@@ -157,20 +157,18 @@ window.calculateAutoMasterPadDb = function(cfg, silentOnly) {
     }
 
     let padDb = -Math.max(0.5, hotDb);
-    if (!silentOnly) {
-        window.lastComputedCeilingDb = Math.round(padDb * 10) / 10;
-        window.lastCeilingBreakdown = parts.length > 0 ? parts.join(' │ ') : 'Базовый запас -0.5 dB';
+    window.lastComputedCeilingDb = Math.round(padDb * 10) / 10;
+    window.lastCeilingBreakdown = parts.length > 0 ? parts.join(' │ ') : 'Базовый запас -0.5 dB';
 
-        const badge = document.getElementById('autoCeilStatusBadge');
-        if (badge) {
-            badge.innerText = cfg.opt_masterCeil
-                ? `Авто: ${window.lastComputedCeilingDb} dB`
-                : `ВЫКЛ`;
-            badge.style.color = cfg.opt_masterCeil ? '#3fb950' : '#8b949e';
-        }
-        if (typeof window.updateTopSearchOrMonitorBar === 'function') {
-            window.updateTopSearchOrMonitorBar();
-        }
+    const badge = document.getElementById('autoCeilStatusBadge');
+    if (badge) {
+        badge.innerText = cfg.opt_masterCeil
+            ? `Авто: ${window.lastComputedCeilingDb} dB`
+            : `ВЫКЛ`;
+        badge.style.color = cfg.opt_masterCeil ? '#3fb950' : '#8b949e';
+    }
+    if (typeof window.updateTopSearchOrMonitorBar === 'function') {
+        window.updateTopSearchOrMonitorBar();
     }
     return padDb;
 };
@@ -186,7 +184,6 @@ window.computeBufferAutoGain = function(audioBuffer, targetDb) {
         return Math.pow(10, diffLocked / 20);
     }
 
-    if (typeof refBuf.getChannelData !== 'function') return 1.0;
     let ch0 = refBuf.getChannelData(0);
     let ch1 = refBuf.numberOfChannels > 1 ? refBuf.getChannelData(1) : ch0;
     let len = ch0.length;
@@ -210,11 +207,11 @@ window.computeBufferAutoGain = function(audioBuffer, targetDb) {
     return Math.pow(10, diffDb / 20);
 };
 
-window.createFIRImpulse = function(context, decayMs, explicitCfg) {
+window.createFIRImpulse = function(context, decayMs) {
     let sampleRate = context.sampleRate;
     let length = Math.max(2, Math.floor(sampleRate * ((parseFloat(decayMs) || 4) / 1000)));
     let impulse = context.createBuffer(2, length, sampleRate);
-    const cfg = explicitCfg || window.appConfig || {};
+    const cfg = window.appConfig || {};
 
     let lengthNorm = Math.sqrt(192 / Math.max(16, length));
     let cleanDriveDb = parseFloat(cfg.val_cleanFir);
@@ -471,7 +468,7 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         cur = cfOut;
     }
 
-    let padDb = window.calculateAutoMasterPadDb(cfg, ctx !== window.audioCtx);
+    let padDb = window.calculateAutoMasterPadDb(cfg);
 
     // Фильтр отсечки постоянного тока (DC Blocker 18 Гц), чтобы ни один узел никогда не смещал мембрану и не пищал!
     let dcBlocker = reg(ctx.createBiquadFilter());

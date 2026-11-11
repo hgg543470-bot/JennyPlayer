@@ -9033,7 +9033,11 @@ if (document.getElementById('jennyTorInspectorModalV128')) window.renderTorrentI
 } catch (e) {}
 };
 
-setInterval(window.refreshTorrentDaemonSnapV128, 1000);
+window._onTorWorkerAutoPush = function() {
+    if (typeof window.refreshTorrentDaemonSnapV128 === 'function') {
+        window.refreshTorrentDaemonSnapV128(true);
+    }
+};
 setTimeout(window.mountTorrentHeaderHubMenuV128, 300);
 
 // === 🎬 JENNY V130: FULL-FEATURED VIDEO STUDIO & PIP PLAYER WITH DSP AUDIO BRIDGE ===
@@ -9201,9 +9205,9 @@ try { vd.preAmpNode.connect(vd.analyserPre); } catch (e) {}
 
 try {
 if (cfg.firEnabled && cfg.firSettings) {
-vd.firNode = window.trackNode(vd.ctx.createConvolver(), vd.activeDynamicNodes);
+vd.firNode = window.trackNodeDeckB(vd.ctx.createConvolver(), vd.activeDynamicNodes);
 vd.firNode.normalize = false;
-vd.firNode.buffer = window.createFIRImpulse(vd.ctx, cfg.firSettings.decay, cfg);
+vd.firNode.buffer = window.createFIRImpulseDeckB(vd.ctx, cfg.firSettings.decay, cfg);
 vd.firGainNode.gain.value = parseFloat(cfg.firSettings.gain) || 1.5;
 cur.connect(vd.preFirPad); vd.preFirPad.connect(vd.firNode); vd.firNode.connect(vd.firGainNode);
 cur = vd.firGainNode;
@@ -9213,7 +9217,7 @@ cur.connect(vd.eqNodes.band60); vd.eqNodes.band60.connect(vd.eqNodes.band230); v
 vd.eqNodes.band910.connect(vd.eqNodes.band3600); vd.eqNodes.band3600.connect(vd.eqNodes.band14000);
 cur = vd.eqNodes.band14000;
 }
-cur = window.insertProStudioPreChain(vd.ctx, cur, cfg, vd.activeDynamicNodes, vd.studioBuffer);
+cur = window.insertProStudioPreChainDeckB(vd.ctx, cur, cfg, vd.activeDynamicNodes, vd.studioBuffer);
 cur.connect(vd.gainNode); cur = vd.gainNode;
 
 if (cfg.limiterEnabled && cfg.limiterSettings) {
@@ -9238,7 +9242,7 @@ vd.compHigh.threshold.value = thresh + 4; vd.compHigh.knee.value = knee; vd.comp
 vd.compHigh.attack.value = 0.008; vd.compHigh.release.value = 0.08;
 cur.connect(vd.splitLow); cur.connect(vd.splitMid); cur.connect(vd.splitHigh);
 vd.splitLow.connect(vd.compLow); vd.splitMid.connect(vd.compMid); vd.splitHigh.connect(vd.compHigh);
-let postBus = window.trackNode(vd.ctx.createGain(), vd.activeDynamicNodes);
+let postBus = window.trackNodeDeckB(vd.ctx.createGain(), vd.activeDynamicNodes);
 if (cfg.phaseFixEnabled) {
 vd.splitMid.Q.setTargetAtTime(Math.max(0.25, midQ * 0.65), now, 0.012);
 vd.midPhaseNode.gain.value = -1.22;
@@ -9247,28 +9251,28 @@ vd.compLow.connect(postBus); vd.compMid.connect(vd.midPhaseNode); vd.midPhaseNod
 let widthPct = parseFloat(cfg.val_midQ); if (isNaN(widthPct) || widthPct < 25) widthPct = 150;
 vd.splitMid.Q.setTargetAtTime(cfg.opt_midQ ? Math.max(0.65, Math.min(2.5, midQ / (widthPct / 100.0))) : midQ, now, 0.012);
 let midDb = parseFloat(cfg.val_midPhase); if (isNaN(midDb)) midDb = 1.5;
-vd.midPhaseNode.gain.value = cfg.opt_midPhase ? window.dbToLinear(Math.max(-15, Math.min(15, midDb))) : 1.0;
+vd.midPhaseNode.gain.value = cfg.opt_midPhase ? window.dbToLinearDeckB(Math.max(-15, Math.min(15, midDb))) : 1.0;
 let deEssDb = parseFloat(cfg.val_deEsser); if (isNaN(deEssDb)) deEssDb = -6.0;
 if (cfg.opt_deEsser) {
 vd.compHigh.threshold.value = Math.min(-6, thresh + 10); vd.compHigh.ratio.value = Math.min(4.0, ratio);
 vd.compHigh.attack.value = 0.0005; vd.compHigh.release.value = 0.09;
-vd.deEssGain.gain.value = window.dbToLinear(Math.min(12, deEssDb));
+vd.deEssGain.gain.value = window.dbToLinearDeckB(Math.min(12, deEssDb));
 } else { vd.deEssGain.gain.value = 1.0; }
 vd.compLow.connect(postBus); vd.compMid.connect(vd.midPhaseNode); vd.midPhaseNode.connect(postBus);
 vd.compHigh.connect(vd.deEssGain); vd.deEssGain.connect(postBus);
 }
-let finalPost = window.insertProStudioPostChain(vd.ctx, postBus, cfg, vd.activeDynamicNodes, vd.studioBuffer);
+let finalPost = window.insertProStudioPostChainDeckB(vd.ctx, postBus, cfg, vd.activeDynamicNodes, vd.studioBuffer);
 finalPost.connect(vd.masterAntiClickGain);
 } else {
 vd.compressorNode.threshold.value = thresh; vd.compressorNode.knee.value = knee; vd.compressorNode.ratio.value = ratio;
 vd.compressorNode.attack.value = (cfg.limiterSettings.attack || 26) / 1000;
 vd.compressorNode.release.value = (cfg.limiterSettings.release || 60) / 1000;
 cur.connect(vd.compressorNode);
-let postOut = window.insertProStudioPostChain(vd.ctx, vd.compressorNode, cfg, vd.activeDynamicNodes, vd.studioBuffer);
+let postOut = window.insertProStudioPostChainDeckB(vd.ctx, vd.compressorNode, cfg, vd.activeDynamicNodes, vd.studioBuffer);
 postOut.connect(vd.masterAntiClickGain);
 }
 } else {
-let postOut = window.insertProStudioPostChain(vd.ctx, cur, cfg, vd.activeDynamicNodes, vd.studioBuffer);
+let postOut = window.insertProStudioPostChainDeckB(vd.ctx, cur, cfg, vd.activeDynamicNodes, vd.studioBuffer);
 postOut.connect(vd.masterAntiClickGain);
 }
 try { vd.masterAntiClickGain.connect(vd.analyserPost); } catch (e) {}
@@ -9416,7 +9420,7 @@ chR.set(rightArr.subarray(0, maxCopy), startFrame);
 }
 pieceMap[pIdx] = 2; audioBuf._loadedCountV72++;
 if (audioBuf._loadedCountV72 === 1 && vd.config && vd.config.opt_autoRms) {
-window.computeBufferAutoGain(audioBuf, vd.config.val_autoRms);
+window.computeBufferAutoGainDeckB(audioBuf, vd.config.val_autoRms);
 window.buildVideoAudioGraphV131();
 }
 return true;
@@ -9519,9 +9523,7 @@ if (!rawWinBuf) return;
 let playBuf = rawWinBuf, nodeRate = 1.0;
 if (gKey === 'jbuf-lock') {
 const tensionPct = (vd.config && vd.config.hoseTensionPct !== undefined) ? vd.config.hoseTensionPct : 100;
-const savedCache = window._hoseSplicerCacheV46, savedCtx = window.audioCtx;
-window._hoseSplicerCacheV46 = vd.hoseCache; window.audioCtx = vd.ctx;
-try { playBuf = window.buildElasticHoseBufferV46(rawWinBuf, targetSpd, tensionPct); } finally { window._hoseSplicerCacheV46 = savedCache; window.audioCtx = savedCtx; }
+playBuf = window.buildElasticHoseBufferDeckB(rawWinBuf, targetSpd, tensionPct);
 nodeRate = 1.0;
 } else {
 playBuf = rawWinBuf; nodeRate = targetSpd;
@@ -10640,8 +10642,7 @@ window.installCleanStageTouchV133();
 // 1. Автоподхват всех скачанных торрент-видео (включая «Матрицу») прямо во вкладку «🎬 Видео»!
 var syncDiscoveredVideosIntoPlaylistV134 = window.syncDiscoveredVideosIntoPlaylistV134 = window.syncDiscoveredVideosIntoPlaylistV134 || function(){};
 
-setInterval(window.syncDiscoveredVideosIntoPlaylistV134, 4500);
-setTimeout(window.syncDiscoveredVideosIntoPlaylistV134, 800);
+setTimeout(function() { if (window.runIsolatedDeckB) window.runIsolatedDeckB(function() { window.syncDiscoveredVideosIntoPlaylistV134(false); }); }, 950);
 
 // 2. Полная и агрессивная распаковка ВСЕЙ аудиодорожки видео в RAM (в 3 параллельных потока FFmpeg без пауз!)
 window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
@@ -10717,7 +10718,7 @@ chR.set(rightArr.subarray(0, maxCopy), startFrame);
 pieceMap[pIdx] = 2;
 audioBuf._loadedCountV72++;
 if (audioBuf._loadedCountV72 === 1 && vd.config && vd.config.opt_autoRms) {
-window.computeBufferAutoGain(audioBuf, vd.config.val_autoRms);
+window.computeBufferAutoGainDeckB(audioBuf, vd.config.val_autoRms);
 window.buildVideoAudioGraphV131();
 }
 return true;
@@ -11203,8 +11204,14 @@ return;
 return _origHandleTrackPlayV130.apply(this, arguments);
 };
 
-setInterval(() => window.syncDiscoveredVideosIntoPlaylistV134(false), 3500);
-setTimeout(() => window.syncDiscoveredVideosIntoPlaylistV134(true), 500);
+setInterval(function() {
+    if (window.runIsolatedDeckB) window.runIsolatedDeckB(function() { window.syncDiscoveredVideosIntoPlaylistV134(false); });
+    else window.syncDiscoveredVideosIntoPlaylistV134(false);
+}, 5003);
+setTimeout(function() {
+    if (window.runIsolatedDeckB) window.runIsolatedDeckB(function() { window.syncDiscoveredVideosIntoPlaylistV134(true); });
+    else window.syncDiscoveredVideosIntoPlaylistV134(true);
+}, 520);
 
 // === ➕🎬 JENNY V138: FIX ADD FORMAT BUTTON (NO WEBVIEW PROMPT) & AUTO VIDEO EXTS ===
 window.ensureAllVideoFormatsInConfigV138 = function() {
@@ -13347,10 +13354,7 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
         let playBuf = rawWinBuf, nodeRate = 1.0;
         if (gKey === 'jbuf-lock') {
             const tensionPct = (vd.config && vd.config.hoseTensionPct !== undefined) ? vd.config.hoseTensionPct : 100;
-            const savedCache = window._hoseSplicerCacheV46, savedCtx = window.audioCtx;
-            window._hoseSplicerCacheV46 = vd.hoseCache; window.audioCtx = vd.ctx;
-            try { playBuf = window.buildElasticHoseBufferV46(rawWinBuf, targetSpd, tensionPct); }
-            finally { window._hoseSplicerCacheV46 = savedCache; window.audioCtx = savedCtx; }
+            playBuf = window.buildElasticHoseBufferDeckB(rawWinBuf, targetSpd, tensionPct);
             nodeRate = 1.0;
         } else {
             playBuf = rawWinBuf; nodeRate = targetSpd;
@@ -13467,7 +13471,7 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
                 pieceMap[pIdx] = 2;
                 audioBuf._loadedCountV72++;
                 if (audioBuf._loadedCountV72 === 1 && vd.config && vd.config.opt_autoRms) {
-                    window.computeBufferAutoGain(audioBuf, vd.config.val_autoRms);
+                    window.computeBufferAutoGainDeckB(audioBuf, vd.config.val_autoRms);
                     window.buildVideoAudioGraphV131();
                 }
                 return true;
@@ -16781,7 +16785,7 @@ let vsyncTicks = 0;
         const vid = document.getElementById('jennyVideoElV130');
         let dur = 0;
         try {
-            const mr = await fetch('/api/video/pcm_meta?src=' + encodeURIComponent(streamUrl));
+            const mr = await (window.fetchDeckBPcmWithPort8082 ? window.fetchDeckBPcmWithPort8082('/api/video/pcm_meta?src=' + encodeURIComponent(streamUrl)) : fetch('/api/video/pcm_meta?src=' + encodeURIComponent(streamUrl)));
             if (mr.ok) { const md = await mr.json(); dur = parseFloat(md.duration) || 0; }
         } catch (e) {}
 
@@ -16865,7 +16869,7 @@ let vsyncTicks = 0;
             }
             try {
                 const u = '/api/video/pcm_chunk?src=' + encodeURIComponent(streamUrl) + '&start=' + stSec + '&dur=' + dSec + '&sr=' + sr;
-                const res = await fetch(u, ctrl ? { signal: ctrl.signal } : {});
+                const res = await (window.fetchDeckBPcmWithPort8082 ? window.fetchDeckBPcmWithPort8082(u, ctrl ? ctrl.signal : null) : fetch(u, ctrl ? { signal: ctrl.signal } : {}));
                 if (!res.ok) { pieceMap[pIdx] = 0; return false; }
                 const ab = await res.arrayBuffer();
                 const frames = Math.floor(ab.byteLength / 8);
@@ -16892,7 +16896,7 @@ let vsyncTicks = 0;
                 audioBuf._loadedCountV72++;
                 if (revAudioBuf) revAudioBuf._loadedCountV72 = audioBuf._loadedCountV72;
                 if (audioBuf._loadedCountV72 === 1 && vd.config && vd.config.opt_autoRms) {
-                    window.computeBufferAutoGain(audioBuf, vd.config.val_autoRms);
+                    window.computeBufferAutoGainDeckB(audioBuf, vd.config.val_autoRms);
                     window.buildVideoAudioGraphV131();
                 }
                 return true;
@@ -16951,9 +16955,14 @@ let vsyncTicks = 0;
     if (typeof _origDecodeHugeAudioV71 === 'function') {
         window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMeta) {
             const buf = await _origDecodeHugeAudioV71.apply(this, arguments);
-            if (buf && window.currentPlayingTrack === filename && !window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+            if (buf && window.currentPlayingTrack === filename && !window.reversedStudioBuffer) {
                 try {
-                    window.reversedStudioBuffer = await window.cloneAndReverseBuffer(buf);
+                    if (typeof window.reverseAudioBufferInDeckAWorker === 'function') {
+                        window.reversedStudioBuffer = await window.reverseAudioBufferInDeckAWorker(buf, window.audioCtx);
+                    }
+                    if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+                        window.reversedStudioBuffer = await window.cloneAndReverseBuffer(buf);
+                    }
                 } catch (e) {}
             }
             return buf;
@@ -17015,10 +17024,7 @@ let vsyncTicks = 0;
         let playBuf = rawWinBuf, nodeRate = 1.0;
         if (gKey === 'jbuf-lock') {
             const tensionPct = (vd.config && vd.config.hoseTensionPct !== undefined) ? vd.config.hoseTensionPct : 100;
-            const savedCache = window._hoseSplicerCacheV46, savedCtx = window.audioCtx;
-            window._hoseSplicerCacheV46 = vd.hoseCache; window.audioCtx = vd.ctx;
-            try { playBuf = window.buildElasticHoseBufferV46(rawWinBuf, targetSpd, tensionPct); }
-            finally { window._hoseSplicerCacheV46 = savedCache; window.audioCtx = savedCtx; }
+            playBuf = window.buildElasticHoseBufferDeckB(rawWinBuf, targetSpd, tensionPct);
             nodeRate = 1.0;
         } else {
             playBuf = rawWinBuf;
@@ -17786,26 +17792,16 @@ let vsyncTicks = 0;
         return false; // запрещаем V210 перехватывать кнопки и прогресс-бар Деки А
     };
 
-    // Главный цикл независимого обновления двух шкал прогресса и 4 буферов RAM
-    setInterval(function() {
-        ensureDualProgressBarsDOMV211();
-        window.setupTimeBlockControlsDeckB();
-        window.setupSeekZoneDeckB();
-        window.syncDualDeckVisibilityAndAudioV211();
-
-        // 1) Обновляем шкалу Деки Б (#deckBProgressRow) строго по видеоэлементу
-        var vEl = document.getElementById('jennyVideoElV130');
-        var stVid = window._vidStateV130;
-        if (vEl && stVid && stVid.active) {
-            var curV = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vEl) : (vEl.currentTime || 0);
-            var durV = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vEl) : (vEl.duration || 0);
-            var isRevV = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
-            window.updateProgressUIDeckB(curV, durV, isRevV);
-        }
-
-        // 2) Обновляем шкалу Деки А (#deckAProgressRow) строго по аудиоэлементу (и защищаем от перезаписи!)
-        var aEl = document.getElementById('audioPlayer');
-        if (aEl && window.currentPlayingTrack) {
+    // РАЗНЕСЁННЫЕ ПО ФАЗЕ И ИЗОЛИРОВАННЫЕ ТАЙМЕРЫ ДЕКИ А (83 мс) И ДЕКИ Б (97 мс, сдвиг +41 мс)
+    // 1) Контур Аудиодеки А — никогда не вызывает функции Деки Б и защищён собственным автоматом runIsolatedDeckA
+    window._deckAIsolatedTimer = setInterval(function() {
+        var tickA = function() {
+            if (!document.getElementById('deckAProgressRow')) {
+                ensureDualProgressBarsDOMV211();
+                window.syncDualDeckVisibilityAndAudioV211();
+            }
+            var aEl = document.getElementById('audioPlayer');
+            if (!aEl || !window.currentPlayingTrack) return;
             var npA = document.getElementById('nowPlaying');
             var hasFwdA = Boolean(window.studioBuffer);
             var hasRevA = Boolean(window.reversedStudioBuffer);
@@ -17825,8 +17821,34 @@ let vsyncTicks = 0;
                 var isRevA = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
                 window.updateProgressUI(aEl.currentTime || 0, effDurA, isRevA);
             }
-        }
-    }, 80);
+        };
+        if (window.runIsolatedDeckA) window.runIsolatedDeckA(tickA);
+        else tickA();
+    }, 83);
+
+    // 2) Контур Видеодеки Б — стартует со сдвигом фазы +41 мс, шаг 97 мс (некратный 83 мс), спит при закрытом видео
+    setTimeout(function() {
+        window._deckBIsolatedTimer = setInterval(function() {
+            var tickB = function() {
+                if (!document.getElementById('deckBProgressRow')) {
+                    ensureDualProgressBarsDOMV211();
+                    window.setupTimeBlockControlsDeckB();
+                    window.setupSeekZoneDeckB();
+                    window.syncDualDeckVisibilityAndAudioV211();
+                }
+                var stVid = window._vidStateV130;
+                if (!stVid || !stVid.active) return;
+                var vEl = document.getElementById('jennyVideoElV130');
+                if (!vEl) return;
+                var curV = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vEl) : (vEl.currentTime || 0);
+                var durV = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vEl) : (vEl.duration || 0);
+                var isRevV = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+                window.updateProgressUIDeckB(curV, durV, isRevV);
+            };
+            if (window.runIsolatedDeckB) window.runIsolatedDeckB(tickB);
+            else tickB();
+        }, 97);
+    }, 41);
 
     setTimeout(function() {
         ensureDualProgressBarsDOMV211();
@@ -18479,10 +18501,18 @@ let vsyncTicks = 0;
     };
 
     var _origRefreshSnapV128 = window.refreshTorrentDaemonSnapV128;
-    window.refreshTorrentDaemonSnapV128 = async function() {
+    window.refreshTorrentDaemonSnapV128 = async function(fromWorkerPush) {
         try {
             window.mountTorrentHeaderHubMenuV128();
-            var d = await fetch('/api/torrent/status').then(function(r) { return r.json(); });
+            var d = null;
+            if (fromWorkerPush && window._latestTorWorkerSnap && window._latestTorWorkerSnap.statusObj) {
+                d = window._latestTorWorkerSnap.statusObj;
+            } else if (typeof window.requestTorrentWorkerSnapshot === 'function') {
+                d = await window.requestTorrentWorkerSnapshot(350);
+            }
+            if (!d) {
+                d = await fetch('/api/torrent/status').then(function(r) { return r.json(); });
+            }
             var list = (d && d.torrents) || [];
             list.forEach(function(t) {
                 var h = String(t.hash || '').toLowerCase();
@@ -18565,6 +18595,7 @@ let vsyncTicks = 0;
 
     window.ensureMultiTorrentWorkerV112 = function() {
         if (window._torGlobalTimerV112) return;
+        if (typeof window.setTorrentWorkerFastMode === 'function') window.setTorrentWorkerFastMode(true);
         window._torGlobalTimerV112 = setInterval(async function() {
             var allJobs = Object.values(window._torMapV112 || {});
             var activeJobs = allJobs.filter(function(j) { return j.dlActive; });
@@ -18572,12 +18603,13 @@ let vsyncTicks = 0;
                 clearInterval(window._torGlobalTimerV112);
                 window._torGlobalTimerV112 = null;
                 if (window._torStateV96) window._torStateV96.dlActive = false;
+                if (typeof window.setTorrentWorkerFastMode === 'function') window.setTorrentWorkerFastMode(false);
                 return;
             }
-            if (Date.now() - (window._lastTorStatusFetchTsV212 || 0) > 650) {
+            if (Date.now() - (window._lastTorStatusFetchTsV212 || 0) > 850) {
                 await window.refreshTorrentDaemonSnapV128();
             }
-        }, 800);
+        }, 1031);
     };
 
     window.downloadSingleTorrentTrackV98 = async function(fileIdx, btnEl, ev) {
@@ -19270,7 +19302,12 @@ let vsyncTicks = 0;
         };
         window.paintOpenedTorrentJobProgressV112._v215Wrapped = true;
     }
-    setInterval(cleanAndHighlightTorrentFileRowsV215, 500);
+    setInterval(function() {
+        var tm = document.getElementById('jennyTorrentModalV91');
+        if (!tm || tm.style.display === 'none') return;
+        if (window.runIsolatedTorrents) window.runIsolatedTorrents(cleanAndHighlightTorrentFileRowsV215);
+        else cleanAndHighlightTorrentFileRowsV215();
+    }, 613);
 
     // -------------------------------------------------------------------------
     // 6. ОЧИСТКА КЭША ПРОГРЕССА ПРИ СТОПЕ / УДАЛЕНИИ + ОНБОРДИНГ 24/7 + ФИЛЬТРЫ ТОРРЕНТА
@@ -19758,64 +19795,11 @@ let vsyncTicks = 0;
     // 2. СТИЛИ V216: КОМПАКТНЫЕ 9-КНОПОЧНЫЕ СТРОКИ УПРАВЛЕНИЯ ПОД ДЕКОЙ Б И ДЕКОЙ А
     //    (СЛЕГКА СКВАДРАЧЕННЫЕ С КРУГЛЫМИ УГЛАМИ, ВСЕ 9 КНОПОК В ОДНУ СТРОКУ!)
     // -------------------------------------------------------------------------
+    // Стили кнопок и шкал Деки А и Деки Б разнесены в независимые файлы deck_a_isolated.css и deck_b_isolated.css
     var styleV216 = document.createElement('style');
-    styleV216.id = 'jennyStyleV216';
+    styleV216.id = 'jennyStyleV216HeaderOnly';
     styleV216.textContent = [
         '#subDockBar { display: none !important; }',
-        '.jenny-deck-ctrl-row-v216 {',
-        '  display: flex !important;',
-        '  align-items: center !important;',
-        '  justify-content: space-between !important;',
-        '  gap: 4px !important;',
-        '  width: 100% !important;',
-        '  padding: 0 2px !important;',
-        '  box-sizing: border-box !important;',
-        '}',
-        '#deckBControlsRowV216 {',
-        '  margin-top: -2px !important;',
-        '  margin-bottom: 7px !important;',
-        '}',
-        '#mainTransportBar.jenny-deck-ctrl-row-v216 {',
-        '  margin-top: -2px !important;',
-        '  margin-bottom: 2px !important;',
-        '}',
-        '.jenny-sq-btn-v216 {',
-        '  flex: 1 1 0 !important;',
-        '  min-width: 0 !important;',
-        '  height: 34px !important;',
-        '  padding: 0 2px !important;',
-        '  border-radius: 9px !important;',
-        '  background: rgba(16, 22, 31, 0.92) !important;',
-        '  border: 1.2px solid rgba(115, 65, 190, 0.55) !important;',
-        '  color: #c9d1d9 !important;',
-        '  display: inline-flex !important;',
-        '  align-items: center !important;',
-        '  justify-content: center !important;',
-        '  gap: 2px !important;',
-        '  cursor: pointer !important;',
-        '  user-select: none !important;',
-        '  box-sizing: border-box !important;',
-        '  box-shadow: 0 2px 6px rgba(0,0,0,0.45) !important;',
-        '  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease !important;',
-        '}',
-        '.jenny-sq-btn-v216:active {',
-        '  transform: scale(0.93) !important;',
-        '}',
-        '.jenny-sq-btn-v216.play-accent-v216 {',
-        '  background: rgba(115, 65, 190, 0.32) !important;',
-        '  border-color: #a371f7 !important;',
-        '  color: #ffffff !important;',
-        '  box-shadow: 0 0 10px rgba(163, 113, 247, 0.35) !important;',
-        '}',
-        '.jenny-sq-btn-v216.deckb-accent-v216 {',
-        '  border-color: rgba(88, 166, 255, 0.52) !important;',
-        '}',
-        '.jenny-sq-btn-v216.deckb-play-v216 {',
-        '  background: rgba(31, 111, 235, 0.28) !important;',
-        '  border-color: #58a6ff !important;',
-        '  color: #ffffff !important;',
-        '  box-shadow: 0 0 10px rgba(88, 166, 255, 0.35) !important;',
-        '}',
         '#topHeaderCapsule .jenny-icon-pill {',
         '  width: 30px !important;',
         '  height: 30px !important;',
@@ -21229,188 +21213,7 @@ let vsyncTicks = 0;
     // 2. РАЗДЕЛЕНИЕ ЦВЕТОВ ДЕКИ Б (НАСЫЩЕННЫЙ СИНИЙ) И ДЕКИ А (100% ФИОЛЕТОВЫЙ)
     //    И ЕДИНЫЙ СТИЛЬ КНОПОК ВНУТРИ ВИДЕОПЛЕЕРА (#jennyVideoStudioRootV130)
     // -------------------------------------------------------------------------
-    var styleV217 = document.createElement('style');
-    styleV217.id = 'jennyStyleV217';
-    styleV217.textContent = [
-        /* === ДЕКА А (АУДИО — НИЖНЯЯ ШКАЛА И 9 КНОПОК): 100% ФИОЛЕТОВЫЙ === */
-        '#deckAProgressRow #leftTimeBlock, #deckAProgressRow #seekZone, #deckAProgressRow #rightTimeBlock {',
-        '  border-color: rgba(168, 85, 247, 0.72) !important;',
-        '  box-shadow: inset 0 0 8px rgba(168, 85, 247, 0.16) !important;',
-        '}',
-        '#deckAProgressRow #progressFill {',
-        '  background: rgba(147, 51, 234, 0.46) !important;',
-        '}',
-        '#deckAProgressRow #currentTime {',
-        '  color: #c084fc !important;',
-        '}',
-        '#deckAProgressRow #remainingTime {',
-        '  color: #d8b4fe !important;',
-        '}',
-        '#mainTransportBar .jenny-sq-btn-v216 {',
-        '  background: rgba(24, 12, 46, 0.94) !important;',
-        '  border: 1.3px solid rgba(168, 85, 247, 0.68) !important;',
-        '  color: #c084fc !important;',
-        '  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(192, 132, 252, 0.18) !important;',
-        '}',
-        '#mainTransportBar .jenny-sq-btn-v216.play-accent-v216 {',
-        '  background: rgba(126, 34, 206, 0.42) !important;',
-        '  border-color: #c084fc !important;',
-        '  color: #e9d5ff !important;',
-        '  box-shadow: 0 0 12px rgba(168, 85, 247, 0.48) !important;',
-        '}',
-        '#mainTransportBar .jenny-sq-btn-v216 svg {',
-        '  color: #c084fc !important;',
-        '}',
-        '#mainTransportBar .jenny-sq-btn-v216 svg[stroke] {',
-        '  stroke: #c084fc !important;',
-        '}',
-        '#mainTransportBar .jenny-sq-btn-v216 svg[fill="currentColor"] {',
-        '  fill: #c084fc !important;',
-        '}',
-        '#mainTransportBar #tracksCount {',
-        '  color: #c084fc !important;',
-        '}',
-
-        /* === ДЕКА Б (ВИДЕО — ВЕРХНЯЯ ШКАЛА И 9 КНОПОК): НАСЫЩЕННЫЙ СИНИЙ === */
-        '#deckBProgressRow #leftTimeBlockDeckB, #deckBProgressRow #seekZoneDeckB, #deckBProgressRow #rightTimeBlockDeckB {',
-        '  border-color: rgba(59, 130, 246, 0.78) !important;',
-        '  box-shadow: inset 0 0 8px rgba(59, 130, 246, 0.18) !important;',
-        '}',
-        '#deckBProgressRow #progressFillDeckB {',
-        '  background: rgba(37, 99, 235, 0.48) !important;',
-        '}',
-        '#deckBProgressRow #currentTimeDeckB {',
-        '  color: #60a5fa !important;',
-        '}',
-        '#deckBProgressRow #remainingTimeDeckB {',
-        '  color: #93c5fd !important;',
-        '}',
-        '#deckBControlsRowV216 .jenny-sq-btn-v216 {',
-        '  background: rgba(11, 24, 54, 0.94) !important;',
-        '  border: 1.3px solid rgba(59, 130, 246, 0.72) !important;',
-        '  color: #60a5fa !important;',
-        '  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(96, 165, 250, 0.18) !important;',
-        '}',
-        '#deckBControlsRowV216 .jenny-sq-btn-v216.deckb-play-v216 {',
-        '  background: rgba(37, 99, 235, 0.42) !important;',
-        '  border-color: #60a5fa !important;',
-        '  color: #dbeafe !important;',
-        '  box-shadow: 0 0 12px rgba(59, 130, 246, 0.48) !important;',
-        '}',
-        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg {',
-        '  color: #60a5fa !important;',
-        '}',
-        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg[stroke] {',
-        '  stroke: #60a5fa !important;',
-        '}',
-        '#deckBControlsRowV216 .jenny-sq-btn-v216 svg[fill="currentColor"] {',
-        '  fill: #60a5fa !important;',
-        '}',
-        '#deckBControlsRowV216 #tracksCountDeckBV216 {',
-        '  color: #60a5fa !important;',
-        '}',
-
-        /* === КНОПКИ ВНУТРИ ВИДЕОПЛЕЕРА (#jennyVideoStudioRootV130): ЕДИНЫЙ СИНИЙ СТИЛЬ === */
-        '#jennyVideoStudioRootV130 .v130-btn {',
-        '  background: rgba(11, 24, 54, 0.88) !important;',
-        '  border: 1.25px solid rgba(59, 130, 246, 0.62) !important;',
-        '  color: #60a5fa !important;',
-        '  border-radius: 9px !important;',
-        '  height: 32px !important;',
-        '  padding: 0 7px !important;',
-        '  font-size: 11px !important;',
-        '  font-weight: 800 !important;',
-        '  display: inline-flex !important;',
-        '  align-items: center !important;',
-        '  justify-content: center !important;',
-        '  gap: 4px !important;',
-        '  box-shadow: 0 2px 6px rgba(0,0,0,0.55), inset 0 1px 2px rgba(96,165,250,0.16) !important;',
-        '  white-space: nowrap !important;',
-        '  box-sizing: border-box !important;',
-        '  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease !important;',
-        '}',
-        '#jennyVideoStudioRootV130 .v130-btn svg {',
-        '  color: #60a5fa !important;',
-        '  flex-shrink: 0 !important;',
-        '}',
-        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-active-v217 {',
-        '  background: rgba(37, 99, 235, 0.44) !important;',
-        '  border-color: #60a5fa !important;',
-        '  color: #eff6ff !important;',
-        '  box-shadow: 0 0 11px rgba(59, 130, 246, 0.52), inset 0 1px 2px rgba(191, 219, 254, 0.25) !important;',
-        '}',
-        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-active-v217 svg {',
-        '  color: #93c5fd !important;',
-        '}',
-        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-off-v217 {',
-        '  background: rgba(15, 23, 42, 0.72) !important;',
-        '  border-color: rgba(100, 116, 139, 0.32) !important;',
-        '  color: #64748b !important;',
-        '  box-shadow: none !important;',
-        '}',
-        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-off-v217 svg {',
-        '  color: #64748b !important;',
-        '}',
-        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-close-v217 {',
-        '  background: rgba(185, 28, 28, 0.85) !important;',
-        '  border-color: #f87171 !important;',
-        '  color: #ffffff !important;',
-        '  width: 32px !important;',
-        '  padding: 0 !important;',
-        '}',
-        '#jennyVideoStudioRootV130 .v130-btn.v130-btn-close-v217 svg {',
-        '  color: #ffffff !important;',
-        '}',
-        '#jennyVideoStudioRootV130 #v135BottomToolsRow {',
-        '  display: flex !important;',
-        '  align-items: center !important;',
-        '  justify-content: space-between !important;',
-        '  gap: 4px !important;',
-        '  width: 100% !important;',
-        '  flex-wrap: nowrap !important;',
-        '  overflow-x: auto !important;',
-        '  scrollbar-width: none !important;',
-        '}',
-        '#jennyVideoStudioRootV130 #v135BottomToolsRow::-webkit-scrollbar { display: none !important; }',
-        '#jennyVideoStudioRootV130 #v135BottomToolsRow .v130-btn {',
-        '  flex: 1 1 0 !important;',
-        '  min-width: 0 !important;',
-        '  padding: 0 4px !important;',
-        '  font-size: 10.5px !important;',
-        '}',
-        '#jennyVideoStudioRootV130 #v130SeekSlider {',
-        '  accent-color: #3b82f6 !important;',
-        '}',
-        '#jennyVideoStudioRootV130 #v130CurTime, #jennyVideoStudioRootV130 #v130DurTime {',
-        '  color: #60a5fa !important;',
-        '}',
-        /* === ПРАВИЛЬНЫЙ РАЗВОРОТ НА 90° ВО ВЕСЬ ЭКРАН БЕЗ ЧЁРНЫХ ПОЛОС === */
-        '#jennyVideoStageV130.rot90-v130 {',
-        '  position: fixed !important;',
-        '  left: 50% !important;',
-        '  top: 50% !important;',
-        '  width: 100dvh !important;',
-        '  height: 100dvw !important;',
-        '  max-width: none !important;',
-        '  max-height: none !important;',
-        '  transform: translate(-50%, -50%) rotate(90deg) !important;',
-        '  transform-origin: center center !important;',
-        '}',
-        '#jennyVideoStageV130.rot90-v130 #jennyVideoElV130 {',
-        '  width: 100% !important;',
-        '  height: 100% !important;',
-        '  max-width: none !important;',
-        '  max-height: none !important;',
-        '}',
-        '#jennyVideoStageV130.rot90-v130 #v130TopDragBar {',
-        '  padding: 6px 12px !important;',
-        '}',
-        '#jennyVideoStageV130.rot90-v130 #v135BottomToolsRow .v130-btn {',
-        '  height: 30px !important;',
-        '  font-size: 11px !important;',
-        '}'
-    ].join('\n');
-    document.head.appendChild(styleV217);
+    // Цветовые схемы и геометрия Деки А и Деки Б физически разведены по deck_a_isolated.css и deck_b_isolated.css
 
     // -------------------------------------------------------------------------
     // 3. НАСТРОЙКИ ВИДЕО ("🎬 Настройки видео"): ОПЦИОНАЛЬНЫЕ КНОПКИ 90° И МАСШТАБА
@@ -26235,11 +26038,19 @@ let vsyncTicks = 0;
             '&no_audio=' + noAud +
             '&t=' + Date.now();
 
-        fetch(url, { signal: ctrl.signal })
-            .then(function(res) {
+        (typeof window.fetchRevBlobInDeckBWorker === 'function'
+            ? window.fetchRevBlobInDeckBWorker(url, ctrl.signal).catch(function(wErr) {
+                if (ctrl.signal.aborted) throw wErr;
+                return fetch(url, { signal: ctrl.signal }).then(function(res) {
+                    if (!res.ok) throw new Error('Preload HTTP ' + res.status);
+                    return res.blob();
+                });
+            })
+            : fetch(url, { signal: ctrl.signal }).then(function(res) {
                 if (!res.ok) throw new Error('Preload HTTP ' + res.status);
                 return res.blob();
             })
+        )
             .then(function(blob) {
                 st._revPreloadingBusyV223 = false;
                 if (!blob || blob.size < 1024) return;
@@ -29976,21 +29787,7 @@ let vsyncTicks = 0;
         '  box-sizing: border-box !important;',
         '}',
 
-        /* Smooth width/flex transitions on all deck buttons so they expand fluidly when Refresh vacates */
-        '#mainTransportBar .jenny-sq-btn-v216,',
-        '#mainTransportBar #volUIWrapper,',
-        '#deckBControlsRowV216 .jenny-sq-btn-v216,',
-        '#deckBControlsRowV216 #volUIWrapperDeckBV216 {',
-        '  transition: flex 0.42s cubic-bezier(0.22, 1, 0.36, 1), max-width 0.42s cubic-bezier(0.22, 1, 0.36, 1), padding 0.35s ease, margin 0.35s ease, opacity 0.3s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1) !important;',
-        '}',
-
-        /* Base 9-button state (before RU/EN leaves): Play/Pause slightly accentuated */
-        '#mainTransportBar:not(.jenny-deck-row-expanded-v235) #playPauseBtn,',
-        '#deckBControlsRowV216:not(.jenny-deck-row-expanded-v235) #playPauseBtnDeckBV216 {',
-        '  flex: 1.14 1 0 !important;',
-        '}',
-
-        /* Animation for old Refresh buttons vanishing from bottom deck rows */
+        /* Animation for old Refresh buttons vanishing from bottom deck rows (per-deck flex lives in deck_a_isolated.css & deck_b_isolated.css) */
         '.jenny-ref-btn-vacating-v235 {',
         '  flex: 0 0 0px !important;',
         '  max-width: 0px !important;',
@@ -30003,36 +29800,6 @@ let vsyncTicks = 0;
         '  transform: scale(0.15) translateY(-18px) !important;',
         '  overflow: hidden !important;',
         '  pointer-events: none !important;',
-        '}',
-
-        /* Expanded 8-button state under Deck A & Deck B after Refresh moves up to Search bar:
-           60% of the vacated space goes to Prev (+30%), Play/Pause (+15%), Next (+30%),
-           while the other 5 buttons smoothly share the remaining 40%! */
-        '#mainTransportBar.jenny-deck-row-expanded-v235,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 {',
-        '  gap: 4px !important;',
-        '}',
-        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnPrev,',
-        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnNext,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnPrevDeckBV216,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnNextDeckBV216 {',
-        '  flex: 1.30 1 0 !important;',
-        '}',
-        '#mainTransportBar.jenny-deck-row-expanded-v235 #playPauseBtn,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #playPauseBtnDeckBV216 {',
-        '  flex: 1.32 1 0 !important;',
-        '}',
-        '#mainTransportBar.jenny-deck-row-expanded-v235 #volUIWrapper,',
-        '#mainTransportBar.jenny-deck-row-expanded-v235 #btnExport,',
-        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-specModal,',
-        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-favModal,',
-        '#mainTransportBar.jenny-deck-row-expanded-v235 #btn-eqModal,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #volUIWrapperDeckBV216,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnExportDeckBV216,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnSpecDeckBV216,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnFavDeckBV216,',
-        '#deckBControlsRowV216.jenny-deck-row-expanded-v235 #btnEqDeckBV216 {',
-        '  flex: 1.08 1 0 !important;',
         '}',
 
         /* Pop-in animation & styling for Refresh buttons when they appear next to Search bar */
@@ -31238,17 +31005,19 @@ let vsyncTicks = 0;
 
     // Ensure refreshTorrentDaemonSnapV128 fetches BOTH /api/torrent/status AND /api/sources/live_badges so _lastTorEncBadgeV212 is always populated!
     var _origRefreshDaemonSnapV236 = window.refreshTorrentDaemonSnapV128;
-    window.refreshTorrentDaemonSnapV128 = async function() {
-        try {
-            fetch('/api/sources/live_badges')
-                .then(function(r) { return r.json(); })
-                .then(function(b) {
-                    if (b && b.torrent_enc) {
-                        window._lastTorEncBadgeV212 = b.torrent_enc;
-                    }
-                })
-                .catch(function() {});
-        } catch (e) {}
+    window.refreshTorrentDaemonSnapV128 = async function(fromWorkerPush) {
+        if (!fromWorkerPush && (!window._latestTorWorkerSnap || (Date.now() - window._latestTorWorkerSnap.ts > 2500))) {
+            try {
+                fetch('/api/sources/live_badges')
+                    .then(function(r) { return r.json(); })
+                    .then(function(b) {
+                        if (b && b.torrent_enc) {
+                            window._lastTorEncBadgeV212 = b.torrent_enc;
+                        }
+                    })
+                    .catch(function() {});
+            } catch (e) {}
+        }
         if (typeof _origRefreshDaemonSnapV236 === 'function') {
             return await _origRefreshDaemonSnapV236.apply(this, arguments);
         }
