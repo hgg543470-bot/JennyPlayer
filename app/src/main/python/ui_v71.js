@@ -3462,76 +3462,37 @@ window.togglePlayPause = window.togglePlayV75_2;
     if (window._ppDocCaptureInstalledV75_2) return;
     window._ppDocCaptureInstalledV75_2 = true;
 
-    let touchActive = false;
-    let startX = 0;
-    let startY = 0;
-    let movedTooMuch = false;
-    let lastTouchActionTs = 0;
-
     const getPlayPauseBtn = (target) => {
         if (!target || !target.closest) return null;
         return target.closest('#playPauseBtn');
     };
 
+    // [V356] Перехватываем touchstart/touchend/click СТРОГО только когда e.target находится внутри #playPauseBtn,
+    // чтобы изолировать старый 500мс таймер из ui_controls.js и НИКОГДА не оставлять залипший флаг touchActive,
+    // который раньше срабатывал при следующем касании перемотки, эквалайзера или настроек DSP!
     document.addEventListener('touchstart', (e) => {
         const btn = getPlayPauseBtn(e.target);
         if (!btn) return;
-
         e.stopImmediatePropagation();
-        touchActive = true;
-        movedTooMuch = false;
-
-        if (e.touches && e.touches[0]) {
-            startX = e.touches[0].clientX;
-            startY = e.touches[0].clientY;
-        }
-    }, { capture: true, passive: true });
-
-    document.addEventListener('touchmove', (e) => {
-        if (!touchActive) return;
-        if (e.touches && e.touches[0]) {
-            const dist = Math.hypot(e.touches[0].clientX - startX, e.touches[0].clientY - startY);
-            if (dist > 14) {
-                movedTooMuch = true;
-            }
-        }
     }, { capture: true, passive: true });
 
     document.addEventListener('touchend', (e) => {
         const btn = getPlayPauseBtn(e.target);
-        if (!btn && !touchActive) return;
-
-        if (btn) {
-            e.stopImmediatePropagation();
-            e.stopPropagation();
-            if (e.cancelable) e.preventDefault();
-        }
-
-        const suppressedByHold = Date.now() < (window._suppressPlayPauseUntilV235 || 0);
-        const shouldToggle = touchActive && !movedTooMuch && !suppressedByHold;
-        touchActive = false;
-
-        if (shouldToggle) {
-            lastTouchActionTs = performance.now();
-            window.togglePlayV75_2();
-        }
+        if (!btn) return;
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        if (e.cancelable) e.preventDefault();
     }, { capture: true, passive: false });
-
-    document.addEventListener('touchcancel', () => {
-        touchActive = false;
-    }, { capture: true, passive: true });
 
     document.addEventListener('click', (e) => {
         const btn = getPlayPauseBtn(e.target);
         if (!btn) return;
-
         e.stopImmediatePropagation();
         e.stopPropagation();
         e.preventDefault();
-
         if (Date.now() < (window._suppressPlayPauseUntilV235 || 0)) return;
-        if (performance.now() - lastTouchActionTs > 400) {
-            window.togglePlayV75_2();
+        if (performance.now() - (window._lastTogglePlayWallTsV232 || 0) > 320) {
+            window.togglePlayV75_2(e);
         }
     }, { capture: true, passive: false });
 })();
@@ -23196,7 +23157,7 @@ let vsyncTicks = 0;
     };
 
     window.changeEQ = function() {
-        if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+        if (!window.audioCtx && typeof window.initAudioBoost === 'function') window.initAudioBoost();
         var targetEq = window._deckAEqV218;
         [60, 230, 910, 3600, 14000].forEach(function(freq) {
             var el = document.getElementById('eq_' + freq);
@@ -29305,7 +29266,7 @@ let vsyncTicks = 0;
     window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
         var player = document.getElementById('audioPlayer');
         // Если пользователь поставил Деку А на паузу — НИКОГДА не создаём новый AudioBufferSourceNode и не запускаем звук!
-        if (window._userPausedV75_2 || (player && player.paused && !window._resumingFromUserPlayV232)) {
+        if (window._userPausedV75_2 || (player && player.paused && !window.isStudioPlaying && !window._resumingFromUserPlayV232)) {
             if (window.studioSourceNode) {
                 try { window.studioSourceNode.onended = null; } catch (e) {}
                 try { window.studioSourceNode.stop(0); } catch (e) {}
@@ -29492,17 +29453,44 @@ let vsyncTicks = 0;
         window.playTrack(filename, listContext || 'queue');
     };
 
-    // Прямой перехват нажатия на #playPauseBtn по координатам и DOM (не блокируется при удержании 360мс или микро-сдвиге пальца!)
-    document.addEventListener('pointerup', function(e) {
-        var btn = document.getElementById('playPauseBtn');
-        if (!btn) return;
-        var rect = btn.getBoundingClientRect();
-        var inside = (rect.width > 0 && e.clientX >= rect.left - 4 && e.clientX <= rect.right + 4 && e.clientY >= rect.top - 4 && e.clientY <= rect.bottom + 4);
-        var byTarget = Boolean(e.target && e.target.closest && e.target.closest('#playPauseBtn'));
-        if (inside || byTarget) {
-            window.togglePlayV75_2(e);
-        }
-    }, true);
+    // [V356] Точный обработчик тапа по #playPauseBtn: срабатывает ТОЛЬКО если нажатие началось и закончилось на самой кнопке #playPauseBtn!
+    (function bindCleanPlayPauseTapV356() {
+        var ppDownActive = false;
+        var ppDownX = 0;
+        var ppDownY = 0;
+
+        document.addEventListener('pointerdown', function(e) {
+            var byTarget = Boolean(e && e.target && e.target.closest && e.target.closest('#playPauseBtn'));
+            if (!byTarget) {
+                ppDownActive = false;
+                return;
+            }
+            ppDownActive = true;
+            ppDownX = Number(e.clientX || 0);
+            ppDownY = Number(e.clientY || 0);
+        }, true);
+
+        document.addEventListener('pointercancel', function() {
+            ppDownActive = false;
+        }, true);
+
+        document.addEventListener('pointerup', function(e) {
+            if (!ppDownActive) return;
+            ppDownActive = false;
+            if (Date.now() < (window._suppressPlayPauseUntilV235 || 0)) return;
+            var btn = document.getElementById('playPauseBtn');
+            if (!btn) return;
+            var dx = Math.abs(Number(e.clientX || 0) - ppDownX);
+            var dy = Math.abs(Number(e.clientY || 0) - ppDownY);
+            if (dx > 24 || dy > 24) return;
+            var byTarget = Boolean(e.target && e.target.closest && e.target.closest('#playPauseBtn'));
+            var rect = btn.getBoundingClientRect();
+            var inside = (rect.width > 0 && e.clientX >= rect.left - 4 && e.clientX <= rect.right + 4 && e.clientY >= rect.top - 4 && e.clientY <= rect.bottom + 4);
+            if (byTarget || inside) {
+                window.togglePlayV75_2(e);
+            }
+        }, true);
+    })();
 
     // Также защищаем playTrack: перед запуском убеждаемся, что внешние потоки остановлены и inputMixer открыт,
     // а после 1.8с ожидания проверяем, не нажал ли пользователь паузу за это время!
@@ -30118,6 +30106,7 @@ let vsyncTicks = 0;
         '  background: linear-gradient(90deg, rgba(126, 34, 206, 0.34), rgba(63, 185, 80, 0.18)) !important;',
         '  animation: jennyLocateAudioPulseV235 0.85s ease-in-out 3 !important;',
         '}',
+        '#playPauseBtn *, #playPauseBtnDeckBV216 * { pointer-events: none !important; }',
         '.track-row-capsule.jenny-hold-locate-video-v235 {',
         '  border: 2px solid #60a5fa !important;',
         '  background: linear-gradient(90deg, rgba(37, 99, 235, 0.36), rgba(56, 189, 248, 0.18)) !important;',
@@ -30762,6 +30751,8 @@ let vsyncTicks = 0;
 
         document.addEventListener('pointerup', onEndOrCancel, true);
         document.addEventListener('pointercancel', onEndOrCancel, true);
+        document.addEventListener('touchend', onEndOrCancel, true);
+        document.addEventListener('touchcancel', onEndOrCancel, true);
         document.addEventListener('contextmenu', function(e) {
             if (e && e.target && e.target.closest && (e.target.closest('#playPauseBtn') || e.target.closest('#playPauseBtnDeckBV216'))) {
                 e.preventDefault();
@@ -32406,7 +32397,7 @@ let vsyncTicks = 0;
                 if (player.ended || player.seeking || window._resumingFromUserPlayV232 || window._internalPauseGuardV239) return;
                 var sinceSwitch = performance.now() - (window._lastInternalMediaSrcSwitchTsV239 || 0);
                 if (sinceSwitch < 600) return;
-                if (!window._userPausedV75_2 && player.currentTime > 0.15) {
+                if (!window._userPausedV75_2 && !window.isStudioPlaying && player.currentTime > 0.15) {
                     window.onExternalAudioInterruptV237();
                 } else {
                     if (typeof window.updateTrackListPlayIcons === 'function') {
