@@ -14442,3 +14442,990 @@ def get_data_v247():
 
 _override_bottle_route_v212('/api/data', 'GET', get_data_v247)
 # ================= END JENNY_V247_ONESHOT_INDEXER_AND_ZERO_BG_IO =================
+# ================= BEGIN JENNY_V248_TORRENT_SPARSE_GUARD_AND_STREAM_REMUX_FIX =================
+_TOR_STATUS_FAST_CACHE_V248 = {"ts": 0.0, "torrents": []}
+_TORRENT_STREAM_INSPECT_CACHE_V248 = {}
+_PERSISTED_TOR_REHYDRATED_ONCE_V248 = False
+_PERSISTED_TOR_REHYDRATE_LOCK_V248 = threading.Lock()
+
+
+def _get_all_torrent_storage_roots_v248() -> list:
+    roots = []
+    try:
+        if "_resolve_persistent_tor_data_dir_v243" in globals():
+            d1 = _resolve_persistent_tor_data_dir_v243()
+            if d1:
+                roots.append(os.path.abspath(d1))
+                parent_tor = os.path.dirname(os.path.abspath(d1))
+                if os.path.basename(parent_tor).lower() == "torrents":
+                    roots.append(parent_tor)
+    except Exception:
+        pass
+    try:
+        if "get_jenny_torrents_data_dir_v242" in globals():
+            d2 = get_jenny_torrents_data_dir_v242()
+            if d2:
+                roots.append(os.path.abspath(d2))
+                parent_tor2 = os.path.dirname(os.path.abspath(d2))
+                if os.path.basename(parent_tor2).lower() == "torrents":
+                    roots.append(parent_tor2)
+    except Exception:
+        pass
+    for extra in (
+        "/storage/emulated/0/JENNY/Torrents/data",
+        "/storage/emulated/0/JENNY/Torrents",
+        os.path.join(globals().get("MUSIC_DIR") or "/storage/emulated/0/Music", "torrents_tmp"),
+        os.path.join(globals().get("DEFAULT_MUSIC_DIR") or "/storage/emulated/0/Music", "torrents_tmp"),
+    ):
+        if extra:
+            roots.append(os.path.abspath(extra))
+    dedup = []
+    for r in roots:
+        if r and r not in dedup:
+            dedup.append(r)
+    return dedup
+
+
+def _is_path_inside_torrent_storage_v248(file_path: str) -> bool:
+    if not file_path:
+        return False
+    try:
+        ap = os.path.abspath(file_path)
+    except Exception:
+        return False
+    low_ap = ap.replace("\\", "/").lower()
+    if "/torrents_tmp/" in low_ap or "/jenny/torrents/" in low_ap:
+        return True
+    for r in _get_all_torrent_storage_roots_v248():
+        if ap == r or ap.startswith(r + os.sep):
+            return True
+    return False
+
+
+def _ensure_all_persisted_torrents_in_daemon_v248(force_check: bool = False):
+    """Ensures saved .torrent AND magnet torrents in torrent_downloads_state.json are registered in jtorrent."""
+    global _PERSISTED_TOR_REHYDRATED_ONCE_V248
+    if _PERSISTED_TOR_REHYDRATED_ONCE_V248 and not force_check:
+        return
+    with _PERSISTED_TOR_REHYDRATE_LOCK_V248:
+        if _PERSISTED_TOR_REHYDRATED_ONCE_V248 and not force_check:
+            return
+        if not ensure_jtorrent_daemon_v96():
+            return
+        _PERSISTED_TOR_REHYDRATED_ONCE_V248 = True
+        port = globals().get("_JTORRENT_PORT_V96", "18081")
+        existing = set()
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=1.2) as r:
+                d_st = json.loads(r.read().decode("utf-8", "ignore"))
+                tor_arr = d_st if isinstance(d_st, list) else (d_st.get("torrents") or [])
+                for tor in tor_arr:
+                    th = (tor.get("hash") or "").strip().lower()
+                    if th:
+                        existing.add(th)
+        except Exception:
+            return
+
+        st = _load_persisted_dl_state_v143() if "_load_persisted_dl_state_v143" in globals() else {}
+        tor_dir = get_jenny_torrents_data_dir_v242() if "get_jenny_torrents_data_dir_v242" in globals() else "/storage/emulated/0/JENNY/Torrents/data"
+        cached_trs = []
+        try:
+            if "_load_trackers_state_v110" in globals():
+                cached_trs, _, _ = _load_trackers_state_v110()
+        except Exception:
+            cached_trs = []
+
+        if isinstance(st, dict):
+            for h_raw, entry in list(st.items()):
+                if not isinstance(entry, dict):
+                    continue
+                h = (h_raw or "").strip().lower()
+                if not h or h in existing:
+                    continue
+                t_path = entry.get("torrent_path") or os.path.join(tor_dir, f"{h}.torrent")
+                mag = (entry.get("magnet") or "").strip()
+                if not os.path.isfile(t_path) and not mag:
+                    continue
+                exp = sorted(list(set(int(x) for x in (entry.get("explicit_files") or []))))
+                comp = sorted(list(set(int(x) for x in (entry.get("completed_files") or []))))
+                pending = sorted(list(set(exp) - set(comp)))
+                is_paused = bool(entry.get("paused", False))
+                try:
+                    add_payload = {"trackers": list(cached_trs or [])}
+                    if os.path.isfile(t_path):
+                        add_payload["torrent_path"] = t_path
+                    else:
+                        add_payload["magnet"] = enrich_magnet_with_cached_trackers_v109(mag) if "enrich_magnet_with_cached_trackers_v109" in globals() else mag
+                    urllib.request.urlopen(
+                        urllib.request.Request(
+                            f"http://127.0.0.1:{port}/add",
+                            data=json.dumps(add_payload).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                        ),
+                        timeout=6.0,
+                    ).read()
+                    existing.add(h)
+                    if pending and not is_paused:
+                        _JTORRENT_ACTIVE_FILES_V106[h] = set(pending)
+                        urllib.request.urlopen(
+                            urllib.request.Request(
+                                f"http://127.0.0.1:{port}/download",
+                                data=json.dumps({"hash": h, "files": pending, "trackers": list(cached_trs or [])}).encode("utf-8"),
+                                headers={"Content-Type": "application/json"},
+                            ),
+                            timeout=4.0,
+                        ).read()
+                    else:
+                        urllib.request.urlopen(
+                            urllib.request.Request(
+                                f"http://127.0.0.1:{port}/control",
+                                data=json.dumps({"hash": h, "action": "pause"}).encode("utf-8"),
+                                headers={"Content-Type": "application/json"},
+                            ),
+                            timeout=2.5,
+                        ).read()
+                except Exception:
+                    pass
+
+        try:
+            if os.path.isdir(tor_dir):
+                for fn in os.listdir(tor_dir):
+                    if not fn.lower().endswith(".torrent"):
+                        continue
+                    stem = os.path.splitext(fn)[0].strip().lower()
+                    if len(stem) == 40 and stem not in existing:
+                        tp = os.path.join(tor_dir, fn)
+                        try:
+                            urllib.request.urlopen(
+                                urllib.request.Request(
+                                    f"http://127.0.0.1:{port}/add",
+                                    data=json.dumps({"torrent_path": tp, "trackers": list(cached_trs or [])}).encode("utf-8"),
+                                    headers={"Content-Type": "application/json"},
+                                ),
+                                timeout=5.0,
+                            ).read()
+                            urllib.request.urlopen(
+                                urllib.request.Request(
+                                    f"http://127.0.0.1:{port}/control",
+                                    data=json.dumps({"hash": stem, "action": "pause"}).encode("utf-8"),
+                                    headers={"Content-Type": "application/json"},
+                                ),
+                                timeout=2.0,
+                            ).read()
+                            existing.add(stem)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        _TOR_STATUS_FAST_CACHE_V248["ts"] = 0.0
+
+
+def _get_live_jtorrent_list_v248(max_age: float = 0.55) -> list:
+    now = time.time()
+    if (now - _TOR_STATUS_FAST_CACHE_V248["ts"]) <= max_age and _TOR_STATUS_FAST_CACHE_V248["torrents"]:
+        return _TOR_STATUS_FAST_CACHE_V248["torrents"]
+    port = globals().get("_JTORRENT_PORT_V96", "18081")
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=0.8) as sr:
+            st_obj = json.loads(_safe_decode_bytes_v218(sr.read()))
+        tor_list = st_obj if isinstance(st_obj, list) else (st_obj.get("torrents") or [])
+        _TOR_STATUS_FAST_CACHE_V248["ts"] = now
+        _TOR_STATUS_FAST_CACHE_V248["torrents"] = tor_list
+        return tor_list
+    except Exception:
+        return _TOR_STATUS_FAST_CACHE_V248["torrents"] or []
+
+
+def _is_fobj_100pct_complete_v248(fobj: dict, p_map: str = "", persisted_comp_set: set = None) -> bool:
+    if not isinstance(fobj, dict):
+        return False
+    f_idx = int(fobj.get("index", -1))
+    if persisted_comp_set and f_idx in persisted_comp_set:
+        return True
+    if bool(fobj.get("done", False)):
+        return True
+    f_len = int(fobj.get("length") or fobj.get("size") or 0)
+    f_comp = int(fobj.get("completed") or 0)
+    pct = float(fobj.get("percent") or 0.0)
+    if f_len > 0 and f_comp >= f_len:
+        return True
+    if pct >= 99.95 and f_len > 0:
+        return True
+    beg_p = int(fobj.get("begin_piece") or 0)
+    end_p = int(fobj.get("end_piece") or 0)
+    if p_map and end_p > beg_p and end_p <= len(p_map):
+        seg = p_map[beg_p:end_p]
+        if seg and all(ch == "4" for ch in seg):
+            return True
+    return False
+
+
+def _get_torrent_file_completion_v248(h_low: str = "", f_idx: int = -1, file_path: str = "") -> dict:
+    h_norm = (h_low or "").strip().lower()
+    idx_norm = int(f_idx) if f_idx is not None else -1
+    in_tor_dir = _is_path_inside_torrent_storage_v248(file_path) if file_path else bool(h_norm)
+    target_bn = os.path.basename(file_path).lower() if file_path else ""
+
+    persisted_st = _load_persisted_dl_state_v143() if "_load_persisted_dl_state_v143" in globals() else {}
+    tor_dir = get_jenny_torrents_data_dir_v242() if "get_jenny_torrents_data_dir_v242" in globals() else "/storage/emulated/0/JENNY/Torrents/data"
+
+    tor_list = _get_live_jtorrent_list_v248(max_age=0.55)
+    for tor in tor_list:
+        th = (tor.get("hash") or "").strip().lower()
+        if h_norm and th != h_norm:
+            continue
+        p_map = tor.get("pieces_map") or ""
+        comp_set = set(int(x) for x in ((persisted_st.get(th) or {}).get("completed_files") or []))
+        seen_idx = set()
+        for fobj in (tor.get("files") or []) + (tor.get("all_files") or []):
+            cur_idx = int(fobj.get("index", -1))
+            if cur_idx in seen_idx:
+                continue
+            seen_idx.add(cur_idx)
+            rel_p = (fobj.get("full_path") or fobj.get("path") or fobj.get("name") or "").strip()
+            f_bn = os.path.basename(rel_p).lower()
+            matched = False
+            if h_norm and idx_norm >= 0 and cur_idx == idx_norm:
+                matched = True
+            elif target_bn and f_bn == target_bn:
+                matched = True
+            if not matched:
+                continue
+
+            is_comp = _is_fobj_100pct_complete_v248(fobj, p_map, comp_set)
+            f_len = int(fobj.get("length") or fobj.get("size") or 0)
+            f_comp = int(fobj.get("completed") or 0)
+            pct = float(fobj.get("percent") or ((f_comp * 100.0 / f_len) if f_len > 0 else 0.0))
+            beg_p = int(fobj.get("begin_piece") or 0)
+            end_p = int(fobj.get("end_piece") or 0)
+
+            disk_p = file_path if (file_path and os.path.isfile(file_path)) else ""
+            if not disk_p and rel_p:
+                for cand in (rel_p, os.path.join(tor_dir, rel_p.lstrip("/")), os.path.join(tor_dir, os.path.basename(rel_p))):
+                    if cand and os.path.isfile(cand):
+                        disk_p = cand
+                        break
+            if is_comp and (not disk_p or not os.path.isfile(disk_p)):
+                is_comp = False
+
+            return {
+                "found": True,
+                "is_torrent_dir_file": True,
+                "is_complete": bool(is_comp),
+                "hash": th,
+                "file_idx": cur_idx,
+                "length": f_len,
+                "completed": f_comp,
+                "percent": 100.0 if is_comp else round(pct, 1),
+                "pieces_map": p_map,
+                "begin_piece": beg_p,
+                "end_piece": end_p,
+                "disk_path": disk_p,
+            }
+
+    if h_norm and idx_norm >= 0 and isinstance(persisted_st, dict):
+        comp_set = set(int(x) for x in ((persisted_st.get(h_norm) or {}).get("completed_files") or []))
+        if idx_norm in comp_set and file_path and os.path.isfile(file_path):
+            return {
+                "found": True,
+                "is_torrent_dir_file": True,
+                "is_complete": True,
+                "hash": h_norm,
+                "file_idx": idx_norm,
+                "length": os.path.getsize(file_path),
+                "completed": os.path.getsize(file_path),
+                "percent": 100.0,
+                "pieces_map": "",
+                "begin_piece": 0,
+                "end_piece": 0,
+                "disk_path": file_path,
+            }
+
+    return {
+        "found": False,
+        "is_torrent_dir_file": bool(in_tor_dir),
+        "is_complete": (not in_tor_dir) and bool(file_path and os.path.isfile(file_path)),
+        "hash": h_norm,
+        "file_idx": idx_norm,
+        "length": 0,
+        "completed": 0,
+        "percent": 0.0,
+        "pieces_map": "",
+        "begin_piece": 0,
+        "end_piece": 0,
+        "disk_path": file_path if (not in_tor_dir and file_path and os.path.isfile(file_path)) else "",
+    }
+
+
+_orig_resolve_any_media_path_v248 = _resolve_any_media_path_v218
+
+
+def _resolve_any_media_path_v248(filename: str) -> str:
+    if not filename:
+        return ""
+    bn = os.path.basename(urllib.parse.unquote(str(filename).split("?")[0]))
+    meta = _discovered_video_meta_v137.get(bn) or _discovered_video_meta_v137.get(filename)
+    if isinstance(meta, dict) and meta.get("tor_hash") and not meta.get("is_ready_local"):
+        comp = _get_torrent_file_completion_v248(meta.get("tor_hash", ""), int(meta.get("tor_file_idx", -1)))
+        if comp.get("is_complete") and comp.get("disk_path"):
+            meta["is_ready_local"] = True
+            meta["percent"] = 100
+            _discovered_video_paths_v134[bn] = comp["disk_path"]
+            return comp["disk_path"]
+        return ""
+
+    cand = _orig_resolve_any_media_path_v248(filename)
+    if cand and _is_path_inside_torrent_storage_v248(cand):
+        comp = _get_torrent_file_completion_v248(file_path=cand)
+        if not comp.get("is_complete"):
+            return ""
+    return cand
+
+
+_resolve_any_media_path_v218 = _resolve_any_media_path_v248
+
+
+def _merge_jtorrent_videos_into_library_v248():
+    tor_dir = get_jenny_torrents_data_dir_v242() if "get_jenny_torrents_data_dir_v242" in globals() else "/storage/emulated/0/JENNY/Torrents/data"
+    persisted_st = _load_persisted_dl_state_v143() if "_load_persisted_dl_state_v143" in globals() else {}
+    tor_list = _get_live_jtorrent_list_v248(max_age=0.25)
+
+    for tor in tor_list:
+        h = (tor.get("hash") or "").strip().lower()
+        if not h:
+            continue
+        p_map = tor.get("pieces_map") or ""
+        comp_set = set(int(x) for x in ((persisted_st.get(h) or {}).get("completed_files") or []))
+        seen_idx = set()
+        for f in (tor.get("files") or []) + (tor.get("all_files") or []):
+            f_idx = int(f.get("index", 0))
+            if f_idx in seen_idx:
+                continue
+            seen_idx.add(f_idx)
+            rel_p = (f.get("path") or f.get("full_path") or f.get("name") or "").strip()
+            if not rel_p or not rel_p.lower().endswith(_STRICT_VIDEO_EXTS_V246):
+                continue
+            bn = os.path.basename(rel_p)
+            f_len = int(f.get("length") or f.get("size") or 0)
+            f_comp = int(f.get("completed") or 0)
+            sz_mb = round(f_len / (1024 * 1024), 1) if f_len > 0 else 0.0
+            is_comp = _is_fobj_100pct_complete_v248(f, p_map, comp_set)
+            pct = 100.0 if is_comp else round(float(f.get("percent") or ((f_comp * 100.0 / f_len) if f_len > 0 else 0.0)), 1)
+
+            disk_full = ""
+            for cand in (rel_p, os.path.join(tor_dir, rel_p.lstrip("/")), os.path.join(tor_dir, bn)):
+                if cand and os.path.isfile(cand):
+                    disk_full = cand
+                    break
+
+            existing_meta = _discovered_video_meta_v137.get(bn)
+            existing_path = _discovered_video_paths_v134.get(bn, "")
+            if existing_meta and existing_meta.get("is_ready_local") and existing_path and not _is_path_inside_torrent_storage_v248(existing_path):
+                continue
+
+            if is_comp and disk_full and os.path.isfile(disk_full):
+                _discovered_video_paths_v134[bn] = disk_full
+                _discovered_video_meta_v137[bn] = {
+                    "name": bn,
+                    "size_mb": sz_mb or round(os.path.getsize(disk_full) / (1024 * 1024), 1),
+                    "percent": 100,
+                    "tor_hash": h,
+                    "tor_file_idx": f_idx,
+                    "in_video_dir": False,
+                    "is_ready_local": True,
+                    "stream_url": "/api/media/" + urllib.parse.quote(bn),
+                }
+            else:
+                if existing_path and _is_path_inside_torrent_storage_v248(existing_path):
+                    _discovered_video_paths_v134.pop(bn, None)
+                _discovered_video_meta_v137[bn] = {
+                    "name": bn,
+                    "size_mb": sz_mb,
+                    "percent": pct,
+                    "tor_hash": h,
+                    "tor_file_idx": f_idx,
+                    "in_video_dir": False,
+                    "is_ready_local": False,
+                    "stream_url": f"/api/torrent/stream/{h}/{f_idx}",
+                }
+
+
+def sync_downloaded_videos_to_library_v248(force: bool = False):
+    load_multi_dirs_v71()
+    scan_all = is_scan_all_folders_enabled_v245()
+    vid_sig = f"VID248|ALL={int(scan_all)}|{','.join(ACTIVE_MUSIC_DIRS)}|{','.join(SAVED_MUSIC_DIRS)}"
+
+    if not force and _ONESHOT_VIDEO_INDEX_V247["sig"] == vid_sig and _ONESHOT_VIDEO_INDEX_V247["items"] is not None:
+        if globals().get("_JTORRENT_PROC_V96") or globals().get("_JTORRENT_ACTIVE_FILES_V106"):
+            _merge_jtorrent_videos_into_library_v248()
+            items_live = list(_discovered_video_meta_v137.values())
+            _ONESHOT_VIDEO_INDEX_V247["items"] = items_live
+            return items_live
+        return _ONESHOT_VIDEO_INDEX_V247["items"]
+
+    with _GLOBAL_SCAN_LOCK_V247:
+        if not force and _ONESHOT_VIDEO_INDEX_V247["sig"] == vid_sig and _ONESHOT_VIDEO_INDEX_V247["items"] is not None:
+            return _ONESHOT_VIDEO_INDEX_V247["items"]
+
+        _discovered_video_paths_v134.clear()
+        _discovered_video_meta_v137.clear()
+
+        scan_dirs = _collect_video_scan_dirs_v137()
+        tor_skip_roots = _get_all_torrent_storage_roots_v248()
+        visited_real = set()
+
+        def _walk_vid_dir_safe_v248(cur_dir: str, depth: int = 0):
+            if depth > 12:
+                return
+            try:
+                abs_cur = os.path.abspath(cur_dir)
+                for t_root in tor_skip_roots:
+                    if abs_cur == t_root or abs_cur.startswith(t_root + os.sep):
+                        return
+                real_d = os.path.realpath(cur_dir)
+                if real_d in visited_real:
+                    return
+                visited_real.add(real_d)
+            except Exception:
+                pass
+
+            norm_cur = cur_dir.replace("\\", "/").rstrip("/")
+            if norm_cur in ("/storage/emulated/0/Android/data", "/storage/emulated/0/Android/obb"):
+                return
+
+            try:
+                with os.scandir(cur_dir) as it:
+                    subdirs = []
+                    for entry in it:
+                        name = entry.name
+                        if not name or name.startswith("."):
+                            continue
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                if name in _SKIP_VID_DIR_NAMES_V246 or name.lower() == "torrents_tmp":
+                                    continue
+                                if norm_cur == "/storage/emulated/0/Android" and name in ("data", "obb"):
+                                    continue
+                                entry_abs = os.path.abspath(entry.path)
+                                if any(entry_abs == tr or entry_abs.startswith(tr + os.sep) for tr in tor_skip_roots):
+                                    continue
+                                subdirs.append(entry.path)
+                            elif entry.is_file(follow_symlinks=False):
+                                if name.lower().endswith(_STRICT_VIDEO_EXTS_V246):
+                                    full_p = entry.path
+                                    if _is_path_inside_torrent_storage_v248(full_p):
+                                        continue
+                                    try:
+                                        sz = entry.stat(follow_symlinks=False).st_size
+                                    except Exception:
+                                        continue
+                                    if sz < 16 * 1024:
+                                        continue
+                                    key_name = name
+                                    if key_name in _discovered_video_paths_v134 and _discovered_video_paths_v134[key_name] != full_p:
+                                        parent_lbl = os.path.basename(cur_dir) or "Video"
+                                        key_name = f"[{parent_lbl}] {name}"
+                                    _discovered_video_paths_v134[key_name] = full_p
+                                    if name not in _discovered_video_paths_v134:
+                                        _discovered_video_paths_v134[name] = full_p
+                                    _discovered_video_meta_v137[key_name] = {
+                                        "name": key_name,
+                                        "size_mb": round(sz / (1024 * 1024), 1),
+                                        "in_video_dir": full_p.startswith(VIDEO_DIR_V137),
+                                        "is_ready_local": True,
+                                        "stream_url": "/api/media/" + urllib.parse.quote(key_name),
+                                    }
+                        except Exception:
+                            pass
+                    for sd in subdirs:
+                        _walk_vid_dir_safe_v248(sd, depth + 1)
+            except Exception:
+                pass
+
+        for root_d in scan_dirs:
+            if root_d and os.path.isdir(root_d):
+                _walk_vid_dir_safe_v248(root_d, 0)
+
+        try:
+            _ensure_all_persisted_torrents_in_daemon_v248(force_check=bool(force))
+            _merge_jtorrent_videos_into_library_v248()
+        except Exception:
+            pass
+
+        items = list(_discovered_video_meta_v137.values())
+        _ONESHOT_VIDEO_INDEX_V247["sig"] = vid_sig
+        _ONESHOT_VIDEO_INDEX_V247["items"] = items
+        return items
+
+
+sync_downloaded_videos_to_library_v246 = sync_downloaded_videos_to_library_v248
+sync_downloaded_videos_to_library_v247 = sync_downloaded_videos_to_library_v248
+sync_downloaded_videos_to_library_v134 = sync_downloaded_videos_to_library_v248
+_merge_active_torrent_videos_only_v247 = lambda scan_dirs=None: _merge_jtorrent_videos_into_library_v248()
+
+
+def _normalize_or_upgrade_torrent_src_v248(raw_src: str) -> str:
+    src = (raw_src or "").strip()
+    if src.startswith(("http://127.0.0.1:", "http://localhost:")) and src.count("/") >= 3:
+        src = "/" + src.split("/", 3)[3]
+    if src and not src.startswith("/api/torrent/stream/"):
+        clean_q = src.split("?", 1)[0]
+        bn = os.path.basename(urllib.parse.unquote(clean_q))
+        meta = _discovered_video_meta_v137.get(bn)
+        if isinstance(meta, dict) and meta.get("tor_hash") and not meta.get("is_ready_local"):
+            h = str(meta["tor_hash"]).strip().lower()
+            f_idx = int(meta.get("tor_file_idx", 0))
+            comp = _get_torrent_file_completion_v248(h, f_idx)
+            if not comp.get("is_complete"):
+                return f"/api/torrent/stream/{h}/{f_idx}"
+    return src
+
+
+def _inspect_torrent_stream_v248(src: str, wait_piece0_sec: float = 0.0) -> dict:
+    parts = src.strip("/").split("/")
+    if len(parts) < 5:
+        return {
+            "ok": True,
+            "probed": False,
+            "is_torrent": True,
+            "needs_remux": True,
+            "needs_transcode": False,
+            "audio_tracks": 1,
+            "has_audio": True,
+            "audio_labels": [],
+            "duration_sec": 0.0,
+            "size_bytes": 0,
+        }
+
+    h_low = parts[3].strip().lower()
+    try:
+        f_idx = int(parts[4].split("?")[0])
+    except Exception:
+        f_idx = 0
+
+    ensure_jtorrent_daemon_v96()
+    _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=0.0, sync_start=True)
+
+    comp = _get_torrent_file_completion_v248(h_low, f_idx)
+    if comp.get("is_complete") and comp.get("disk_path") and os.path.isfile(comp["disk_path"]):
+        info = dict(_inspect_local_video_streams_v246(comp["disk_path"]))
+        info["is_torrent"] = True
+        info["size_bytes"] = int(comp.get("length") or os.path.getsize(comp["disk_path"]))
+        return info
+
+    cache_key = (h_low, f_idx)
+    cached = _TORRENT_STREAM_INSPECT_CACHE_V248.get(cache_key)
+    if cached and cached.get("probed"):
+        return dict(cached)
+
+    deadline = time.time() + max(0.0, float(wait_piece0_sec or 0.0))
+    piece0_ready = False
+    sz_bytes = int(comp.get("length") or 0)
+
+    while True:
+        comp_now = _get_torrent_file_completion_v248(h_low, f_idx)
+        sz_bytes = int(comp_now.get("length") or sz_bytes or 0)
+        p_map = comp_now.get("pieces_map") or ""
+        beg_p = int(comp_now.get("begin_piece") or 0)
+        if comp_now.get("is_complete"):
+            piece0_ready = True
+            break
+        if p_map and 0 <= beg_p < len(p_map) and p_map[beg_p] in ("4", "3"):
+            piece0_ready = True
+            break
+        if time.time() >= deadline:
+            break
+        time.sleep(0.22)
+
+    v_codec = ""
+    a_codecs = []
+    a_labels = []
+    dur_sec = 0.0
+    ff_probed_ok = False
+
+    if piece0_ready:
+        internal_port = globals().get("_INTERNAL_STREAM_PORT_V238", 8080)
+        stream_http_u = f"http://127.0.0.1:{internal_port}/api/torrent/stream/{h_low}/{f_idx}"
+        try:
+            ff_bin = find_ffmpeg_binary()
+            res = subprocess.run(
+                [
+                    ff_bin,
+                    "-hide_banner",
+                    "-seekable", "0",
+                    "-probesize", "1048576",
+                    "-analyzeduration", "1000000",
+                    "-i", stream_http_u,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=2.6,
+            )
+            info_txt = (res.stderr or b"").decode("utf-8", errors="replace")
+            if "Input #0," in info_txt or "Duration:" in info_txt:
+                ff_probed_ok = True
+            m_dur = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", info_txt)
+            if m_dur:
+                dur_sec = int(m_dur.group(1)) * 3600 + int(m_dur.group(2)) * 60 + float(m_dur.group(3))
+            for line in info_txt.splitlines():
+                if "Stream #" not in line:
+                    continue
+                m_v = re.search(r"Video:\s*([a-zA-Z0-9_]+)", line)
+                if m_v and not v_codec:
+                    v_codec = m_v.group(1).lower()
+                m_a = re.search(r"Stream #\d+:\d+(?:\(([a-zA-Z0-9_-]+)\))?.*?: Audio:\s*([a-zA-Z0-9_]+)", line)
+                if m_a:
+                    lang_raw = (m_a.group(1) or "").strip().upper()
+                    ac_raw = (m_a.group(2) or "").strip().lower()
+                    a_codecs.append(ac_raw)
+                    if lang_raw and lang_raw not in ("UND", "UNK"):
+                        a_labels.append(f"{lang_raw} • {ac_raw.upper()}")
+                    else:
+                        a_labels.append(ac_raw.upper())
+        except Exception:
+            pass
+
+    if dur_sec <= 1.0 and "_estimate_duration_from_torrent_meta_v218" in globals():
+        try:
+            est_d = float(_estimate_duration_from_torrent_meta_v218(h_low, f_idx) or 0.0)
+            if est_d > 1.0 and ff_probed_ok:
+                dur_sec = est_d
+        except Exception:
+            pass
+
+    real_audio_cnt = len(a_codecs) if ff_probed_ok else max(1, len(a_codecs))
+    needs_tc = bool(
+        any(x in src.lower() for x in _TRANSCODE_REQUIRED_EXTS_V240)
+        or (v_codec and v_codec in _LEGACY_TRANSCODE_VCODECS_V240)
+    )
+    out = {
+        "ok": True,
+        "probed": bool(ff_probed_ok),
+        "is_torrent": True,
+        "v_codec": v_codec,
+        "audio_tracks": real_audio_cnt,
+        "has_audio": real_audio_cnt > 0 if ff_probed_ok else True,
+        "audio_labels": a_labels,
+        "duration_sec": round(float(dur_sec or 0.0), 2),
+        "size_bytes": sz_bytes,
+        "needs_remux": True,
+        "needs_transcode": needs_tc,
+    }
+    if ff_probed_ok:
+        if len(_TORRENT_STREAM_INSPECT_CACHE_V248) > 256:
+            _TORRENT_STREAM_INSPECT_CACHE_V248.clear()
+        _TORRENT_STREAM_INSPECT_CACHE_V248[cache_key] = dict(out)
+    return out
+
+
+def _probe_torrent_partial_file_duration_v248(raw_src: str) -> tuple:
+    src = _normalize_or_upgrade_torrent_src_v248(raw_src)
+    if src.startswith("/api/torrent/stream/"):
+        info = _inspect_torrent_stream_v248(src, wait_piece0_sec=0.35)
+        return float(info.get("duration_sec") or 0.0), int(info.get("audio_tracks") or 1), int(info.get("size_bytes") or 0)
+    fp = _resolve_any_media_path_v218(src)
+    if fp and os.path.isfile(fp):
+        info = _inspect_local_video_streams_v246(fp)
+        try:
+            sz_b = os.path.getsize(fp)
+        except Exception:
+            sz_b = 0
+        return float(info.get("duration_sec") or 0.0), int(info.get("audio_tracks") or 1), sz_b
+    return 0.0, 1, 0
+
+
+_probe_torrent_partial_file_duration_v218 = _probe_torrent_partial_file_duration_v248
+_probe_torrent_partial_file_duration_v214 = lambda raw_src: _probe_torrent_partial_file_duration_v248(raw_src)[0]
+
+
+def api_video_smart_check_v248():
+    response.content_type = "application/json; charset=utf-8"
+    raw_src = (request.query.get("src") or "").strip()
+    if not raw_src:
+        return json.dumps({"status": "error"}, ensure_ascii=False)
+    src = _normalize_or_upgrade_torrent_src_v248(raw_src)
+    if src.startswith("/api/torrent/stream/"):
+        info = _inspect_torrent_stream_v248(src, wait_piece0_sec=1.15)
+        info["status"] = "ok"
+        info["resolved_stream_url"] = src
+        return json.dumps(info, ensure_ascii=False)
+    fp = _resolve_any_media_path_v218(src)
+    info = dict(_inspect_local_video_streams_v246(fp))
+    info["status"] = "ok"
+    return json.dumps(info, ensure_ascii=False)
+
+
+_override_bottle_route_v212("/api/video/smart_check_v240", "GET", api_video_smart_check_v248)
+
+
+def api_video_pcm_meta_v248():
+    response.content_type = "application/json; charset=utf-8"
+    raw_src = (request.query.get("src") or "").strip()
+    if not raw_src:
+        return json.dumps({"duration": 0, "size": 0, "audio_streams": 1, "audio_labels": [], "probed": False})
+    src = _normalize_or_upgrade_torrent_src_v248(raw_src)
+    if src.startswith("/api/torrent/stream/"):
+        info = _inspect_torrent_stream_v248(src, wait_piece0_sec=0.25)
+        return json.dumps({
+            "probed": bool(info.get("probed")),
+            "duration": info.get("duration_sec", 0.0),
+            "size": info.get("size_bytes", 0),
+            "audio_streams": info.get("audio_tracks", 1),
+            "has_audio": info.get("has_audio", True),
+            "audio_labels": info.get("audio_labels", []),
+            "needs_transcode": bool(info.get("needs_transcode")),
+            "resolved_stream_url": src,
+        }, ensure_ascii=False)
+    fp = _resolve_any_media_path_v218(src)
+    if fp and os.path.isfile(fp):
+        info = _inspect_local_video_streams_v246(fp)
+        try:
+            sz_b = os.path.getsize(fp)
+        except Exception:
+            sz_b = 0
+        return json.dumps({
+            "probed": bool(info.get("probed")),
+            "duration": info.get("duration_sec", 0.0),
+            "size": sz_b,
+            "audio_streams": info.get("audio_tracks", 1),
+            "has_audio": info.get("has_audio", True),
+            "audio_labels": info.get("audio_labels", []),
+            "needs_transcode": bool(info.get("needs_transcode")),
+        }, ensure_ascii=False)
+    return json.dumps({"duration": 0, "size": 0, "audio_streams": 1, "audio_labels": [], "probed": False})
+
+
+_override_bottle_route_v212("/api/video/pcm_meta", "GET", api_video_pcm_meta_v248)
+
+
+def api_video_live_remux_v248():
+    _cancel_stream_hold_release_v216()
+    raw_src = (request.query.get("src") or "").strip()
+    start_sec = float(request.query.get("start") or 0.0)
+    if start_sec < 0.25:
+        start_sec = 0.0
+    dur_sec = float(request.query.get("dur") or 0.0)
+    no_audio = (request.query.get("no_audio") == "1")
+    audio_only = (request.query.get("audio_only") == "1")
+    try:
+        audio_idx = max(0, int(request.query.get("aidx") or 0))
+    except Exception:
+        audio_idx = 0
+
+    if not raw_src:
+        response.status = 400
+        return "Missing src"
+
+    src = _normalize_or_upgrade_torrent_src_v248(raw_src)
+
+    mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
+    req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
+    now_ts = time.time()
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
+            if k_existing != req_key:
+                for _, p_old in plist:
+                    try:
+                        p_old.kill()
+                    except Exception:
+                        pass
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
+            else:
+                kept = []
+                for ts_started, p_same in plist:
+                    if now_ts - ts_started > 6.0 and p_same.poll() is not None:
+                        continue
+                    kept.append((ts_started, p_same))
+                _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    is_tor_stream = src.startswith("/api/torrent/stream/")
+    src_input = ""
+    tor_info_cached = None
+
+    if is_tor_stream:
+        parts = src.strip("/").split("/")
+        if len(parts) >= 5:
+            h_low = parts[3].strip().lower()
+            try:
+                f_idx = int(parts[4].split("?")[0])
+            except Exception:
+                f_idx = 0
+            ensure_jtorrent_daemon_v96()
+            if dur_sec <= 0:
+                cached_ti = _TORRENT_STREAM_INSPECT_CACHE_V248.get((h_low, f_idx))
+                if cached_ti and cached_ti.get("duration_sec", 0) > 0:
+                    dur_sec = float(cached_ti["duration_sec"])
+                    tor_info_cached = cached_ti
+            ratio = (start_sec / dur_sec) if (dur_sec > 0 and start_sec > 0.5) else 0.0
+            _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
+
+            comp_info = _get_torrent_file_completion_v248(h_low, f_idx)
+            if comp_info.get("is_complete") and comp_info.get("disk_path") and os.path.isfile(comp_info["disk_path"]):
+                src_input = comp_info["disk_path"]
+
+            if not src_input and start_sec > 0.5 and ratio > 0.0:
+                wait_deadline = time.time() + 4.5
+                while time.time() < wait_deadline:
+                    c_now = _get_torrent_file_completion_v248(h_low, f_idx)
+                    if c_now.get("is_complete"):
+                        if c_now.get("disk_path") and os.path.isfile(c_now["disk_path"]):
+                            src_input = c_now["disk_path"]
+                        break
+                    p_map = c_now.get("pieces_map") or ""
+                    beg_p = int(c_now.get("begin_piece") or 0)
+                    end_p = int(c_now.get("end_piece") or 0)
+                    if end_p > beg_p and p_map:
+                        t_p = max(beg_p, min(end_p - 1, beg_p + int(ratio * (end_p - beg_p))))
+                        if 0 <= t_p < len(p_map) and p_map[t_p] == "4":
+                            break
+                    time.sleep(0.25)
+
+            if not src_input:
+                internal_port = globals().get("_INTERNAL_STREAM_PORT_V238", 8080)
+                src_input = f"http://127.0.0.1:{internal_port}/api/torrent/stream/{h_low}/{f_idx}"
+            if tor_info_cached is None:
+                tor_info_cached = _TORRENT_STREAM_INSPECT_CACHE_V248.get((h_low, f_idx))
+        else:
+            src_input = _resolve_any_media_path_v218(src)
+    else:
+        src_input = _resolve_any_media_path_v218(src)
+
+    if not src_input:
+        response.status = 404
+        return "Source not ready"
+
+    is_http = str(src_input).startswith(("http://", "https://"))
+    local_info = {"needs_transcode": False, "audio_tracks": 1, "probed": False}
+
+    if not is_http and os.path.isfile(src_input):
+        local_info = _inspect_local_video_streams_v246(src_input)
+        a_cnt = int(local_info.get("audio_tracks") or 0)
+        if local_info.get("probed") and a_cnt == 0 and not audio_only:
+            no_audio = True
+        elif a_cnt > 0 and audio_idx >= a_cnt:
+            audio_idx = audio_idx % a_cnt
+    elif is_http and isinstance(tor_info_cached, dict) and tor_info_cached.get("probed"):
+        a_cnt_t = int(tor_info_cached.get("audio_tracks") or 0)
+        if a_cnt_t == 0 and not audio_only:
+            no_audio = True
+        elif a_cnt_t > 0 and audio_idx >= a_cnt_t:
+            audio_idx = audio_idx % a_cnt_t
+
+    ff_bin = find_ffmpeg_binary()
+    ff_threads = str(max(2, min(8, int(_THREAD_CFG_V216.get("videoFfmpegThreads", 3)))))
+    cmd = [ff_bin, "-hide_banner", "-loglevel", "error"]
+    if is_http:
+        if start_sec > 0.5:
+            cmd.extend([
+                "-seekable", "1",
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-probesize", "1048576",
+                "-analyzeduration", "1000000",
+            ])
+        else:
+            cmd.extend([
+                "-seekable", "0",
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-probesize", "1048576",
+                "-analyzeduration", "1000000",
+            ])
+
+    need_v_transcode = bool(
+        request.query.get("transcode") == "1"
+        or local_info.get("needs_transcode")
+        or (isinstance(tor_info_cached, dict) and tor_info_cached.get("needs_transcode"))
+        or str(src_input).lower().endswith(_TRANSCODE_REQUIRED_EXTS_V240)
+        or any(ext in src.lower() for ext in _TRANSCODE_REQUIRED_EXTS_V240)
+    )
+
+    if start_sec > 0.5:
+        cmd.extend(["-ss", f"{start_sec:.2f}"])
+
+    if need_v_transcode:
+        v_codec_args = [
+            "-threads", ff_threads,
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+            "-crf", "23", "-pix_fmt", "yuv420p", "-g", "30",
+        ]
+    else:
+        v_codec_args = ["-c:v", "copy"]
+
+    fflags_val = "+genpts+nobuffer"
+    af_sync = "aresample=async=1000:first_pts=0" if start_sec <= 0.5 else "aresample=async=1000"
+
+    if audio_only:
+        cmd.extend([
+            "-fflags", fflags_val,
+            "-i", src_input,
+            "-vn", "-map", f"0:a:{audio_idx}?", "-sn", "-dn",
+            "-threads", ff_threads,
+            "-af", af_sync,
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            "-avoid_negative_ts", "make_zero",
+            "-movflags", "empty_moov+default_base_moof",
+            "-frag_duration", "200000",
+            "-flush_packets", "1",
+            "-f", "mp4", "-",
+        ])
+    elif no_audio:
+        cmd.extend([
+            "-fflags", fflags_val,
+            "-i", src_input,
+            "-map", "0:v:0", "-an", "-sn", "-dn",
+            *v_codec_args,
+            "-avoid_negative_ts", "make_zero",
+            "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+            "-frag_duration", "200000",
+            "-flush_packets", "1",
+            "-f", "mp4", "-",
+        ])
+    else:
+        cmd.extend([
+            "-fflags", fflags_val,
+            "-i", src_input,
+            "-map", "0:v:0", "-map", f"0:a:{audio_idx}?", "-sn", "-dn",
+            *v_codec_args,
+            "-threads", ff_threads,
+            "-af", af_sync,
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            "-avoid_negative_ts", "make_zero",
+            "-max_interleave_delta", "400000",
+            "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+            "-frag_duration", "200000",
+            "-flush_packets", "1",
+            "-f", "mp4", "-",
+        ])
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
+    with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
+        _ACTIVE_REMUX_PROCS_BY_KEY_V214.setdefault(req_key, []).append((now_ts, proc))
+
+    resp_hdrs = {
+        "Content-Type": "video/mp4",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Accept-Ranges": "none",
+    }
+
+    def _remux_gen_v248():
+        try:
+            while True:
+                chunk = proc.stdout.read(16384)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    return bottle.HTTPResponse(body=_remux_gen_v248(), status=200, headers=resp_hdrs)
+
+
+api_video_live_remux_v240 = api_video_live_remux_v248
+api_video_live_remux_v246 = api_video_live_remux_v248
+_override_bottle_route_v212("/api/video/live_remux", "GET", api_video_live_remux_v248)
+# ================= END JENNY_V248_TORRENT_SPARSE_GUARD_AND_STREAM_REMUX_FIX =================

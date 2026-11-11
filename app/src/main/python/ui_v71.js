@@ -33656,7 +33656,9 @@ let vsyncTicks = 0;
             var isImmediateTranscodeExt = /\.(avi|3gp|3g2|wmv|flv|mpg|mpeg|vob|ogv)(\?|$)/i.test(checkStr);
             var isImmediateRemuxExt = isImmediateTranscodeExt || /\.(mkv|mov|ts|m2ts|mts)(\?|$)/i.test(checkStr);
             if (isImmediateRemuxExt) {
-                _activateSeamlessLiveRemuxV240(rawBaseUrl, isImmediateTranscodeExt, 0);
+                if (!window._jennyV246Installed && !window._jennyV248Installed) {
+                    _activateSeamlessLiveRemuxV240(rawBaseUrl, isImmediateTranscodeExt, 0);
+                }
                 return res;
             }
 
@@ -37137,8 +37139,8 @@ let vsyncTicks = 0;
             };
             vid.addEventListener('error', onRemuxFallbackError, { once: true });
 
-            // Probe exact real audio tracks count, codec labels, and duration in ~15ms
-            window.fetch('/api/video/smart_check_v240?src=' + encodeURIComponent(rawBaseUrl))
+            // Probe exact real audio tracks count, codec labels, and duration in ~15ms (handled by V248 when present)
+            if (!window._jennyV248Installed) window.fetch('/api/video/smart_check_v240?src=' + encodeURIComponent(rawBaseUrl))
                 .then(function(r) { return r.json(); })
                 .then(function(info) {
                     if (!info || info.status !== 'ok') return;
@@ -38461,3 +38463,504 @@ let vsyncTicks = 0;
     }, 60);
 })();
 /* ================= END JENNY_V247_120FPS_VIRTUAL_LIST_AND_BLOCKING_SCAN_SHIELD ================= */
+
+/* ================= BEGIN JENNY_V248_VIDEO_STREAM_CONTINUITY_AND_TORRENT_EPISODE_FIX ================= */
+(function() {
+    if (window._jennyV248Installed) return;
+    window._jennyV248Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. SPARSE-SAFE resolveReadyLocalVideoInfoV212:
+    //    NEVER wipe torHash / torFileIdx on incomplete (<100%) P2P torrent episodes!
+    // -------------------------------------------------------------------------
+    var _origResolveReadyLocalV248 = window.resolveReadyLocalVideoInfoV212;
+    window.resolveReadyLocalVideoInfoV212 = function(streamUrl, titleStr, opts) {
+        opts = opts || {};
+        var urlStr = String(streamUrl || '').trim();
+        var fileName = String(titleStr || '').trim();
+        if (!fileName && urlStr.indexOf('/api/media/') === 0) {
+            try { fileName = decodeURIComponent(urlStr.replace(/^\/api\/media\//, '').split('?')[0]); } catch (e) {}
+        }
+
+        var meta = (fileName && window._dedicatedVideoMetaMapV137) ? window._dedicatedVideoMetaMapV137[fileName] : null;
+        var hasTorHash = Boolean((meta && meta.tor_hash) || opts.torHash || urlStr.indexOf('/api/torrent/stream/') === 0);
+
+        if (hasTorHash) {
+            var resolvedHash = String((meta && meta.tor_hash) || opts.torHash || '').trim().toLowerCase();
+            var resolvedIdx = (meta && meta.tor_file_idx !== undefined && Number(meta.tor_file_idx) >= 0)
+                ? Number(meta.tor_file_idx)
+                : ((opts.torFileIdx !== undefined && Number(opts.torFileIdx) >= 0) ? Number(opts.torFileIdx) : 0);
+
+            if (!resolvedHash && urlStr.indexOf('/api/torrent/stream/') === 0) {
+                var p = urlStr.replace(/^\/+/, '').split('/');
+                if (p.length >= 5) {
+                    resolvedHash = String(p[3] || '').toLowerCase();
+                    resolvedIdx = parseInt(String(p[4] || '0').split('?')[0], 10) || 0;
+                }
+            }
+
+            var isConfirmedComplete = Boolean(
+                meta && meta.is_ready_local === true && (meta.percent === undefined || Number(meta.percent) >= 100)
+            );
+            if (!isConfirmedComplete && resolvedHash && window._torMapV112 && window._torMapV112[resolvedHash]) {
+                var job = window._torMapV112[resolvedHash];
+                var fst = job && job.fileStatusMap && job.fileStatusMap[resolvedIdx];
+                if (fst && (fst.done || Number(fst.percent) >= 100 || (Number(fst.length) > 0 && Number(fst.completed) >= Number(fst.length)))) {
+                    isConfirmedComplete = true;
+                }
+            }
+
+            if (isConfirmedComplete && fileName) {
+                return {
+                    isReadyLocal: true,
+                    url: '/api/media/' + encodeURIComponent(fileName),
+                    fileName: fileName
+                };
+            }
+
+            var torStreamUrl = resolvedHash
+                ? ('/api/torrent/stream/' + resolvedHash + '/' + resolvedIdx)
+                : urlStr;
+            return {
+                isReadyLocal: false,
+                url: torStreamUrl,
+                fileName: fileName,
+                torHash: resolvedHash,
+                torFileIdx: resolvedIdx
+            };
+        }
+
+        if (typeof _origResolveReadyLocalV248 === 'function') {
+            return _origResolveReadyLocalV248.call(this, streamUrl, titleStr, opts);
+        }
+        return { isReadyLocal: false, url: urlStr, fileName: fileName };
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. UNIFIED SINGLE-LAUNCH openJennyVideoPlayerV130 + DYNAMIC PROBING FOR TORRENT STREAMS
+    // -------------------------------------------------------------------------
+    window.explicitMediaSessionPauseV240 = function() {
+        if (typeof window.handleNativeMediaControlV243 === 'function') {
+            window.handleNativeMediaControlV243('pause');
+        }
+    };
+    window.explicitMediaSessionPlayV240 = function() {
+        if (typeof window.handleNativeMediaControlV243 === 'function') {
+            window.handleNativeMediaControlV243('play');
+        }
+    };
+
+    window.seekDeckBAndPlayerSyncedV212 = function(targetSec, showToastMsg, fromExplicitUser) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131 || {};
+        if (!vid || !st || !st.active) return;
+
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+        var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+        var rawTarget = Math.max(0, Number(targetSec) || 0);
+
+        if (isRev) {
+            var clampedRev = (isFinite(dur) && dur > 0)
+                ? Math.max(0.1, Math.min(Math.max(0.1, dur - 0.2), rawTarget))
+                : Math.max(0.1, rawTarget);
+            st._lastTrueMediaSecV227 = clampedRev;
+            st._pendingSeekSecV167 = clampedRev;
+            st._pendingSeekTsV167 = performance.now();
+            if (typeof window.updateProgressUIDeckB === 'function') window.updateProgressUIDeckB(clampedRev, dur, true);
+            if (typeof window.syncInternalVideoSliderUIV212 === 'function') window.syncInternalVideoSliderUIV212(clampedRev, dur);
+            if (showToastMsg === true && !fromExplicitUser && window._v130UserDraggingSeekV212) return;
+            if (st._playingHardwareRevStreamV219 && st._revStreamStartedPlayingV220 && !vid.paused && isFinite(vid.duration) && vid.duration > 1.0) {
+                var curAnchor = Number(st._revAnchorSecV219 || 0);
+                var curWin = Math.min(Number(st._revWinLenV219 || 0), vid.duration);
+                var offsetInChunk = curAnchor - clampedRev;
+                if (offsetInChunk >= 0.05 && offsetInChunk <= curWin - 0.25) {
+                    try { vid.currentTime = offsetInChunk; return; } catch (e) {}
+                }
+            }
+            var curRevSpd = Number(vd.speed || window._jennyVideoSpeedV170 || window._lastRevVideoSpeedV217 || 1.0);
+            if (typeof window.startImmediateVideoReverseEngineV217 === 'function') {
+                window.startImmediateVideoReverseEngineV217(curRevSpd, true, clampedRev);
+            }
+            return;
+        }
+
+        var clamped = (isFinite(dur) && dur > 0.5)
+            ? Math.max(0, Math.min(Math.max(0, dur - 0.2), rawTarget))
+            : rawTarget;
+        if (clamped < 0.2) clamped = 0;
+
+        st._lastTrueMediaSecV227 = clamped;
+        st._pendingSeekSecV167 = clamped;
+        st._pendingSeekTsV167 = performance.now();
+        st._reconnectingRemuxUntilV248 = performance.now() + 1500;
+
+        if (typeof window.captureAndHoldVideoFrameV220 === 'function' && clamped > 0.2) {
+            window.captureAndHoldVideoFrameV220(1800);
+        }
+        if (typeof window.updateProgressUIDeckB === 'function') window.updateProgressUIDeckB(clamped, dur, false);
+        if (typeof window.syncInternalVideoSliderUIV212 === 'function') window.syncInternalVideoSliderUIV212(clamped, dur);
+
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        var checkStr = String(st.currentTitle || '') + ' ' + String(rawBaseUrl);
+        var aIdx = Number(st.audioTrackIdxV216) || 0;
+        var sMode = st.videoStreamModeV217 || 'va';
+
+        if (st.torHash && dur > 0 && clamped > 0.5) {
+            var seekRatio = Math.max(0, Math.min(0.995, clamped / dur));
+            window.fetch('/api/torrent/seek_boost', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hash: st.torHash, file_index: Number(st.torFileIdx || 0), ratio: seekRatio })
+            }).catch(function() {});
+        }
+
+        if (!st.userPaused) {
+            window._vidPlayIntentV132 = true;
+            window._vidIsBufferingV132 = true;
+            st._seekingTorrentWaitUntilV218 = performance.now() + 25000;
+            if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+        }
+
+        st.usingRemux = true;
+        st.remuxBaseOffset = clamped;
+        var isLegacyTc = Boolean(st._v246ActiveTranscode) || /\.(avi|3gp|3g2|wmv|flv|mpg|mpeg|vob|ogv)(\?|$)/i.test(checkStr);
+        var tcFlag = isLegacyTc ? '1' : '0';
+        var modeParam = (sMode === 'v_only') ? '&no_audio=1' : ((sMode === 'a_only') ? '&audio_only=1' : '');
+
+        window._lastInternalMediaSrcSwitchTsV239 = performance.now();
+        st._lastRemuxLaunchWallTsV248 = performance.now();
+
+        vid.src = '/api/video/live_remux?src=' + encodeURIComponent(rawBaseUrl) +
+            '&start=' + clamped.toFixed(2) +
+            '&dur=' + (dur || 0).toFixed(2) +
+            '&aidx=' + aIdx +
+            modeParam +
+            '&transcode=' + tcFlag +
+            '&t=' + Date.now();
+
+        var activeFwdSpd = Number(vd.speed || window._jennyVideoSpeedV170 || 1.0);
+        try {
+            vid.defaultPlaybackRate = activeFwdSpd;
+            vid.playbackRate = activeFwdSpd;
+        } catch (e) {}
+        if (!st.userPaused) {
+            vid.play().catch(function() {});
+        }
+        if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
+            window.syncVideoPlayerButtonsUIV217();
+        }
+    };
+
+    var _origStartTrackOneV246 = window.startSeamlessTrackOneVideoV246;
+    window.startSeamlessTrackOneVideoV246 = function(rawBaseUrl, forceTranscode) {
+        var st = window._vidStateV130;
+        if (st) {
+            st._reconnectingRemuxUntilV248 = performance.now() + 1500;
+            st._lastRemuxLaunchWallTsV248 = performance.now();
+            st._autoContRetryCountV248 = 0;
+        }
+        window._lastInternalMediaSrcSwitchTsV239 = performance.now();
+        if (typeof _origStartTrackOneV246 === 'function') {
+            return _origStartTrackOneV246.call(this, rawBaseUrl, forceTranscode);
+        }
+    };
+
+    var _prevOpenVidV248 = window.openJennyVideoPlayerV130;
+    if (typeof _prevOpenVidV248 === 'function' && !_prevOpenVidV248._v248Wrapped) {
+        window.openJennyVideoPlayerV130 = function(streamUrl, titleStr, opts) {
+            opts = Object.assign({}, opts || {});
+            var check = window.resolveReadyLocalVideoInfoV212(streamUrl, titleStr, opts);
+            if (!check.isReadyLocal && check.torHash) {
+                streamUrl = check.url;
+                opts.torHash = check.torHash;
+                opts.torFileIdx = (check.torFileIdx !== undefined) ? Number(check.torFileIdx) : 0;
+            }
+
+            var res = _prevOpenVidV248.call(this, streamUrl, titleStr, opts);
+            var st = window._vidStateV130;
+            var vid = document.getElementById('jennyVideoElV130');
+            if (!st || !vid) return res;
+
+            if (!check.isReadyLocal && check.torHash) {
+                st.isReadyLocalV212 = false;
+                st.torHash = check.torHash;
+                st.torFileIdx = (check.torFileIdx !== undefined) ? Number(check.torFileIdx) : 0;
+                st.rawTorStreamUrlV214 = check.url;
+                st.currentUrl = check.url;
+                st.audioStreamsProbedV218 = false;
+            }
+            st._pausedAtWallTsV248 = 0;
+            st._autoContRetryCountV248 = 0;
+
+            var mySessionTs = Date.now();
+            st._v248OpenSessionTs = mySessionTs;
+            var probeTargetUrl = st.rawTorStreamUrlV214 || st.currentUrl || streamUrl || '';
+
+            window.fetch('/api/video/smart_check_v240?src=' + encodeURIComponent(probeTargetUrl))
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(info) {
+                    if (!info || info.status !== 'ok') return;
+                    if (!st.active || st._v248OpenSessionTs !== mySessionTs) return;
+
+                    if (info.resolved_stream_url && String(info.resolved_stream_url).indexOf('/api/torrent/stream/') === 0) {
+                        st.rawTorStreamUrlV214 = info.resolved_stream_url;
+                        st.currentUrl = info.resolved_stream_url;
+                        var sp = info.resolved_stream_url.replace(/^\/+/, '').split('/');
+                        if (sp.length >= 5) {
+                            st.torHash = sp[3].toLowerCase();
+                            st.torFileIdx = parseInt(sp[4], 10) || 0;
+                        }
+                    }
+
+                    if (info.probed) {
+                        if (typeof info.audio_tracks === 'number') {
+                            st.audioStreamsCountV218 = info.audio_tracks;
+                        }
+                        if (Array.isArray(info.audio_labels)) {
+                            st.audioTrackLabelsV246 = info.audio_labels;
+                        }
+                        st.audioStreamsProbedV218 = true;
+                    } else {
+                        st.audioStreamsProbedV218 = false;
+                    }
+
+                    if (info.duration_sec && info.duration_sec > 0) {
+                        st.trueDuration = Number(info.duration_sec);
+                        st.knownDurationSec = Number(info.duration_sec);
+                        window._jennyFullMovieDurationSecV210 = Number(info.duration_sec);
+                        var curT = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : 0;
+                        if (typeof window.syncInternalVideoSliderUIV212 === 'function') window.syncInternalVideoSliderUIV212(curT, st.trueDuration);
+                        if (typeof window.updateProgressUIDeckB === 'function') window.updateProgressUIDeckB(curT, st.trueDuration, false);
+                    }
+                    if (info.needs_transcode && !st._v246ActiveTranscode) {
+                        st._v246ActiveTranscode = true;
+                        window.startSeamlessTrackOneVideoV246(st.rawTorStreamUrlV214 || probeTargetUrl, true);
+                    }
+                    if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
+                        window.syncVideoPlayerButtonsUIV217();
+                    }
+                })
+                .catch(function() {});
+
+            return res;
+        };
+        window.openJennyVideoPlayerV130._v248Wrapped = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. ON-DEMAND RE-PROBE IN cycleVideoAudioTrackV217 IF PIECE 0 JUST ARRIVED
+    // -------------------------------------------------------------------------
+    var _origCycleAudioTrackV248 = window.cycleVideoAudioTrackV217;
+    window.cycleVideoAudioTrackV217 = function(ev) {
+        var st = window._vidStateV130;
+        if (ev && st && st.active && !st.audioStreamsProbedV218) {
+            var rawUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+            if (rawUrl) {
+                window.fetch('/api/video/smart_check_v240?src=' + encodeURIComponent(rawUrl))
+                    .then(function(r) { return r.ok ? r.json() : null; })
+                    .then(function(info) {
+                        if (!info || !st.active) return;
+                        if (info.probed && typeof info.audio_tracks === 'number') {
+                            st.audioStreamsCountV218 = info.audio_tracks;
+                            st.audioTrackLabelsV246 = Array.isArray(info.audio_labels) ? info.audio_labels : [];
+                            st.audioStreamsProbedV218 = true;
+                            if (info.audio_tracks > 1 && typeof _origCycleAudioTrackV248 === 'function') {
+                                _origCycleAudioTrackV248.call(window, ev);
+                            } else if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
+                                window.syncVideoPlayerButtonsUIV217();
+                            }
+                        }
+                    })
+                    .catch(function() {});
+                if ((Number(st.audioStreamsCountV218) || 1) <= 1) {
+                    if (typeof window.showVideoFeedbackV130 === 'function') {
+                        window.showVideoFeedbackV130('⏳ Проверяем аудиодорожки потока...');
+                    }
+                    if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+                    return;
+                }
+            }
+        }
+        if (typeof _origCycleAudioTrackV248 === 'function') {
+            return _origCycleAudioTrackV248.apply(this, arguments);
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. BULLETPROOF PLAY/PAUSE & CONTINUOUS LIVE_REMUX PLAYBACK (ZERO AUTO-PAUSE!)
+    // -------------------------------------------------------------------------
+    window.toggleVideoPlayPauseV130 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131 || {};
+        if (!vid || !st) return;
+
+        var isActuallyPlaying = (!vid.paused && !vid.ended && vid.readyState >= 2) || Boolean(vd.isReversed);
+        if (st.userPaused || !isActuallyPlaying) {
+            var pausedDurMs = st._pausedAtWallTsV248 ? (performance.now() - st._pausedAtWallTsV248) : 0;
+            st.userPaused = false;
+            st._pausedAtWallTsV248 = 0;
+            st._autoContRetryCountV248 = 0;
+            window._vidPlayIntentV132 = true;
+            if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+
+            var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (st.remuxBaseOffset || 0);
+            var needFreshRemuxPipe = Boolean(
+                vid.error ||
+                vid.ended ||
+                (st.usingRemux && (vid.readyState < 2 || vid.networkState === 3 || pausedDurMs > 3500))
+            );
+            if (needFreshRemuxPipe) {
+                window.seekDeckBAndPlayerSyncedV212(curSec, false, true);
+            } else {
+                window._vidIsBufferingV132 = (vid.readyState < 2);
+                vid.play().catch(function() {});
+            }
+            if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false);
+        } else {
+            st.userPaused = true;
+            st._pausedAtWallTsV248 = performance.now();
+            window._vidPlayIntentV132 = false;
+            window._vidIsBufferingV132 = false;
+            st._seekingTorrentWaitUntilV218 = 0;
+            if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+            if (vd.sourceNode) { try { vd.sourceNode.stop(); } catch (e) {} vd.sourceNode = null; }
+            vd.isStudioPlaying = false;
+            try { vid.pause(); } catch (e) {}
+        }
+        if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
+    };
+
+    function bindVideoContinuityGuardsV248() {
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!vid || vid._v248ContinuityBound) return;
+        vid._v248ContinuityBound = true;
+
+        // Capture-phase 'pause' guard:
+        // In Chromium WebView, stream EOF dispatches 'pause' 1 tick BEFORE setting vid.ended=true!
+        // When Jenny Player is visible in foreground (or stream is seeking/loading/ending), never let V239
+        // mistake a stream pause/EOF for a background OS AudioFocus loss (while still yielding when hidden!).
+        vid.addEventListener('pause', function() {
+            var st = window._vidStateV130;
+            if (!st || !st.active || st.userPaused) return;
+            var appVisible = (document.visibilityState === 'visible');
+            var isTechnicalStreamPause = Boolean(
+                appVisible ||
+                vid.ended ||
+                vid.error ||
+                vid.seeking ||
+                vid.readyState < 3 ||
+                vid.networkState === 2 ||
+                (performance.now() - (st._lastRemuxLaunchWallTsV248 || 0) < 1800) ||
+                (performance.now() < (st._reconnectingRemuxUntilV248 || 0))
+            );
+            if (isTechnicalStreamPause) {
+                window._lastInternalMediaSrcSwitchTsV239 = performance.now();
+                // If app is visible and video paused unexpectedly without ending/seeking, nudge play after 180ms
+                if (appVisible && !st.userPaused && window._vidPlayIntentV132) {
+                    setTimeout(function() {
+                        if (!st.active || st.userPaused || !window._vidPlayIntentV132) return;
+                        if (document.visibilityState !== 'visible') return;
+                        if (vid.ended || vid.error) return; // handled by ended/error listener below
+                        if (vid.paused && !vid.seeking && !(window.videoDeckV131 && window.videoDeckV131.isReversed)) {
+                            vid.play().catch(function() {});
+                        }
+                    }, 180);
+                }
+            }
+        }, true);
+
+        var handlePrematureRemuxStop = function() {
+            var st = window._vidStateV130;
+            var vd = window.videoDeckV131 || {};
+            if (!st || !st.active || st.userPaused || !window._vidPlayIntentV132) return;
+            if (vd.isReversed || window.isReversedDeckB || st._playingHardwareRevStreamV219) return;
+            if (!st.usingRemux) return;
+
+            var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : 0;
+            var cur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (st.remuxBaseOffset || 0);
+            var isNearRealEnd = (dur > 5 && cur >= dur - 2.5);
+            if (isNearRealEnd) return;
+
+            var now = performance.now();
+            if (now - (st._lastAutoContTsV248 || 0) < 1400) return;
+            st._lastAutoContTsV248 = now;
+            st._autoContRetryCountV248 = (st._autoContRetryCountV248 || 0) + 1;
+            if (st._autoContRetryCountV248 > 25) return;
+
+            window._vidIsBufferingV132 = true;
+            if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+            setTimeout(function() {
+                if (!st.active || st.userPaused || !window._vidPlayIntentV132) return;
+                var resumePos = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : cur;
+                window.seekDeckBAndPlayerSyncedV212(resumePos, false, false);
+            }, 320);
+        };
+
+        vid.addEventListener('ended', handlePrematureRemuxStop);
+        vid.addEventListener('error', handlePrematureRemuxStop);
+        vid.addEventListener('playing', function() {
+            var st = window._vidStateV130;
+            if (st) {
+                st._autoContRetryCountV248 = 0;
+                window._vidIsBufferingV132 = false;
+                if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+            }
+        });
+    }
+
+    bindVideoContinuityGuardsV248();
+    setInterval(bindVideoContinuityGuardsV248, 1200);
+
+    setInterval(function() {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        if (!vid || !st || !st.active) return;
+
+        var now = performance.now();
+        if (st.torHash && !st.userPaused && vid.networkState === 2 && !vid.error && !vid.ended) {
+            if (now - (st._lastRemuxLaunchWallTsV248 || now) < 22000) {
+                st._lastTorSeekRetryTsV218 = now;
+            }
+        }
+
+        var curDur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : 0;
+        var rawUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
+        if (rawUrl && (!st.audioStreamsProbedV218 || curDur <= 12.5) && (!st._lastV248MetaPollTs || now - st._lastV248MetaPollTs > 1600)) {
+            st._lastV248MetaPollTs = now;
+            st._lastMetaPollTsV218 = now;
+            window.fetch('/api/video/pcm_meta?src=' + encodeURIComponent(rawUrl))
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(md) {
+                    if (!md || !st.active) return;
+                    if (md.probed) {
+                        if (typeof md.audio_streams === 'number') {
+                            st.audioStreamsCountV218 = Number(md.audio_streams);
+                        }
+                        if (Array.isArray(md.audio_labels) && md.audio_labels.length > 0) {
+                            st.audioTrackLabelsV246 = md.audio_labels;
+                        }
+                        st.audioStreamsProbedV218 = true;
+                        if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
+                            window.syncVideoPlayerButtonsUIV217();
+                        }
+                    }
+                    var d = parseFloat(md.duration) || 0;
+                    if (d > 1.0 && (curDur <= 12.5 || Math.abs(d - curDur) > 2.0)) {
+                        st.trueDuration = d;
+                        st.knownDurationSec = d;
+                        window._jennyFullMovieDurationSecV210 = d;
+                        var curT = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : 0;
+                        if (typeof window.syncInternalVideoSliderUIV212 === 'function') window.syncInternalVideoSliderUIV212(curT, d);
+                        if (typeof window.updateProgressUIDeckB === 'function') window.updateProgressUIDeckB(curT, d, false);
+                    }
+                })
+                .catch(function() {});
+        }
+    }, 650);
+})();
+/* ================= END JENNY_V248_VIDEO_STREAM_CONTINUITY_AND_TORRENT_EPISODE_FIX ================= */
