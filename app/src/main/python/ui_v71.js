@@ -36240,3 +36240,369 @@ let vsyncTicks = 0;
     ].join('\n');
 })();
 /* === END JENNY_V244_VIEWPORT_CLEAN === */
+
+
+/* ================= BEGIN JENNY_V245_GLOBAL_SCAN_TOGGLE_AND_STICKY_ONBOARDING_PERMS ================= */
+(function() {
+    if (window._jennyV245Installed) return;
+    window._jennyV245Installed = true;
+
+    // -------------------------------------------------------------------------
+    // 1. GLOBAL ALL-FOLDERS AUDIO & VIDEO SCANNER STATE & UI TOGGLE (DEFAULT: ON)
+    // -------------------------------------------------------------------------
+    window.appConfig = window.appConfig || {};
+    if (window.appConfig.scanAllFolders === undefined) {
+        window.appConfig.scanAllFolders = true;
+        try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+    }
+
+    window.isScanAllFoldersEnabledV245 = function() {
+        if (window.appConfig && window.appConfig.scanAllFolders !== undefined) {
+            return Boolean(window.appConfig.scanAllFolders);
+        }
+        return true;
+    };
+
+    window.syncScanAllFoldersUIV245 = function() {
+        var isAll = window.isScanAllFoldersEnabledV245();
+        var chkSet = document.getElementById('cfg_scanAllFoldersV245');
+        if (chkSet && chkSet.checked !== isAll) chkSet.checked = isAll;
+
+        var hintSet = document.getElementById('scanAllFoldersHintV245');
+        if (hintSet) {
+            hintSet.innerHTML = isAll
+                ? window.tr(
+                    '✅ <b>Включено:</b> плеер автоматически находит все аудио и видео во всех папках памяти телефона.',
+                    '✅ <b>Enabled:</b> player automatically finds all audio & video across all device folders.'
+                )
+                : window.tr(
+                    '📁 <b>Выключено:</b> используются только выбранные тобой папки (как обычно).',
+                    '📁 <b>Disabled:</b> using only your manually selected folders.'
+                );
+            hintSet.style.color = isAll ? '#3fb950' : '#79c0ff';
+        }
+
+        var pickBtn = document.getElementById('btnOpenFoldersFromSettingsV245');
+        if (pickBtn) {
+            pickBtn.style.borderColor = isAll ? '#30363d' : '#58a6ff';
+            pickBtn.style.color = isAll ? '#8b949e' : '#58a6ff';
+            pickBtn.style.background = isAll ? '#0d1117' : 'rgba(88,166,255,0.16)';
+        }
+
+        var chkModal = document.getElementById('fm_scanAllFoldersChkV245');
+        if (chkModal && chkModal.checked !== isAll) chkModal.checked = isAll;
+
+        var rowsBox = document.getElementById('jennyFolderRowsBoxV237');
+        if (rowsBox) {
+            rowsBox.style.opacity = isAll ? '0.58' : '1';
+        }
+        var fmHint = document.getElementById('fm_scanAllHintV245');
+        if (fmHint) {
+            fmHint.innerHTML = isAll
+                ? window.tr(
+                    '🌍 Сейчас активен <b>автопоиск по всем папкам памяти</b>. Выключи галочку выше, чтобы фильтровать строго по отмеченным ниже папкам.',
+                    '🌍 <b>Full-storage auto-scan</b> is active. Uncheck above to use only selected folders below.'
+                )
+                : window.tr(
+                    '📁 Активен режим <b>выбранных папок</b>: сканируются только отмеченные галочками папки ниже.',
+                    '📁 <b>Selected folders mode</b> active: scanning only checked folders below.'
+                );
+            fmHint.style.color = isAll ? '#3fb950' : '#58a6ff';
+        }
+    };
+
+    window.setScanAllFoldersModeV245 = async function(enabled, ev) {
+        try { navigator.vibrate(20); } catch (e) {}
+        var val = Boolean(enabled);
+        window.appConfig = window.appConfig || {};
+        window.appConfig.scanAllFolders = val;
+        try { localStorage.setItem('ytm_config', JSON.stringify(window.appConfig)); } catch (e) {}
+        window.syncScanAllFoldersUIV245();
+
+        try {
+            await window.fetch('/api/scan_mode_v245', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scan_all: val })
+            });
+        } catch (e) {}
+
+        if (window.AndroidBridge && typeof window.AndroidBridge.invalidatePresetFolderCache === 'function') {
+            try { window.AndroidBridge.invalidatePresetFolderCache(); } catch (e) {}
+        }
+
+        if (typeof window.fetchData === 'function') {
+            await window.fetchData();
+        }
+        if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') {
+            await window.syncDiscoveredVideosIntoPlaylistV134(true);
+        }
+        if (typeof window.renderActivePlaylistTracksV71 === 'function') {
+            window.renderActivePlaylistTracksV71(false);
+        }
+        if (typeof window.syncContextRefreshCounterV242 === 'function') {
+            window.syncContextRefreshCounterV242();
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(
+                val
+                    ? window.tr('🌍 Включён автопоиск аудио и видео по всем папкам!', '🌍 Auto-scan across all folders enabled!')
+                    : window.tr('📁 Включён режим выбранных папок!', '📁 Using selected folders only!'),
+                ev
+            );
+        }
+    };
+
+    // Mount dedicated setting card inside #settingsModal (right near Studio RAM / Formats)
+    window.mountGlobalScanSettingsCardV245 = function() {
+        var sm = document.getElementById('settingsModal');
+        if (!sm) return;
+        var container = sm.querySelector('.container') || sm;
+        var existing = document.getElementById('globalMediaScanCardV245');
+        if (existing) {
+            window.syncScanAllFoldersUIV245();
+            return;
+        }
+
+        var card = document.createElement('div');
+        card.id = 'globalMediaScanCardV245';
+        card.className = 'setting-row';
+        card.style.cssText = 'background:var(--bg-setting-box);padding:11px 12px;border-radius:8px;margin-bottom:13px;border:1px solid #262c36;border-left:3px solid #39c5cf;display:flex;flex-direction:column;align-items:stretch;gap:7px;';
+
+        var isAll = window.isScanAllFoldersEnabledV245();
+        card.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+                '<label class="toggle-label" style="color:#e6edf3;font-weight:bold;flex:1;font-size:13px;line-height:1.35;">' +
+                    '<input type="checkbox" id="cfg_scanAllFoldersV245" ' + (isAll ? 'checked' : '') + ' onchange="window.setScanAllFoldersModeV245(this.checked, event)"> ' +
+                    '<span>🌍 ' + window.tr('Автопоиск всех аудио и видео по всем папкам', 'Auto-scan all audio & video across all folders') + '</span>' +
+                '</label>' +
+                '<button type="button" id="btnOpenFoldersFromSettingsV245" onclick="if(window.openFolderManagerModalV62) window.openFolderManagerModalV62(event)" style="padding:5px 9px;font-size:11px;font-weight:bold;border-radius:7px;border:1px solid #58a6ff;background:#0d1117;color:#58a6ff;flex-shrink:0;white-space:nowrap;">' +
+                    '📁 ' + window.tr('Папки', 'Folders') +
+                '</button>' +
+            '</div>' +
+            '<div id="scanAllFoldersHintV245" style="font-size:11px;line-height:1.38;padding-left:23px;"></div>';
+
+        var fmtSec = document.getElementById('customFormatsSection');
+        var studioChk = document.getElementById('cfg_studioMode');
+        var studioRow = studioChk ? studioChk.closest('.setting-row') : null;
+        if (studioRow && studioRow.parentElement === container) {
+            studioRow.insertAdjacentElement('afterend', card);
+        } else if (fmtSec && fmtSec.parentElement === container) {
+            container.insertBefore(card, fmtSec);
+        } else {
+            container.insertBefore(card, container.firstChild);
+        }
+        window.syncScanAllFoldersUIV245();
+    };
+
+    // Inject synced toggle banner at the top of #jennyFolderManagerModal too!
+    var _origOpenFolderMgrV245 = window.openFolderManagerModalV62;
+    if (typeof _origOpenFolderMgrV245 === 'function') {
+        window.openFolderManagerModalV62 = async function(ev) {
+            var r = _origOpenFolderMgrV245.apply(this, arguments);
+            var injectBanner = function() {
+                var m = document.getElementById('jennyFolderManagerModal');
+                if (!m) return;
+                var body = m.querySelector('.jenny-modal-body-v71');
+                if (!body || document.getElementById('fm_scanAllWrapV245')) return;
+                var isAll = window.isScanAllFoldersEnabledV245();
+                var banner = document.createElement('div');
+                banner.id = 'fm_scanAllWrapV245';
+                banner.style.cssText = 'background:#0b111a;border:1px solid #39c5cf;border-radius:9px;padding:9px 10px;margin-bottom:8px;display:flex;flex-direction:column;gap:5px;';
+                banner.innerHTML =
+                    '<label style="display:flex;align-items:center;gap:8px;color:#e6edf3;font-size:12.5px;font-weight:800;cursor:pointer;">' +
+                        '<input type="checkbox" id="fm_scanAllFoldersChkV245" ' + (isAll ? 'checked' : '') + ' onchange="window.setScanAllFoldersModeV245(this.checked, event)">' +
+                        '<span>🌍 ' + window.tr('Искать аудио и видео во всех папках памяти', 'Scan all folders on device automatically') + '</span>' +
+                    '</label>' +
+                    '<div id="fm_scanAllHintV245" style="font-size:10.5px;line-height:1.35;padding-left:24px;"></div>';
+                body.insertBefore(banner, body.firstChild);
+                window.syncScanAllFoldersUIV245();
+            };
+            injectBanner();
+            setTimeout(injectBanner, 60);
+            return r;
+        };
+    }
+
+    // Keep client window.appConfig.scanAllFolders synced with backend /api/data response
+    var _prevFetchDataV245 = window.fetchData;
+    if (typeof _prevFetchDataV245 === 'function') {
+        window.fetchData = async function() {
+            var r = await _prevFetchDataV245.apply(this, arguments);
+            if (window.lastData && typeof window.lastData.scan_all_folders === 'boolean') {
+                window.appConfig = window.appConfig || {};
+                window.appConfig.scanAllFolders = window.lastData.scan_all_folders;
+                window.syncScanAllFoldersUIV245();
+            }
+            return r;
+        };
+    }
+
+    var _prevMountStudioV245 = window.mountJennyStudioUI;
+    if (typeof _prevMountStudioV245 === 'function') {
+        window.mountJennyStudioUI = function() {
+            var r = _prevMountStudioV245.apply(this, arguments);
+            window.mountGlobalScanSettingsCardV245();
+            return r;
+        };
+    }
+
+    var _prevToggleModalV245 = window.toggleModal;
+    if (typeof _prevToggleModalV245 === 'function') {
+        window.toggleModal = function(id) {
+            var r = _prevToggleModalV245.apply(this, arguments);
+            if (id === 'settingsModal') {
+                window.mountGlobalScanSettingsCardV245();
+            }
+            return r;
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. PINNED / ALWAYS-VISIBLE PERMISSION REQUEST BUTTONS IN INITIAL SETUP (#jennyOnboardingModalV165)
+    //    Permission buttons NEVER hide inside scroll regardless of text length or font scale!
+    // -------------------------------------------------------------------------
+    var _origOnbPermUpdV245 = window.onOnboardingPermUpdatedV165;
+    if (typeof _origOnbPermUpdV245 === 'function') {
+        window.onOnboardingPermUpdatedV165 = function(which, granted) {
+            var r = _origOnbPermUpdV245.apply(this, arguments);
+            if (which === 'storage' && granted) {
+                if (window.AndroidBridge && typeof window.AndroidBridge.invalidatePresetFolderCache === 'function') {
+                    try { window.AndroidBridge.invalidatePresetFolderCache(); } catch (e) {}
+                }
+                if (typeof window.fetchData === 'function') window.fetchData();
+                if (typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') {
+                    window.syncDiscoveredVideosIntoPlaylistV134(true);
+                }
+            }
+            return r;
+        };
+    }
+
+    var _origEnsureOnbModalV245 = window.ensureOnboardingModalV165;
+    if (typeof _origEnsureOnbModalV245 === 'function') {
+        window.ensureOnboardingModalV165 = function() {
+            var m = _origEnsureOnbModalV245.apply(this, arguments);
+            if (m) {
+                var bodyEl = document.getElementById('onbPageBodyV165');
+                var footEl = document.getElementById('onbFooterBarV165');
+                if (bodyEl) {
+                    bodyEl.style.minHeight = '0';
+                    bodyEl.style.flex = '1 1 auto';
+                    bodyEl.style.overflowY = 'auto';
+                }
+                if (footEl && footEl.parentElement && !document.getElementById('onbPinnedActionDockV245')) {
+                    var dock = document.createElement('div');
+                    dock.id = 'onbPinnedActionDockV245';
+                    dock.style.cssText = [
+                        'flex-shrink:0',
+                        'background:#11161f',
+                        'border:1px solid #30363d',
+                        'border-radius:13px',
+                        'padding:9px 11px',
+                        'display:flex',
+                        'flex-direction:column',
+                        'gap:7px',
+                        'box-shadow:0 -6px 18px rgba(0,0,0,0.65)'
+                    ].join(';');
+                    footEl.parentElement.insertBefore(dock, footEl);
+                }
+            }
+            return m;
+        };
+    }
+
+    var _origRenderOnbPageV245 = window.renderOnboardingPageV165;
+    if (typeof _origRenderOnbPageV245 === 'function') {
+        window.renderOnboardingPageV165 = function(pageIdx) {
+            window.ensureOnboardingModalV165();
+            var res = _origRenderOnbPageV245.apply(this, arguments);
+            var p = Math.max(0, Math.min(3, Number(pageIdx) || 0));
+            var bodyEl = document.getElementById('onbPageBodyV165');
+            var dockEl = document.getElementById('onbPinnedActionDockV245');
+            if (!bodyEl || !dockEl) return res;
+
+            // Remove inline permission buttons from inside the scrollable body (#onbPageBodyV165)
+            // so they don't duplicate or sit hidden at the bottom of scroll!
+            bodyEl.querySelectorAll(
+                'button[onclick*="triggerOnboardingPermActionV165"], button#onbBgUnrestrictedBtnV214'
+            ).forEach(function(btn) {
+                var wrap = btn.parentElement;
+                btn.remove();
+                if (wrap && wrap !== bodyEl && wrap.children.length === 0 && wrap.textContent.trim() === '') {
+                    wrap.remove();
+                }
+            });
+
+            var st = window._onbStateV165 || {};
+            var okBg = Boolean(window._bgUnrestrictedGrantedV212);
+
+            if (p === 0) {
+                var okS = Boolean(st.storageOk);
+                dockEl.style.display = 'flex';
+                dockEl.style.borderColor = okS ? 'rgba(63,185,80,0.55)' : 'rgba(88,166,255,0.65)';
+                dockEl.innerHTML =
+                    '<button type="button" onclick="window.triggerOnboardingPermActionV165(\'storage\')" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid ' + (okS ? '#3fb950' : '#58a6ff') + ';background:' + (okS ? 'rgba(63,185,80,0.18)' : 'linear-gradient(135deg,#1f6feb,#1158c7)') + ';color:' + (okS ? '#3fb950' : '#ffffff') + ';font-size:13.5px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(31,111,235,0.35);">' +
+                        (okS ? '✅ Доступ к файлам активен (проверить ещё раз)' : '🔓 Открыть и включить доступ к файлам') +
+                    '</button>';
+            } else if (p === 1) {
+                var okN = Boolean(st.notifOk);
+                dockEl.style.display = 'flex';
+                dockEl.style.borderColor = (okN && okBg) ? 'rgba(63,185,80,0.55)' : 'rgba(63,185,80,0.65)';
+                dockEl.innerHTML =
+                    '<button type="button" onclick="window.triggerOnboardingPermActionV165(\'notif\')" style="width:100%;padding:11px 14px;border-radius:10px;border:1px solid #3fb950;background:' + (okN ? 'rgba(63,185,80,0.18)' : 'linear-gradient(135deg,#238636,#2ea043)') + ';color:' + (okN ? '#3fb950' : '#ffffff') + ';font-size:13px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(46,160,67,0.32);">' +
+                        (okN ? '✅ Фоновый пульт и уведомления активны' : '🔔 Разрешить медиа-пульт и работу в фоне') +
+                    '</button>' +
+                    '<button type="button" id="onbBgUnrestrictedBtnV214" onclick="if(window.requestBackgroundUnrestrictedV212) window.requestBackgroundUnrestrictedV212(event)" style="width:100%;padding:10px 12px;border-radius:10px;border:1px solid ' + (okBg ? '#3fb950' : '#58a6ff') + ';background:' + (okBg ? 'rgba(63,185,80,0.16)' : 'rgba(88,166,255,0.16)') + ';color:' + (okBg ? '#3fb950' : '#58a6ff') + ';font-size:12.5px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">' +
+                        (okBg ? '🛡️ Фон 24/7 без ограничений батареи: АКТИВЕН' : '🛡️ Разрешить работу в фоне 24/7 (Без сна батареи)') +
+                    '</button>';
+            } else if (p === 2) {
+                var okO = Boolean(st.overlayOk);
+                dockEl.style.display = 'flex';
+                dockEl.style.borderColor = okO ? 'rgba(63,185,80,0.55)' : 'rgba(163,113,247,0.65)';
+                dockEl.innerHTML =
+                    '<button type="button" onclick="window.triggerOnboardingPermActionV165(\'overlay\')" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid ' + (okO ? '#3fb950' : '#a371f7') + ';background:' + (okO ? 'rgba(63,185,80,0.18)' : 'linear-gradient(135deg,#7341be,#8957e5)') + ';color:' + (okO ? '#3fb950' : '#ffffff') + ';font-size:13.5px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(137,87,229,0.38);">' +
+                        (okO ? '✅ Плавающее окно поверх приложений активно' : '🪟 Открыть одиночный тумблер «Поверх окон»') +
+                    '</button>';
+            } else {
+                // Step 4: Quick pinned status pills of all 3 permissions so user can still grant any missed permission in 1 tap without scrolling!
+                var sOk = Boolean(st.storageOk);
+                var nOk = Boolean(st.notifOk);
+                var oOk = Boolean(st.overlayOk);
+                dockEl.style.display = 'flex';
+                dockEl.style.borderColor = (sOk && nOk && oOk) ? 'rgba(63,185,80,0.45)' : 'rgba(227,179,65,0.55)';
+                var mkQuickPill = function(actKey, ok, lbl) {
+                    return '<button type="button" onclick="window.triggerOnboardingPermActionV165(\'' + actKey + '\')" style="flex:1;min-width:0;padding:8px 6px;border-radius:9px;border:1px solid ' + (ok ? '#3fb950' : '#e3b341') + ';background:' + (ok ? 'rgba(63,185,80,0.16)' : 'rgba(227,179,65,0.15)') + ';color:' + (ok ? '#3fb950' : '#e3b341') + ';font-size:11px;font-weight:900;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                        (ok ? '✅ ' : '🔓 ') + lbl +
+                    '</button>';
+                };
+                dockEl.innerHTML =
+                    '<div style="font-size:10.5px;color:#8b949e;text-align:center;font-weight:bold;">Быстрый статус разрешений (нажми, если что-то пропустил):</div>' +
+                    '<div style="display:flex;gap:6px;width:100%;">' +
+                        mkQuickPill('storage', sOk, 'Файлы') +
+                        mkQuickPill('notif', nOk, 'Пульт') +
+                        mkQuickPill('overlay', oOk, 'Поверх окон') +
+                    '</div>';
+            }
+
+            bodyEl.scrollTop = 0;
+            return res;
+        };
+    }
+
+    setTimeout(function() {
+        window.mountGlobalScanSettingsCardV245();
+        // Sync initial backend scan mode with appConfig on startup
+        window.fetch('/api/scan_mode_v245')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d && typeof d.scan_all_folders === 'boolean') {
+                    window.appConfig = window.appConfig || {};
+                    window.appConfig.scanAllFolders = d.scan_all_folders;
+                    window.syncScanAllFoldersUIV245();
+                }
+            })
+            .catch(function() {});
+    }, 220);
+})();
+/* ================= END JENNY_V245_GLOBAL_SCAN_TOGGLE_AND_STICKY_ONBOARDING_PERMS ================= */

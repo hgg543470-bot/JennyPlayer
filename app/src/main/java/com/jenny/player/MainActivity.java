@@ -1744,23 +1744,65 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // === JENNY_V245_GLOBAL_SCAN_JAVA ===
+    private static volatile long lastGlobalDirWalkMsV245 = 0L;
+
+    private static boolean shouldSkipGlobalScanDirV245(String name) {
+        if (name == null || name.isEmpty() || name.charAt(0) == '.') return true;
+        return "Android".equalsIgnoreCase(name)
+                || "JENNY".equalsIgnoreCase(name)
+                || "torrents_tmp".equalsIgnoreCase(name)
+                || "proc".equalsIgnoreCase(name)
+                || "sys".equalsIgnoreCase(name)
+                || "LOST.DIR".equalsIgnoreCase(name)
+                || "$RECYCLE.BIN".equalsIgnoreCase(name)
+                || "Trash".equalsIgnoreCase(name);
+    }
+
+    private static void walkStorageDirsV245(File dir, int depth, int maxDepth, LinkedHashSet<String> out, int maxDirs) {
+        if (dir == null || depth > maxDepth || out.size() >= maxDirs) return;
+        String abs = normDirPathV238(dir.getAbsolutePath());
+        if (!abs.isEmpty()) out.add(abs);
+        if (depth == maxDepth) return;
+        File[] children = null;
+        try {
+            children = dir.listFiles();
+        } catch (Exception ignored) {}
+        if (children == null) return;
+        for (int i = 0; i < children.length; i++) {
+            if (out.size() >= maxDirs) break;
+            File ch = children[i];
+            if (ch != null && ch.isDirectory()) {
+                String nm = ch.getName();
+                if (!shouldSkipGlobalScanDirV245(nm)) {
+                    walkStorageDirsV245(ch, depth + 1, maxDepth, out, maxDirs);
+                }
+            }
+        }
+    }
+
     private static List<String> getLookupMediaDirsV238() {
         File preset = new File("/storage/emulated/0/Music/jenny_dsp_preset.json");
         long mtime = preset.exists() ? preset.lastModified() : 0L;
+        long nowMs = android.os.SystemClock.uptimeMillis();
         List<String> cur = cachedLookupDirsV238;
-        if (cur != null && cachedPresetMtimeV238 == mtime) {
+        if (cur != null && cachedPresetMtimeV238 == mtime && (nowMs - lastGlobalDirWalkMsV245 < 12000L)) {
             return cur;
         }
         synchronized (presetCacheLockV238) {
-            if (cachedLookupDirsV238 != null && cachedPresetMtimeV238 == mtime) {
+            if (cachedLookupDirsV238 != null && cachedPresetMtimeV238 == mtime && (nowMs - lastGlobalDirWalkMsV245 < 12000L)) {
                 return cachedLookupDirsV238;
             }
+            boolean scanAll = true;
             LinkedHashSet<String> dirs = new LinkedHashSet<String>();
             if (preset.isFile()) {
                 String txt = readSmallUtf8FileV238(preset);
                 if (txt != null && !txt.isEmpty()) {
                     try {
                         JSONObject j = new JSONObject(txt);
+                        if (j.has("scanAllFolders")) {
+                            scanAll = j.optBoolean("scanAllFolders", true);
+                        }
                         JSONArray act = j.optJSONArray("activeFolders");
                         if (act != null) {
                             for (int i = 0; i < act.length(); i++) {
@@ -1786,9 +1828,16 @@ public class MainActivity extends AppCompatActivity {
             dirs.add("/storage/emulated/0/JennyVideo");
             dirs.add("/storage/emulated/0/Download");
             dirs.add("/storage/emulated/0/Movies");
+            if (scanAll) {
+                File extRoot = new File("/storage/emulated/0");
+                if (extRoot.isDirectory() && extRoot.canRead()) {
+                    walkStorageDirsV245(extRoot, 0, 5, dirs, 600);
+                }
+            }
             List<String> built = new ArrayList<String>(dirs);
             cachedLookupDirsV238 = built;
             cachedPresetMtimeV238 = mtime;
+            lastGlobalDirWalkMsV245 = nowMs;
             return built;
         }
     }
@@ -1905,7 +1954,18 @@ public class MainActivity extends AppCompatActivity {
 
             JSONObject out = new JSONObject();
             out.put("status", "ok");
+            boolean scanAllFlag = true;
+            if (preset.isFile()) {
+                try {
+                    String pTxt = readSmallUtf8FileV238(preset);
+                    if (pTxt != null && !pTxt.isEmpty()) {
+                        JSONObject pj = new JSONObject(pTxt);
+                        if (pj.has("scanAllFolders")) scanAllFlag = pj.optBoolean("scanAllFolders", true);
+                    }
+                } catch (Exception ignored) {}
+            }
             out.put("fast_jni", true);
+            out.put("scan_all_folders", scanAllFlag);
             out.put("saved_folders", savedArr);
             out.put("active_folders", activeArr);
             out.put("current_folder", currentFolder);

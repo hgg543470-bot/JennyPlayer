@@ -1377,7 +1377,7 @@ def save_config_all():
             try:
                 with open(PRESET_FILE, 'r', encoding='utf-8') as old_f:
                     old_data = json.load(old_f)
-                for k in ("customMusicDir", "savedFolders", "activeFolders"):
+                for k in ("customMusicDir", "savedFolders", "activeFolders", "scanAllFolders"):
                     if k in old_data and k not in data:
                         data[k] = old_data[k]
             except Exception:
@@ -13451,3 +13451,306 @@ def api_radio_abort_stale_v243():
     return json.dumps({"status": "ok", "killed": killed})
 _override_bottle_route_v212('/api/radio/abort_stale_v243', 'POST', api_radio_abort_stale_v243)
 # ================= END JENNY_V243_UNIFIED_FIXES =================
+
+
+# ================= BEGIN JENNY_V245_GLOBAL_ALL_FOLDERS_SCANNER =================
+_SCAN_ALL_CFG_CACHE_V245 = {"mtime": -1.0, "val": True}
+_DISCOVERED_AUDIO_PATHS_V245 = {}  # filename -> full_path
+_GLOBAL_AUDIO_WALK_CACHE_V245 = {"ts": 0.0, "sig": "", "pairs": []}
+
+_SKIP_GLOBAL_SCAN_DIRS_V245 = {
+    ".git", "android", "proc", "sys", "usr", "lib", "torrents_tmp", "jenny",
+    "lost.dir", "$recycle.bin", "trash", ".trash", ".thumbnails", "thumbnails"
+}
+
+
+def is_scan_all_folders_enabled_v245() -> bool:
+    """Returns True by default unless explicitly set to False in PRESET_FILE (jenny_dsp_preset.json)."""
+    try:
+        if os.path.isfile(PRESET_FILE):
+            mt = os.path.getmtime(PRESET_FILE)
+            if _SCAN_ALL_CFG_CACHE_V245["mtime"] == mt:
+                return bool(_SCAN_ALL_CFG_CACHE_V245["val"])
+            with open(PRESET_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            val = bool(d.get("scanAllFolders", True)) if isinstance(d, dict) else True
+            _SCAN_ALL_CFG_CACHE_V245["mtime"] = mt
+            _SCAN_ALL_CFG_CACHE_V245["val"] = val
+            return val
+    except Exception:
+        pass
+    return True
+
+
+def set_scan_all_folders_enabled_v245(enabled: bool) -> bool:
+    global _last_vid_scan_ts_v136
+    val = bool(enabled)
+    data = {}
+    if os.path.isfile(PRESET_FILE):
+        try:
+            with open(PRESET_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    data = loaded
+        except Exception:
+            data = {}
+    data["scanAllFolders"] = val
+    try:
+        os.makedirs(os.path.dirname(PRESET_FILE), exist_ok=True)
+        with open(PRESET_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        _SCAN_ALL_CFG_CACHE_V245["mtime"] = os.path.getmtime(PRESET_FILE)
+    except Exception:
+        _SCAN_ALL_CFG_CACHE_V245["mtime"] = -1.0
+    _SCAN_ALL_CFG_CACHE_V245["val"] = val
+    _GLOBAL_AUDIO_WALK_CACHE_V245["ts"] = 0.0
+    _GLOBAL_AUDIO_WALK_CACHE_V245["pairs"] = []
+    if "_invalidate_fs_caches_v237" in globals():
+        _invalidate_fs_caches_v237()
+    _last_vid_scan_ts_v136 = 0.0
+    return val
+
+
+def _walk_all_storage_audio_files_v245(allowed_exts) -> list:
+    now = time.time()
+    exts_tuple = tuple(x.lower() for x in allowed_exts)
+    sig = ",".join(sorted(exts_tuple))
+    if _GLOBAL_AUDIO_WALK_CACHE_V245["pairs"] and _GLOBAL_AUDIO_WALK_CACHE_V245["sig"] == sig and (now - _GLOBAL_AUDIO_WALK_CACHE_V245["ts"] < 2.5):
+        return _GLOBAL_AUDIO_WALK_CACHE_V245["pairs"]
+
+    load_multi_dirs_v71()
+    roots = []
+    ext_root = "/storage/emulated/0"
+    if os.path.isdir(ext_root) and os.access(ext_root, os.R_OK):
+        roots.append(ext_root)
+    for d in list(ACTIVE_MUSIC_DIRS) + list(SAVED_MUSIC_DIRS):
+        if d and os.path.isdir(d):
+            nd = os.path.abspath(d)
+            if not any(nd == os.path.abspath(r) or nd.startswith(os.path.abspath(r) + os.sep) for r in roots):
+                roots.append(d)
+
+    tor_tmp_abs = os.path.abspath(_resolve_persistent_tor_data_dir_v243()) if "_resolve_persistent_tor_data_dir_v243" in globals() else ""
+
+    # Scan ACTIVE_MUSIC_DIRS top-level first so user's primary music folders win on duplicate basenames
+    found_map = {}  # basename -> full_path
+    ordered_pairs = []
+
+    for pref_d in ACTIVE_MUSIC_DIRS:
+        for fn, fp in _fast_list_dir_tracks_v237(pref_d, exts_tuple):
+            if fn not in found_map:
+                found_map[fn] = fp
+                ordered_pairs.append((fn, fp))
+
+    def _fast_scandir_walk(cur_dir: str, depth: int):
+        if depth > 7:
+            return
+        try:
+            abs_cur = os.path.abspath(cur_dir)
+            if tor_tmp_abs and abs_cur.startswith(tor_tmp_abs):
+                return
+            with os.scandir(cur_dir) as it:
+                subdirs = []
+                for entry in it:
+                    name = entry.name
+                    if not name or name.startswith("."):
+                        continue
+                    low_n = name.lower()
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if low_n not in _SKIP_GLOBAL_SCAN_DIRS_V245:
+                                subdirs.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            if low_n.startswith(("temp_stretcher_", "temp_final_")) or low_n.endswith((".part", ".tmp", ".crdownload")):
+                                continue
+                            if low_n.endswith(exts_tuple):
+                                st_sz = 0
+                                try:
+                                    st_sz = entry.stat().st_size
+                                    if st_sz < 4096 and not low_n.endswith(".xflac"):
+                                        continue
+                                except Exception:
+                                    pass
+                                key_name = name
+                                if key_name in found_map:
+                                    try:
+                                        prev_sz = os.path.getsize(found_map[key_name])
+                                    except Exception:
+                                        prev_sz = st_sz
+                                    if prev_sz == st_sz:
+                                        continue
+                                    parent_lbl = os.path.basename(cur_dir) or "Folder"
+                                    key_name = f"[{parent_lbl}] {name}"
+                                    if key_name in found_map:
+                                        continue
+                                found_map[key_name] = entry.path
+                                ordered_pairs.append((key_name, entry.path))
+                    except Exception:
+                        pass
+                for sd in subdirs:
+                    _fast_scandir_walk(sd, depth + 1)
+        except Exception:
+            pass
+
+    for r_dir in roots:
+        _fast_scandir_walk(r_dir, 0)
+
+    _DISCOVERED_AUDIO_PATHS_V245.update(found_map)
+    if ordered_pairs:
+        _GLOBAL_AUDIO_WALK_CACHE_V245["ts"] = now
+        _GLOBAL_AUDIO_WALK_CACHE_V245["sig"] = sig
+        _GLOBAL_AUDIO_WALK_CACHE_V245["pairs"] = ordered_pairs
+    return ordered_pairs
+
+_orig_invalidate_fs_v245 = _invalidate_fs_caches_v237
+def _invalidate_fs_caches_v245():
+    _orig_invalidate_fs_v245()
+    _GLOBAL_AUDIO_WALK_CACHE_V245["ts"] = 0.0
+    _GLOBAL_AUDIO_WALK_CACHE_V245["pairs"] = []
+_invalidate_fs_caches_v237 = _invalidate_fs_caches_v245
+
+
+# Upgrade resolve_track_full_path_v71 so tracks found in ANY subfolder on device resolve in O(1)!
+_orig_resolve_track_v245 = resolve_track_full_path_v71
+def resolve_track_full_path_v71(filename):
+    if not filename:
+        return os.path.join(MUSIC_DIR, "")
+    if os.path.isabs(filename) and os.path.isfile(filename):
+        return filename
+    bn = os.path.basename(filename)
+    cand_disc = _DISCOVERED_AUDIO_PATHS_V245.get(filename) or _DISCOVERED_AUDIO_PATHS_V245.get(bn)
+    if cand_disc and os.path.isfile(cand_disc):
+        return cand_disc
+    vid_disc = (globals().get("_discovered_video_paths_v134") or {}).get(filename) or (globals().get("_discovered_video_paths_v134") or {}).get(bn)
+    if vid_disc and os.path.isfile(vid_disc):
+        return vid_disc
+    res = _orig_resolve_track_v245(filename)
+    if res and os.path.isfile(res):
+        return res
+    if is_scan_all_folders_enabled_v245():
+        _walk_all_storage_audio_files_v245(get_allowed_extensions())
+        cand2 = _DISCOVERED_AUDIO_PATHS_V245.get(filename) or _DISCOVERED_AUDIO_PATHS_V245.get(bn)
+        if cand2 and os.path.isfile(cand2):
+            return cand2
+    return res
+
+
+# Upgrade _collect_video_scan_dirs_v137 so scanAllFolders=True scans ALL folders on /storage/emulated/0,
+# while scanAllFolders=False scans ONLY selected folders + JennyVideo as usual!
+def _collect_video_scan_dirs_v245():
+    load_multi_dirs_v71()
+    if is_scan_all_folders_enabled_v245():
+        roots = []
+        ext_root = "/storage/emulated/0"
+        if os.path.isdir(ext_root) and os.access(ext_root, os.R_OK):
+            roots.append(ext_root)
+        for d in list(ACTIVE_MUSIC_DIRS) + [VIDEO_DIR_V137]:
+            if d and os.path.isdir(d):
+                nd = os.path.abspath(d)
+                if not any(nd == os.path.abspath(r) or nd.startswith(os.path.abspath(r) + os.sep) for r in roots):
+                    roots.append(d)
+        return roots
+    roots = []
+    for d in list(ACTIVE_MUSIC_DIRS) + [VIDEO_DIR_V137]:
+        if d and os.path.isdir(d) and d not in roots:
+            roots.append(d)
+    return roots
+
+_collect_video_scan_dirs_v137 = _collect_video_scan_dirs_v245
+
+
+# Upgrade /api/data (get_data_v245) to honor scanAllFolders (True by default -> all device folders; False -> ACTIVE_MUSIC_DIRS)
+def get_data_v245():
+    response.content_type = "application/json; charset=utf-8"
+    load_multi_dirs_v71()
+    scan_all = is_scan_all_folders_enabled_v245()
+    allowed_exts = get_allowed_extensions()
+    now = time.time()
+    sig = f"ALL={int(scan_all)}|{','.join(ACTIVE_MUSIC_DIRS)}|{','.join(SAVED_MUSIC_DIRS)}|{','.join(allowed_exts)}"
+    if _DATA_CACHE_V237["payload"] and _DATA_CACHE_V237["sig"] == sig and (now - _DATA_CACHE_V237["ts"] < 1.2):
+        return _DATA_CACHE_V237["payload"]
+
+    all_tracks, seen, track_meta = [], set(), {}
+    if scan_all:
+        pairs = _walk_all_storage_audio_files_v245(allowed_exts)
+    else:
+        pairs = []
+        for d in ACTIVE_MUSIC_DIRS:
+            for fn, fp in _fast_list_dir_tracks_v237(d, allowed_exts):
+                pairs.append((fn, fp))
+                _DISCOVERED_AUDIO_PATHS_V245[fn] = fp
+
+    for fn, fp in pairs:
+        if fn not in seen:
+            seen.add(fn)
+            all_tracks.append(fn)
+            track_meta[fn] = quick_parse_artist_album_v71(fn, fp)
+
+    all_tracks.sort(key=lambda x: track_meta.get(x, {}).get("mtime", 0), reverse=True)
+    out_json = json.dumps({
+        "all_tracks": all_tracks,
+        "session_tracks": all_tracks,
+        "current_folder": MUSIC_DIR,
+        "active_folders": ACTIVE_MUSIC_DIRS,
+        "saved_folders": SAVED_MUSIC_DIRS,
+        "scan_all_folders": scan_all,
+        "track_meta": track_meta,
+    }, ensure_ascii=False)
+    _DATA_CACHE_V237["ts"] = now
+    _DATA_CACHE_V237["sig"] = sig
+    _DATA_CACHE_V237["payload"] = out_json
+    return out_json
+
+_override_bottle_route_v212('/api/data', 'GET', get_data_v245)
+
+
+# Upgrade /api/folders_v71 to include scan_all_folders flag & support action='set_scan_all'
+_orig_api_folders_v245 = api_folders_v237
+def api_folders_v245():
+    if request.method == 'POST':
+        raw_b = request.body.read()
+        try:
+            req_p = json.loads(raw_b.decode("utf-8") or "{}")
+        except Exception:
+            req_p = {}
+        if req_p.get("action") == "set_scan_all":
+            response.content_type = "application/json; charset=utf-8"
+            new_val = set_scan_all_folders_enabled_v245(bool(req_p.get("scan_all", True)))
+            return json.dumps({
+                "status": "ok",
+                "scan_all_folders": new_val,
+                "saved_folders": SAVED_MUSIC_DIRS,
+                "active_folders": ACTIVE_MUSIC_DIRS,
+                "current_folder": MUSIC_DIR,
+            }, ensure_ascii=False)
+        import io as _io_v245
+        request.environ['wsgi.input'] = _io_v245.BytesIO(raw_b)
+        request.environ['CONTENT_LENGTH'] = str(len(raw_b))
+
+    res_raw = _orig_api_folders_v245()
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else dict(res_raw)
+        d["scan_all_folders"] = is_scan_all_folders_enabled_v245()
+        return json.dumps(d, ensure_ascii=False)
+    except Exception:
+        return res_raw
+
+_override_bottle_route_v212('/api/folders_v71', 'GET', api_folders_v245)
+_override_bottle_route_v212('/api/folders_v71', 'POST', api_folders_v245)
+
+
+@route('/api/scan_mode_v245', method=['GET', 'POST'])
+def api_scan_mode_v245():
+    response.content_type = "application/json; charset=utf-8"
+    if request.method == 'POST':
+        try:
+            body = json.loads(request.body.read().decode("utf-8") or "{}")
+        except Exception:
+            body = {}
+        val = set_scan_all_folders_enabled_v245(bool(body.get("scan_all", True)))
+    else:
+        val = is_scan_all_folders_enabled_v245()
+    return json.dumps({"status": "ok", "scan_all_folders": val}, ensure_ascii=False)
+
+_override_bottle_route_v212('/api/scan_mode_v245', 'GET', api_scan_mode_v245)
+_override_bottle_route_v212('/api/scan_mode_v245', 'POST', api_scan_mode_v245)
+# ================= END JENNY_V245_GLOBAL_ALL_FOLDERS_SCANNER =================
