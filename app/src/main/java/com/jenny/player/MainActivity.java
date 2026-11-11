@@ -977,18 +977,138 @@ public class MainActivity extends AppCompatActivity {
     }
 
     
+    // === BEGIN JENNY_V249_OVERLAY_EXPAND_FIX ===
+    private static volatile boolean pendingExpandToFullFromOverlayV249 = false;
+
+    private void bringMainActivityToFrontSafelyV249() {
+        try {
+            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(android.content.Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                try {
+                    am.moveTaskToFront(getTaskId(), android.app.ActivityManager.MOVE_TASK_WITH_HOME);
+                } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            Intent launchIntent = new Intent(getApplicationContext(), MainActivity.class);
+            launchIntent.setAction(Intent.ACTION_MAIN);
+            launchIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+            launchIntent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                    | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            );
+
+            int piFlags = android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                piFlags |= android.app.PendingIntent.FLAG_IMMUTABLE;
+            }
+            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
+                    getApplicationContext(), 7249, launchIntent, piFlags
+            );
+            android.os.Bundle optsBundle = null;
+            if (Build.VERSION.SDK_INT >= 34) {
+                try {
+                    android.app.ActivityOptions ao = android.app.ActivityOptions.makeBasic();
+                    java.lang.reflect.Method m = android.app.ActivityOptions.class.getMethod(
+                            "setPendingIntentBackgroundActivityStartMode", int.class
+                    );
+                    m.invoke(ao, 1); // MODE_BACKGROUND_ACTIVITY_START_ALLOWED = 1
+                    optsBundle = ao.toBundle();
+                } catch (Throwable ignored) {}
+            }
+            try {
+                if (optsBundle != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+                    pi.send(getApplicationContext(), 0, null, null, null, null, optsBundle);
+                } else {
+                    pi.send();
+                }
+            } catch (Throwable ignored) {
+                getApplicationContext().startActivity(launchIntent);
+            }
+            try {
+                startActivity(launchIntent);
+                overridePendingTransition(0, 0);
+            } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {}
+    }
+
+    private void attachWebViewIntoContentGroupV249() {
+        if (webView == null) return;
+        webView.setPivotX(0f);
+        webView.setPivotY(0f);
+        webView.setScaleX(1.0f);
+        webView.setScaleY(1.0f);
+        webView.setAlpha(1.0f);
+        webView.setVisibility(View.VISIBLE);
+
+        android.view.ViewGroup contentGroup = findViewById(android.R.id.content);
+        android.view.ViewParent parent = webView.getParent();
+        if (contentGroup != null) {
+            if (parent != contentGroup) {
+                if (parent instanceof android.view.ViewGroup) {
+                    ((android.view.ViewGroup) parent).removeView(webView);
+                }
+                contentGroup.removeAllViews();
+                android.widget.FrameLayout.LayoutParams flp = new android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                );
+                contentGroup.addView(webView, flp);
+            }
+            contentGroup.setVisibility(View.VISIBLE);
+            contentGroup.requestLayout();
+            contentGroup.invalidate();
+        } else if (parent == null) {
+            setContentView(webView);
+        }
+
+        webView.onResume();
+        webView.resumeTimers();
+        applyPlayerViewportMarginsV244();
+        webView.requestLayout();
+        webView.invalidate();
+    }
+
     private void restoreWebViewToActivityV135(final boolean bringToFront) {
         runOnUiThread(() -> {
             try {
-                boolean wasOverlay = isDesktopOverlayActiveV132;
+                if (bringToFront && (isDesktopOverlayActiveV132 || overlayContainerV132 != null)) {
+                    // Bring MainActivity task to the foreground FIRST before tearing down overlayContainerV132
+                    // so Xiaomi HyperOS / Android 14+ never displays a detached black Activity shell!
+                    pendingExpandToFullFromOverlayV249 = true;
+                    overlayGrantProtectionUntilMsV153 = 0L;
+                    bringMainActivityToFrontSafelyV249();
+
+                    permWatchHandlerV147.postDelayed(() -> {
+                        if (hasWindowFocus()) {
+                            restoreWebViewToActivityV135(false);
+                        } else {
+                            bringMainActivityToFrontSafelyV249();
+                        }
+                    }, 140L);
+                    permWatchHandlerV147.postDelayed(() -> {
+                        if (hasWindowFocus() || !isFinishing()) {
+                            restoreWebViewToActivityV135(false);
+                        }
+                    }, 340L);
+                    return;
+                }
+
+                boolean wasOverlay = isDesktopOverlayActiveV132 || (overlayContainerV132 != null);
+                boolean shouldExpandFull = pendingExpandToFullFromOverlayV249;
                 isDesktopOverlayActiveV132 = false;
-                if (!wasOverlay && overlayContainerV132 == null) {
+                pendingExpandToFullFromOverlayV249 = false;
+
+                if (!wasOverlay && !shouldExpandFull) {
                     if (webView != null) {
-                        webView.onResume();
-                        webView.resumeTimers();
+                        attachWebViewIntoContentGroupV249();
                     }
                     return;
                 }
+
                 if (overlayContainerV132 != null) {
                     overlayContainerV132.removeAllViews();
                     if (wmV132 != null) {
@@ -1000,29 +1120,17 @@ public class MainActivity extends AppCompatActivity {
                     }
                     overlayContainerV132 = null;
                 }
-                if (webView != null) {
-                    webView.setScaleX(1.0f);
-                    webView.setScaleY(1.0f);
-                    android.view.ViewGroup contentGroup = findViewById(android.R.id.content);
-                    android.view.ViewParent parent = webView.getParent();
-                    if (parent != contentGroup) {
-                        if (parent instanceof android.view.ViewGroup) {
-                            ((android.view.ViewGroup) parent).removeView(webView);
-                        }
-                        setContentView(webView);
-                    }
-                    webView.onResume();
-                    webView.resumeTimers();
-                    webView.requestLayout();
-                    webView.invalidate();
-                }
+
+                attachWebViewIntoContentGroupV249();
                 applyVideoSystemUiLockV132();
-                if (bringToFront) {
-                    Intent i = new Intent(MainActivity.this, MainActivity.class);
-                    i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                    startActivity(i);
-                }
-                if (wasOverlay) {
+
+                if (shouldExpandFull) {
+                    evalJs("if(window.onExpandedFromDesktopOverlayToFullV249) window.onExpandedFromDesktopOverlayToFullV249(); else if(window.onDesktopOverlayStateChangedV133) window.onDesktopOverlayStateChangedV133(false);");
+                    permWatchHandlerV147.postDelayed(() -> {
+                        attachWebViewIntoContentGroupV249();
+                        evalJs("if(window.onExpandedFromDesktopOverlayToFullV249) window.onExpandedFromDesktopOverlayToFullV249();");
+                    }, 120L);
+                } else if (wasOverlay) {
                     evalJs("if(window.onDesktopOverlayStateChangedV133) window.onDesktopOverlayStateChangedV133(false);");
                 }
             } catch (Exception e) {
@@ -1030,6 +1138,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
+    // === END JENNY_V249_OVERLAY_EXPAND_FIX ===
 
     public static void evalJs(final String script) {
         if (instance != null && instance.webView != null) {

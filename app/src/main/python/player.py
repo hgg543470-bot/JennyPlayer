@@ -15429,3 +15429,156 @@ api_video_live_remux_v240 = api_video_live_remux_v248
 api_video_live_remux_v246 = api_video_live_remux_v248
 _override_bottle_route_v212("/api/video/live_remux", "GET", api_video_live_remux_v248)
 # ================= END JENNY_V248_TORRENT_SPARSE_GUARD_AND_STREAM_REMUX_FIX =================
+# ================= BEGIN JENNY_V249_FULL_VIDEO_AUDIO_DUAL_RAM_BUFFER =================
+_ACTIVE_FULL_RAM_AUDIO_LOCK_V249 = threading.Lock()
+_ACTIVE_FULL_RAM_AUDIO_PROCS_V249 = []
+
+
+def _kill_stale_full_ram_audio_procs_v249():
+    with _ACTIVE_FULL_RAM_AUDIO_LOCK_V249:
+        while _ACTIVE_FULL_RAM_AUDIO_PROCS_V249:
+            p_old = _ACTIVE_FULL_RAM_AUDIO_PROCS_V249.pop()
+            try:
+                p_old.kill()
+            except Exception:
+                pass
+
+
+def _resolve_rev_src_input_v249(src: str, seg_start: float) -> str:
+    norm_s = _normalize_or_upgrade_torrent_src_v248(src)
+    if norm_s.startswith("/api/torrent/stream/"):
+        parts = norm_s.strip("/").split("/")
+        if len(parts) >= 5:
+            h_low = parts[3].strip().lower()
+            try:
+                f_idx = int(parts[4].split("?")[0])
+            except Exception:
+                f_idx = 0
+            comp = _get_torrent_file_completion_v248(h_low, f_idx)
+            if comp.get("is_complete") and comp.get("disk_path") and os.path.isfile(comp["disk_path"]):
+                return comp["disk_path"]
+            dur_est, _, _ = _probe_torrent_partial_file_duration_v218(norm_s)
+            ratio = (seg_start / dur_est) if (dur_est > 0 and seg_start > 0) else 0.0
+            _boost_torrent_file_and_pieces_v218(h_low, f_idx, ratio=ratio, sync_start=True)
+            internal_port = globals().get("_INTERNAL_STREAM_PORT_V238", 8080)
+            return f"http://127.0.0.1:{internal_port}/api/torrent/stream/{h_low}/{f_idx}"
+    return _resolve_any_media_path_v218(norm_s)
+
+
+_resolve_rev_src_input_v223 = _resolve_rev_src_input_v249
+
+
+@route("/api/video/full_audio_ram", method="GET")
+def api_video_full_audio_ram_v249():
+    """
+    One-shot full-file PCM Int16LE audio extractor for Deck B (Video):
+      - Triggered automatically when video playback begins (just like Music Deck A!).
+      - Uses its own isolated process lock so it NEVER kills or interrupts live_remux!
+      - Populates BOTH vd.studioBuffer (Forward) and vd.reversedStudioBuffer (Reverse) in RAM.
+    """
+    raw_src = (request.query.get("src") or "").strip()
+    if not raw_src:
+        response.status = 400
+        return b""
+    try:
+        audio_idx = max(0, int(request.query.get("aidx") or 0))
+    except Exception:
+        audio_idx = 0
+
+    src = _normalize_or_upgrade_torrent_src_v248(raw_src)
+    local_fp = ""
+    if src.startswith("/api/torrent/stream/"):
+        parts = src.strip("/").split("/")
+        if len(parts) >= 5:
+            h_low = parts[3].strip().lower()
+            try:
+                f_idx = int(parts[4].split("?")[0])
+            except Exception:
+                f_idx = 0
+            comp = _get_torrent_file_completion_v248(h_low, f_idx)
+            if comp.get("is_complete") and comp.get("disk_path") and os.path.isfile(comp["disk_path"]):
+                local_fp = comp["disk_path"]
+    else:
+        local_fp = _resolve_any_media_path_v218(src)
+
+    if not local_fp or not os.path.isfile(local_fp):
+        response.status = 204
+        response.set_header("X-Ram-Reason", "not-local-yet")
+        return b""
+
+    info = _inspect_local_video_streams_v246(local_fp)
+    a_cnt = int(info.get("audio_tracks") or 0)
+    if info.get("probed") and a_cnt == 0:
+        response.status = 204
+        response.set_header("X-Audio-Tracks", "0")
+        return b""
+    if a_cnt > 0 and audio_idx >= a_cnt:
+        audio_idx = audio_idx % a_cnt
+
+    dur = float(info.get("duration_sec") or 0.0)
+    if dur > 5400.0:
+        response.status = 204
+        response.set_header("X-Ram-Reason", "too-long")
+        return b""
+
+    if dur <= 420.0:
+        sr, ch = 44100, 2
+    elif dur <= 1200.0:
+        sr, ch = 24000, 2
+    elif dur <= 2400.0:
+        sr, ch = 22050, 1
+    else:
+        sr, ch = 16000, 1
+
+    _kill_stale_full_ram_audio_procs_v249()
+
+    ff_bin = find_ffmpeg_binary()
+    cmd = [
+        ff_bin,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-threads", "4",
+        "-i", local_fp,
+        "-vn",
+        "-map", f"0:a:{audio_idx}?",
+        "-sn", "-dn",
+        "-ac", str(ch),
+        "-ar", str(sr),
+        "-f", "s16le",
+        "-acodec", "pcm_s16le",
+        "-",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
+    with _ACTIVE_FULL_RAM_AUDIO_LOCK_V249:
+        _ACTIVE_FULL_RAM_AUDIO_PROCS_V249.append(proc)
+
+    resp_hdrs = {
+        "Content-Type": "application/octet-stream",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "X-Sample-Rate": str(sr),
+        "X-Channels": str(ch),
+        "X-Duration": f"{dur:.3f}",
+        "X-Audio-Index": str(audio_idx),
+    }
+
+    def _pcm_gen_v249():
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            with _ACTIVE_FULL_RAM_AUDIO_LOCK_V249:
+                if proc in _ACTIVE_FULL_RAM_AUDIO_PROCS_V249:
+                    _ACTIVE_FULL_RAM_AUDIO_PROCS_V249.remove(proc)
+
+    return bottle.HTTPResponse(body=_pcm_gen_v249(), status=200, headers=resp_hdrs)
+
+
+_override_bottle_route_v212("/api/video/full_audio_ram", "GET", api_video_full_audio_ram_v249)
+# ================= END JENNY_V249_FULL_VIDEO_AUDIO_DUAL_RAM_BUFFER =================
