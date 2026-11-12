@@ -12727,9 +12727,9 @@ def api_multiport_ping_v238():
             "torrents": "http://127.0.0.1:8083"
         },
         "sandboxes": {
-            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=362",
-            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=362",
-            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=362"
+            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=363",
+            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=363",
+            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=363"
         },
         "roles": {
             "8080": "VIP UI / Folders / Presets",

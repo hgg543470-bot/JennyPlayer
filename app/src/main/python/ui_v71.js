@@ -1241,9 +1241,14 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
         if ((gKey === 'neutral' || gKey === 'n') && player) {
             const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
             if (!isRev || !window.studioBuffer) {
+                if (window.studioSourceNode) {
+                    try { window.studioSourceNode.onended = null; } catch (e) {}
+                    try { window.studioSourceNode.stop(0); } catch (e) {}
+                    try { window.studioSourceNode.disconnect(); } catch (e) {}
+                }
                 window._activeBufferSourcesV71.forEach(n => {
                     n.onended = null;
-                    try { n.stop(); } catch (e) {}
+                    try { n.stop(0); } catch (e) {}
                     try { n.disconnect(); } catch (e) {}
                 });
                 window._activeBufferSourcesV71.clear();
@@ -35890,9 +35895,7 @@ let vsyncTicks = 0;
     if (window._jennyV360ClockAndModalPatchInstalled) return;
     window._jennyV360ClockAndModalPatchInstalled = true;
 
-    // 1. ЧИСТЫЕ ЧАСЫ WEBAUDIO ДЛЯ ДЕКИ А (БЕЗ Object.defineProperty НА player.paused)
-    //    Гарантирует, что таймер #currentTime всегда идёт от WebAudio context,
-    //    и любое изменение настроек/скорости берёт точную секунду без сброса песни на 0:00!
+    // 1. ЧИСТЫЕ ЧАСЫ WEBAUDIO ДЛЯ ДЕКИ А И ЗАЩИТА ОТ СИРОТСКИХ УЗЛОВ ПРИ ПЕРЕКЛЮЧЕНИИ РКПП (N <-> 1-я)
     function updateDeckAStudioClockFromNowV360(trackSecOverride) {
         var player = document.getElementById('audioPlayer');
         if (!window.audioCtx) return;
@@ -35908,6 +35911,25 @@ let vsyncTicks = 0;
             startTrackSec: Math.max(0, baseSec),
             speed: spd
         };
+    }
+
+    function stopAllDeckABufferNodesCleanlyV363() {
+        if (window.studioSourceNode) {
+            try { window.studioSourceNode.onended = null; } catch (e) {}
+            try { window.studioSourceNode.stop(0); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+            window.studioSourceNode = null;
+        }
+        if (window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.forEach === 'function') {
+            window._activeBufferSourcesV71.forEach(function(n) {
+                if (!n) return;
+                try { n.onended = null; } catch (e) {}
+                try { n.stop(0); } catch (e) {}
+                try { n.disconnect(); } catch (e) {}
+            });
+            window._activeBufferSourcesV71.clear();
+        }
+        window.isStudioPlaying = false;
     }
 
     function startHoseBufferDirectWebAudioV362(trueSec) {
@@ -35931,16 +35953,16 @@ let vsyncTicks = 0;
         }
         player.preservesPitch = false;
 
-        if (window.studioSourceNode) {
-            window.studioSourceNode.onended = null;
-            try { window.studioSourceNode.stop(); } catch (e) {}
-            try { window.studioSourceNode.disconnect(); } catch (e) {}
-        }
+        stopAllDeckABufferNodesCleanlyV363();
+
         window.studioSourceNode = window.audioCtx.createBufferSource();
         window.studioSourceNode._isHoseSpliced = true;
         window.studioSourceNode.buffer = activeBuf;
         window.studioSourceNode.playbackRate.value = 1.0;
         window.studioSourceNode.connect(window.inputMixer);
+        if (window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.add === 'function') {
+            window._activeBufferSourcesV71.add(window.studioSourceNode);
+        }
 
         var scaledOffset = Math.max(0, trueSec) / Math.max(0.05, targetSpd);
         if (!isFinite(scaledOffset) || scaledOffset < 0) scaledOffset = 0;
@@ -35980,15 +36002,23 @@ let vsyncTicks = 0;
                     } catch (e) {}
                 }
 
+                // Перед перестроением графа/передачи всегда останавливаем прежний studioSourceNode,
+                // чтобы при переходе 1-я -> Нейтраль (N) -> 1-я старый буфер НИКОГДА не оставался играть вторым голосом!
+                var gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+                if (!isDraggingArc && (gKey === 'neutral' || gKey === 'n' || gKey === 'web-lock' || gKey === 'web-shift')) {
+                    stopAllDeckABufferNodesCleanlyV363();
+                }
+
                 var res = origSync.apply(this, arguments);
 
-                // Если muted <audio> был поставлен WebView на паузу (например при открытом <video>),
-                // но Дека А должна играть в RAM — поднимаем WebAudio источник напрямую на точной секунде trueSec!
+                if (window.studioSourceNode && window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.add === 'function') {
+                    window._activeBufferSourcesV71.add(window.studioSourceNode);
+                }
+
                 if (!isDraggingArc && shouldPlay && window.studioBuffer && window.audioCtx && !window.isStudioPlaying) {
-                    var gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
                     var hoseChk = document.getElementById('cfg_elasticHoseV44');
                     var isHose = Boolean(hoseChk ? hoseChk.checked : (window.appConfig && window.appConfig.elasticHoseMode));
-                    if (isHose || gKey === 'jbuf-lock') {
+                    if ((isHose || gKey === 'jbuf-lock') && gKey !== 'neutral' && gKey !== 'n' && gKey !== 'web-lock' && gKey !== 'web-shift') {
                         startHoseBufferDirectWebAudioV362(trueSec);
                     }
                 } else if (!isDraggingArc && window.isStudioPlaying && window.studioSourceNode) {
@@ -36006,8 +36036,6 @@ let vsyncTicks = 0;
     setTimeout(wrapHoseAndSyncWithTrueClockV360, 600);
 
     // 2. ЕДИНЫЙ СБОРЩИК ВИДЕО ИЗ АКТИВНЫХ ПАПОК (/api/data + /api/video/discovered_list)
-    //    Гарантирует, что все видеофайлы из отмеченных галочками папок в «📁 Музыкальные папки»
-    //    (JennyVideo, test, Video, Movies, Download и др.) мгновенно попадают во вкладку «🎬 Видео»!
     window._harvestedActiveFolderVideosV362 = window._harvestedActiveFolderVideosV362 || {};
 
     window.harvestVideosFromLastDataV362 = function(dataObj) {
@@ -36033,7 +36061,6 @@ let vsyncTicks = 0;
         }
         window._harvestedActiveFolderVideosV362 = nextHarvest;
 
-        // Обновляем _dedicatedVideoMetaMapV137: сохраняем торрент-видео и синхронизируем локальные видео с активными папками
         var merged = {};
         var prevMap = window._dedicatedVideoMetaMapV137 || {};
         Object.keys(prevMap).forEach(function(k) {
@@ -36050,8 +36077,6 @@ let vsyncTicks = 0;
         window._dedicatedVideoListV137 = allVids.map(function(x) { return x.name; }).sort();
     };
 
-    // Перехватываем fetch('/api/data') в window.fetchData ДО фильтрации видеофайлов,
-    // чтобы ни одно видео из выбранных папок не терялось!
     window.syncDiscoveredVideosIntoPlaylistV134 = async function(forceScan) {
         try {
             var res = await fetch('/api/video/discovered_list' + (forceScan ? '?force=1' : ''));
@@ -36087,8 +36112,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // Оборачиваем json() ответа /api/data или window.fetchData так, чтобы harvestVideosFromLastDataV362
-    // срабатывал мгновенно при получении window.lastData!
     var _origJsonProtoV362 = Response && Response.prototype && Response.prototype.json;
     if (typeof _origJsonProtoV362 === 'function' && !_origJsonProtoV362._v362Hooked) {
         var wrappedJson = async function() {
@@ -36105,7 +36128,6 @@ let vsyncTicks = 0;
     }
 
     // 3. МГНОВЕННЫЙ ВИЗУАЛЬНЫЙ ОТКЛИК ГАЛОЧЕК В «📁 МУЗЫКАЛЬНЫЕ ПАПКИ» (0 мс ПРИ ТАПЕ!)
-    //    БЕЗ ЗАКРЫТИЯ И ПЕРЕСОЗДАНИЯ МОДАЛКИ И С МГНОВЕННЫМ ОБНОВЛЕНИЕМ АУДИО И ВИДЕО!
     window.renderFolderManagerRowsHTMLV237 = function(saved, active, ft, folderCounts) {
         return (saved || []).map(function(p) {
             var isSel = (active || []).indexOf(p) !== -1;
@@ -36134,7 +36156,6 @@ let vsyncTicks = 0;
     window.toggleFolderActivePoolV71 = async function(fp, ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
 
-        // 1) Мгновенный (0 мс) оптимистичный визуальный отклик строки в открытой модалке!
         var box = document.getElementById('jennyFolderRowsBoxV237');
         if (box) {
             var rows = box.querySelectorAll('[data-folder-path]');
@@ -36148,7 +36169,7 @@ let vsyncTicks = 0;
                     var chk = r.querySelector('input[type="checkbox"]');
                     var ttl = r.querySelector('.jenny-folder-row-title-v362');
                     if (chk) {
-                        if (chk.checked && checkedCnt <= 1) return; // Последнюю активную папку не выключаем
+                        if (chk.checked && checkedCnt <= 1) return;
                         var nextSel = !chk.checked;
                         chk.checked = nextSel;
                         r.style.borderColor = nextSel ? '#3fb950' : '#262c36';
@@ -36178,7 +36199,6 @@ let vsyncTicks = 0;
                         null
                     );
                 }
-                // Запускаем обновление медиатеки и видео в фоне без блокировки UI модалки папок!
                 window._fetchDataInFlightPromiseV237 = null;
                 await Promise.all([
                     window.fetchData(),
@@ -36267,8 +36287,7 @@ let vsyncTicks = 0;
         } catch (e) {}
     };
 
-    // 4. КНОПКА ОБНОВЛЕНИЯ 🔄 N В ПОИСКЕ: ВСЕГДА ОБНОВЛЯЕТ И /api/data, И /api/video/discovered_list
-    //    И ПОКАЗЫВАЕТ ТОЧНОЕ ЧИСЛО ДЛЯ АКТИВНОЙ ВКЛАДКИ (В «🎬 ВИДЕО» — ЧИСЛО ВИДЕО, В «🎵 ВСЕ» — ЧИСЛО АУДИО)!
+    // 4. КНОПКА ОБНОВЛЕНИЯ 🔄 N В ПОИСКЕ
     window.refreshActiveContextListV242 = async function(ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
         var savedTab = window.activePlaylistTabV71 || 'all';
@@ -36313,14 +36332,19 @@ let vsyncTicks = 0;
         window.selectPlaylistTabV71._v362Wrapped = true;
     }
 
-    // 5. Учитываем модалки Деки Б (#settingsModalDeckB, #eqModalDeckB, #specModalDeckB) в высоте шапки и z-index,
-    //    чтобы плавающий мини-плеер видео (#jennyVideoStudioRootV130) НИКОГДА не перекрывал крестик закрытия или ползунки в Настройках/Эквалайзере!
+    // 5. ИДЕМПОТЕНТНАЯ СИНХРОНИЗАЦИЯ ВЫСОТЫ ШАПКИ И МОДАЛОК ДЕКИ А + ДЕКИ Б БЕЗ MUTATIONOBSERVER PING-PONG LOOP (74920.mp4 01:55)!
+    //    В ui_v71.js:1092 и ui_help.js:403 висят два MutationObserver с attributeFilter: ['class', 'style'] на settingsModal/eqModal.
+    //    Если при открытии #settingsModalDeckB или #eqModalDeckB старый код ставил top: 142px, а новый — top: 104px,
+    //    оба MutationObserver бесконечно перезапускали друг друга в очереди микрозадач (100% CPU freeze).
+    //    Решение: единые идемпотентные функции, которые меняют style только при реальном изменении значения!
     var stModalZ = document.createElement('style');
     stModalZ.id = 'jennyModalZIndexFixV360';
     stModalZ.textContent = [
         '#settingsModal.open, #eqModal.open, #specModal.open, #favModal.open, #themeModal.open,',
         '#settingsModalDeckB.open, #eqModalDeckB.open, #specModalDeckB.open {',
         '  z-index: 2147483646 !important;',
+        '  opacity: 1 !important;',
+        '  pointer-events: auto !important;',
         '}',
         'body.jenny-any-modal-open-v360 #jennyVideoStudioRootV130.mode-pip-v130 {',
         '  z-index: 2400 !important;',
@@ -36330,27 +36354,175 @@ let vsyncTicks = 0;
     ].join('\n');
     document.head.appendChild(stModalZ);
 
-    var _origSyncHeaderV71 = window.syncHeaderHeightWithModalsV71;
-    window.syncHeaderHeightWithModalsV71 = function() {
-        var r = (typeof _origSyncHeaderV71 === 'function') ? _origSyncHeaderV71.apply(this, arguments) : undefined;
-        var anyOpen = Boolean(document.querySelector('.modal-overlay.open'));
-        if (document.body) {
-            document.body.classList.toggle('jenny-any-modal-open-v360', anyOpen);
+    function setStylePropIfChangedV363(el, prop, val, priority) {
+        if (!el || !el.style) return;
+        var wantVal = String(val);
+        var wantPri = priority || '';
+        if (el.style.getPropertyValue(prop) === wantVal && el.style.getPropertyPriority(prop) === wantPri) {
+            return;
         }
-        if (anyOpen) {
+        el.style.setProperty(prop, wantVal, wantPri);
+    }
+
+    function getOpenModalStateV363() {
+        var deckAIds = ['settingsModal', 'eqModal', 'specModal', 'themeModal', 'favModal'];
+        var deckBIds = ['settingsModalDeckB', 'eqModalDeckB', 'specModalDeckB'];
+        var deckAOpen = deckAIds.some(function(id) {
+            var el = document.getElementById(id);
+            return Boolean(el && el.classList.contains('open'));
+        });
+        var deckBOpen = deckBIds.some(function(id) {
+            var el = document.getElementById(id);
+            return Boolean(el && el.classList.contains('open'));
+        });
+        return {
+            deckAOpen: deckAOpen,
+            deckBOpen: deckBOpen,
+            anyOpen: Boolean(deckAOpen || deckBOpen)
+        };
+    }
+
+    window._inLayoutSyncGuardV363 = false;
+
+    window.syncHeaderHeightWithModalsV71 = function() {
+        if (window._inLayoutSyncGuardV363) return;
+        window._inLayoutSyncGuardV363 = true;
+        try {
+            var st = getOpenModalStateV363();
+            var isOpen = st.anyOpen;
+            if (document.body) {
+                if (isOpen !== document.body.classList.contains('jenny-any-modal-open-v360')) {
+                    document.body.classList.toggle('jenny-any-modal-open-v360', isOpen);
+                }
+            }
+
             var plWrap = document.getElementById('jennyPlaylistBarWrapV71');
-            var subWrap = document.getElementById('jennySubCategoryStripV71');
+            var subWrap = (typeof window.ensureSubStripPinnedInHeaderV74_7 === 'function')
+                ? window.ensureSubStripPinnedInHeaderV74_7()
+                : document.getElementById('jennySubCategoryStripV71');
             var stickyTop = document.querySelector('.sticky-top');
             var midList = document.querySelector('.middle-list-container');
-            if (plWrap) plWrap.style.setProperty('display', 'none', 'important');
-            if (subWrap) subWrap.style.setProperty('display', 'none', 'important');
-            if (stickyTop) stickyTop.style.setProperty('height', '104px', 'important');
-            if (midList) midList.style.setProperty('top', '104px', 'important');
+            var botEl = document.getElementById('bottomPlayerDock') || document.querySelector('.sticky-bottom');
+            var hasSub = Boolean(subWrap && subWrap.innerHTML && subWrap.innerHTML.trim().length > 0);
+
+            if (plWrap) setStylePropIfChangedV363(plWrap, 'display', isOpen ? 'none' : 'flex', 'important');
+            if (subWrap) setStylePropIfChangedV363(subWrap, 'display', (!isOpen && hasSub) ? 'block' : 'none', 'important');
+
+            var targetTopPx = isOpen ? '104px' : (hasSub ? '184px' : '142px');
+            var botH = 0;
+            if (botEl && getComputedStyle(botEl).display !== 'none') {
+                botH = botEl.offsetHeight || 96;
+            }
+            var targetBotPx = botH + 'px';
+
+            if (stickyTop) setStylePropIfChangedV363(stickyTop, 'height', targetTopPx, 'important');
+            if (midList) {
+                setStylePropIfChangedV363(midList, 'top', targetTopPx, 'important');
+                setStylePropIfChangedV363(midList, 'bottom', targetBotPx, 'important');
+            }
             document.querySelectorAll('.modal-overlay').forEach(function(m) {
-                m.style.setProperty('top', '104px', 'important');
+                setStylePropIfChangedV363(m, 'top', isOpen ? '104px' : targetTopPx, 'important');
+                setStylePropIfChangedV363(m, 'bottom', targetBotPx, 'important');
             });
+        } finally {
+            window._inLayoutSyncGuardV363 = false;
         }
-        return r;
+    };
+
+    window.syncEdgeToEdgeLayoutBoundsV242 = function() {
+        window.syncHeaderHeightWithModalsV71();
+    };
+
+    window._inUpdateTopBarGuardV363 = false;
+
+    window.updateTopSearchOrMonitorBar = function() {
+        if (window._inUpdateTopBarGuardV363) return;
+        window._inUpdateTopBarGuardV363 = true;
+        try {
+            var st = getOpenModalStateV363();
+            var searchInput = document.getElementById('trackSearchInput');
+            var rightSlot = document.getElementById('searchRightSlotV235');
+            var clrBtn = document.getElementById('btnClearTrackSearchV73');
+            var plWrap = document.getElementById('jennyPlaylistBarWrapV71');
+
+            if (searchInput && searchInput.parentElement) {
+                var barWrap = searchInput.parentElement;
+                var monEl = document.getElementById('topAutoCeilMonitor');
+                if (!monEl) {
+                    monEl = document.createElement('div');
+                    monEl.id = 'topAutoCeilMonitor';
+                    monEl.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #2ea043;border-radius:8px;padding:8px 11px;font-size:12px;color:#e6edf3;white-space:nowrap;overflow-x:auto;font-family:monospace;box-shadow:0 0 8px rgba(46,160,67,0.25);';
+                    barWrap.appendChild(monEl);
+                }
+
+                if (!st.anyOpen) {
+                    barWrap.style.display = '';
+                    barWrap.style.paddingTop = '2px';
+                    searchInput.style.display = '';
+                    monEl.style.display = 'none';
+                } else if (st.deckBOpen) {
+                    searchInput.style.display = 'none';
+                    if (typeof window.updateDeckBAutoCeilMonitorUI === 'function') {
+                        window.updateDeckBAutoCeilMonitorUI();
+                    }
+                    if (monEl.style.display !== 'none') {
+                        setStylePropIfChangedV363(monEl, 'width', '100%', 'important');
+                        setStylePropIfChangedV363(monEl, 'flex', '1 1 100%', 'important');
+                    }
+                } else {
+                    // Deck A modal open (#settingsModal / #eqModal / #specModal / #themeModal / #favModal)
+                    var cfg = window.appConfig || {};
+                    var ceilOn = Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled);
+                    var totalTxt = (typeof window.lastComputedCeilingDb !== 'undefined') ? window.lastComputedCeilingDb : -0.5;
+                    var detailsTxt = (typeof window.localizeCeilingBreakdown === 'function')
+                        ? window.localizeCeilingBreakdown(window.lastCeilingBreakdown)
+                        : (window.lastCeilingBreakdown || '');
+                    var badge = document.getElementById('autoCeilStatusBadge');
+                    if (badge) {
+                        var wantBadgeTxt = cfg.opt_masterCeil ? ((window.tr ? window.tr('Авто', 'Auto') : 'Авто') + ': ' + totalTxt + ' dB') : (window.tr ? window.tr('ВЫКЛ', 'OFF') : 'ВЫКЛ');
+                        if (badge.innerText !== wantBadgeTxt) badge.innerText = wantBadgeTxt;
+                        badge.style.color = cfg.opt_masterCeil ? '#3fb950' : '#8b949e';
+                    }
+                    searchInput.style.display = 'none';
+                    if (ceilOn) {
+                        barWrap.style.display = '';
+                        barWrap.style.paddingTop = '2px';
+                        monEl.style.display = 'block';
+                        monEl.style.borderColor = '#2ea043';
+                        var wantHtml = '<span style="color:#3fb950;font-weight:bold;">🛡️ ' + (window.tr ? window.tr('Авто-Потолок', 'Auto-Ceiling') : 'Авто-Потолок') + ': ' + totalTxt + ' dB</span> <span style="color:#8b949e;">│</span> <span style="color:#58a6ff;">' + detailsTxt + '</span>';
+                        if (monEl.innerHTML !== wantHtml) monEl.innerHTML = wantHtml;
+                        setStylePropIfChangedV363(monEl, 'width', '100%', 'important');
+                        setStylePropIfChangedV363(monEl, 'flex', '1 1 100%', 'important');
+                    } else {
+                        monEl.style.display = 'none';
+                        barWrap.style.display = 'none';
+                    }
+                }
+            }
+
+            if (plWrap) {
+                setStylePropIfChangedV363(plWrap, 'display', st.anyOpen ? 'none' : 'flex', 'important');
+            }
+            if (rightSlot) {
+                if (st.anyOpen) {
+                    rightSlot.classList.add('jenny-slot-hidden-in-modal-v242');
+                    setStylePropIfChangedV363(rightSlot, 'display', 'none', 'important');
+                } else {
+                    rightSlot.classList.remove('jenny-slot-hidden-in-modal-v242');
+                    setStylePropIfChangedV363(rightSlot, 'display', 'inline-flex', 'important');
+                }
+            }
+            if (st.anyOpen && clrBtn) {
+                setStylePropIfChangedV363(clrBtn, 'display', 'none', 'important');
+            }
+
+            if (typeof window.syncLangDockedBodyClassV242 === 'function') {
+                window.syncLangDockedBodyClassV242();
+            }
+            window.syncHeaderHeightWithModalsV71();
+        } finally {
+            window._inUpdateTopBarGuardV363 = false;
+        }
     };
 
     var _origCloseAllV71 = window.closeAllV71Modals;
