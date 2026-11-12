@@ -2765,7 +2765,7 @@ def ensure_jtorrent_daemon_v96():
     return False
 
 # Запускаем Go-демон заранее при старте сервера, чтобы DHT-таблица успела набрать пиров!
-threading.Thread(target=ensure_jtorrent_daemon_v96, daemon=True).start()
+# [V361 DEFERRED AFTER 8080 BIND] threading.Thread(target=ensure_jtorrent_daemon_v96, daemon=True).start()
 
 # ==============================================================================
 # 🧠 JENNY V124: ISOLATED CRASH-PROOF OMNITORRENT DAEMON BRIDGE (127.0.0.1:18999)
@@ -2853,7 +2853,7 @@ def ensure_omnitorrent_daemon_v124():
             print("OmniTorrent daemon start error:", e)
     return False
 
-threading.Thread(target=ensure_omnitorrent_daemon_v124, daemon=True).start()
+# [V361 DEFERRED AFTER 8080 BIND] threading.Thread(target=ensure_omnitorrent_daemon_v124, daemon=True).start()
 
 def _enrich_omni_response_trackers_v124(data_dict: dict) -> dict:
     if "enrich_magnet_with_cached_trackers_v109" not in globals():
@@ -4885,7 +4885,7 @@ def _startup_resume_downloads_and_clean_streams_v143():
         except Exception:
             pass
 
-threading.Thread(target=_startup_resume_downloads_and_clean_streams_v143, daemon=True).start()
+# [V361 DEFERRED AFTER 8080 BIND] threading.Thread(target=_startup_resume_downloads_and_clean_streams_v143, daemon=True).start()
 
 
 def _ensure_torrent_registered_in_daemon_v145(h: str, magnet_hint: str = ""):
@@ -12499,7 +12499,7 @@ def _rehydrate_persisted_torrents_v242():
 
 # Override the old destructive startup cleaner so it never wipes completed/paused torrents!
 _startup_resume_downloads_and_clean_streams_v143 = _rehydrate_persisted_torrents_v242
-threading.Thread(target=_rehydrate_persisted_torrents_v242, daemon=True).start()
+# [V361 DEFERRED AFTER 8080 BIND] threading.Thread(target=_rehydrate_persisted_torrents_v242, daemon=True).start()
 
 
 # ==============================================================================
@@ -12720,9 +12720,9 @@ def api_multiport_ping_v238():
             "torrents": "http://127.0.0.1:8083"
         },
         "sandboxes": {
-            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=360",
-            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=360",
-            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=360"
+            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=361",
+            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=361",
+            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=361"
         },
         "roles": {
             "8080": "VIP UI / Folders / Presets",
@@ -12759,11 +12759,6 @@ def _create_waitress_instance_v238(wsgi_callable, port_num, num_threads):
 
 def start_server_v238():
     global _CLUSTER_STARTED_FLAG_V238, _INTERNAL_STREAM_PORT_V238
-    load_saved_music_dir()
-    cleanup_stale_temps(DEFAULT_MUSIC_DIR)
-    if MUSIC_DIR != DEFAULT_MUSIC_DIR:
-        cleanup_stale_temps(MUSIC_DIR)
-
     base_app = bottle.default_app()
     cfg_pool = 64
     try:
@@ -12771,41 +12766,71 @@ def start_server_v238():
     except Exception:
         cfg_pool = 64
 
-    # Synchronously bind secondary ports (8081 Deck A, 8082 Deck B, 8083 Background) BEFORE port 8080 starts,
-    # so the moment WebView loads http://127.0.0.1:8080, all 4 ports are already listening with zero race!
-    worker_specs = [
-        (8081, max(16, cfg_pool // 2), "Deck A Audio & xFLAC"),
-        (8082, max(16, cfg_pool // 2), "Deck B Video & FFmpeg Remux"),
-        (8083, max(24, cfg_pool),      "Background P2P / YouTube / OST / Radio"),
-    ]
-
-    with _CLUSTER_STARTED_LOCK_V238:
-        if not _CLUSTER_STARTED_FLAG_V238:
-            _CLUSTER_STARTED_FLAG_V238 = True
-            for p_num, p_threads, p_label in worker_specs:
-                try:
-                    wrapped = JennyCorsWsgiMiddlewareV238(base_app, p_num)
-                    srv_obj = _create_waitress_instance_v238(wrapped, p_num, p_threads)
-                    if p_num not in _ACTIVE_CLUSTER_PORTS_V238:
-                        _ACTIVE_CLUSTER_PORTS_V238.append(p_num)
-                    if p_num == 8082:
-                        _INTERNAL_STREAM_PORT_V238 = 8082
-                    t = threading.Thread(
-                        target=srv_obj.run,
-                        name=f"JennyWaitress_{p_num}",
-                        daemon=True,
-                    )
-                    t.start()
-                    print(f"⚡ [V238] ПОРТ {p_num} АКТИВЕН ({p_label}, потоков: {p_threads})")
-                except Exception as e_port:
-                    print(f"⚠️ [V238] Порт {p_num} занят/пропущен ({e_port}), работает авто-фоллбэк на 8080")
-
-    print(f"🚀 [V238] ГЛАВНЫЙ VIP-ПОРТ 8080 АКТИВЕН (кластер портов: {sorted(_ACTIVE_CLUSTER_PORTS_V238)})")
+    # 1. [V361] СРАЗУ ЖЕ (за 5 мс) открываем слушающий сокет главного порта 8080 ДО любых обращений к диску/FUSE и демонам!
+    #    Это гарантирует, что когда MainActivity вызывает webView.loadUrl("http://127.0.0.1:8080") через 1500 мс,
+    #    порт 8080 уже 100% слушает и НИКОГДА не выдаёт чёрный экран с зелёным роботом (ERR_CONNECTION_REFUSED)!
     main_wrapped = JennyCorsWsgiMiddlewareV238(base_app, 8080)
-    try:
-        main_srv = _create_waitress_instance_v238(main_wrapped, 8080, max(24, cfg_pool // 2))
+    main_srv = None
+    for _attempt in range(10):
+        try:
+            main_srv = _create_waitress_instance_v238(main_wrapped, 8080, max(24, cfg_pool // 2))
+            break
+        except Exception:
+            time.sleep(0.1)
+
+    def _boot_secondary_ports_and_daemons_v361():
+        global _CLUSTER_STARTED_FLAG_V238, _INTERNAL_STREAM_PORT_V238
+        try:
+            load_saved_music_dir()
+        except Exception:
+            pass
+        worker_specs = [
+            (8081, max(16, cfg_pool // 2), "Deck A Audio & xFLAC"),
+            (8082, max(16, cfg_pool // 2), "Deck B Video & FFmpeg Remux"),
+            (8083, max(24, cfg_pool),      "Background P2P / YouTube / OST / Radio"),
+        ]
+        with _CLUSTER_STARTED_LOCK_V238:
+            if not _CLUSTER_STARTED_FLAG_V238:
+                _CLUSTER_STARTED_FLAG_V238 = True
+                for p_num, p_threads, p_label in worker_specs:
+                    try:
+                        wrapped = JennyCorsWsgiMiddlewareV238(base_app, p_num)
+                        srv_obj = _create_waitress_instance_v238(wrapped, p_num, p_threads)
+                        if p_num not in _ACTIVE_CLUSTER_PORTS_V238:
+                            _ACTIVE_CLUSTER_PORTS_V238.append(p_num)
+                        if p_num == 8082:
+                            _INTERNAL_STREAM_PORT_V238 = 8082
+                        t = threading.Thread(
+                            target=srv_obj.run,
+                            name=f"JennyWaitress_{p_num}",
+                            daemon=True,
+                        )
+                        t.start()
+                        print(f"⚡ [V361] ПОРТ {p_num} АКТИВЕН ({p_label}, потоков: {p_threads})")
+                    except Exception as e_port:
+                        print(f"⚠️ [V361] Порт {p_num} занят/пропущен ({e_port}), работает авто-фоллбэк на 8080")
+        try:
+            cleanup_stale_temps(DEFAULT_MUSIC_DIR)
+            if MUSIC_DIR != DEFAULT_MUSIC_DIR:
+                cleanup_stale_temps(MUSIC_DIR)
+        except Exception:
+            pass
+        time.sleep(1.5)
+        for bg_fn in (
+            globals().get("ensure_jtorrent_daemon_v96"),
+            globals().get("ensure_omnitorrent_daemon_v124"),
+            globals().get("_rehydrate_persisted_torrents_v242"),
+            globals().get("_upgrade_running_daemon_if_old_v238"),
+        ):
+            if callable(bg_fn):
+                threading.Thread(target=bg_fn, daemon=True).start()
+
+    threading.Thread(target=_boot_secondary_ports_and_daemons_v361, name="JennyDeferredBootV361", daemon=True).start()
+
+    print("🚀 [V361] ГЛАВНЫЙ VIP-ПОРТ 8080 МГНОВЕННО АКТИВЕН!")
+    if main_srv is not None:
         main_srv.run()
-    except Exception:
+    else:
         run(app=main_wrapped, host='127.0.0.1', port=8080, quiet=True, server='waitress', threads=max(24, cfg_pool // 2))
 
 
@@ -12968,7 +12993,7 @@ def _upgrade_running_daemon_if_old_v238():
     except Exception:
         ensure_jtorrent_daemon_v96()
 
-threading.Thread(target=_upgrade_running_daemon_if_old_v238, daemon=True).start()
+# [V361 DEFERRED AFTER 8080 BIND] threading.Thread(target=_upgrade_running_daemon_if_old_v238, daemon=True).start()
 
 
 def _check_tracker_host_alive_v238(tr_url: str) -> bool:
