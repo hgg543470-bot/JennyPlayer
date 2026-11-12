@@ -4153,12 +4153,14 @@ def _migrate_videos_from_music_dir_v137():
 def _collect_video_scan_dirs_v137():
     load_multi_dirs_v71()
     roots = []
-    for d in list(ACTIVE_MUSIC_DIRS) + [VIDEO_DIR_V137]:
+    # Сканируем строго активные папки, отмеченные галочками в «📁 Музыкальные папки»
+    # (а если VIDEO_DIR_V137 вообще нет в SAVED_MUSIC_DIRS — добавляем её как дефолтную)
+    base_list = list(ACTIVE_MUSIC_DIRS)
+    if VIDEO_DIR_V137 not in (SAVED_MUSIC_DIRS or []) and VIDEO_DIR_V137 not in base_list:
+        base_list.append(VIDEO_DIR_V137)
+    for d in base_list:
         if d and os.path.isdir(d) and d not in roots:
             roots.append(d)
-    tor_tmp = get_jenny_torrents_data_dir_v242()
-    if os.path.isdir(tor_tmp) and tor_tmp not in roots:
-        roots.append(tor_tmp)
     return roots
 
 def sync_downloaded_videos_to_library_v134(force=False):
@@ -5710,12 +5712,11 @@ def _delete_torrent_files_from_disk_v142(target_hash: str, nuke_all: bool = Fals
 def sync_downloaded_videos_to_library_v134(force=False):
     global _last_vid_scan_ts_v136
     now = time.time()
-    if not force and (now - _last_vid_scan_ts_v136 < 2.5) and (_discovered_video_paths_v134 or _discovered_video_meta_v137):
+    if not force and (now - _last_vid_scan_ts_v136 < 1.5) and (_discovered_video_paths_v134 or _discovered_video_meta_v137):
         return list(_discovered_video_meta_v137.values())
     _last_vid_scan_ts_v136 = now
-    if force:
-        _discovered_video_paths_v134.clear()
-        _discovered_video_meta_v137.clear()
+    _discovered_video_paths_v134.clear()
+    _discovered_video_meta_v137.clear()
 
     _migrate_videos_from_music_dir_v137()
     scan_dirs = _collect_video_scan_dirs_v137()
@@ -5725,76 +5726,80 @@ def sync_downloaded_videos_to_library_v134(force=False):
     completed_tor_videos = {}  # bn -> (cand_full, sz_mb, h, f_idx)
     active_tor_videos = {}     # bn -> (pct, sz_mb, h, f_idx)
 
-    try:
-        ensure_jtorrent_daemon_v96()
-        port = globals().get('_JTORRENT_PORT_V96', "18081")
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/status")
-        with urllib.request.urlopen(req, timeout=0.8) as resp:
-            st_data = json.loads(resp.read().decode('utf-8', 'ignore'))
-            tor_list = st_data if isinstance(st_data, list) else (st_data.get('torrents') or [])
-            for tor in tor_list:
-                h = (tor.get('hash') or '').lower()
-                t_name = (tor.get('name') or 'Torrent').strip()
-                for f in (tor.get('files') or []):
-                    rel_p = f.get('path') or f.get('name') or ''
-                    if not rel_p or not rel_p.lower().endswith(_VIDEO_EXTS_V134):
-                        continue
-                    bn = os.path.basename(rel_p)
-                    f_idx = int(f.get('index', 0))
-                    f_len = int(f.get('length') or f.get('size') or 0)
-                    f_comp = int(f.get('completed') or 0)
-                    is_done = bool(f.get('done')) or (f_len > 0 and f_comp >= f_len)
-                    pct = 100 if is_done else (min(99, int((f_comp * 100) // f_len)) if f_len > 0 else int(f.get('percent') or 0))
-                    sz_mb = round(f_len / (1024.0 * 1024.0), 1)
-
-                    if is_done:
-                        imported_fn = _instant_import_completed_file_v212(h, f_idx, f.get('full_path') or '', rel_p, t_name)
-                        v_full = _discovered_video_paths_v134.get(imported_fn or bn) or os.path.join(VIDEO_DIR_V137, bn)
-                        completed_tor_videos[bn] = (v_full, sz_mb, h, f_idx)
-                    else:
-                        incomplete_basenames.add(bn)
-                        active_tor_videos[bn] = (pct, sz_mb, h, f_idx)
-                        broken_stub = os.path.join(VIDEO_DIR_V137, bn)
-                        if os.path.isfile(broken_stub) and f_len > 0 and os.path.getsize(broken_stub) < f_len:
-                            try:
-                                os.remove(broken_stub)
-                            except Exception:
-                                pass
-    except Exception:
-        pass
-
-    for root_d in scan_dirs:
-        if os.path.abspath(root_d).startswith(tor_tmp):
-            continue
+    # [V362] НЕ вызываем здесь блокирующий ensure_jtorrent_daemon_v96() (3.75 сек)!
+    # Опрашиваем демон только если он уже запущен (быстрый таймаут 0.18 сек)
+    if globals().get('_JTORRENT_PROC_V96') is not None:
         try:
-            for r, dirs, files in os.walk(root_d):
-                if os.path.abspath(r).startswith(tor_tmp):
-                    continue
-                dirs[:] = [d for d in dirs if d not in ('.git', 'Android', 'proc', 'sys', 'usr', 'lib', 'torrents_tmp', 'JENNY')]
-                for fn in files:
-                    if fn.lower().endswith(_VIDEO_EXTS_V134) and not fn.startswith('.'):
-                        if fn in incomplete_basenames:
+            port = globals().get('_JTORRENT_PORT_V96', "18081")
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/status")
+            with urllib.request.urlopen(req, timeout=0.18) as resp:
+                st_data = json.loads(resp.read().decode('utf-8', 'ignore'))
+                tor_list = st_data if isinstance(st_data, list) else (st_data.get('torrents') or [])
+                for tor in tor_list:
+                    h = (tor.get('hash') or '').lower()
+                    t_name = (tor.get('name') or 'Torrent').strip()
+                    for f in (tor.get('files') or []):
+                        rel_p = f.get('path') or f.get('name') or ''
+                        if not rel_p or not rel_p.lower().endswith(_VIDEO_EXTS_V134):
                             continue
-                        full_p = os.path.join(r, fn)
-                        try:
-                            sz = os.path.getsize(full_p)
-                            if sz < 64 * 1024:
-                                continue
-                        except Exception:
-                            continue
-                        _discovered_video_paths_v134[fn] = full_p
-                        _discovered_video_meta_v137[fn] = {
-                            "name": fn,
-                            "size_mb": round(sz / (1024.0 * 1024.0), 1),
-                            "percent": 100,
-                            "in_video_dir": full_p.startswith(VIDEO_DIR_V137),
-                            "is_ready_local": True,
-                            "tor_hash": "",
-                            "tor_file_idx": -1,
-                            "stream_url": "/api/media/" + urllib.parse.quote(fn)
-                        }
+                        bn = os.path.basename(rel_p)
+                        f_idx = int(f.get('index', 0))
+                        f_len = int(f.get('length') or f.get('size') or 0)
+                        f_comp = int(f.get('completed') or 0)
+                        is_done = bool(f.get('done')) or (f_len > 0 and f_comp >= f_len)
+                        pct = 100 if is_done else (min(99, int((f_comp * 100) // f_len)) if f_len > 0 else int(f.get('percent') or 0))
+                        sz_mb = round(f_len / (1024.0 * 1024.0), 1)
+
+                        if is_done:
+                            imported_fn = _instant_import_completed_file_v212(h, f_idx, f.get('full_path') or '', rel_p, t_name)
+                            v_full = _discovered_video_paths_v134.get(imported_fn or bn) or os.path.join(VIDEO_DIR_V137, bn)
+                            completed_tor_videos[bn] = (v_full, sz_mb, h, f_idx)
+                        else:
+                            incomplete_basenames.add(bn)
+                            active_tor_videos[bn] = (pct, sz_mb, h, f_idx)
         except Exception:
             pass
+
+    # [V362] Мгновенное сканирование выбранных папок через os.scandir (без зависаний os.walk на FUSE!)
+    def _scan_one_video_dir_v362(dir_path: str, allow_one_sublevel: bool):
+        if not dir_path or not os.path.isdir(dir_path):
+            return
+        if os.path.abspath(dir_path).startswith(tor_tmp):
+            return
+        try:
+            with os.scandir(dir_path) as it:
+                for entry in it:
+                    name = entry.name
+                    if name.startswith(('temp_stretcher_', 'temp_final_', '.')):
+                        continue
+                    try:
+                        if entry.is_file():
+                            if name.lower().endswith(_VIDEO_EXTS_V134) and name not in incomplete_basenames:
+                                full_p = entry.path
+                                sz = entry.stat().st_size
+                                if sz < 1024:
+                                    continue
+                                _discovered_video_paths_v134[name] = full_p
+                                _discovered_video_meta_v137[name] = {
+                                    "name": name,
+                                    "size_mb": round(sz / (1024.0 * 1024.0), 1),
+                                    "percent": 100,
+                                    "in_video_dir": full_p.startswith(VIDEO_DIR_V137),
+                                    "is_ready_local": True,
+                                    "tor_hash": "",
+                                    "tor_file_idx": -1,
+                                    "stream_url": "/api/media/" + urllib.parse.quote(name)
+                                }
+                        elif allow_one_sublevel and entry.is_dir():
+                            if name not in ('.git', 'Android', 'proc', 'sys', 'usr', 'lib', 'torrents_tmp', 'JENNY'):
+                                _scan_one_video_dir_v362(entry.path, False)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    for root_d in scan_dirs:
+        _scan_one_video_dir_v362(root_d, True)
 
     for bn, (v_full, sz_mb, h, f_idx) in completed_tor_videos.items():
         if v_full and os.path.isfile(v_full):
@@ -11316,6 +11321,8 @@ def get_data_v237():
                 seen.add(fn)
                 all_tracks.append(fn)
                 track_meta[fn] = quick_parse_artist_album_v71(fn, fp)
+                if fn.lower().endswith(_VIDEO_EXTS_V134):
+                    _discovered_video_paths_v134[fn] = fp
 
     all_tracks.sort(key=lambda x: track_meta.get(x, {}).get("mtime", 0), reverse=True)
     out_json = json.dumps({
@@ -12720,9 +12727,9 @@ def api_multiport_ping_v238():
             "torrents": "http://127.0.0.1:8083"
         },
         "sandboxes": {
-            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=361",
-            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=361",
-            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=361"
+            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=362",
+            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=362",
+            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=362"
         },
         "roles": {
             "8080": "VIP UI / Folders / Presets",
@@ -12766,9 +12773,15 @@ def start_server_v238():
     except Exception:
         cfg_pool = 64
 
-    # 1. [V361] СРАЗУ ЖЕ (за 5 мс) открываем слушающий сокет главного порта 8080 ДО любых обращений к диску/FUSE и демонам!
-    #    Это гарантирует, что когда MainActivity вызывает webView.loadUrl("http://127.0.0.1:8080") через 1500 мс,
-    #    порт 8080 уже 100% слушает и НИКОГДА не выдаёт чёрный экран с зелёным роботом (ERR_CONNECTION_REFUSED)!
+    # 1. [V362] Чтение сохранённого списка папок (< 2 мс) и мгновенное открытие ВСЕХ 4 изолированных портов
+    #    (8080 VIP UI/Папки, 8081 Дека А Аудио/xFLAC, 8082 Дека Б Видео/FFmpeg, 8083 P2P/Радио/OST/YouTube)
+    #    за ~12 мс ДО тяжёлой зачистки временных файлов и запуска фоновых P2P-демонов!
+    try:
+        load_saved_music_dir()
+        load_multi_dirs_v71()
+    except Exception:
+        pass
+
     main_wrapped = JennyCorsWsgiMiddlewareV238(base_app, 8080)
     main_srv = None
     for _attempt in range(10):
@@ -12776,46 +12789,43 @@ def start_server_v238():
             main_srv = _create_waitress_instance_v238(main_wrapped, 8080, max(24, cfg_pool // 2))
             break
         except Exception:
-            time.sleep(0.1)
+            time.sleep(0.08)
 
-    def _boot_secondary_ports_and_daemons_v361():
-        global _CLUSTER_STARTED_FLAG_V238, _INTERNAL_STREAM_PORT_V238
-        try:
-            load_saved_music_dir()
-        except Exception:
-            pass
-        worker_specs = [
-            (8081, max(16, cfg_pool // 2), "Deck A Audio & xFLAC"),
-            (8082, max(16, cfg_pool // 2), "Deck B Video & FFmpeg Remux"),
-            (8083, max(24, cfg_pool),      "Background P2P / YouTube / OST / Radio"),
-        ]
-        with _CLUSTER_STARTED_LOCK_V238:
-            if not _CLUSTER_STARTED_FLAG_V238:
-                _CLUSTER_STARTED_FLAG_V238 = True
-                for p_num, p_threads, p_label in worker_specs:
-                    try:
-                        wrapped = JennyCorsWsgiMiddlewareV238(base_app, p_num)
-                        srv_obj = _create_waitress_instance_v238(wrapped, p_num, p_threads)
-                        if p_num not in _ACTIVE_CLUSTER_PORTS_V238:
-                            _ACTIVE_CLUSTER_PORTS_V238.append(p_num)
-                        if p_num == 8082:
-                            _INTERNAL_STREAM_PORT_V238 = 8082
-                        t = threading.Thread(
-                            target=srv_obj.run,
-                            name=f"JennyWaitress_{p_num}",
-                            daemon=True,
-                        )
-                        t.start()
-                        print(f"⚡ [V361] ПОРТ {p_num} АКТИВЕН ({p_label}, потоков: {p_threads})")
-                    except Exception as e_port:
-                        print(f"⚠️ [V361] Порт {p_num} занят/пропущен ({e_port}), работает авто-фоллбэк на 8080")
+    worker_specs = [
+        (8081, max(16, cfg_pool // 2), "Deck A Audio & xFLAC"),
+        (8082, max(16, cfg_pool // 2), "Deck B Video & FFmpeg Remux"),
+        (8083, max(24, cfg_pool),      "Background P2P / YouTube / OST / Radio"),
+    ]
+    with _CLUSTER_STARTED_LOCK_V238:
+        if not _CLUSTER_STARTED_FLAG_V238:
+            _CLUSTER_STARTED_FLAG_V238 = True
+            for p_num, p_threads, p_label in worker_specs:
+                try:
+                    wrapped = JennyCorsWsgiMiddlewareV238(base_app, p_num)
+                    srv_obj = _create_waitress_instance_v238(wrapped, p_num, p_threads)
+                    if p_num not in _ACTIVE_CLUSTER_PORTS_V238:
+                        _ACTIVE_CLUSTER_PORTS_V238.append(p_num)
+                    if p_num == 8082:
+                        _INTERNAL_STREAM_PORT_V238 = 8082
+                    t = threading.Thread(
+                        target=srv_obj.run,
+                        name=f"JennyWaitress_{p_num}",
+                        daemon=True,
+                    )
+                    t.start()
+                    print(f"⚡ [V362] ИЗОЛИРОВАННЫЙ ПОРТ {p_num} АКТИВЕН ({p_label}, потоков: {p_threads})")
+                except Exception as e_port:
+                    print(f"⚠️ [V362] Порт {p_num} занят/пропущен ({e_port}), работает авто-фоллбэк на 8080")
+
+    def _boot_daemons_and_cleanup_v362():
+        time.sleep(1.2)
         try:
             cleanup_stale_temps(DEFAULT_MUSIC_DIR)
             if MUSIC_DIR != DEFAULT_MUSIC_DIR:
                 cleanup_stale_temps(MUSIC_DIR)
         except Exception:
             pass
-        time.sleep(1.5)
+        time.sleep(1.0)
         for bg_fn in (
             globals().get("ensure_jtorrent_daemon_v96"),
             globals().get("ensure_omnitorrent_daemon_v124"),
@@ -12825,9 +12835,9 @@ def start_server_v238():
             if callable(bg_fn):
                 threading.Thread(target=bg_fn, daemon=True).start()
 
-    threading.Thread(target=_boot_secondary_ports_and_daemons_v361, name="JennyDeferredBootV361", daemon=True).start()
+    threading.Thread(target=_boot_daemons_and_cleanup_v362, name="JennyDeferredBootV362", daemon=True).start()
 
-    print("🚀 [V361] ГЛАВНЫЙ VIP-ПОРТ 8080 МГНОВЕННО АКТИВЕН!")
+    print("🚀 [V362] ВСЕ 4 ПОРТА (8080..8083) МГНОВЕННО АКТИВНЫ!")
     if main_srv is not None:
         main_srv.run()
     else:

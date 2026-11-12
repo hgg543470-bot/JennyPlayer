@@ -11,8 +11,8 @@ android {
         applicationId "com.jenny.player"
         minSdk 24
         targetSdk 33
-        versionCode 361
-        versionName "1.1-b361"
+        versionCode 362
+        versionName "1.1-b362"
         
         ndk {
             abiFilters "arm64-v8a"

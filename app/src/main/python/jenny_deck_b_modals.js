@@ -1626,7 +1626,20 @@
             }
             bufHudA.innerHTML = window.renderFourBuffersStatusHTMLV359();
 
-            // Ставим [🎵 А | 🎬 Б] в каждую карточку и спойлер настроек Деки А
+            // Ставим [🎵 А | 🎬 Б] в каждую карточку и спойлер настроек Деки А (через badge.parentNode, без NotFoundError!)
+            var safeInsertBeforeBadgeV362 = function(containerEl, newEl) {
+                if (!containerEl || !newEl) return;
+                try {
+                    var badge = containerEl.querySelector('.jenny-help-badge');
+                    if (badge && badge.parentNode) {
+                        badge.parentNode.insertBefore(newEl, badge);
+                    } else {
+                        containerEl.appendChild(newEl);
+                    }
+                } catch (e) {
+                    try { containerEl.appendChild(newEl); } catch (e2) {}
+                }
+            };
             var attachABToRow = function(inputId, secKey) {
                 var inp = document.getElementById(inputId);
                 var row = inp ? inp.closest('.setting-row') : null;
@@ -1634,9 +1647,7 @@
                 row.setAttribute('data-ab-sec', secKey);
                 var holder = document.createElement('span');
                 holder.innerHTML = buildABSectionSwitchHTML('music', secKey);
-                var badge = row.querySelector('.jenny-help-badge');
-                if (badge) row.insertBefore(holder.firstElementChild, badge);
-                else row.appendChild(holder.firstElementChild);
+                safeInsertBeforeBadgeV362(row, holder.firstElementChild);
             };
             attachABToRow('cfg_studioMode', 'sec_studio_ram');
             attachABToRow('cfg_phaseFix', 'sec_phase_focus');
@@ -1658,9 +1669,7 @@
                 if (sum.parentElement) sum.parentElement.setAttribute('data-ab-sec', secKey);
                 var holder = document.createElement('span');
                 holder.innerHTML = buildABSectionSwitchHTML('music', secKey);
-                var badge = sum.querySelector('.jenny-help-badge');
-                if (badge) sum.insertBefore(holder.firstElementChild, badge);
-                else sum.appendChild(holder.firstElementChild);
+                safeInsertBeforeBadgeV362(sum, holder.firstElementChild);
             });
         }
 
@@ -1681,9 +1690,13 @@
                 if (hdr && hdr.classList.contains('eq-band-hdr') && !hdr.querySelector('.jenny-ab-sec-switch-v359')) {
                     var holder = document.createElement('span');
                     holder.innerHTML = buildABSectionSwitchHTML('music', 'eq_' + f);
-                    var badge = hdr.querySelector('.jenny-help-badge');
-                    if (badge) hdr.insertBefore(holder.firstElementChild, badge);
-                    else hdr.appendChild(holder.firstElementChild);
+                    try {
+                        var badge = hdr.querySelector('.jenny-help-badge');
+                        if (badge && badge.parentNode) badge.parentNode.insertBefore(holder.firstElementChild, badge);
+                        else hdr.appendChild(holder.firstElementChild);
+                    } catch (e) {
+                        try { hdr.appendChild(holder.firstElementChild); } catch (e2) {}
+                    }
                 }
             });
         }
@@ -1911,8 +1924,8 @@
                     window.closeDeckBIsolatedModals();
                     return;
                 }
-                window.closeDeckBIsolatedModals();
-                window.decorateDeckAModalsWithABSwitchersV359();
+                try { window.closeDeckBIsolatedModals(); } catch (e) {}
+                try { window.decorateDeckAModalsWithABSwitchersV359(); } catch (e) {}
                 return origToggle.apply(this, arguments);
             };
             wrapped._v359Hooked = true;
@@ -1929,7 +1942,7 @@
         };
         // Переопределяем renderDeckSwitchBannersV131, чтобы в обеих копиях всегда рисовались актуальные переключатели А/Б
         window.renderDeckSwitchBannersV131 = function() {
-            window.decorateDeckAModalsWithABSwitchersV359();
+            try { window.decorateDeckAModalsWithABSwitchersV359(); } catch (e) {}
             var bEq = document.getElementById('deckSwitchBarEqDeckB');
             if (bEq) bEq.innerHTML = buildTopDeckSwitchBannerHTML('video', 'eq');
             var bSet = document.getElementById('deckSwitchBarSettingsDeckB');

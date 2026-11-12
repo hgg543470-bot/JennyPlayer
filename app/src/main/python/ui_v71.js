@@ -27946,12 +27946,18 @@ let vsyncTicks = 0;
                     get: function() { return desc.get.call(this); },
                     set: function(val) {
                         var s = String(val !== undefined && val !== null ? val : '');
-                        if (s === '⏳' && window._manualAudioRefreshActiveV229) {
+                        if (s === '⏳') {
                             if (desc.get.call(this) !== '⏳') desc.set.call(this, '⏳');
                             return;
                         }
-                        var counts = window.computeAudioAndVideoCountsV229();
-                        var targetStr = String(counts.audioCount > 0 ? counts.audioCount : s);
+                        var targetStr = s;
+                        if (typeof window.computeActiveViewCountV242 === 'function') {
+                            targetStr = String(window.computeActiveViewCountV242());
+                        } else {
+                            var counts = window.computeAudioAndVideoCountsV229();
+                            var isVid = (window.activePlaylistTabV71 === 'videos' || (window.activePlaylistTabV71 === 'fav' && window._favSubTabV216 === 'video'));
+                            targetStr = String(isVid ? counts.videoCount : (counts.audioCount > 0 ? counts.audioCount : s));
+                        }
                         if (desc.get.call(this) !== targetStr) {
                             desc.set.call(this, targetStr);
                         }
@@ -35884,9 +35890,9 @@ let vsyncTicks = 0;
     if (window._jennyV360ClockAndModalPatchInstalled) return;
     window._jennyV360ClockAndModalPatchInstalled = true;
 
-    // 1. Точные часы WebAudio для Деки А на ВСЕХ передачах (1-я J Buf 90°, 2-я J Buf Shift, R Винил, ДНК и REV)
-    //    Гарантирует, что таймер #currentTime всегда идёт (даже когда на странице открыто <video> или играет .xflac),
-    //    и что любое изменение настроек/скорости берёт точную секунду из WebAudio, НИКОГДА не сбрасывая песню на 0:00!
+    // 1. ЧИСТЫЕ ЧАСЫ WEBAUDIO ДЛЯ ДЕКИ А (БЕЗ Object.defineProperty НА player.paused)
+    //    Гарантирует, что таймер #currentTime всегда идёт от WebAudio context,
+    //    и любое изменение настроек/скорости берёт точную секунду без сброса песни на 0:00!
     function updateDeckAStudioClockFromNowV360(trackSecOverride) {
         var player = document.getElementById('audioPlayer');
         if (!window.audioCtx) return;
@@ -35904,61 +35910,55 @@ let vsyncTicks = 0;
         };
     }
 
-    // Оборачиваем applyElasticHoseBufferLiveV46 (1-я передача J Buf 90° из ui_help.js),
-    // чтобы при поставленном WebView на паузу беззвучном <audio> но живом RAM-буфере:
-    //  а) ui_help.js видел актуальную секунду getTruePlaybackTimeV74_2() вместо застрявшего 0:00,
-    //  б) ui_help.js видел player.paused === false (если пользователь НЕ ставил паузу),
-    //  в) после запуска studioSourceNode сразу взводились часы _studioClockV74_1!
-    function wrapHoseAndSyncWithTrueClockV360() {
-        var origHose = window.applyElasticHoseBufferLiveV46;
-        if (typeof origHose === 'function' && !origHose._v360ClockWrapped) {
-            var wrappedHose = function(isDraggingArc) {
-                var player = document.getElementById('audioPlayer');
-                var shouldPlay = !window._userPausedV75_2 && Boolean(
-                    window.isStudioPlaying ||
-                    window._resumingFromUserPlayV232 ||
-                    (player && !player.paused)
-                );
-                var trueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
-                    ? window.getTruePlaybackTimeV74_2()
-                    : ((player && player.currentTime) || 0);
+    function startHoseBufferDirectWebAudioV362(trueSec) {
+        var player = document.getElementById('audioPlayer');
+        if (!window.studioBuffer || !window.audioCtx || !player) return false;
+        var targetSpd = (typeof window.getActiveTargetSpeedV59 === 'function')
+            ? window.getActiveTargetSpeedV59()
+            : ((player && player.playbackRate) || 1.0);
+        var tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined)
+            ? window.appConfig.hoseTensionPct
+            : 100;
+        var isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        var baseBuf = isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer;
+        var activeBuf = (typeof window.buildElasticHoseBufferV46 === 'function')
+            ? window.buildElasticHoseBufferV46(baseBuf, targetSpd, tensionPct)
+            : baseBuf;
+        if (!activeBuf) return false;
 
-                var restoreProps = false;
-                if (player && shouldPlay && !isDraggingArc) {
-                    try {
-                        if (Math.abs((player.currentTime || 0) - trueSec) > 0.25) {
-                            player.currentTime = trueSec;
-                        }
-                    } catch (e) {}
-                    try {
-                        Object.defineProperty(player, 'paused', { configurable: true, get: function() { return false; } });
-                        Object.defineProperty(player, 'currentTime', {
-                            configurable: true,
-                            get: function() { return trueSec; },
-                            set: function(v) {
-                                trueSec = Math.max(0, parseFloat(v) || 0);
-                            }
-                        });
-                        restoreProps = true;
-                    } catch (e) {}
-                }
-                try {
-                    var res = origHose.apply(this, arguments);
-                    if (!isDraggingArc && window.isStudioPlaying && window.studioSourceNode) {
-                        updateDeckAStudioClockFromNowV360(trueSec);
-                    }
-                    return res;
-                } finally {
-                    if (restoreProps && player) {
-                        try { delete player.paused; } catch (e) {}
-                        try { delete player.currentTime; } catch (e) {}
-                    }
-                }
-            };
-            wrappedHose._v360ClockWrapped = true;
-            window.applyElasticHoseBufferLiveV46 = wrappedHose;
+        if (window.htmlGain && window.htmlGain.gain) {
+            window.htmlGain.gain.value = 0;
         }
+        player.preservesPitch = false;
 
+        if (window.studioSourceNode) {
+            window.studioSourceNode.onended = null;
+            try { window.studioSourceNode.stop(); } catch (e) {}
+            try { window.studioSourceNode.disconnect(); } catch (e) {}
+        }
+        window.studioSourceNode = window.audioCtx.createBufferSource();
+        window.studioSourceNode._isHoseSpliced = true;
+        window.studioSourceNode.buffer = activeBuf;
+        window.studioSourceNode.playbackRate.value = 1.0;
+        window.studioSourceNode.connect(window.inputMixer);
+
+        var scaledOffset = Math.max(0, trueSec) / Math.max(0.05, targetSpd);
+        if (!isFinite(scaledOffset) || scaledOffset < 0) scaledOffset = 0;
+        if (scaledOffset >= activeBuf.duration) scaledOffset = Math.max(0, activeBuf.duration - 0.05);
+
+        window.studioSourceNode.start(0, scaledOffset);
+        window.isStudioPlaying = true;
+        updateDeckAStudioClockFromNowV360(trueSec);
+
+        var badge = document.getElementById('hoseLiveTelemetryV44');
+        if (badge && window._hoseSplicerCacheV46) {
+            var c = window._hoseSplicerCacheV46;
+            badge.innerText = '🐍 V49: Δy=' + ((c.avgSeamErrMv || 0) * 100).toFixed(1) + '% | x' + targetSpd.toFixed(2) + ' (' + (c.lastBuildMs || 0) + 'мс)';
+        }
+        return true;
+    }
+
+    function wrapHoseAndSyncWithTrueClockV360() {
         var origSync = window.syncMasterPlaybackEngineV59;
         if (typeof origSync === 'function' && !origSync._v360ClockWrapped) {
             var wrappedSync = function(isDraggingArc) {
@@ -35972,47 +35972,348 @@ let vsyncTicks = 0;
                     ? window.getTruePlaybackTimeV74_2()
                     : ((player && player.currentTime) || 0);
 
-                var restoreProps = false;
                 if (player && shouldPlay && !isDraggingArc) {
                     try {
                         if (Math.abs((player.currentTime || 0) - trueSec) > 0.25) {
                             player.currentTime = trueSec;
                         }
                     } catch (e) {}
-                    try {
-                        Object.defineProperty(player, 'paused', { configurable: true, get: function() { return false; } });
-                        Object.defineProperty(player, 'currentTime', {
-                            configurable: true,
-                            get: function() { return trueSec; },
-                            set: function(v) {
-                                trueSec = Math.max(0, parseFloat(v) || 0);
-                            }
-                        });
-                        restoreProps = true;
-                    } catch (e) {}
                 }
-                try {
-                    var res = origSync.apply(this, arguments);
-                    if (!isDraggingArc && window.isStudioPlaying && window.studioSourceNode) {
-                        updateDeckAStudioClockFromNowV360(trueSec);
+
+                var res = origSync.apply(this, arguments);
+
+                // Если muted <audio> был поставлен WebView на паузу (например при открытом <video>),
+                // но Дека А должна играть в RAM — поднимаем WebAudio источник напрямую на точной секунде trueSec!
+                if (!isDraggingArc && shouldPlay && window.studioBuffer && window.audioCtx && !window.isStudioPlaying) {
+                    var gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+                    var hoseChk = document.getElementById('cfg_elasticHoseV44');
+                    var isHose = Boolean(hoseChk ? hoseChk.checked : (window.appConfig && window.appConfig.elasticHoseMode));
+                    if (isHose || gKey === 'jbuf-lock') {
+                        startHoseBufferDirectWebAudioV362(trueSec);
                     }
-                    return res;
-                } finally {
-                    if (restoreProps && player) {
-                        try { delete player.paused; } catch (e) {}
-                        try { delete player.currentTime; } catch (e) {}
-                    }
+                } else if (!isDraggingArc && window.isStudioPlaying && window.studioSourceNode) {
+                    updateDeckAStudioClockFromNowV360(trueSec);
                 }
+                return res;
             };
             wrappedSync._v360ClockWrapped = true;
             window.syncMasterPlaybackEngineV59 = wrappedSync;
+            window.applyElasticHoseBufferLiveV46 = wrappedSync;
         }
     }
     wrapHoseAndSyncWithTrueClockV360();
     setTimeout(wrapHoseAndSyncWithTrueClockV360, 200);
     setTimeout(wrapHoseAndSyncWithTrueClockV360, 600);
 
-    // 2. Учитываем модалки Деки Б (#settingsModalDeckB, #eqModalDeckB, #specModalDeckB) в высоте шапки и z-index,
+    // 2. ЕДИНЫЙ СБОРЩИК ВИДЕО ИЗ АКТИВНЫХ ПАПОК (/api/data + /api/video/discovered_list)
+    //    Гарантирует, что все видеофайлы из отмеченных галочками папок в «📁 Музыкальные папки»
+    //    (JennyVideo, test, Video, Movies, Download и др.) мгновенно попадают во вкладку «🎬 Видео»!
+    window._harvestedActiveFolderVideosV362 = window._harvestedActiveFolderVideosV362 || {};
+
+    window.harvestVideosFromLastDataV362 = function(dataObj) {
+        if (!dataObj || !Array.isArray(dataObj.all_tracks)) return;
+        var nextHarvest = {};
+        var tMeta = dataObj.track_meta || {};
+        for (var i = 0; i < dataObj.all_tracks.length; i++) {
+            var fn = dataObj.all_tracks[i];
+            if (fn && window.isVideoFileNameV130 && window.isVideoFileNameV130(fn)) {
+                var m = tMeta[fn] || {};
+                var szMb = m.size ? Math.round((Number(m.size) / (1024 * 1024)) * 10) / 10 : 0;
+                nextHarvest[fn] = {
+                    name: fn,
+                    size_mb: szMb,
+                    percent: 100,
+                    in_video_dir: true,
+                    is_ready_local: true,
+                    tor_hash: '',
+                    tor_file_idx: -1,
+                    stream_url: '/api/media/' + encodeURIComponent(fn)
+                };
+            }
+        }
+        window._harvestedActiveFolderVideosV362 = nextHarvest;
+
+        // Обновляем _dedicatedVideoMetaMapV137: сохраняем торрент-видео и синхронизируем локальные видео с активными папками
+        var merged = {};
+        var prevMap = window._dedicatedVideoMetaMapV137 || {};
+        Object.keys(prevMap).forEach(function(k) {
+            var it = prevMap[k];
+            if (it && it.tor_hash) {
+                merged[k] = it;
+            }
+        });
+        Object.keys(nextHarvest).forEach(function(k) {
+            merged[k] = prevMap[k] ? Object.assign({}, prevMap[k], nextHarvest[k]) : nextHarvest[k];
+        });
+        window._dedicatedVideoMetaMapV137 = merged;
+        var allVids = window.collectClientTorrentVideosV137 ? window.collectClientTorrentVideosV137() : Object.values(merged);
+        window._dedicatedVideoListV137 = allVids.map(function(x) { return x.name; }).sort();
+    };
+
+    // Перехватываем fetch('/api/data') в window.fetchData ДО фильтрации видеофайлов,
+    // чтобы ни одно видео из выбранных папок не терялось!
+    window.syncDiscoveredVideosIntoPlaylistV134 = async function(forceScan) {
+        try {
+            var res = await fetch('/api/video/discovered_list' + (forceScan ? '?force=1' : ''));
+            if (res.ok) {
+                var data = await res.json();
+                if (data.video_dir) window._dedicatedVideoDirPathV137 = data.video_dir;
+                var items = data.items || [];
+                var nextMap = Object.assign({}, window._harvestedActiveFolderVideosV362 || {});
+                items.forEach(function(it) {
+                    if (it && it.name) nextMap[it.name] = it;
+                });
+                window._dedicatedVideoMetaMapV137 = nextMap;
+            }
+        } catch (e) {}
+
+        var mergedItems = window.collectClientTorrentVideosV137 ? window.collectClientTorrentVideosV137() : Object.values(window._dedicatedVideoMetaMapV137 || {});
+        window._dedicatedVideoListV137 = mergedItems.map(function(x) { return x.name; }).sort();
+
+        if (window.lastData && Array.isArray(window.lastData.all_tracks)) {
+            window.harvestVideosFromLastDataV362(window.lastData);
+            window.lastData.all_tracks = window.lastData.all_tracks.filter(function(fn) {
+                return !window.isVideoFileNameV130(fn);
+            });
+        }
+
+        if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
+        if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+        if (window.activePlaylistTabV71 === 'videos' && typeof window.renderActivePlaylistTracksV71 === 'function') {
+            window.renderActivePlaylistTracksV71(false);
+        }
+        if (typeof window.syncContextRefreshCounterV242 === 'function') {
+            window.syncContextRefreshCounterV242();
+        }
+    };
+
+    // Оборачиваем json() ответа /api/data или window.fetchData так, чтобы harvestVideosFromLastDataV362
+    // срабатывал мгновенно при получении window.lastData!
+    var _origJsonProtoV362 = Response && Response.prototype && Response.prototype.json;
+    if (typeof _origJsonProtoV362 === 'function' && !_origJsonProtoV362._v362Hooked) {
+        var wrappedJson = async function() {
+            var obj = await _origJsonProtoV362.apply(this, arguments);
+            try {
+                if (obj && Array.isArray(obj.all_tracks) && obj.track_meta && Array.isArray(obj.active_folders)) {
+                    window.harvestVideosFromLastDataV362(obj);
+                }
+            } catch (e) {}
+            return obj;
+        };
+        wrappedJson._v362Hooked = true;
+        Response.prototype.json = wrappedJson;
+    }
+
+    // 3. МГНОВЕННЫЙ ВИЗУАЛЬНЫЙ ОТКЛИК ГАЛОЧЕК В «📁 МУЗЫКАЛЬНЫЕ ПАПКИ» (0 мс ПРИ ТАПЕ!)
+    //    БЕЗ ЗАКРЫТИЯ И ПЕРЕСОЗДАНИЯ МОДАЛКИ И С МГНОВЕННЫМ ОБНОВЛЕНИЕМ АУДИО И ВИДЕО!
+    window.renderFolderManagerRowsHTMLV237 = function(saved, active, ft, folderCounts) {
+        return (saved || []).map(function(p) {
+            var isSel = (active || []).indexOf(p) !== -1;
+            var sp = String(p).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            var shortN = String(p).split('/').filter(Boolean).pop() || p;
+            var cntStr = '…';
+            if (folderCounts && typeof folderCounts[p] === 'number') {
+                cntStr = String(folderCounts[p]);
+            } else if (ft && Array.isArray(ft[p])) {
+                cntStr = String(ft[p].length);
+            }
+            var delBtn = (saved && saved.length > 1)
+                ? '<button type="button" onclick="event.stopPropagation();window.removeFolderFromPoolV71(\'' + sp + '\')" style="padding:5px 8px;color:#f85149;background:#161b22;border:1px solid rgba(248,81,73,0.4);border-radius:7px;">🗑️</button>'
+                : '';
+            return '<div data-folder-path="' + String(p).replace(/"/g, '&quot;') + '" onclick="window.toggleFolderActivePoolV71(\'' + sp + '\',event)" style="display:flex;align-items:center;background:#0d1117;border:1px solid ' + (isSel ? '#3fb950' : '#262c36') + ';border-radius:8px;padding:9px 10px;gap:8px;cursor:pointer;transition:border-color 0.12s ease;">' +
+                '<input type="checkbox" ' + (isSel ? 'checked' : '') + ' style="pointer-events:none;width:16px;height:16px;accent-color:#3fb950;">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div class="jenny-folder-row-title-v362" style="color:' + (isSel ? '#3fb950' : '#e6edf3') + ';font-weight:bold;">📁 ' + shortN + ' (' + cntStr + ')</div>' +
+                    '<div style="color:#8b949e;font-size:10.5px;word-break:break-all;">' + p + '</div>' +
+                '</div>' +
+                delBtn +
+            '</div>';
+        }).join('');
+    };
+
+    window.toggleFolderActivePoolV71 = async function(fp, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+
+        // 1) Мгновенный (0 мс) оптимистичный визуальный отклик строки в открытой модалке!
+        var box = document.getElementById('jennyFolderRowsBoxV237');
+        if (box) {
+            var rows = box.querySelectorAll('[data-folder-path]');
+            var checkedCnt = 0;
+            rows.forEach(function(r) {
+                var c = r.querySelector('input[type="checkbox"]');
+                if (c && c.checked) checkedCnt++;
+            });
+            rows.forEach(function(r) {
+                if (r.getAttribute('data-folder-path') === fp) {
+                    var chk = r.querySelector('input[type="checkbox"]');
+                    var ttl = r.querySelector('.jenny-folder-row-title-v362');
+                    if (chk) {
+                        if (chk.checked && checkedCnt <= 1) return; // Последнюю активную папку не выключаем
+                        var nextSel = !chk.checked;
+                        chk.checked = nextSel;
+                        r.style.borderColor = nextSel ? '#3fb950' : '#262c36';
+                        if (ttl) ttl.style.color = nextSel ? '#3fb950' : '#e6edf3';
+                    }
+                }
+            });
+        }
+
+        try {
+            var res = await fetch('/api/folders_v71', {
+                method: 'POST',
+                body: JSON.stringify({ action: 'toggle', path: fp })
+            });
+            var d = await res.json();
+            if (d && d.status === 'ok') {
+                window._cachedFoldersDataV237 = d;
+                if (window.AndroidBridge && typeof window.AndroidBridge.invalidatePresetFolderCache === 'function') {
+                    try { window.AndroidBridge.invalidatePresetFolderCache(); } catch (e) {}
+                }
+                var liveBox = document.getElementById('jennyFolderRowsBoxV237');
+                if (liveBox) {
+                    liveBox.innerHTML = window.renderFolderManagerRowsHTMLV237(
+                        d.saved_folders || [],
+                        d.active_folders || [],
+                        d.folder_tracks || {},
+                        null
+                    );
+                }
+                // Запускаем обновление медиатеки и видео в фоне без блокировки UI модалки папок!
+                window._fetchDataInFlightPromiseV237 = null;
+                await Promise.all([
+                    window.fetchData(),
+                    window.syncDiscoveredVideosIntoPlaylistV134(true)
+                ]);
+                if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+                if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+            } else if (typeof window.showToast === 'function') {
+                window.showToast('❌ ' + ((d && d.error) || 'Ошибка'), ev);
+            }
+        } catch (err) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('❌ Ошибка связи с сервером папок', ev);
+            }
+        }
+    };
+
+    window.addFolderToPoolV71 = async function() {
+        var inp = document.getElementById('newFolderInputV62');
+        var fp = inp ? inp.value.trim() : '';
+        if (!fp) return;
+        try {
+            var d = await (await fetch('/api/folders_v71', {
+                method: 'POST',
+                body: JSON.stringify({ action: 'add', path: fp })
+            })).json();
+            if (d && d.status === 'ok') {
+                if (inp) inp.value = '';
+                window._cachedFoldersDataV237 = d;
+                if (window.AndroidBridge && typeof window.AndroidBridge.invalidatePresetFolderCache === 'function') {
+                    try { window.AndroidBridge.invalidatePresetFolderCache(); } catch (e) {}
+                }
+                var liveBox = document.getElementById('jennyFolderRowsBoxV237');
+                if (liveBox) {
+                    liveBox.innerHTML = window.renderFolderManagerRowsHTMLV237(
+                        d.saved_folders || [],
+                        d.active_folders || [],
+                        d.folder_tracks || {},
+                        null
+                    );
+                }
+                window._fetchDataInFlightPromiseV237 = null;
+                await Promise.all([
+                    window.fetchData(),
+                    window.syncDiscoveredVideosIntoPlaylistV134(true)
+                ]);
+                if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+                if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+            } else if (typeof window.showToast === 'function') {
+                window.showToast('❌ ' + ((d && d.error) || 'Папка не найдена'));
+            }
+        } catch (e) {}
+    };
+
+    window.removeFolderFromPoolV71 = async function(fp) {
+        try {
+            var d = await (await fetch('/api/folders_v71', {
+                method: 'POST',
+                body: JSON.stringify({ action: 'remove', path: fp })
+            })).json();
+            if (d && d.status === 'ok') {
+                window._cachedFoldersDataV237 = d;
+                if (window.AndroidBridge && typeof window.AndroidBridge.invalidatePresetFolderCache === 'function') {
+                    try { window.AndroidBridge.invalidatePresetFolderCache(); } catch (e) {}
+                }
+                var liveBox = document.getElementById('jennyFolderRowsBoxV237');
+                if (liveBox) {
+                    liveBox.innerHTML = window.renderFolderManagerRowsHTMLV237(
+                        d.saved_folders || [],
+                        d.active_folders || [],
+                        d.folder_tracks || {},
+                        null
+                    );
+                }
+                window._fetchDataInFlightPromiseV237 = null;
+                await Promise.all([
+                    window.fetchData(),
+                    window.syncDiscoveredVideosIntoPlaylistV134(true)
+                ]);
+                if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+                if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+                if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+            }
+        } catch (e) {}
+    };
+
+    // 4. КНОПКА ОБНОВЛЕНИЯ 🔄 N В ПОИСКЕ: ВСЕГДА ОБНОВЛЯЕТ И /api/data, И /api/video/discovered_list
+    //    И ПОКАЗЫВАЕТ ТОЧНОЕ ЧИСЛО ДЛЯ АКТИВНОЙ ВКЛАДКИ (В «🎬 ВИДЕО» — ЧИСЛО ВИДЕО, В «🎵 ВСЕ» — ЧИСЛО АУДИО)!
+    window.refreshActiveContextListV242 = async function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var savedTab = window.activePlaylistTabV71 || 'all';
+        var savedArtist = window.selectedArtistV71;
+        var savedAlbum = window.selectedAlbumV71;
+        var savedTag = window.selectedTagV74;
+        var savedFavSub = window._favSubTabV216;
+        var cntSpanA = document.getElementById('tracksCount');
+        if (cntSpanA) cntSpanA.innerText = '⏳';
+
+        try {
+            window._fetchDataInFlightPromiseV237 = null;
+            await Promise.all([
+                window.fetchData(),
+                window.syncDiscoveredVideosIntoPlaylistV134(true)
+            ]);
+        } catch (e) {}
+
+        window.activePlaylistTabV71 = savedTab;
+        window.selectedArtistV71 = savedArtist;
+        window.selectedAlbumV71 = savedAlbum;
+        window.selectedTagV74 = savedTag;
+        window._favSubTabV216 = savedFavSub;
+
+        if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
+        if (typeof window.renderActivePlaylistTracksV71 === 'function') window.renderActivePlaylistTracksV71(false);
+        if (typeof window.syncContextRefreshCounterV242 === 'function') window.syncContextRefreshCounterV242();
+        if (typeof window.showToast === 'function') {
+            window.showToast('🔄 Список обновлён (' + window.computeActiveViewCountV242() + ')', ev);
+        }
+    };
+
+    var _origSelectPlTabV362 = window.selectPlaylistTabV71;
+    if (typeof _origSelectPlTabV362 === 'function' && !_origSelectPlTabV362._v362Wrapped) {
+        window.selectPlaylistTabV71 = function(tabId, ev) {
+            var r = _origSelectPlTabV362.apply(this, arguments);
+            if (typeof window.syncContextRefreshCounterV242 === 'function') {
+                window.syncContextRefreshCounterV242();
+            }
+            return r;
+        };
+        window.selectPlaylistTabV71._v362Wrapped = true;
+    }
+
+    // 5. Учитываем модалки Деки Б (#settingsModalDeckB, #eqModalDeckB, #specModalDeckB) в высоте шапки и z-index,
     //    чтобы плавающий мини-плеер видео (#jennyVideoStudioRootV130) НИКОГДА не перекрывал крестик закрытия или ползунки в Настройках/Эквалайзере!
     var stModalZ = document.createElement('style');
     stModalZ.id = 'jennyModalZIndexFixV360';
@@ -36061,4 +36362,3 @@ let vsyncTicks = 0;
     };
 })();
 /* ================= END JENNY_V360_WEBAUDIO_CLOCK_AND_MODAL_SYNC ================= */
-
