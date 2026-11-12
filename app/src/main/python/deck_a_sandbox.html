@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Jenny Deck A Isolated Sandbox (:8081)</title>
+    <script src="/jenny_iframe_bridge.js?v=358"></script>
+</head>
+<body style="margin:0;padding:0;background:transparent;overflow:hidden;">
+<script>
+(function() {
+    'use strict';
+    var bridge = window.__jennyIframeBridgeV354;
+    if (!bridge) return;
+    var workerA = null;
+    function getWorkerA() {
+        if (workerA) return workerA;
+        try {
+            workerA = new Worker('/worker_deck_a.js?v=358');
+            workerA.onmessage = function(ev) {
+                bridge.emitToParent('deckA:worker_result', ev.data || {});
+            };
+            workerA.onerror = function(err) {
+                try { workerA.terminate(); } catch (e) {}
+                workerA = null;
+                bridge.emitToParent('deckA:worker_error', { message: String((err && err.message) || err) });
+            };
+        } catch (e) {
+            workerA = null;
+        }
+        return workerA;
+    }
+    bridge.on('deckA:ping', function(payload) {
+        bridge.emitToParent('deckA:pong', { port: 8081, ts: Date.now(), echo: payload || null });
+    });
+    bridge.on('deckA:worker_cmd', function(payload) {
+        var w = getWorkerA();
+        if (!w || !payload) {
+            bridge.emitToParent('deckA:worker_result', { id: payload && payload.id, ok: false, error: 'no_worker_a' });
+            return;
+        }
+        try {
+            w.postMessage(payload);
+        } catch (e) {
+            bridge.emitToParent('deckA:worker_result', { id: payload.id, ok: false, error: String(e) });
+        }
+    });
+    getWorkerA();
+    bridge.emitToParent('deckA:sandbox_ready', { port: 8081, ts: Date.now() });
+})();
+</script>
+</body>
+</html>

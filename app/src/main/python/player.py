@@ -9345,9 +9345,10 @@ def _render_reverse_segment_in_ram_v223(src, pos_sec, win_sec, audio_idx, no_aud
     cmd = _build_reverse_ffmpeg_cmd_v223(src_input, seg_start, seg_dur, audio_idx, no_audio, spd=spd)
     proc = None
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
-        job_obj["proc"] = proc
-        out_bytes, _ = proc.communicate(timeout=40)
+        with _VIDEO_REV_RENDER_SEMAPHORE_V358:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
+            job_obj["proc"] = proc
+            out_bytes, _ = proc.communicate(timeout=40)
         if out_bytes and len(out_bytes) >= 1024:
             job_obj["data"] = out_bytes
             job_obj["done"] = True
@@ -9505,6 +9506,10 @@ def api_video_reverse_remux_v223():
 _override_bottle_route_v212('/api/video/reverse_remux', 'GET', api_video_reverse_remux_v223)
 
 
+_VIDEO_PCM_SEMAPHORE_V358 = threading.BoundedSemaphore(2)
+_VIDEO_REV_RENDER_SEMAPHORE_V358 = threading.BoundedSemaphore(2)
+
+
 def api_video_pcm_chunk_v220():
     src = (request.query.get('src') or '').strip()
     if not src:
@@ -9528,15 +9533,17 @@ def api_video_pcm_chunk_v220():
             aidx = 0
         cmd = [
             find_ffmpeg_binary(), '-v', 'error',
+            '-threads', '1',
             '-ss', f"{st_sec:.3f}", '-t', f"{dur_sec:.3f}",
             '-i', src_input,
             '-map', f'0:a:{aidx}?',
             '-vn', '-ac', '2', '-ar', str(sr),
             '-f', 'f32le', '-acodec', 'pcm_f32le', '-'
         ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        _register_video_ffmpeg_proc_v212(proc)
-        raw_interleaved, _ = proc.communicate(timeout=15)
+        with _VIDEO_PCM_SEMAPHORE_V358:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            _register_video_ffmpeg_proc_v212(proc)
+            raw_interleaved, _ = proc.communicate(timeout=15)
         raw_interleaved = raw_interleaved or b""
         frames = (len(raw_interleaved) // 4) // 2
         if frames <= 0:
@@ -12711,6 +12718,11 @@ def api_multiport_ping_v238():
             "deck_a": "http://127.0.0.1:8081",
             "deck_b": "http://127.0.0.1:8082",
             "torrents": "http://127.0.0.1:8083"
+        },
+        "sandboxes": {
+            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=360",
+            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=360",
+            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=360"
         },
         "roles": {
             "8080": "VIP UI / Folders / Presets",

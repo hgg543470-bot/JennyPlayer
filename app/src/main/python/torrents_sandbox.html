@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Jenny Torrents P2P Isolated Sandbox (:8083)</title>
+    <script src="/jenny_iframe_bridge.js?v=358"></script>
+</head>
+<body style="margin:0;padding:0;background:transparent;overflow:hidden;">
+<script>
+(function() {
+    'use strict';
+    var bridge = window.__jennyIframeBridgeV354;
+    if (!bridge) return;
+    var workerTor = null;
+    function getWorkerTor() {
+        if (workerTor) return workerTor;
+        try {
+            workerTor = new Worker('/worker_torrents.js?v=358');
+            workerTor.onmessage = function(ev) {
+                var d = ev.data || {};
+                if (d.type === 'torrent_snapshot') {
+                    bridge.emitToParent('torrents:snapshot', d);
+                }
+            };
+            workerTor.onerror = function(err) {
+                try { workerTor.terminate(); } catch (e) {}
+                workerTor = null;
+                bridge.emitToParent('torrents:worker_error', { message: String((err && err.message) || err) });
+            };
+            workerTor.postMessage({ cmd: 'start', fast: false, origin: 'http://127.0.0.1:8083' });
+        } catch (e) {
+            workerTor = null;
+        }
+        return workerTor;
+    }
+    bridge.on('torrents:ping', function(payload) {
+        bridge.emitToParent('torrents:pong', { port: 8083, ts: Date.now(), echo: payload || null });
+    });
+    bridge.on('torrents:cmd', function(payload) {
+        var w = getWorkerTor();
+        if (!w || !payload) return;
+        try {
+            w.postMessage(payload);
+        } catch (e) {}
+    });
+    getWorkerTor();
+    bridge.emitToParent('torrents:sandbox_ready', { port: 8083, ts: Date.now() });
+})();
+</script>
+</body>
+</html>

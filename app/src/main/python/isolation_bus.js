@@ -70,7 +70,7 @@
         if (deckAWorker) return deckAWorker;
         if (typeof Worker === 'undefined') return null;
         try {
-            deckAWorker = new Worker('/worker_deck_a.js?v=357');
+            deckAWorker = new Worker('/worker_deck_a.js?v=358');
             window._jennyIsolationStats.deckA.workerAlive = true;
             deckAWorker.onmessage = function(ev) {
                 var d = ev.data || {};
@@ -161,7 +161,7 @@
         if (deckBWorker) return deckBWorker;
         if (typeof Worker === 'undefined') return null;
         try {
-            deckBWorker = new Worker('/worker_deck_b.js?v=357');
+            deckBWorker = new Worker('/worker_deck_b.js?v=358');
             window._jennyIsolationStats.deckB.workerAlive = true;
             deckBWorker.onmessage = function(ev) {
                 var d = ev.data || {};
@@ -241,7 +241,7 @@
         if (torWorker) return torWorker;
         if (typeof Worker === 'undefined') return null;
         try {
-            torWorker = new Worker('/worker_torrents.js?v=357');
+            torWorker = new Worker('/worker_torrents.js?v=358');
             window._jennyIsolationStats.torrents.workerAlive = true;
             torWorker.onmessage = function(ev) {
                 var d = ev.data || {};
@@ -313,7 +313,54 @@
         }
     };
 
+    // Подключаем приём снимков P2P из изолированного iframe-контейнера :8083 (torrents_sandbox.html)
+    function mountPortSandboxesV358() {
+        if (!document.body) return;
+        if (!document.getElementById('jennyDeckASandboxIframeV358')) {
+            try {
+                var ifrA = document.createElement('iframe');
+                ifrA.id = 'jennyDeckASandboxIframeV358';
+                ifrA.src = 'http://127.0.0.1:8081/deck_a_sandbox.html?v=358';
+                ifrA.style.cssText = 'display:none !important;width:0 !important;height:0 !important;border:0 !important;position:absolute !important;pointer-events:none !important;';
+                ifrA.setAttribute('aria-hidden', 'true');
+                document.body.appendChild(ifrA);
+            } catch (e) {}
+        }
+        if (!document.getElementById('jennyTorrentsSandboxIframeV358')) {
+            try {
+                var ifrT = document.createElement('iframe');
+                ifrT.id = 'jennyTorrentsSandboxIframeV358';
+                ifrT.src = 'http://127.0.0.1:8083/torrents_sandbox.html?v=358';
+                ifrT.style.cssText = 'display:none !important;width:0 !important;height:0 !important;border:0 !important;position:absolute !important;pointer-events:none !important;';
+                ifrT.setAttribute('aria-hidden', 'true');
+                document.body.appendChild(ifrT);
+            } catch (e) {}
+        }
+        var bridge = window.__jennyIframeBridgeV354;
+        if (bridge && !bridge._v358Bound) {
+            bridge._v358Bound = true;
+            bridge.on('torrents:snapshot', function(d) {
+                if (!d || !d.ok || !d.statusObj) return;
+                window._jennyIsolationStats.torrents.workerAlive = true;
+                window._latestTorWorkerSnap = d;
+                if (d.badgesObj && d.badgesObj.torrent_enc) {
+                    window._lastTorEncBadgeV212 = d.badgesObj.torrent_enc;
+                }
+                if (d.reqId && torWaiters[d.reqId]) {
+                    var waiter = torWaiters[d.reqId];
+                    delete torWaiters[d.reqId];
+                    waiter(d);
+                } else if (typeof window._onTorWorkerAutoPush === 'function') {
+                    window.runIsolatedTorrents(function() {
+                        window._onTorWorkerAutoPush(d);
+                    });
+                }
+            });
+        }
+    }
+
     setTimeout(function() {
+        mountPortSandboxesV358();
         ensureDeckAWorker();
         setTimeout(ensureDeckBWorker, 37);
         setTimeout(ensureTorrentsWorker, 79);

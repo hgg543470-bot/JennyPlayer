@@ -2420,13 +2420,16 @@ window.getTruePlaybackTimeV74_2 = function() {
     }
     const pTime = (player && isFinite(player.currentTime)) ? player.currentTime : 0;
     const clk = window._studioClockV74_1;
-    if (player && player.paused && pTime < 0.05 && window.isStudioPlaying && clk && clk.active && window.audioCtx) {
-        const spd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
+    if (window.isStudioPlaying && window.studioSourceNode && clk && clk.active && window.audioCtx && !window._userPausedV75_2) {
+        const spd = clk.speed || ((typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0);
         const est = clk.startTrackSec + Math.max(0, window.audioCtx.currentTime - clk.startCtxTime) * spd;
         const maxDur = (window.studioBuffer && window.studioBuffer.duration)
             ? window.studioBuffer.duration
-            : (isFinite(player.duration) ? player.duration : 999999);
-        return Math.max(0, Math.min(maxDur - 0.05, est));
+            : ((player && isFinite(player.duration) && player.duration > 0) ? player.duration : 999999);
+        const clampedEst = Math.max(0, Math.min(maxDur - 0.02, est));
+        if (!player || player.paused || pTime < 0.08 || Math.abs(pTime - clampedEst) > 0.45) {
+            return clampedEst;
+        }
     }
     return pTime;
 };
@@ -13516,7 +13519,7 @@ window.addP2pCompareFileToPlayerV162 = async function(trackName, mode, btnEl, to
         };
 
         // 6 параллельных воркеров распаковки в ОЗУ!
-        await Promise.all([workerLoop(), workerLoop(), workerLoop(), workerLoop(), workerLoop(), workerLoop()]);
+        await Promise.all([workerLoop(), workerLoop()]);
         if (mySess === vd.ramDecodeSession && audioBuf._loadedCountV72 >= numPieces) {
             audioBuf._allPiecesLoadedV72 = true;
             window.syncVideoRamEngineV131(false);
@@ -14885,19 +14888,9 @@ let vsyncTicks = 0;
             }
         }
 
-        // Если звук видео сейчас идет через отвязанный аудиоплеер/RAM-движок
-        if (isVideoDeckActiveV170()) {
-            var aEl = document.getElementById('audioPlayer') || window.player;
-            if (aEl && aEl !== vEl) {
-                try {
-                    aEl.preservesPitch = true;
-                    aEl.webkitPreservesPitch = true;
-                    aEl.playbackRate = spd;
-                } catch (e) {}
-            }
-            if (window.studioSourceNode && window.studioSourceNode.playbackRate) {
-                try { window.studioSourceNode.playbackRate.value = spd; } catch (e) {}
-            }
+        // [V360] Полная изоляция Деки А от Деки Б: скорость видео НИКОГДА не трогает audioPlayer и studioSourceNode Деки А!
+        if (window.JennyVideoDeckBEngine && typeof window.JennyVideoDeckBEngine.syncSpeed === 'function') {
+            try { window.JennyVideoDeckBEngine.syncSpeed(spd); } catch (e) {}
         }
 
         // Обновляем все кнопки скорости в HUD видео и индикатор внизу
@@ -14913,9 +14906,10 @@ let vsyncTicks = 0;
             }
         }
 
-        var spdInd = document.getElementById('speedLockIndicator');
-        if (spdInd && isVideoDeckActiveV170()) {
-            spdInd.textContent = 'x' + spd;
+        var spdIndB = document.getElementById('speedLockIndicatorDeckB');
+        if (spdIndB && Math.abs(spd - 1.0) > 0.005) {
+            spdIndB.style.display = 'block';
+            spdIndB.textContent = '🔒 ⏩ x' + spd;
         }
 
         if (showNotification !== false && typeof window.showToast === 'function') {
@@ -14993,10 +14987,8 @@ let vsyncTicks = 0;
     // Долгое нажатие по центру нижней шкалы в режиме Видео сбрасывает скорость видео на 1.0x,
     // а короткий тап/свайп по нижней шкале перематывает само Видео!
     function bindBottomBarToVideoDeckV170() {
-        var npEl = document.getElementById('nowPlaying');
-        var barContainer = npEl ? npEl.parentElement : null;
-        if (!barContainer || barContainer._v170Bound) return;
-        barContainer._v170Bound = true;
+        // [V360] Отключено: фиолетовая шкала #nowPlaying принадлежит строго Аудиодеке А!
+        return;
 
         var touchStartX = 0;
         var touchStartTime = 0;
@@ -16853,9 +16845,22 @@ let vsyncTicks = 0;
             revAudioBuf._trueDurationV72 = dur;
         }
 
-        // Буфер #3 (Видео ВПЕРЁД) и Буфер #4 (Видео НАЗАД)
-        vd.studioBuffer = audioBuf;
-        vd.reversedStudioBuffer = revAudioBuf;
+        // Индикация "⏳ RAM (пока играет сжатый...): " на шкале Деки Б, пока в фоне собираются Буфер #3 (Вперёд) и Буфер #4 (Назад)
+        const cleanTitleB = titleStr || (window._vidStateV130 && window._vidStateV130.currentTitle) || '';
+        vd.title = cleanTitleB;
+        vd._isLoadingRamV359 = true;
+        vd._ramPiecesLoadedV359 = 0;
+        vd._ramPiecesTotalV359 = numPieces;
+        vd._ramDecodeStartWallMsV359 = performance.now();
+        const npBInit = document.getElementById('nowPlayingDeckB');
+        if (npBInit && cleanTitleB && (!vd.config || vd.config.studioMode !== false)) {
+            npBInit.innerText = '⏳ RAM (пока играет сжатый...): ' + cleanTitleB;
+        }
+        const subTelInit = document.getElementById('v130VideoSubTelemetry');
+        if (subTelInit && (!vd.config || vd.config.studioMode !== false)) {
+            subTelInit.innerText = '⏳ Дека Б: распаковка в RAM (пока играет сжатый звук)...';
+        }
+        if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
 
         const fetchVideoPiece = async (pIdx, isUrgent) => {
             if (pIdx < 0 || pIdx >= numPieces || pieceMap[pIdx] === 2) return true;
@@ -16895,10 +16900,23 @@ let vsyncTicks = 0;
                 revPieceMap[numPieces - 1 - pIdx] = 2;
                 audioBuf._loadedCountV72++;
                 if (revAudioBuf) revAudioBuf._loadedCountV72 = audioBuf._loadedCountV72;
-                if (audioBuf._loadedCountV72 === 1 && vd.config && vd.config.opt_autoRms) {
-                    window.computeBufferAutoGainDeckB(audioBuf, vd.config.val_autoRms);
-                    window.buildVideoAudioGraphV131();
+                vd._ramPiecesLoadedV359 = audioBuf._loadedCountV72;
+                vd._ramPiecesTotalV359 = numPieces;
+                if (audioBuf._loadedCountV72 === 1) {
+                    const elapsedMs = performance.now() - (vd._ramDecodeStartWallMsV359 || 0);
+                    if (elapsedMs < 1100 && mySess === vd.ramDecodeSession) {
+                        await new Promise(r => setTimeout(r, 1100 - elapsedMs));
+                    }
+                    if (mySess !== vd.ramDecodeSession) return false;
+                    // Публикуем Буфер #3 (Видео ВПЕРЁД) и Буфер #4 (Видео НАЗАД) для бесшовной подмены!
+                    vd.studioBuffer = audioBuf;
+                    vd.reversedStudioBuffer = revAudioBuf;
+                    if (vd.config && vd.config.opt_autoRms) {
+                        window.computeBufferAutoGainDeckB(audioBuf, vd.config.val_autoRms);
+                        window.buildVideoAudioGraphV131();
+                    }
                 }
+                if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
                 return true;
             } catch (e) {
                 pieceMap[pIdx] = 0;
@@ -16941,10 +16959,20 @@ let vsyncTicks = 0;
             }
         };
 
-        await Promise.all([workerLoop(), workerLoop(), workerLoop(), workerLoop(), workerLoop(), workerLoop()]);
-        if (mySess === vd.ramDecodeSession && audioBuf._loadedCountV72 >= numPieces) {
-            audioBuf._allPiecesLoadedV72 = true;
-            if (revAudioBuf) revAudioBuf._allPiecesLoadedV72 = true;
+        await Promise.all([workerLoop(), workerLoop()]);
+        if (mySess === vd.ramDecodeSession) {
+            vd._isLoadingRamV359 = false;
+            if (audioBuf._loadedCountV72 >= numPieces) {
+                audioBuf._allPiecesLoadedV72 = true;
+                if (revAudioBuf) revAudioBuf._allPiecesLoadedV72 = true;
+            }
+            const subTelDone = document.getElementById('v130VideoSubTelemetry');
+            if (subTelDone && vd.studioBuffer) {
+                subTelDone.innerText = vd.reversedStudioBuffer
+                    ? 'Дека Б: RAM ⏩⏪ 🚀 (Буферы #3 Вперёд и #4 Реверс в ОЗУ)'
+                    : 'Дека Б: RAM 🚀 (Буфер #3 в ОЗУ)';
+            }
+            if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
             window.syncVideoRamEngineV211(false);
         }
         return audioBuf;
@@ -17816,10 +17844,25 @@ let vsyncTicks = 0;
             if (pFillA && pFillA.style.transform && pFillA.style.transform !== 'none') {
                 pFillA.style.transform = 'none';
             }
-            var effDurA = (isFinite(aEl.duration) && aEl.duration > 0) ? aEl.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
+            var effDurA = (window.studioBuffer && window.studioBuffer.duration > 0)
+                ? window.studioBuffer.duration
+                : ((isFinite(aEl.duration) && aEl.duration > 0) ? aEl.duration : 0);
             if (effDurA > 0 && typeof window.updateProgressUI === 'function') {
                 var isRevA = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
-                window.updateProgressUI(aEl.currentTime || 0, effDurA, isRevA);
+                var curTimeA = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+                    ? window.getTruePlaybackTimeV74_2()
+                    : (aEl.currentTime || 0);
+                window.updateProgressUI(curTimeA, effDurA, isRevA);
+                if (typeof window.updateCenterCurrentTime === 'function') {
+                    window.updateCenterCurrentTime(curTimeA, effDurA, isRevA);
+                }
+                if (window.isStudioPlaying && !window._userPausedV75_2 && effDurA > 2.0 && curTimeA >= effDurA - 0.08 && aEl.paused) {
+                    var nowAdv = performance.now();
+                    if (nowAdv - (window._lastAutoAdvanceWallV360 || 0) > 1500) {
+                        window._lastAutoAdvanceWallV360 = nowAdv;
+                        if (typeof window.playNextTrack === 'function') window.playNextTrack();
+                    }
+                }
             }
         };
         if (window.runIsolatedDeckA) window.runIsolatedDeckA(tickA);
@@ -20945,15 +20988,8 @@ let vsyncTicks = 0;
     // 10. ОГРАНИЧЕНИЕ ФОНОВЫХ ВОРКЕРОВ РАСПАКОВКИ ВИДЕО В RAM (ПО НАСТРОЙКЕ ПОТОКА 1)
     //     И ИСКЛЮЧЕНИЕ ЗАБИВАНИЯ HTTP-ПУЛА НА .MKV / .AVI
     // -------------------------------------------------------------------------
-    window.decodeVideoToRamV131 = async function(streamUrl, titleStr) {
-        // В V216 звук видео (включая .mkv и .avi через live_remux) идёт напрямую через <video> -> vd.htmlGain -> весь DSP Деки Б
-        // с 0 мс задержки. Фоновая распаковка всего 22-минутного / 2-часового фильма в RAM запускается ТОЛЬКО если пользователь
-        // включил реверс (⏪ REV) на видео, чтобы в обычном режиме никогда не забивать HTTP-соединения и процессор!
-        var vd = window.videoDeckV131;
-        var isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || (vd && vd.isReversed));
-        if (!isRev) return null;
-        return null;
-    };
+    // В #359 фоновая сборка Буфера #3 (Видео Вперёд) и Буфера #4 (Видео Назад) в RAM работает всегда
+    // через изолированный порт :8082 и семафор (2 потока FFmpeg), пока с 0 мс играет сжатый поток!
 
     // -------------------------------------------------------------------------
     // 11. ФИКС КНОПКИ "✅ ОК" В "+ ФОРМАТ" (СРАБАТЫВАЕТ С ПЕРВОГО КАСАНИЯ ПРИ ОТКРЫТОЙ КЛАВИАТУРЕ!)
@@ -23086,6 +23122,14 @@ let vsyncTicks = 0;
     };
 
     window.renderDeckSwitchBannersV131 = function() {
+        if (typeof window.decorateDeckAModalsWithABSwitchersV359 === 'function') {
+            window.decorateDeckAModalsWithABSwitchersV359();
+            if (typeof window.syncDeckBBannersOnlyV360 === 'function') {
+                window.syncDeckBBannersOnlyV360();
+            }
+            if (typeof window.renderVCoreDeckPanelV166 === 'function') window.renderVCoreDeckPanelV166();
+            return;
+        }
         var d = window._jennyDualDeckV211 || { deckA: true, deckB: false, uiFocus: 'music' };
         var sm = document.getElementById('settingsModal');
         if (sm) {
@@ -23093,37 +23137,25 @@ let vsyncTicks = 0;
             var exS = document.getElementById('deckSwitchBarSettingsV131');
             if (!exS) {
                 exS = document.createElement('div');
+                exS.id = 'deckSwitchBarSettingsV131';
                 contS.insertBefore(exS, contS.firstChild);
             }
-            var clsA = 'jenny-deck-ctrl-btn-v211 ' + (d.deckA ? 'deck-on-v211 deck-focused-v211' : 'deck-off-v211');
-            var clsB = 'jenny-deck-ctrl-btn-v211 ' + (d.deckB ? 'deck-on-v211' : 'deck-off-v211');
             var statusA = d.deckA ? 'ВКЛ' : 'ВЫКЛ';
             var statusB = d.deckB ? 'ВКЛ' : 'ВЫКЛ';
-
-            exS.outerHTML =
-                '<div id="deckSwitchBarSettingsV131" style="display:flex;flex-direction:column;gap:6px;padding:8px;background:#05070b;border:1px solid var(--border-uniform, #30363d);border-radius:16px;margin-bottom:10px;box-shadow:inset 0 1px 4px rgba(0,0,0,0.9);">' +
+            exS.innerHTML =
+                '<div style="display:flex;flex-direction:column;gap:6px;padding:8px;background:#05070b;border:1.5px solid #a855f7;border-radius:14px;margin-bottom:10px;">' +
                     '<div style="display:flex;align-items:center;gap:8px;width:100%;">' +
-                        '<button type="button" class="' + clsA + '" onclick="window.toggleComplementDeckV211(\'music\', event)">' +
+                        '<button type="button" onclick="if(window.switchModalCopyABV359) window.switchModalCopyABV359(\'music\', \'settings\', event)" style="flex:1;padding:8px;border-radius:10px;font-size:12px;font-weight:900;display:flex;align-items:center;justify-content:space-between;border:1.5px solid #c084fc;background:rgba(126,34,206,0.38);color:#f3e8ff;cursor:pointer;">' +
                             '<span>🎵 Дека А: Музыка</span>' +
-                            '<span class="jenny-deck-pill-badge-v211">' + statusA + '</span>' +
+                            '<span onclick="event.stopPropagation();window.toggleComplementDeckV211(\'music\', event);" style="padding:2px 6px;border-radius:6px;font-size:10px;background:rgba(63,185,80,0.22);color:#3fb950;border:1px solid #3fb950;">' + statusA + '</span>' +
                         '</button>' +
-                        '<button type="button" class="' + clsB + '" onclick="window.toggleComplementDeckV211(\'video\', event)">' +
+                        '<button type="button" onclick="if(window.switchModalCopyABV359) window.switchModalCopyABV359(\'video\', \'settings\', event)" style="flex:1;padding:8px;border-radius:10px;font-size:12px;font-weight:900;display:flex;align-items:center;justify-content:space-between;border:1.5px solid #30363d;background:#0d1117;color:#8b949e;cursor:pointer;">' +
                             '<span>🎬 Дека Б: Видео</span>' +
-                            '<span class="jenny-deck-pill-badge-v211">' + statusB + '</span>' +
+                            '<span onclick="event.stopPropagation();window.toggleComplementDeckV211(\'video\', event);" style="padding:2px 6px;border-radius:6px;font-size:10px;background:#161b22;color:#8b949e;border:1px solid #30363d;">' + statusB + '</span>' +
                         '</button>' +
-                    '</div>' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px 0 4px;gap:6px;">' +
-                        '<span style="font-size:10px;color:#c084fc;font-weight:bold;">🔒 Все настройки ниже — строго Дека А (Музыка)</span>' +
-                        '<button type="button" onclick="if(window.openDeckBIsolatedEqModal) window.openDeckBIsolatedEqModal(event)" style="padding:3px 9px;font-size:10px;font-weight:bold;border-radius:14px;background:rgba(37,99,235,0.28);border:1px solid #60a5fa;color:#dbeafe;cursor:pointer;">🎬 Открыть пульт DSP Видео</button>' +
                     '</div>' +
                 '</div>';
         }
-
-        // Удаляем любые старые общие переключатели из #eqModal и #specModal — они теперь 100% чистые окна Аудиодеки А!
-        ['deckSwitchBarEqV131', 'deckSwitchBarSpecV131'].forEach(function(barId) {
-            var oldBar = document.getElementById(barId);
-            if (oldBar) oldBar.remove();
-        });
         if (typeof window.renderVCoreDeckPanelV166 === 'function') window.renderVCoreDeckPanelV166();
     };
 
@@ -24229,7 +24261,8 @@ let vsyncTicks = 0;
                 try { window.AndroidBridge.setVideoFullscreenLock(false, false); } catch (e) {}
             }
 
-            if (rawBaseUrl) {
+            var isContainerNeedingRemux = /\.(mkv|avi|ts|m2ts|wmv|flv|mpg|mpeg|vob)(\?|$)/i.test(checkStr);
+            if (rawBaseUrl && isContainerNeedingRemux) {
                 st.usingRemux = true;
                 st.remuxBaseOffset = curSec;
                 st._pendingSeekSecV167 = curSec;
@@ -24248,6 +24281,12 @@ let vsyncTicks = 0;
                 vid.addEventListener('loadedmetadata', playAudioOnly, { once: true });
                 vid.addEventListener('canplay', playAudioOnly, { once: true });
                 playAudioOnly();
+            } else {
+                // Нативный MP4/WebM уже играет напрямую — не перезапускаем FFmpeg live_remux и не сбиваем позицию 52:27!
+                try { vid.defaultPlaybackRate = spd; vid.playbackRate = spd; } catch (e) {}
+                if (!st.userPaused && vid.paused) {
+                    vid.play().catch(function(){});
+                }
             }
 
             if (badge) {
@@ -25519,7 +25558,8 @@ let vsyncTicks = 0;
     window.syncVideoRamEngineV211 = window.syncVideoRamEngineV131 = function(isDragging) {
         var st = window._vidStateV130 || {};
         var vd = window.videoDeckV131 || {};
-        if (st.active && (st._playingHardwareRevStreamV219 || vd.isReversed || window.isReversedDeckB)) {
+        // Если включён режим "Только Видео (-an)", глушим звук
+        if (st.active && st.videoStreamModeV217 === 'v_only') {
             if (vd.sourceNode) {
                 vd.sourceNode.onended = null;
                 try { vd.sourceNode.stop(); } catch (e) {}
@@ -25527,18 +25567,20 @@ let vsyncTicks = 0;
                 vd.sourceNode = null;
             }
             vd.isStudioPlaying = false;
-            var noAud = (st.videoStreamModeV217 === 'v_only');
-            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = (noAud || st.dspBypass) ? 0.0 : 1.0;
-            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = noAud ? 0.0 : (st.dspBypass ? 1.0 : 0.0);
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+            return;
+        }
+        // Если в реверсе Буфер #4 (vd.reversedStudioBuffer) ещё не готов в RAM, временно пропускаем звук из аппаратного реверс-потока
+        var isRevNow = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+        if (st.active && isRevNow && !vd.reversedStudioBuffer && !vd.studioBuffer) {
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
             return;
         }
         if (typeof _origSyncVideoRamEngineV219 === 'function') {
             return _origSyncVideoRamEngineV219.apply(this, arguments);
         }
-    };
-
-    window.decodeVideoToRamV131 = async function() {
-        return null;
     };
 
     window.stopHardwareReverseTimerV220 = function() {
@@ -26831,11 +26873,28 @@ let vsyncTicks = 0;
             var vEl = document.getElementById('jennyVideoElV130');
             var rawTitle = st.currentTitle || vd.title || (vEl && vEl.getAttribute('data-title')) ||
                            (vEl && vEl.src ? decodeURIComponent(vEl.src.split('/').pop().split('?')[0]) : '');
-            if (rawTitle && npEl.innerText.indexOf(rawTitle) === -1) {
+            if (rawTitle && rawTitle.indexOf('live_remux') === -1 && rawTitle.indexOf('reverse_remux') === -1) {
+                var studioOn = Boolean(!vd.config || vd.config.studioMode !== false);
                 var hasFwd = Boolean(vd.studioBuffer);
                 var hasRev = Boolean(vd.reversedStudioBuffer);
-                var ramTag = (hasFwd && hasRev) ? 'RAM ⏩⏪ 🚀: ' : (hasFwd ? 'RAM 🚀: ' : '🎬 ');
-                npEl.innerText = ramTag + rawTitle;
+                var ramTag = '🎬 ';
+                if (studioOn) {
+                    if (hasFwd && hasRev) {
+                        if (vd._isLoadingRamV359 && !vd.studioBuffer._allPiecesLoadedV72 && (vd._ramPiecesTotalV359 || 1) > 1) {
+                            ramTag = 'RAM ⏩⏪ 🚀 (' + (vd.studioBuffer._loadedCountV72 || 1) + '/' + vd._ramPiecesTotalV359 + '): ';
+                        } else {
+                            ramTag = 'RAM ⏩⏪ 🚀: ';
+                        }
+                    } else if (hasFwd) {
+                        ramTag = 'RAM 🚀: ';
+                    } else if (vd._isLoadingRamV359) {
+                        ramTag = '⏳ RAM (пока играет сжатый...): ';
+                    }
+                }
+                var wantTextB = ramTag + rawTitle;
+                if (npEl.innerText !== wantTextB) {
+                    npEl.innerText = wantTextB;
+                }
             }
         }
 
@@ -32512,9 +32571,10 @@ let vsyncTicks = 0;
             return window._jennyClusterPortsV238[8081] ? 8081 : 8080;
         }
 
-        // 3. Heavy Background Modules (P2P Torrent polling/search/add, YouTube, OST, SoundCloud, Radio, Export) -> :8083
+        // 3. Heavy Background Modules (P2P Torrent polling/search/add, Omni P2P Core, YouTube, OST, SoundCloud, Radio, Export) -> :8083
         if (
             relPath.indexOf('/api/torrent/') === 0 ||
+            relPath.indexOf('/api/omni/') === 0 ||
             relPath.indexOf('/api/sources/') === 0 ||
             relPath.indexOf('/api/youtube/') === 0 ||
             relPath.indexOf('/api/khinsider/') === 0 ||
@@ -35818,3 +35878,187 @@ let vsyncTicks = 0;
     ].join('\n');
 })();
 /* === END JENNY_V244_VIEWPORT_CLEAN === */
+
+/* ================= BEGIN JENNY_V360_WEBAUDIO_CLOCK_AND_MODAL_SYNC ================= */
+(function() {
+    if (window._jennyV360ClockAndModalPatchInstalled) return;
+    window._jennyV360ClockAndModalPatchInstalled = true;
+
+    // 1. Точные часы WebAudio для Деки А на ВСЕХ передачах (1-я J Buf 90°, 2-я J Buf Shift, R Винил, ДНК и REV)
+    //    Гарантирует, что таймер #currentTime всегда идёт (даже когда на странице открыто <video> или играет .xflac),
+    //    и что любое изменение настроек/скорости берёт точную секунду из WebAudio, НИКОГДА не сбрасывая песню на 0:00!
+    function updateDeckAStudioClockFromNowV360(trackSecOverride) {
+        var player = document.getElementById('audioPlayer');
+        if (!window.audioCtx) return;
+        var spd = (typeof window.getActiveTargetSpeedV59 === 'function')
+            ? window.getActiveTargetSpeedV59()
+            : ((player && player.playbackRate) || 1.0);
+        var baseSec = (typeof trackSecOverride === 'number' && isFinite(trackSecOverride))
+            ? trackSecOverride
+            : ((typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0));
+        window._studioClockV74_1 = {
+            active: Boolean(window.isStudioPlaying && window.studioSourceNode),
+            startCtxTime: window.audioCtx.currentTime,
+            startTrackSec: Math.max(0, baseSec),
+            speed: spd
+        };
+    }
+
+    // Оборачиваем applyElasticHoseBufferLiveV46 (1-я передача J Buf 90° из ui_help.js),
+    // чтобы при поставленном WebView на паузу беззвучном <audio> но живом RAM-буфере:
+    //  а) ui_help.js видел актуальную секунду getTruePlaybackTimeV74_2() вместо застрявшего 0:00,
+    //  б) ui_help.js видел player.paused === false (если пользователь НЕ ставил паузу),
+    //  в) после запуска studioSourceNode сразу взводились часы _studioClockV74_1!
+    function wrapHoseAndSyncWithTrueClockV360() {
+        var origHose = window.applyElasticHoseBufferLiveV46;
+        if (typeof origHose === 'function' && !origHose._v360ClockWrapped) {
+            var wrappedHose = function(isDraggingArc) {
+                var player = document.getElementById('audioPlayer');
+                var shouldPlay = !window._userPausedV75_2 && Boolean(
+                    window.isStudioPlaying ||
+                    window._resumingFromUserPlayV232 ||
+                    (player && !player.paused)
+                );
+                var trueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+                    ? window.getTruePlaybackTimeV74_2()
+                    : ((player && player.currentTime) || 0);
+
+                var restoreProps = false;
+                if (player && shouldPlay && !isDraggingArc) {
+                    try {
+                        if (Math.abs((player.currentTime || 0) - trueSec) > 0.25) {
+                            player.currentTime = trueSec;
+                        }
+                    } catch (e) {}
+                    try {
+                        Object.defineProperty(player, 'paused', { configurable: true, get: function() { return false; } });
+                        Object.defineProperty(player, 'currentTime', {
+                            configurable: true,
+                            get: function() { return trueSec; },
+                            set: function(v) {
+                                trueSec = Math.max(0, parseFloat(v) || 0);
+                            }
+                        });
+                        restoreProps = true;
+                    } catch (e) {}
+                }
+                try {
+                    var res = origHose.apply(this, arguments);
+                    if (!isDraggingArc && window.isStudioPlaying && window.studioSourceNode) {
+                        updateDeckAStudioClockFromNowV360(trueSec);
+                    }
+                    return res;
+                } finally {
+                    if (restoreProps && player) {
+                        try { delete player.paused; } catch (e) {}
+                        try { delete player.currentTime; } catch (e) {}
+                    }
+                }
+            };
+            wrappedHose._v360ClockWrapped = true;
+            window.applyElasticHoseBufferLiveV46 = wrappedHose;
+        }
+
+        var origSync = window.syncMasterPlaybackEngineV59;
+        if (typeof origSync === 'function' && !origSync._v360ClockWrapped) {
+            var wrappedSync = function(isDraggingArc) {
+                var player = document.getElementById('audioPlayer');
+                var shouldPlay = !window._userPausedV75_2 && Boolean(
+                    window.isStudioPlaying ||
+                    window._resumingFromUserPlayV232 ||
+                    (player && !player.paused)
+                );
+                var trueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+                    ? window.getTruePlaybackTimeV74_2()
+                    : ((player && player.currentTime) || 0);
+
+                var restoreProps = false;
+                if (player && shouldPlay && !isDraggingArc) {
+                    try {
+                        if (Math.abs((player.currentTime || 0) - trueSec) > 0.25) {
+                            player.currentTime = trueSec;
+                        }
+                    } catch (e) {}
+                    try {
+                        Object.defineProperty(player, 'paused', { configurable: true, get: function() { return false; } });
+                        Object.defineProperty(player, 'currentTime', {
+                            configurable: true,
+                            get: function() { return trueSec; },
+                            set: function(v) {
+                                trueSec = Math.max(0, parseFloat(v) || 0);
+                            }
+                        });
+                        restoreProps = true;
+                    } catch (e) {}
+                }
+                try {
+                    var res = origSync.apply(this, arguments);
+                    if (!isDraggingArc && window.isStudioPlaying && window.studioSourceNode) {
+                        updateDeckAStudioClockFromNowV360(trueSec);
+                    }
+                    return res;
+                } finally {
+                    if (restoreProps && player) {
+                        try { delete player.paused; } catch (e) {}
+                        try { delete player.currentTime; } catch (e) {}
+                    }
+                }
+            };
+            wrappedSync._v360ClockWrapped = true;
+            window.syncMasterPlaybackEngineV59 = wrappedSync;
+        }
+    }
+    wrapHoseAndSyncWithTrueClockV360();
+    setTimeout(wrapHoseAndSyncWithTrueClockV360, 200);
+    setTimeout(wrapHoseAndSyncWithTrueClockV360, 600);
+
+    // 2. Учитываем модалки Деки Б (#settingsModalDeckB, #eqModalDeckB, #specModalDeckB) в высоте шапки и z-index,
+    //    чтобы плавающий мини-плеер видео (#jennyVideoStudioRootV130) НИКОГДА не перекрывал крестик закрытия или ползунки в Настройках/Эквалайзере!
+    var stModalZ = document.createElement('style');
+    stModalZ.id = 'jennyModalZIndexFixV360';
+    stModalZ.textContent = [
+        '#settingsModal.open, #eqModal.open, #specModal.open, #favModal.open, #themeModal.open,',
+        '#settingsModalDeckB.open, #eqModalDeckB.open, #specModalDeckB.open {',
+        '  z-index: 2147483646 !important;',
+        '}',
+        'body.jenny-any-modal-open-v360 #jennyVideoStudioRootV130.mode-pip-v130 {',
+        '  z-index: 2400 !important;',
+        '  opacity: 0.12 !important;',
+        '  pointer-events: none !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(stModalZ);
+
+    var _origSyncHeaderV71 = window.syncHeaderHeightWithModalsV71;
+    window.syncHeaderHeightWithModalsV71 = function() {
+        var r = (typeof _origSyncHeaderV71 === 'function') ? _origSyncHeaderV71.apply(this, arguments) : undefined;
+        var anyOpen = Boolean(document.querySelector('.modal-overlay.open'));
+        if (document.body) {
+            document.body.classList.toggle('jenny-any-modal-open-v360', anyOpen);
+        }
+        if (anyOpen) {
+            var plWrap = document.getElementById('jennyPlaylistBarWrapV71');
+            var subWrap = document.getElementById('jennySubCategoryStripV71');
+            var stickyTop = document.querySelector('.sticky-top');
+            var midList = document.querySelector('.middle-list-container');
+            if (plWrap) plWrap.style.setProperty('display', 'none', 'important');
+            if (subWrap) subWrap.style.setProperty('display', 'none', 'important');
+            if (stickyTop) stickyTop.style.setProperty('height', '104px', 'important');
+            if (midList) midList.style.setProperty('top', '104px', 'important');
+            document.querySelectorAll('.modal-overlay').forEach(function(m) {
+                m.style.setProperty('top', '104px', 'important');
+            });
+        }
+        return r;
+    };
+
+    var _origCloseAllV71 = window.closeAllV71Modals;
+    window.closeAllV71Modals = function() {
+        if (typeof window.closeDeckBIsolatedModals === 'function') {
+            window.closeDeckBIsolatedModals();
+        }
+        return (typeof _origCloseAllV71 === 'function') ? _origCloseAllV71.apply(this, arguments) : undefined;
+    };
+})();
+/* ================= END JENNY_V360_WEBAUDIO_CLOCK_AND_MODAL_SYNC ================= */
+
