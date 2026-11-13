@@ -1298,10 +1298,15 @@ DEFAULT_FORMAT_SLOTS = [
     {"en": True, "ext": "xflac"}
 ]
 
-def get_allowed_extensions():
+_PURE_VIDEO_EXT_SET_V365 = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp', '.flv', '.ts', '.wmv', '.mpg', '.mpeg')
+_PURE_AUDIO_EXT_DEF_V365 = ('.mp3', '.opus', '.m4a', '.flac', '.wav', '.xflac', '.ogg', '.aac', '.wv', '.ape', '.alac')
+
+def get_audio_allowed_extensions_v365():
+    """Возвращает строго ТОЛЬКО аудио-расширения для Деки А (/api/data). Никаких видеофайлов!"""
     q_exts = request.query.get('exts', '').strip()
     if q_exts:
-        exts = [ '.' + x.strip().lower().lstrip('.') for x in q_exts.split(',') if x.strip() ]
+        exts = ['.' + x.strip().lower().lstrip('.') for x in q_exts.split(',') if x.strip()]
+        exts = [x for x in exts if x not in _PURE_VIDEO_EXT_SET_V365]
         if exts:
             return tuple(exts)
     if os.path.exists(PRESET_FILE):
@@ -1310,12 +1315,21 @@ def get_allowed_extensions():
                 data = json.load(f)
             slots = data.get("formatSlots")
             if isinstance(slots, list) and len(slots) > 0:
-                exts = [ '.' + str(s.get('ext', '')).strip().lower().lstrip('.') for s in slots if s.get('en') and str(s.get('ext', '')).strip() ]
+                exts = ['.' + str(s.get('ext', '')).strip().lower().lstrip('.') for s in slots if s.get('en') and str(s.get('ext', '')).strip()]
+                exts = [x for x in exts if x not in _PURE_VIDEO_EXT_SET_V365]
                 if exts:
                     return tuple(exts)
         except Exception:
             pass
-    return ('.mp3', '.opus', '.m4a', '.flac', '.wav', '.xflac', '.ogg', '.mp4', '.aac', '.webm', '.3gp', '.mkv', '.avi', '.mov', '.m4v', '.flv')
+    return _PURE_AUDIO_EXT_DEF_V365
+
+def get_video_allowed_extensions_v365():
+    """Возвращает строго ТОЛЬКО видео-расширения для Деки Б (/api/video/discovered_list). Никаких аудиофайлов!"""
+    return _PURE_VIDEO_EXT_SET_V365
+
+def get_allowed_extensions():
+    """Для менеджера папок (/api/folders_v71) считает и аудио, и видео в папке."""
+    return tuple(list(get_audio_allowed_extensions_v365()) + list(get_video_allowed_extensions_v365()))
 
 
 @route('/api/data')
@@ -4141,7 +4155,7 @@ try:
 except Exception:
     pass
 
-_VIDEO_EXTS_V134 = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp')
+_VIDEO_EXTS_V134 = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.3gp', '.flv', '.ts', '.wmv', '.mpg', '.mpeg')
 _discovered_video_paths_v134 = {}
 _discovered_video_meta_v137 = {}
 _last_vid_scan_ts_v136 = 0.0
@@ -5799,7 +5813,7 @@ def sync_downloaded_videos_to_library_v134(force=False):
             pass
 
     for root_d in scan_dirs:
-        _scan_one_video_dir_v362(root_d, True)
+        _scan_one_video_dir_v362(root_d, False)
 
     for bn, (v_full, sz_mb, h, f_idx) in completed_tor_videos.items():
         if v_full and os.path.isfile(v_full):
@@ -11308,7 +11322,8 @@ _override_bottle_route_v212('/api/folders_v71', 'POST', api_folders_v237)
 def get_data_v237():
     response.content_type = 'application/json; charset=utf-8'
     load_multi_dirs_v71()
-    allowed_exts = get_allowed_extensions()
+    # [V365] /api/data ищет СТРОГО ТОЛЬКО аудиофайлы для Деки А! Видео ищет отдельная функция sync_downloaded_videos_to_library_v134.
+    allowed_exts = get_audio_allowed_extensions_v365()
     now = time.time()
     sig = f"{','.join(ACTIVE_MUSIC_DIRS)}|{','.join(SAVED_MUSIC_DIRS)}|{','.join(allowed_exts)}"
     if _DATA_CACHE_V237["payload"] and _DATA_CACHE_V237["sig"] == sig and (now - _DATA_CACHE_V237["ts"] < 1.2):
@@ -11321,8 +11336,6 @@ def get_data_v237():
                 seen.add(fn)
                 all_tracks.append(fn)
                 track_meta[fn] = quick_parse_artist_album_v71(fn, fp)
-                if fn.lower().endswith(_VIDEO_EXTS_V134):
-                    _discovered_video_paths_v134[fn] = fp
 
     all_tracks.sort(key=lambda x: track_meta.get(x, {}).get("mtime", 0), reverse=True)
     out_json = json.dumps({
@@ -12727,9 +12740,9 @@ def api_multiport_ping_v238():
             "torrents": "http://127.0.0.1:8083"
         },
         "sandboxes": {
-            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=363",
-            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=363",
-            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=363"
+            "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=365",
+            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=365",
+            "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=365"
         },
         "roles": {
             "8080": "VIP UI / Folders / Presets",

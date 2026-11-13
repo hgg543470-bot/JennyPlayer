@@ -36035,46 +36035,25 @@ let vsyncTicks = 0;
     setTimeout(wrapHoseAndSyncWithTrueClockV360, 200);
     setTimeout(wrapHoseAndSyncWithTrueClockV360, 600);
 
-    // 2. ЕДИНЫЙ СБОРЩИК ВИДЕО ИЗ АКТИВНЫХ ПАПОК (/api/data + /api/video/discovered_list)
-    window._harvestedActiveFolderVideosV362 = window._harvestedActiveFolderVideosV362 || {};
-
-    window.harvestVideosFromLastDataV362 = function(dataObj) {
-        if (!dataObj || !Array.isArray(dataObj.all_tracks)) return;
-        var nextHarvest = {};
-        var tMeta = dataObj.track_meta || {};
-        for (var i = 0; i < dataObj.all_tracks.length; i++) {
-            var fn = dataObj.all_tracks[i];
-            if (fn && window.isVideoFileNameV130 && window.isVideoFileNameV130(fn)) {
-                var m = tMeta[fn] || {};
-                var szMb = m.size ? Math.round((Number(m.size) / (1024 * 1024)) * 10) / 10 : 0;
-                nextHarvest[fn] = {
-                    name: fn,
-                    size_mb: szMb,
-                    percent: 100,
-                    in_video_dir: true,
-                    is_ready_local: true,
-                    tor_hash: '',
-                    tor_file_idx: -1,
-                    stream_url: '/api/media/' + encodeURIComponent(fn)
-                };
+    // 2. ПОЛНОЕ РАЗДЕЛЕНИЕ ПОИСКА АУДИО (ДЕКА А) И ПОИСКА ВИДЕО (ДЕКА Б) (#365):
+    //    - window.fetchData() (/api/data) ищет ТОЛЬКО аудиофайлы для Деки А и не трогает видео.
+    //    - window.syncDiscoveredVideosIntoPlaylistV134() (:8082/api/video/discovered_list) ищет ТОЛЬКО видеофайлы
+    //      для Деки Б и не трогает window.lastData.all_tracks!
+    //    - Запускается сразу после старта плеера И при переключении на вкладку «🎬 Видео».
+    window.isVideoTrackAllowedByFormatSlotsV150 = function(filename) {
+        if (!filename) return true;
+        var lower = String(filename).toLowerCase().trim();
+        try {
+            var slotsObj = window.ensureDualDeckFormatSlotsV150 ? window.ensureDualDeckFormatSlotsV150() : null;
+            var videoSlots = (slotsObj && Array.isArray(slotsObj.videoSlots)) ? slotsObj.videoSlots : [];
+            var activeExts = videoSlots
+                .filter(function(s) { return s && s.en && String(s.ext || '').trim(); })
+                .map(function(s) { return '.' + String(s.ext).trim().toLowerCase().replace(/^\.+/, ''); });
+            if (activeExts.length > 0) {
+                return activeExts.some(function(ext) { return lower.endsWith(ext); });
             }
-        }
-        window._harvestedActiveFolderVideosV362 = nextHarvest;
-
-        var merged = {};
-        var prevMap = window._dedicatedVideoMetaMapV137 || {};
-        Object.keys(prevMap).forEach(function(k) {
-            var it = prevMap[k];
-            if (it && it.tor_hash) {
-                merged[k] = it;
-            }
-        });
-        Object.keys(nextHarvest).forEach(function(k) {
-            merged[k] = prevMap[k] ? Object.assign({}, prevMap[k], nextHarvest[k]) : nextHarvest[k];
-        });
-        window._dedicatedVideoMetaMapV137 = merged;
-        var allVids = window.collectClientTorrentVideosV137 ? window.collectClientTorrentVideosV137() : Object.values(merged);
-        window._dedicatedVideoListV137 = allVids.map(function(x) { return x.name; }).sort();
+        } catch (e) {}
+        return Boolean(window.isVideoFileNameV130 && window.isVideoFileNameV130(filename));
     };
 
     window.syncDiscoveredVideosIntoPlaylistV134 = async function(forceScan) {
@@ -36084,7 +36063,7 @@ let vsyncTicks = 0;
                 var data = await res.json();
                 if (data.video_dir) window._dedicatedVideoDirPathV137 = data.video_dir;
                 var items = data.items || [];
-                var nextMap = Object.assign({}, window._harvestedActiveFolderVideosV362 || {});
+                var nextMap = {};
                 items.forEach(function(it) {
                     if (it && it.name) nextMap[it.name] = it;
                 });
@@ -36092,40 +36071,28 @@ let vsyncTicks = 0;
             }
         } catch (e) {}
 
-        var mergedItems = window.collectClientTorrentVideosV137 ? window.collectClientTorrentVideosV137() : Object.values(window._dedicatedVideoMetaMapV137 || {});
+        var mergedItems = window.collectClientTorrentVideosV137
+            ? window.collectClientTorrentVideosV137()
+            : Object.values(window._dedicatedVideoMetaMapV137 || {});
         window._dedicatedVideoListV137 = mergedItems.map(function(x) { return x.name; }).sort();
-
-        if (window.lastData && Array.isArray(window.lastData.all_tracks)) {
-            window.harvestVideosFromLastDataV362(window.lastData);
-            window.lastData.all_tracks = window.lastData.all_tracks.filter(function(fn) {
-                return !window.isVideoFileNameV130(fn);
-            });
-        }
 
         if (typeof window.mountPlaylistStripDOMV71 === 'function') window.mountPlaylistStripDOMV71();
         if (typeof window.renderPlaylistStripChipsV71 === 'function') window.renderPlaylistStripChipsV71();
         if (window.activePlaylistTabV71 === 'videos' && typeof window.renderActivePlaylistTracksV71 === 'function') {
             window.renderActivePlaylistTracksV71(false);
         }
+        if (typeof window.syncDualDeckCountersV216 === 'function') {
+            window.syncDualDeckCountersV216();
+        }
         if (typeof window.syncContextRefreshCounterV242 === 'function') {
             window.syncContextRefreshCounterV242();
         }
     };
 
-    var _origJsonProtoV362 = Response && Response.prototype && Response.prototype.json;
-    if (typeof _origJsonProtoV362 === 'function' && !_origJsonProtoV362._v362Hooked) {
-        var wrappedJson = async function() {
-            var obj = await _origJsonProtoV362.apply(this, arguments);
-            try {
-                if (obj && Array.isArray(obj.all_tracks) && obj.track_meta && Array.isArray(obj.active_folders)) {
-                    window.harvestVideosFromLastDataV362(obj);
-                }
-            } catch (e) {}
-            return obj;
-        };
-        wrappedJson._v362Hooked = true;
-        Response.prototype.json = wrappedJson;
-    }
+    // Сразу после загрузки плеера параллельно и независимо запускаем поиск видео для Деки Б!
+    setTimeout(function() {
+        window.syncDiscoveredVideosIntoPlaylistV134(true);
+    }, 120);
 
     // 3. МГНОВЕННЫЙ ВИЗУАЛЬНЫЙ ОТКЛИК ГАЛОЧЕК В «📁 МУЗЫКАЛЬНЫЕ ПАПКИ» (0 мс ПРИ ТАПЕ!)
     window.renderFolderManagerRowsHTMLV237 = function(saved, active, ft, folderCounts) {
@@ -36324,6 +36291,9 @@ let vsyncTicks = 0;
     if (typeof _origSelectPlTabV362 === 'function' && !_origSelectPlTabV362._v362Wrapped) {
         window.selectPlaylistTabV71 = function(tabId, ev) {
             var r = _origSelectPlTabV362.apply(this, arguments);
+            if (tabId === 'videos' && typeof window.syncDiscoveredVideosIntoPlaylistV134 === 'function') {
+                window.syncDiscoveredVideosIntoPlaylistV134(false);
+            }
             if (typeof window.syncContextRefreshCounterV242 === 'function') {
                 window.syncContextRefreshCounterV242();
             }
