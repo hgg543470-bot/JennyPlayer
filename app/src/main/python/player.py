@@ -7941,6 +7941,10 @@ def api_video_live_remux_v217():
         audio_idx = max(0, int(request.query.get('aidx') or 0))
     except Exception:
         audio_idx = 0
+    try:
+        av_lead = max(-2.5, min(2.5, float(request.query.get('av_lead') or 0.0)))
+    except Exception:
+        av_lead = 0.0
 
     if not raw_src:
         response.status = 400
@@ -7951,7 +7955,7 @@ def api_video_live_remux_v217():
         src = '/' + src.split('/', 3)[3]
 
     mode_tag = "AO" if audio_only else ("VO" if no_audio else "VA")
-    req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}"
+    req_key = f"{src}::{round(start_sec, 1)}::{audio_idx}::{mode_tag}::{round(av_lead, 2)}"
     now_ts = time.time()
     with _ACTIVE_VIDEO_FFMPEG_LOCK_V212:
         for k_existing, plist in list(_ACTIVE_REMUX_PROCS_BY_KEY_V214.items()):
@@ -11849,10 +11853,6 @@ def api_video_live_remux_v240():
         or any(ext in src.lower() for ext in _TRANSCODE_REQUIRED_EXTS_V240)
     )
 
-    # Seek BEFORE -i for fast keyframe demux, then lock timestamps to 0 via -avoid_negative_ts make_zero!
-    if start_sec > 0.5:
-        cmd.extend(['-ss', f"{start_sec:.2f}"])
-
     if need_v_transcode:
         v_codec_args = [
             '-threads', ff_threads,
@@ -11863,11 +11863,35 @@ def api_video_live_remux_v240():
     else:
         v_codec_args = ['-c:v', 'copy']
 
-    # CRITICAL A/V SYNC FIX V240:
-    # NEVER pass '+igndts' when copying H.264/HEVC B-frames — '+igndts' destroys ctts PTS/DTS offsets,
-    # freezing initial video GOPs in MediaCodec while audio races ahead!
-    fflags_val = '+genpts+nobuffer'
-    af_sync = 'aresample=async=1000:first_pts=0' if start_sec <= 0.5 else 'aresample=async=1000'
+    # CRITICAL A/V SYNC FIX V366 (75005.mp4):
+    # 1) When copying video (-c:v copy) with start_sec > 0.5, ALWAYS pass '-noaccurate_seek' before '-ss'!
+    #    Without '-noaccurate_seek', FFmpeg starts '-c:v copy' video at the previous x265/H.264 keyframe (~5s earlier),
+    #    while accurate-seeking '-c:a aac' audio to start_sec (discarding 5s of audio samples!).
+    #    Because WebAudio createMediaElementSource(vid) plays audio strictly by cumulative decoded sample count,
+    #    discarding those 5s of audio caused audio to play ~5 seconds ahead of video at 1.0x/1.1x/0.95x/1.5x!
+    # 2) NEVER pass '+nobuffer' in -fflags when remuxing MKV/HEVC B-frames: Matroska stores only PTS (no DTS),
+    #    and '+nobuffer' disables B-frame pyramid delay detection in avformat_find_stream_info, shifting video PTS by 1 GOP!
+    # 3) NEVER pass '-af aresample=async=1000' on '-c:v copy' remuxes: let '-avoid_negative_ts make_zero' shift
+    #    both video and audio tracks by the exact same muxer offset!
+    if start_sec > 0.5:
+        if not need_v_transcode and not audio_only:
+            cmd.extend(['-noaccurate_seek', '-ss', f"{start_sec:.2f}"])
+        else:
+            cmd.extend(['-ss', f"{start_sec:.2f}"])
+
+    fflags_val = '+genpts'
+
+    # V367: Pre-advance audio samples by `av_lead` seconds (while keeping original initial PTS via asetpts=PTS-lead/TB
+    # so -avoid_negative_ts make_zero shifts Video and Audio identically!). This cancels Chromium WebAudioSourceProviderImpl
+    # + WSOLA + DSP transit delay even before RAM Buffer #3 finishes loading!
+    af_lead_args = []
+    if not no_audio and not audio_only:
+        if av_lead > 0.005:
+            n_samp = int(round(av_lead * 48000))
+            af_lead_args = ['-af', f'aresample=48000,atrim=start_sample={n_samp},asetpts=PTS-{av_lead:.4f}/TB', '-ar', '48000']
+        elif av_lead < -0.005:
+            delay_ms = int(round(abs(av_lead) * 1000))
+            af_lead_args = ['-af', f'aresample=48000,adelay={delay_ms}:all=1', '-ar', '48000']
 
     if audio_only:
         cmd.extend([
@@ -11875,7 +11899,6 @@ def api_video_live_remux_v240():
             '-i', src_input,
             '-vn', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
             '-threads', ff_threads,
-            '-af', af_sync,
             '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
             '-avoid_negative_ts', 'make_zero',
             '-movflags', 'empty_moov+default_base_moof',
@@ -11902,7 +11925,7 @@ def api_video_live_remux_v240():
             '-map', '0:v:0', '-map', f'0:a:{audio_idx}?', '-sn', '-dn',
             *v_codec_args,
             '-threads', ff_threads,
-            '-af', af_sync,
+            *af_lead_args,
             '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
             '-avoid_negative_ts', 'make_zero',
             '-max_interleave_delta', '400000',
