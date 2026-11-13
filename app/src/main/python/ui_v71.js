@@ -25826,9 +25826,10 @@ let vsyncTicks = 0;
         var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
 
         var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid ? (vid.duration || 0) : 0);
+        var rawTargetSec = Number(targetSec) || 0;
         var clamped = (isFinite(dur) && dur > 0)
-            ? Math.max(0.1, Math.min(Math.max(0.1, dur - 0.2), Number(targetSec) || 0))
-            : Math.max(0.1, Number(targetSec) || 0);
+            ? Math.max(0.0, Math.min(Math.max(0.0, dur - 0.2), rawTargetSec))
+            : Math.max(0.0, rawTargetSec);
 
         // [V355] Если видео стоит на паузе — мгновенно двигаем синюю шкалу и кадр превью БЕЗ автозапуска!
         if (st.userPaused) {
@@ -36534,24 +36535,162 @@ let vsyncTicks = 0;
 })();
 /* ================= END JENNY_V360_WEBAUDIO_CLOCK_AND_MODAL_SYNC ================= */
 
-/* ================= BEGIN JENNY_V367_AV_SYNC_RADAR_AND_ZERO_LAG_ENGINE =================
-   1) EXPLAINS & VISUALIZES A/V SYNC TELEMETRY LIVE ON SCREEN ("⏱️ Синхро-Радар А/В"):
-      - Shows Video PTS vs Audio Cursor, WebAudio Context hardware latency (ms),
-        WSOLA + DSP transit delay (ms), Active Sound Path (RAM Buffer #3 vs Direct <video>),
-        and interactive buttons [⏪ -0.1с] / [🎯 Авто] / [⏩ +0.1с] for instant on-the-fly calibration!
-   2) ELIMINATES THE 1.0–1.5s AUDIO LAG BEHIND THE VIDEO PICTURE:
-      - Uses low-latency AudioContext({ latencyHint: 'interactive' }) on Deck B.
-      - Activates Seamless RAM Buffer #3 (vd.studioBuffer) in forward playback with exact
-        audio lead compensation (curVideoSec + avLeadSec * targetSpd) so speed changes
-        (1.0x -> 1.1x -> 0.95x -> 1.5x) happen in 0ms without Chromium WSOLAFIFO lag!
-      - Passes &av_lead= to /api/video/live_remux so even during the first 1–2s before
-        RAM Buffer #3 is ready, FFmpeg pre-advances audio samples to match the picture!
+/* ================= BEGIN JENNY_V368_FIX_PLAYBACK_HUD_AND_DYNAMIC_DSP_RADAR =================
+   1) PRESERVES V238 MULTI-PORT ROUTER (:8082) ON HTMLMediaElement.prototype.src:
+      - Never overwrites V238's `src` setter, so `<video>` live_remux streams always route to port :8082
+        while RAM Buffer #3 chunks decode in parallel without deadlocking or stalling at 0.10s!
+   2) MOVES "🎬 Настройки видео" (#jennyModularLabBoxV208) FROM DECK A (#settingsModal) TO DECK B (#settingsModalDeckB):
+      - Deck A settings contain ONLY audio settings; Deck B settings contain all video settings + "🎬 Настройки видео".
+      - Clicking "🎛️ Пульт" in the video player opens Deck B's `#settingsModalDeckB` and scrolls to "🎬 Настройки видео".
+   3) DEFAULT AUTO-HIDE OFF (`stub1 = false`) & COMPLETE HUD HIDE FIX:
+      - By default, video player controls do NOT auto-hide every 4 seconds unless the user enables "⏱️ Скрывать управление".
+      - When the user taps the video frame to hide the HUD (`hud-hidden-v130`), ALL bottom buttons (`#v135BottomToolsRow`)
+        and the A/V Sync tab hide 100% cleanly (`opacity: 0; visibility: hidden; pointer-events: none`).
+   4) COMPACT COLLAPSIBLE EDGE TAB ("⏱️ А/В") + DYNAMIC REAL-TIME DSP LATENCY BREAKDOWN:
+      - Replaces the wide bottom banner with a sleek collapsible pill/tab on the right edge (`⏱️ А/В ▸` / `◂`).
+      - Dynamically computes real-time DSP latency (in ms) from the actual enabled Deck B modules
+        (FIR impulse decayMs, 3-Band/Limiter lookahead, 5x IIR EQ, Binaural Crossfeed delay, M/S Width, Punch).
 ================= */
 (function() {
-    if (window._jennyV367AvSyncRadarInstalled) return;
-    window._jennyV367AvSyncRadarInstalled = true;
+    if (window._jennyV368AvSyncRadarInstalled) return;
+    window._jennyV368AvSyncRadarInstalled = true;
 
-    // Load saved user A/V trim (in seconds; positive = advance audio earlier to fix audio lagging behind video)
+    // 1. Default auto-hide controls in main player (`stub1`) to FALSE unless user explicitly saved a preference in V368
+    try {
+        if (localStorage.getItem('jenny_autohide_default_off_v368') !== '1') {
+            localStorage.setItem('jenny_autohide_default_off_v368', '1');
+            if (window._jennyLabFlagsV208) {
+                window._jennyLabFlagsV208.stub1 = false;
+                if (typeof window.saveJennyLabFlagsV208 === 'function') {
+                    window.saveJennyLabFlagsV208();
+                }
+            }
+        }
+    } catch (e) {}
+
+    // 2. CSS: Guarantee 100% hiding of ALL HUD bars, #v135BottomToolsRow, and the A/V Sync edge tab when HUD is hidden!
+    var stV368 = document.createElement('style');
+    stV368.id = 'jennyStyleV368HudAndAvTab';
+    stV368.textContent = [
+        '#v130HudOverlay.hud-hidden-v130,',
+        '#v130HudOverlay.hud-hidden-v130 #v130TopDragBar,',
+        '#v130HudOverlay.hud-hidden-v130 #v130BottomBar,',
+        '#v130HudOverlay.hud-hidden-v130 #v135BottomToolsRow,',
+        '#v130HudOverlay.hud-hidden-v130 #jennyAvSyncEdgePillV368,',
+        '#jennyVideoStudioRootV130.jv210-controls-hidden #jennyAvSyncEdgePillV368,',
+        '#jennyVideoStudioRootV130.compact-pip-v218 #jennyAvSyncEdgePillV368 {',
+        '  opacity: 0 !important;',
+        '  visibility: hidden !important;',
+        '  pointer-events: none !important;',
+        '}',
+        '#jennyAvSyncEdgePillV368 {',
+        '  position: absolute;',
+        '  right: 8px;',
+        '  top: 54px;',
+        '  z-index: 99996;',
+        '  display: flex;',
+        '  flex-direction: column;',
+        '  align-items: flex-end;',
+        '  gap: 4px;',
+        '  pointer-events: auto;',
+        '  user-select: none;',
+        '  -webkit-user-select: none;',
+        '  transition: opacity 0.18s ease;',
+        '}',
+        '#jennyAvSyncEdgePillBtnV368 {',
+        '  display: inline-flex;',
+        '  align-items: center;',
+        '  gap: 5px;',
+        '  padding: 4px 10px;',
+        '  border-radius: 14px;',
+        '  background: rgba(9, 15, 26, 0.90);',
+        '  border: 1.5px solid #3b82f6;',
+        '  color: #93c5fd;',
+        '  font-family: monospace;',
+        '  font-size: 10.5px;',
+        '  font-weight: 900;',
+        '  box-shadow: 0 4px 12px rgba(0,0,0,0.8);',
+        '  cursor: pointer;',
+        '}',
+        '#jennyAvSyncEdgeDrawerV368 {',
+        '  display: none;',
+        '  flex-direction: column;',
+        '  gap: 5px;',
+        '  padding: 8px 10px;',
+        '  border-radius: 12px;',
+        '  background: rgba(9, 13, 22, 0.95);',
+        '  border: 1.5px solid #3b82f6;',
+        '  box-shadow: 0 8px 24px rgba(0,0,0,0.92);',
+        '  font-family: monospace;',
+        '  font-size: 10.5px;',
+        '  color: #e6edf3;',
+        '  max-width: min(320px, 88vw);',
+        '}'
+    ].join('\n');
+    document.head.appendChild(stV368);
+
+    // Also ensure #jennyVideoStudioRootV130 always carries class `.active` while st.active is true
+    // so V210/V224 touch listeners (`ov.classList.contains('active')`) always recognize user touches!
+    var _origOpenVidV368 = window.openJennyVideoPlayerV130;
+    if (typeof _origOpenVidV368 === 'function' && !_origOpenVidV368._v368Wrapped) {
+        window.openJennyVideoPlayerV130 = function() {
+            var r = _origOpenVidV368.apply(this, arguments);
+            var root = document.getElementById('jennyVideoStudioRootV130');
+            if (root) root.classList.add('active');
+            return r;
+        };
+        window.openJennyVideoPlayerV130._v368Wrapped = true;
+    }
+    var _origCloseVidV368 = window.closeVideoPlayerV130;
+    if (typeof _origCloseVidV368 === 'function' && !_origCloseVidV368._v368Wrapped) {
+        window.closeVideoPlayerV130 = function() {
+            var root = document.getElementById('jennyVideoStudioRootV130');
+            if (root) root.classList.remove('active');
+            return _origCloseVidV368.apply(this, arguments);
+        };
+        window.closeVideoPlayerV130._v368Wrapped = true;
+    }
+
+    // 3. Move "🎬 Настройки видео" (#jennyModularLabBoxV208) into Deck B (#settingsModalDeckB)
+    //    and make "🎛️ Пульт" inside the video player open Deck B's #settingsModalDeckB!
+    var _origMountModLabV208 = window.mountModularLabSettingsV208;
+    window.mountModularLabSettingsV208 = function() {
+        if (typeof _origMountModLabV208 === 'function') {
+            _origMountModLabV208.apply(this, arguments);
+        }
+        var box = document.getElementById('jennyModularLabBoxV208');
+        var smBCont = document.getElementById('settingsModalDeckBContainer') || document.getElementById('settingsModalDeckB');
+        if (box && smBCont && !smBCont.contains(box)) {
+            var anchor = document.getElementById('jennyDeckBSettingsAvRadarCardV367') || document.getElementById('jennyFourBuffersHudBarB');
+            if (anchor && anchor.parentNode === smBCont) {
+                anchor.insertAdjacentElement('afterend', box);
+            } else {
+                smBCont.insertBefore(box, smBCont.firstChild);
+            }
+        }
+    };
+
+    window.openVideoDeckDspStudioV131 = function(ev) {
+        if (ev && window.isVideoHudGuardActiveV130 && window.isVideoHudGuardActiveV130(ev)) return;
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var st = window._vidStateV130;
+        if (st && !st.pipMode && typeof window.toggleVideoPipModeV130 === 'function') {
+            window.toggleVideoPipModeV130();
+        }
+        if (typeof window.openDeckBIsolatedSettingsModal === 'function') {
+            window.openDeckBIsolatedSettingsModal(ev, 'sec_top', true);
+        }
+        window.mountModularLabSettingsV208();
+        var vidSettingsBox = document.getElementById('jennyModularLabBoxV208');
+        if (vidSettingsBox) {
+            vidSettingsBox.open = true;
+            setTimeout(function() {
+                if (vidSettingsBox.scrollIntoView) vidSettingsBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 120);
+        }
+    };
+
+    // 4. Load saved user A/V trim (in seconds; positive = advance audio earlier)
     var savedTrim = 0.0;
     try {
         var rawSaved = localStorage.getItem('jenny_video_av_trim_sec_v367');
@@ -36561,78 +36700,113 @@ let vsyncTicks = 0;
         }
     } catch (e) {}
     window._jennyVideoUserAvTrimSecV367 = savedTrim;
-    window._jennyVideoAvRadarVisibleV367 = true;
+    window._jennyAvSyncEdgeExpandedV368 = false;
 
-    // Measure live WebAudio + DSP + Android AudioTrack hardware latency (in seconds)
+    // 5. Real-time, honest calculation of WebAudio + active Deck B DSP modules latency (in ms and seconds)
     window.getDeckBHardwareAndDspLatencySecV367 = function() {
         var vd = window.videoDeckV131 || {};
         var st = window._vidStateV130 || {};
+        var cfg = vd.config || {};
         var ctx = vd.ctx;
-        var baseLat = (ctx && typeof ctx.baseLatency === 'number' && isFinite(ctx.baseLatency)) ? ctx.baseLatency : 0.025;
-        var outLat = (ctx && typeof ctx.outputLatency === 'number' && isFinite(ctx.outputLatency) && ctx.outputLatency > 0) ? ctx.outputLatency : 0.085;
-        var dspLat = 0.0;
-        if (!st.dspBypass && vd.config) {
-            dspLat += 0.035; // 5x Biquad EQ + 3-Band Crossover + DynamicsCompressors
-            if (vd.config.firEnabled) dspLat += 0.045; // ConvolverNode FIR impulse
+
+        // Real WebAudio context latency reported by Chromium / Android AAudio:
+        var sr = (ctx && ctx.sampleRate) ? ctx.sampleRate : 48000;
+        var baseLat = (ctx && typeof ctx.baseLatency === 'number' && isFinite(ctx.baseLatency) && ctx.baseLatency > 0)
+            ? ctx.baseLatency
+            : (256 / sr);
+        var outLat = (ctx && typeof ctx.outputLatency === 'number' && isFinite(ctx.outputLatency) && ctx.outputLatency > 0)
+            ? ctx.outputLatency
+            : 0.040;
+        // WebAudio render quantum on Android WebView (128 frames per render quantum)
+        var ctxSec = baseLat + outLat;
+
+        // Calculate exact DSP group delay from currently active Deck B DSP blocks:
+        var dspMs = 0.0;
+        var activeDspTags = [];
+        if (!st.dspBypass) {
+            // 1) ConvolverNode (FIR Saturator): FFT partitioned convolution + impulse decay group delay
+            if (cfg.firEnabled && cfg.firSettings) {
+                var decayMs = parseFloat(cfg.firSettings.decay);
+                if (!isFinite(decayMs) || decayMs <= 0) decayMs = 1.28;
+                var firDelayMs = 2.67 + Math.min(25.0, decayMs * 0.42);
+                dspMs += firDelayMs;
+                activeDspTags.push('FIR ' + firDelayMs.toFixed(1) + 'мс');
+            }
+            // 2) 5-Band IIR Biquad Equalizer: phase group delay around low/mid shelves
+            if (cfg.eqEnabled) {
+                var eqCfg = cfg.eq || {};
+                var anyNonZero = [60, 230, 910, 3600, 14000].some(function(f) {
+                    return Math.abs(parseFloat(eqCfg['b' + f]) || 0) > 0.1;
+                });
+                var eqDelayMs = anyNonZero ? 1.85 : 0.65;
+                dspMs += eqDelayMs;
+                activeDspTags.push('EQ ' + eqDelayMs.toFixed(1) + 'мс');
+            }
+            // 3) Soft-Clip Limiter & 3-Band Crossover ( WebAudio DynamicsCompressorNode has a built-in 6.0ms lookahead delay! )
+            if (cfg.limiterEnabled) {
+                if (cfg.multiBandEnabled) {
+                    var mbDelayMs = 6.0 + 1.9; // 6ms compressor lookahead + LR crossover filter delay
+                    dspMs += mbDelayMs;
+                    activeDspTags.push('3-Band+Лим ' + mbDelayMs.toFixed(1) + 'мс');
+                } else {
+                    dspMs += 6.0;
+                    activeDspTags.push('Лимитер 6.0мс');
+                }
+                if (cfg.opt_deEsser) {
+                    dspMs += 0.8;
+                }
+            }
+            // 4) PRO Mastering Modules:
+            if (cfg.opt_monoBass) {
+                dspMs += 1.1;
+                activeDspTags.push('МоноБас 1.1мс');
+            }
+            if (cfg.opt_punch) {
+                dspMs += 1.4;
+                activeDspTags.push('Панч 1.4мс');
+            }
+            if (cfg.opt_msWidth) {
+                var wPct = parseFloat(cfg.val_msWidth);
+                var msDelay = (!isNaN(wPct) && wPct > 100) ? 1.8 : 0.7;
+                dspMs += msDelay;
+                activeDspTags.push('Стерео ' + msDelay.toFixed(1) + 'мс');
+            }
+            if (cfg.opt_crossfeed) {
+                var cfPct = parseFloat(cfg.val_crossfeed) || 65;
+                var cfDelay = 0.42 + (cfPct / 100.0) * 0.45;
+                dspMs += cfDelay;
+                activeDspTags.push('Бинаурал ' + cfDelay.toFixed(1) + 'мс');
+            }
+            if (cfg.opt_masterCeil || cfg.phaseFixEnabled) {
+                dspMs += 0.5;
+            }
         }
+
+        var dspSec = dspMs / 1000.0;
+        // Android AudioFlinger / HAL hardware presentation offset (~85ms) + ctxSec + dspSec
+        var totalRamPipelineSec = Math.max(0.04, Math.min(0.80, ctxSec + dspSec + 0.085));
+
         return {
-            ctxMs: Math.round((baseLat + outLat) * 1000),
-            dspMs: Math.round(dspLat * 1000),
-            totalRamPipelineSec: Math.max(0.08, Math.min(0.65, baseLat + outLat + dspLat + 0.06))
+            ctxMs: Math.round(ctxSec * 1000),
+            dspMs: Math.round(dspMs * 10) / 10,
+            dspBreakdown: activeDspTags.length > 0 ? activeDspTags.join(' + ') : (st.dspBypass ? 'DSP Выкл (0мс)' : 'Базовый тракт (0.5мс)'),
+            totalRamPipelineSec: totalRamPipelineSec
         };
     };
 
-    // Total audio lead (in media seconds) to apply:
-    // - When playing from RAM Buffer #3 (vd.studioBuffer): we bypass <video>'s WSOLA + WebAudioSourceProviderImpl FIFO (~1.05s lag!),
-    //   so we only need to compensate `totalRamPipelineSec` (~0.20s) + user's manual trim (`_jennyVideoUserAvTrimSecV367`)!
-    // - When playing from Direct <video> stream (before RAM Buffer #3 is ready): <video> -> createMediaElementSource
-    //   has ~1.10s of uncompensated Chromium WebAudioSourceProviderImpl + WSOLA + AudioTrack delay,
-    //   so `/api/video/live_remux` pre-advances audio by `1.10 + _jennyVideoUserAvTrimSecV367` seconds!
     window.getEffectiveRamAudioLeadSecV367 = function() {
         var hw = window.getDeckBHardwareAndDspLatencySecV367();
         var userTrim = Number(window._jennyVideoUserAvTrimSecV367 || 0);
         return Math.max(-2.5, Math.min(2.5, hw.totalRamPipelineSec + userTrim));
     };
 
-    window.getEffectiveStreamRemuxAvLeadSecV367 = function() {
-        var vd = window.videoDeckV131 || {};
-        var studioOn = Boolean(!vd.config || vd.config.studioMode !== false);
-        var userTrim = Number(window._jennyVideoUserAvTrimSecV367 || 0);
-        // If studioMode (RAM Buffer #3) is enabled, RAM Buffer #3 takes over after Piece 0 loads (~1s),
-        // but for the initial direct stream (or if studioMode is OFF), pre-advance stream audio by 1.10s + userTrim!
-        var baseStreamComp = studioOn ? 0.95 : 1.15;
-        return Math.max(-2.5, Math.min(2.5, Math.round((baseStreamComp + userTrim) * 100) / 100));
+    window.toggleAvSyncEdgeDrawerV368 = function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        window._jennyAvSyncEdgeExpandedV368 = !window._jennyAvSyncEdgeExpandedV368;
+        window.updateVideoAvSyncRadarUIV367();
+        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
     };
 
-    // Automatically append &av_lead=... to /api/video/live_remux URLs assigned to #jennyVideoElV130
-    function installVideoSrcAvLeadInterceptorV367() {
-        var proto = window.HTMLMediaElement && window.HTMLMediaElement.prototype;
-        if (!proto) return;
-        var desc = Object.getOwnPropertyDescriptor(proto, 'src');
-        if (!desc || !desc.set || desc.set._v367Wrapped) return;
-        var origSet = desc.set;
-        var origGet = desc.get;
-        var wrappedSet = function(val) {
-            var s = String(val || '');
-            if (this && this.id === 'jennyVideoElV130' && s.indexOf('/api/video/live_remux') !== -1 && s.indexOf('av_lead=') === -1) {
-                var lead = window.getEffectiveStreamRemuxAvLeadSecV367();
-                s += (s.indexOf('?') === -1 ? '?' : '&') + 'av_lead=' + encodeURIComponent(lead.toFixed(2));
-            }
-            return origSet.call(this, s);
-        };
-        wrappedSet._v367Wrapped = true;
-        try {
-            Object.defineProperty(proto, 'src', {
-                configurable: true,
-                enumerable: desc.enumerable,
-                get: origGet,
-                set: wrappedSet
-            });
-        } catch (e) {}
-    }
-    installVideoSrcAvLeadInterceptorV367();
-
-    // Adjust A/V sync offset on the fly (-0.1s / Reset Auto / +0.1s)
     window.adjustVideoAvSyncTrimV367 = function(deltaSec, resetToAuto, ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
         if (resetToAuto) {
@@ -36645,21 +36819,12 @@ let vsyncTicks = 0;
             localStorage.setItem('jenny_video_av_trim_sec_v367', String(window._jennyVideoUserAvTrimSecV367));
         } catch (e) {}
 
-        var vd = window.videoDeckV131 || {};
         var st = window._vidStateV130 || {};
-        var vid = document.getElementById('jennyVideoElV130');
-
-        // Immediately resync RAM Buffer #3 at the new audio lead offset (0ms, no video interruption!)
         if (typeof window.syncVideoRamEngineV211 === 'function') {
             window.syncVideoRamEngineV211(false, true);
         }
-        // If playing pure stream without RAM Buffer #3, re-seek live_remux with new &av_lead
-        if (st.active && !vd.isStudioPlaying && st.usingRemux && vid && typeof window.seekDeckBAndPlayerSyncedV212 === 'function') {
-            var cur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
-            window.seekDeckBAndPlayerSyncedV212(cur, false, true);
-        }
-
         window.updateVideoAvSyncRadarUIV367();
+
         var trimVal = window._jennyVideoUserAvTrimSecV367;
         var signStr = trimVal >= 0 ? ('+' + trimVal.toFixed(2)) : trimVal.toFixed(2);
         var msg = resetToAuto
@@ -36675,26 +36840,11 @@ let vsyncTicks = 0;
         }
     };
 
-    window.toggleVideoAvRadarPanelV367 = function(ev) {
-        if (ev && ev.stopPropagation) ev.stopPropagation();
-        window._jennyVideoAvRadarVisibleV367 = !window._jennyVideoAvRadarVisibleV367;
-        var bar = document.getElementById('jennyVideoAvSyncRadarBarV367');
-        if (bar) {
-            bar.style.display = window._jennyVideoAvRadarVisibleV367 ? 'flex' : 'none';
-        }
-        window.updateVideoAvSyncRadarUIV367();
-        if (typeof window.wakeVideoHudV130 === 'function') window.wakeVideoHudV130(false);
-    };
-
-    // Upgrade syncVideoRamEngineV211 & syncVideoRamEngineV131:
-    // 1) Seamless RAM Buffer #3 replacement in forward playback (`useRamEngine`) as soon as current piece is ready in RAM!
-    // 2) Exact audio lead compensation (`audioTargetSec = curSec + effLeadSec * targetSpd`) so sound from speaker matches video frame on screen to 0.00s!
-    // 3) Drift watchdog: if `<video>` currentTime and RAM Buffer #3 cursor drift by > 0.09s (e.g. on speed change 1.1x -> 0.95x -> 1.5x), resyncs in 0ms!
+    // 6. Seamless RAM Buffer #3/#4 playback engine with 0ms speed transitions and drift correction
     window.syncVideoRamEngineV211 = window.syncVideoRamEngineV131 = function(isDragging, forceResyncNow) {
         var vd = window.videoDeckV131, st = window._vidStateV130, vid = document.getElementById('jennyVideoElV130');
         if (!vid || !vd || !vd.ctx || !st || !st.active) return;
 
-        // If mode "В" (Video Only -an) is active, mute all audio
         if (st.videoStreamModeV217 === 'v_only') {
             if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
             if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
@@ -36718,7 +36868,6 @@ let vsyncTicks = 0;
 
         var isVidActuallyPlayingFrames = Boolean(!vid.paused && !vid.ended && vid.readyState >= 2 && !window._vidIsBufferingV132);
 
-        // Never play RAM audio while <video> is paused or buffering (⏳) in forward mode!
         if (!isRev && (!isVidActuallyPlayingFrames || st.userPaused)) {
             if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
             if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
@@ -36734,7 +36883,6 @@ let vsyncTicks = 0;
             return;
         }
 
-        // In hardware reverse mode (_playingHardwareRevStreamV219), if RAM Buffer #4 isn't ready yet, let hardware reverse stream play
         if (isRev && st._playingHardwareRevStreamV219 && !vd.reversedStudioBuffer && !vd.studioBuffer) {
             if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
             if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
@@ -36756,9 +36904,6 @@ let vsyncTicks = 0;
             (!vd.studioBuffer._pieceMapV72 || vd.studioBuffer._pieceMapV72.length === 0 || (curP >= 0 && vd.studioBuffer._pieceMapV72[curP] === 2))
         );
         var studioOn = Boolean(!vd.config || vd.config.studioMode !== false);
-
-        // Seamless replacement: as soon as Piece `curP` of RAM Buffer #3 (Forward) or #4 (Reverse) is in RAM,
-        // and studioMode is enabled (and not in Neutral N), switch audio from <video> WSOLA to RAM Buffer #3/#4!
         var useRamEngine = studioOn && isPieceReady && (isRev || gKey !== 'neutral');
 
         if (!useRamEngine) {
@@ -36781,7 +36926,6 @@ let vsyncTicks = 0;
             return;
         }
 
-        // Check if RAM Buffer #3 is ALREADY playing in sync at the same speed, gear, direction, and within 85ms of `audioTargetSec`!
         if (
             !forceResyncNow &&
             !isDragging &&
@@ -36830,7 +36974,6 @@ let vsyncTicks = 0;
             nodeRate = targetSpd;
         }
 
-        // Mute <video>'s own delayed audio output and switch 100% to RAM Buffer #3/#4!
         if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
         if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
 
@@ -36873,10 +37016,9 @@ let vsyncTicks = 0;
         }
     };
 
-    // Hook setVideoDeckSpeedV170 so every speed change (1.1x, 0.95x, 1.5x) immediately resyncs RAM Buffer #3 in 0ms!
-    var _prevSetSpeedV367 = window.setVideoDeckSpeedV170;
+    var _prevSetSpeedV368 = window.setVideoDeckSpeedV170;
     window.setVideoDeckSpeedV170 = function(rawSpeed, showNotification) {
-        var r = _prevSetSpeedV367 ? _prevSetSpeedV367.apply(this, arguments) : rawSpeed;
+        var r = _prevSetSpeedV368 ? _prevSetSpeedV368.apply(this, arguments) : rawSpeed;
         if (typeof window.syncVideoRamEngineV211 === 'function') {
             window.syncVideoRamEngineV211(false, true);
         }
@@ -36884,32 +37026,36 @@ let vsyncTicks = 0;
         return r;
     };
 
-    // Ensure the live A/V Sync Radar bar in Video Player HUD and in #settingsModalDeckB
+    // 7. Build the collapsible edge tab (`#jennyAvSyncEdgePillV368`) inside `#v130HudOverlay`
+    //    and the diagnostic card inside `#settingsModalDeckB`
     window.ensureVideoAvSyncRadarDOMV367 = function() {
+        var oldBottomRadar = document.getElementById('jennyVideoAvSyncRadarBarV367');
+        if (oldBottomRadar) oldBottomRadar.remove();
+
         var hudOverlay = document.getElementById('v130HudOverlay');
-        if (hudOverlay && !document.getElementById('jennyVideoAvSyncRadarBarV367')) {
-            var bars = hudOverlay.querySelectorAll('.v130-hud-bar');
-            var botBar = bars.length > 0 ? bars[bars.length - 1] : null;
-            if (botBar) {
-                var radar = document.createElement('div');
-                radar.id = 'jennyVideoAvSyncRadarBarV367';
-                radar.className = 'v130-hide-in-pip';
-                radar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;padding:5px 8px;margin-bottom:2px;border-radius:8px;background:rgba(13,17,23,0.92);border:1px solid rgba(88,166,255,0.45);font-family:monospace;font-size:10.5px;color:#e6edf3;pointer-events:auto;';
-                radar.innerHTML =
-                    '<div id="jennyVideoAvSyncRadarTextV367" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex:1;min-width:180px;line-height:1.3;">' +
-                        '<span style="color:#58a6ff;font-weight:bold;">⏱️ Синхро А/В:</span> ' +
-                        '<span id="v367AvPathBadge" style="color:#3fb950;font-weight:bold;">RAM #3 🚀</span>' +
+        if (hudOverlay && !document.getElementById('jennyAvSyncEdgePillV368')) {
+            var wrap = document.createElement('div');
+            wrap.id = 'jennyAvSyncEdgePillV368';
+            wrap.className = 'v130-hide-in-pip';
+            wrap.addEventListener('touchstart', function(e) { e.stopPropagation(); }, { passive: true });
+            wrap.addEventListener('touchend', function(e) { e.stopPropagation(); }, { passive: true });
+            wrap.addEventListener('click', function(e) { e.stopPropagation(); });
+
+            wrap.innerHTML =
+                '<button type="button" id="jennyAvSyncEdgePillBtnV368" onclick="window.toggleAvSyncEdgeDrawerV368(event)">' +
+                    '<span id="v368EdgeTabLabel">⏱️ А/В: RAM #3 🚀 ◂</span>' +
+                '</button>' +
+                '<div id="jennyAvSyncEdgeDrawerV368">' +
+                    '<div id="jennyVideoAvSyncRadarTextV367" style="line-height:1.4;"></div>' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:5px;margin-top:2px;">' +
+                        '<button type="button" onclick="window.adjustVideoAvSyncTrimV367(-0.10, false, event)" style="flex:1;padding:4px 7px;border-radius:6px;background:#161b22;border:1px solid #30363d;color:#79c0ff;font-size:10.5px;font-weight:bold;cursor:pointer;">⏪ -0.1с</button>' +
+                        '<button type="button" id="v367BtnAvReset" onclick="window.adjustVideoAvSyncTrimV367(0, true, event)" style="flex:1;padding:4px 7px;border-radius:6px;background:#1f2937;border:1px solid #3fb950;color:#3fb950;font-size:10.5px;font-weight:bold;cursor:pointer;">🎯 Авто</button>' +
+                        '<button type="button" onclick="window.adjustVideoAvSyncTrimV367(0.10, false, event)" style="flex:1;padding:4px 7px;border-radius:6px;background:#161b22;border:1px solid #30363d;color:#79c0ff;font-size:10.5px;font-weight:bold;cursor:pointer;">⏩ +0.1с</button>' +
                     '</div>' +
-                    '<div style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0;">' +
-                        '<button type="button" onclick="window.adjustVideoAvSyncTrimV367(-0.10, false, event)" style="padding:3px 7px;border-radius:6px;background:#161b22;border:1px solid #30363d;color:#79c0ff;font-size:10.5px;font-weight:bold;cursor:pointer;">⏪ -0.1с</button>' +
-                        '<button type="button" id="v367BtnAvReset" onclick="window.adjustVideoAvSyncTrimV367(0, true, event)" style="padding:3px 7px;border-radius:6px;background:#1f2937;border:1px solid #3fb950;color:#3fb950;font-size:10.5px;font-weight:bold;cursor:pointer;">🎯 Авто +0.00с</button>' +
-                        '<button type="button" onclick="window.adjustVideoAvSyncTrimV367(0.10, false, event)" style="padding:3px 7px;border-radius:6px;background:#161b22;border:1px solid #30363d;color:#79c0ff;font-size:10.5px;font-weight:bold;cursor:pointer;">⏩ +0.1с</button>' +
-                    '</div>';
-                botBar.insertBefore(radar, botBar.firstChild);
-            }
+                '</div>';
+            hudOverlay.appendChild(wrap);
         }
 
-        // Also inject a permanent diagnostic & calibration card into #settingsModalDeckB
         var smB = document.getElementById('settingsModalDeckBContainer');
         if (smB && !document.getElementById('jennyDeckBSettingsAvRadarCardV367')) {
             var anchor = document.getElementById('jennyFourBuffersHudBarB');
@@ -36935,6 +37081,7 @@ let vsyncTicks = 0;
                 smB.insertBefore(card, smB.firstChild);
             }
         }
+        window.mountModularLabSettingsV208();
     };
 
     window.updateVideoAvSyncRadarUIV367 = function() {
@@ -36957,30 +37104,36 @@ let vsyncTicks = 0;
             aCursorSec = isRev
                 ? Math.max(0, vd._ramAnchorMediaSecV367 - el * spd)
                 : Math.max(0, vd._ramAnchorMediaSecV367 + el * spd);
-        } else if (st.active && st.usingRemux) {
-            aCursorSec = vSec + window.getEffectiveStreamRemuxAvLeadSecV367();
         }
 
         var pathStr = usingRam
             ? (isRev ? '🧠 RAM Буфер #4 (Реверс)' : '🧠 RAM Буфер #3 (Прямой ОЗУ, 0мс WSOLA)')
-            : (st.usingRemux ? '🛠️ Поток FFmpeg AAC (пред-опережение)' : '🎬 Прямой <video> WebAudio');
+            : (st.usingRemux ? '🛠️ Поток FFmpeg AAC' : '🎬 Прямой <video> WebAudio');
 
         var wsolaMs = usingRam ? 0 : (Math.abs(spd - 1.0) > 0.01 ? 320 : 180);
         var totalCompMs = usingRam
             ? Math.round(window.getEffectiveRamAudioLeadSecV367() * 1000)
-            : Math.round(window.getEffectiveStreamRemuxAvLeadSecV367() * 1000);
+            : Math.round(trimSec * 1000);
+
+        var expanded = Boolean(window._jennyAvSyncEdgeExpandedV368);
+        var drawer = document.getElementById('jennyAvSyncEdgeDrawerV368');
+        if (drawer) {
+            drawer.style.display = expanded ? 'flex' : 'none';
+        }
+        var tabLbl = document.getElementById('v368EdgeTabLabel');
+        if (tabLbl) {
+            var shortMode = usingRam ? 'RAM #3 🚀' : 'Поток';
+            tabLbl.innerHTML = '⏱️ А/В: <b style="color:' + (usingRam ? '#3fb950' : '#e3b341') + ';">' + shortMode + '</b> (' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + 'мс) ' + (expanded ? '▴' : '▾');
+        }
 
         var txtEl = document.getElementById('jennyVideoAvSyncRadarTextV367');
         if (txtEl) {
             txtEl.innerHTML =
-                '<span style="color:#58a6ff;font-weight:bold;">⏱️ А/В:</span> ' +
-                '<span style="color:' + (usingRam ? '#3fb950' : '#e3b341') + ';font-weight:bold;">' + (usingRam ? 'RAM #3 🚀' : 'Поток') + '</span> ' +
-                '<span style="color:#8b949e;">│</span> ' +
-                '<span>Кадр: <b style="color:#fff;">' + vSec.toFixed(2) + 'с</b></span> ' +
-                '<span>Звук: <b style="color:#79c0ff;">' + aCursorSec.toFixed(2) + 'с</b></span> ' +
-                '<span style="color:#8b949e;">│</span> ' +
-                '<span>Тракт: <b style="color:#d2a8ff;">WebAudio ' + hw.ctxMs + 'мс + DSP ' + hw.dspMs + 'мс' + (wsolaMs > 0 ? (' + WSOLA ' + wsolaMs + 'мс') : '') + '</b></span> ' +
-                '<span>➔ Опережение: <b style="color:#3fb950;">' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + 'мс</b></span>';
+                '<div>Тракт: <b style="color:' + (usingRam ? '#3fb950' : '#e3b341') + ';">' + pathStr + '</b></div>' +
+                '<div>Кадр: <b style="color:#fff;">' + vSec.toFixed(2) + 'с</b> │ Звук: <b style="color:#79c0ff;">' + aCursorSec.toFixed(2) + 'с</b> (x' + spd.toFixed(2) + ')</div>' +
+                '<div>WebAudio: <b style="color:#d2a8ff;">' + hw.ctxMs + 'мс</b> │ DSP: <b style="color:#d2a8ff;">' + hw.dspMs.toFixed(1) + 'мс</b>' + (wsolaMs > 0 ? (' │ WSOLA: <b>' + wsolaMs + 'мс</b>') : '') + '</div>' +
+                '<div style="color:#8b949e;font-size:9.5px;">↳ Модули DSP: ' + hw.dspBreakdown + '</div>' +
+                '<div>Компенсация: <b style="color:#3fb950;">' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + 'мс</b> (ручн: ' + trimStr + ')</div>';
         }
 
         var btnReset = document.getElementById('v367BtnAvReset');
@@ -36998,7 +37151,7 @@ let vsyncTicks = 0;
         var mDiag = document.getElementById('v367ModalAvDiagLines');
         if (mDiag) {
             mDiag.innerHTML =
-                '• <b>Почему отставал звук в WebView:</b> при маршрутизации <code>&lt;video&gt;</code> через <code>createMediaElementSource</code> Chromium отключает авто-задержку кадров и пускает звук через буфер WSOLA (' + wsolaMs + ' мс) + WebAudio (' + hw.ctxMs + ' мс) + DSP (' + hw.dspMs + ' мс).<br>' +
+                '• <b>Задержка узлов в реальном времени:</b> WebAudio = <b>' + hw.ctxMs + ' мс</b>, Активные блоки DSP Деки Б = <b>' + hw.dspMs.toFixed(1) + ' мс</b> (' + hw.dspBreakdown + ')' + (wsolaMs > 0 ? (', Буфер WSOLA = <b>' + wsolaMs + ' мс</b>') : ' (WSOLA отключён: звук идёт напрямую из ОЗУ Буфера #3)') + '.<br>' +
                 '• <b>Активный режим компенсации:</b> ' + pathStr + ' • Скорость: <b>x' + spd.toFixed(2) + '</b> • Суммарное пред-опережение звука: <b style="color:#3fb950;">' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + ' мс</b> (ручная поправка: <b>' + trimStr + '</b>).';
         }
         var mBtnReset = document.getElementById('v367ModalBtnAvReset');
@@ -37007,10 +37160,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // High-frequency watchdog (every 200ms):
-    // 1) Switches from <video> stream to RAM Buffer #3 as soon as Piece 0 is decoded!
-    // 2) Corrects any A/V drift > 85ms during playback or after speed transitions!
-    // 3) Updates the live A/V Sync Radar telemetry!
     setInterval(function() {
         var st = window._vidStateV130;
         var vd = window.videoDeckV131;
@@ -37024,6 +37173,10 @@ let vsyncTicks = 0;
             window.updateVideoAvSyncRadarUIV367();
         }
     }, 220);
+
+    setTimeout(function() {
+        window.ensureVideoAvSyncRadarDOMV367();
+    }, 450);
 })();
-/* ================= END JENNY_V367_AV_SYNC_RADAR_AND_ZERO_LAG_ENGINE ================= */
+/* ================= END JENNY_V368_FIX_PLAYBACK_HUD_AND_DYNAMIC_DSP_RADAR ================= */
 

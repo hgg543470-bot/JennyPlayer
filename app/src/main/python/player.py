@@ -11881,17 +11881,9 @@ def api_video_live_remux_v240():
 
     fflags_val = '+genpts'
 
-    # V367: Pre-advance audio samples by `av_lead` seconds (while keeping original initial PTS via asetpts=PTS-lead/TB
-    # so -avoid_negative_ts make_zero shifts Video and Audio identically!). This cancels Chromium WebAudioSourceProviderImpl
-    # + WSOLA + DSP transit delay even before RAM Buffer #3 finishes loading!
+    # V368: Keep live_remux stream 100% instant (0ms first-fragment start, no atrim muxer interleave hold!).
+    # All A/V lead/lag compensation is performed in 0ms by RAM Buffer #3 (vd.studioBuffer) in WebAudio!
     af_lead_args = []
-    if not no_audio and not audio_only:
-        if av_lead > 0.005:
-            n_samp = int(round(av_lead * 48000))
-            af_lead_args = ['-af', f'aresample=48000,atrim=start_sample={n_samp},asetpts=PTS-{av_lead:.4f}/TB', '-ar', '48000']
-        elif av_lead < -0.005:
-            delay_ms = int(round(abs(av_lead) * 1000))
-            af_lead_args = ['-af', f'aresample=48000,adelay={delay_ms}:all=1', '-ar', '48000']
 
     if audio_only:
         cmd.extend([

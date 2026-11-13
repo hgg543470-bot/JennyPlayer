@@ -1772,6 +1772,7 @@
         if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
         var smA = document.getElementById('settingsModal');
         var smB = ensureDeckBSettingsModalDOM();
+        if (typeof window.mountModularLabSettingsV208 === 'function') window.mountModularLabSettingsV208();
         var prevScroll = (smA && smA.classList.contains('open')) ? smA.scrollTop : smB.scrollTop;
         if (smA && smA.classList.contains('open')) {
             syncDetailsOpenStateBetweenModalsV360(smA, smB, sectionKey);
