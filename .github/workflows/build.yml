@@ -94,8 +94,6 @@ jobs:
         if [ ! -s app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so ]; then
           CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so app/src/main/python/omni_torrent_core.go
         fi
-        cp -f app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so app/src/main/jniLibs/armeabi-v7a/libomnitorrent_v36ir.so
-        cp -f app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so app/src/main/jniLibs/armeabi-v7a/libomnitorrent_v40ir.so
         if [ ! -s app/src/main/jniLibs/arm64-v8a/libomnitorrent.so ]; then
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o app/src/main/jniLibs/arm64-v8a/libomnitorrent.so app/src/main/python/omni_torrent_core.go
           cp -f app/src/main/jniLibs/arm64-v8a/libomnitorrent.so app/src/main/jniLibs/arm64-v8a/libomnitorrent_v36ir.so
@@ -142,7 +140,9 @@ jobs:
         STAMP_EOF
 
     - name: Сборка универсального APK (ARM64 + ARM32 armeabi-v7a)
-      run: gradle assembleDebug
+      env:
+        GRADLE_OPTS: "-Dorg.gradle.jvmargs=\"-Xmx4608m -Xms1024m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8\""
+      run: gradle assembleDebug --no-daemon
 
     - name: Выдача готового файла
       uses: actions/upload-artifact@v4
