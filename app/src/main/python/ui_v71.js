@@ -36939,7 +36939,7 @@ let vsyncTicks = 0;
                     }
 
                     if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
-                    if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false, isUrgent);
+                    if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false, Boolean(isUrgent && !vd.isStudioPlaying));
                     if (typeof window.updateVideoAvSyncRadarUIV367 === 'function') window.updateVideoAvSyncRadarUIV367();
                     return true;
                 } catch (e) {
@@ -37147,13 +37147,24 @@ let vsyncTicks = 0;
     if (typeof _origSeekSyncedV369 === 'function') {
         window.seekDeckBAndPlayerSyncedV212 = function(targetSec, showToastMsg, fromExplicitUser) {
             var vd = window.videoDeckV131;
-            if (vd && typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
-                vd._ensureUrgentPieceAtSecV369(targetSec);
+            var st = window._vidStateV130 || {};
+            st._lastSeekWallTsV372 = performance.now();
+            st._vidAdvancingAfterSeekV372 = false;
+            st._lastRawVidTimeForAdvanceV372 = -1;
+            if (vd) {
+                if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+                if (vd.sourceNode) {
+                    vd.sourceNode.onended = null;
+                    try { vd.sourceNode.stop(); } catch (e) {}
+                    try { vd.sourceNode.disconnect(); } catch (e) {}
+                    vd.sourceNode = null;
+                }
+                vd.isStudioPlaying = false;
+                if (typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
+                    vd._ensureUrgentPieceAtSecV369(targetSec);
+                }
             }
             var r = _origSeekSyncedV369.apply(this, arguments);
-            if (vd && vd.isStudioPlaying && typeof window.syncVideoRamEngineV211 === 'function') {
-                window.syncVideoRamEngineV211(false, true);
-            }
             return r;
         };
     }
@@ -38631,3 +38642,426 @@ let vsyncTicks = 0;
     setTimeout(installSeekZoneFallbackTapV371, 800);
 })();
 /* ================= END JENNY_V371_SEEK_LIVE_DECK_A_SVG_BUFFER_BADGES_AND_PAUSE_SAFE_REV_PATCH ================= */
+
+/* ================= BEGIN JENNY_V372_DECK_A_EXACT_REVERSE_INVERSION_AND_DECK_B_ANTI_STUTTER_PLL_PATCH ================= */
+(function() {
+    if (window._jennyV372PatchInstalled) return;
+    window._jennyV372PatchInstalled = true;
+
+    // -------------------------------------------------------------------------
+    // 1. ПРАВИЛЬНАЯ ЗЕРКАЛЬНАЯ ИНВЕРСИЯ ВРЕМЕНИ ДЕКИ А ПРИ ПЕРЕКЛЮЧЕНИИ
+    //    ВПЕРЁД (F ▶) <-> НАЗАД (◀ R) (75208.mp4 00:07–00:39)
+    //    - В режиме Вперёд (F ▶): curTime = прошедшее с начала время (например, 0:29 из 2:37, остаток -2:07).
+    //    - В режиме Реверс (◀ R): буфер reversedStudioBuffer развёрнут с конца к началу,
+    //      поэтому та же самая точка песни (0:29 от начала) находится в reversedStudioBuffer
+    //      на смещении (dur - 0:29) = 2:08! Тогда updateProgressUI(2:08, 2:37, true) показывает
+    //      слева -0:29 (сколько осталось идти назад до 0:00!), справа 2:07, а звук играет
+    //      ровно с 29-й секунды назад к 0:00 (а НЕ с 29-й секунды с конца!).
+    //    - Раньше в ui_controls.js:24 и 53 стояло условие if (isFinite(player.duration)),
+    //      которое не срабатывало, когда длительность известна из window.studioBuffer.duration,
+    //      и брало player.currentTime вместо getTruePlaybackTimeV74_2().
+    // -------------------------------------------------------------------------
+    function getEffectiveDeckADurationV372() {
+        var player = document.getElementById('audioPlayer');
+        if (window.studioBuffer && window.studioBuffer.duration > 0) {
+            return window.studioBuffer.duration;
+        }
+        if (player && isFinite(player.duration) && player.duration > 0) {
+            return player.duration;
+        }
+        var fn = window.currentPlayingTrack || '';
+        var meta = (window.lastData && window.lastData.track_meta && window.lastData.track_meta[fn]) || {};
+        return Number(meta.dur || 0);
+    }
+    window.getEffectiveDeckADurationV372 = getEffectiveDeckADurationV372;
+
+    window.toggleReverseMode = function(targetReversed) {
+        if (!window.appConfig || !window.appConfig.studioMode || !window.studioBuffer) return;
+        if (typeof window.prioritizeRamPieceAtCursorV72 === 'function') {
+            window.prioritizeRamPieceAtCursorV72();
+        }
+        var player = document.getElementById('audioPlayer');
+        var wasReversedNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        var wantReversed = (targetReversed !== undefined) ? Boolean(targetReversed) : !wasReversedNow;
+        var dur = getEffectiveDeckADurationV372();
+        var curBefore = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+            ? window.getTruePlaybackTimeV74_2()
+            : ((player && player.currentTime) || 0);
+
+        if (!wantReversed) {
+            if (!wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
+            window.isReversed = false;
+            if (window.scrubState) {
+                window.scrubState.active = false;
+                window.scrubState.locked = false;
+                window.scrubState.side = null;
+                window.scrubState.isPhysicallyReversed = false;
+            }
+            window.persistedPlaybackSpeed = null;
+            window.persistedPlaybackSide = 'right';
+            var lockEl = document.getElementById('speedLockIndicator');
+            if (lockEl) lockEl.style.display = 'none';
+
+            var newFwdSec = curBefore;
+            if (wasReversedNow && dur > 0) {
+                newFwdSec = Math.max(0, Math.min(dur - 0.02, dur - curBefore));
+            }
+            var baseSpd = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+            if (player) {
+                try { player.playbackRate = baseSpd; } catch (e) {}
+            }
+            if (typeof window.seekDeckAToExactSecondV371 === 'function') {
+                window.seekDeckAToExactSecondV371(newFwdSec);
+            }
+            if (dur > 0 && typeof window.updateProgressUI === 'function') {
+                window.updateProgressUI(newFwdSec, dur, false);
+            }
+            return;
+        }
+
+        if (!window.reversedStudioBuffer && !window.studioBuffer) return;
+        if (wasReversedNow && !(window.scrubState && (window.scrubState.active || window.scrubState.locked))) return;
+
+        if (window.scrubState && (window.scrubState.active || window.scrubState.locked)) {
+            window.scrubState.active = false;
+            window.scrubState.locked = false;
+            window.scrubState.side = null;
+            window.scrubState.isPhysicallyReversed = false;
+            window.persistedPlaybackSpeed = null;
+            window.persistedPlaybackSide = 'right';
+            var lockEl2 = document.getElementById('speedLockIndicator');
+            if (lockEl2) lockEl2.style.display = 'none';
+        }
+
+        window.isReversed = true;
+        var newRevSec = curBefore;
+        if (!wasReversedNow && dur > 0) {
+            newRevSec = Math.max(0, Math.min(dur - 0.02, dur - curBefore));
+        }
+        var baseSpd2 = typeof window.getBaseSpeed === 'function' ? window.getBaseSpeed() : 1.0;
+        if (player) {
+            try { player.playbackRate = baseSpd2; } catch (e) {}
+        }
+        if (typeof window.seekDeckAToExactSecondV371 === 'function') {
+            window.seekDeckAToExactSecondV371(newRevSec);
+        }
+        if (dur > 0 && typeof window.updateProgressUI === 'function') {
+            window.updateProgressUI(newRevSec, dur, true);
+        }
+    };
+
+    // Также исправляем разворот позиции в startScrub и stopScrub (когда направление меняется через дугу скоростей Деки А),
+    // чтобы они брали dur из getEffectiveDeckADurationV372() и текущую позицию из getTruePlaybackTimeV74_2()!
+    var _origStartScrubV372 = window.startScrub;
+    if (typeof _origStartScrubV372 === 'function') {
+        window.startScrub = function(side, speed) {
+            var wasRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+            var wantRev = (side === 'left');
+            var dur = getEffectiveDeckADurationV372();
+            var curBefore = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : 0;
+            if (wasRev !== wantRev && dur > 0) {
+                var flipped = Math.max(0, Math.min(dur - 0.02, dur - curBefore));
+                window.isReversed = false;
+                if (window.scrubState) window.scrubState.isPhysicallyReversed = wantRev;
+                if (typeof window.seekDeckAToExactSecondV371 === 'function') {
+                    window.seekDeckAToExactSecondV371(flipped);
+                }
+            }
+            return _origStartScrubV372.apply(this, arguments);
+        };
+    }
+
+    var _origStopScrubV372 = window.stopScrub;
+    if (typeof _origStopScrubV372 === 'function') {
+        window.stopScrub = function(keepLockedSpeed) {
+            var wasRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+            var nowRev = Boolean(window.isReversed || (keepLockedSpeed && window.scrubState && window.scrubState.isPhysicallyReversed));
+            var dur = getEffectiveDeckADurationV372();
+            var curBefore = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : 0;
+            if (wasRev !== nowRev && dur > 0) {
+                var flipped = Math.max(0, Math.min(dur - 0.02, dur - curBefore));
+                if (typeof window.seekDeckAToExactSecondV371 === 'function') {
+                    window.seekDeckAToExactSecondV371(flipped);
+                }
+            }
+            return _origStopScrubV372.apply(this, arguments);
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. УСТРАНЕНИЕ ЗАИКАНИЯ ЗВУКА ("ТУМ-ТУМ-ТУМ" / "ДИ-ДИ-ДИ" / "ЗОЙД-ЗОЙД")
+    //    И ОТСТАВАНИЯ АУДИО ПОСЛЕ ПЕРЕМОТКИ НА ВИДЕОДЕКЕ Б (75208.mp4 00:48–01:31)
+    //    Причины, найденные по видео 75208.mp4:
+    //    А) После перемотки .mkv (live_remux) на 6:25 или 11:21 <video> декодирует
+    //       первый кадр (readyState >= 2), но vid.currentTime ещё 1.5–2.5 сек стоит
+    //       на 0.000, пока буферизуется x265-поток. Старый таймер (220 мс) запускал
+    //       RAM-буфер #3 сразу и каждые 220 мс видел расхождение 0.220с > 0.085с,
+    //       убивая и перезапуская vd.sourceNode на одном и том же слоге ("ди-ди-ди-ди")!
+    //    Б) Во время обычной игры шаг обновления vid.currentTime в WebView составляет
+    //       ~100–200 мс, из-за чего жёсткий порог 0.085с вызывал пересоздание узла
+    //       прямо посреди слова ("Зойд-Зойдбер") и накапливал отставание звука.
+    //    Решение V372:
+    //    1) Отслеживаем реальное движение кадров <video> (vid.currentTime реально
+    //       сдвинулся с места после старта/перемотки!). Пока кадры видео стоят на паузе
+    //       буферизации после seek — НЕ запускаем и НЕ перезапускаем vd.sourceNode вхолостую!
+    //    2) Когда vd.sourceNode уже играет, малый и средний дрейф (до 0.85 сек)
+    //       компенсируется плавной микро-подстройкой скорости playbackRate (±1..3% PLL)
+    //       БЕЗ остановки vd.sourceNode и БЕЗ повтора слогов!
+    //    3) При старте нового окна учитывается время сборки буфера (buildElapsedSec),
+    //       поэтому звук сразу встаёт в 0 мс синхрон с кадром видео!
+    // -------------------------------------------------------------------------
+    window.isVideoElementActivelyAdvancingFramesV372 = function(vid, st) {
+        if (!vid || !st || !st.active || st.userPaused || vid.paused || vid.ended || vid.seeking || vid.readyState < 2) {
+            return false;
+        }
+        if (window._vidIsBufferingV132) {
+            return false;
+        }
+        var now = performance.now();
+        var rawT = Number(vid.currentTime || 0);
+
+        // Если только что была перемотка или запуск live_remux, ждём, пока vid.currentTime реально сдвинется (> 0.06 сек)!
+        if (st.usingRemux && rawT < 0.06 && (now - (st._lastSeekWallTsV372 || 0) < 4500)) {
+            return false;
+        }
+
+        if (st._lastRawVidTimeForAdvanceV372 === undefined || st._lastRawVidTimeForAdvanceV372 < 0) {
+            st._lastRawVidTimeForAdvanceV372 = rawT;
+            st._lastRawVidAdvanceWallTsV372 = now;
+        } else if (Math.abs(rawT - st._lastRawVidTimeForAdvanceV372) > 0.012) {
+            st._lastRawVidTimeForAdvanceV372 = rawT;
+            st._lastRawVidAdvanceWallTsV372 = now;
+            st._vidAdvancingAfterSeekV372 = true;
+        }
+
+        var sinceLastFrameMoveMs = now - (st._lastRawVidAdvanceWallTsV372 || 0);
+        // Если после перемотки кадры ещё ни разу не сдвинулись — видео ещё буферизует точку seek!
+        if (!st._vidAdvancingAfterSeekV372 && (now - (st._lastSeekWallTsV372 || 0) < 4000)) {
+            return false;
+        }
+        // Если кадры видео замерли больше чем на 420 мс — не дёргаем звук назад!
+        if (sinceLastFrameMoveMs > 420) {
+            return false;
+        }
+        return true;
+    };
+
+    window.syncVideoRamEngineV211 = window.syncVideoRamEngineV131 = function(isDragging, forceResyncNow) {
+        var vd = window.videoDeckV131, st = window._vidStateV130, vid = document.getElementById('jennyVideoElV130');
+        if (!vid || !vd || !vd.ctx || !st || !st.active) return;
+
+        if (st.videoStreamModeV217 === 'v_only') {
+            if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+            if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+            if (vd.sourceNode) {
+                vd.sourceNode.onended = null;
+                try { vd.sourceNode.stop(); } catch (e) {}
+                try { vd.sourceNode.disconnect(); } catch (e) {}
+                vd.sourceNode = null;
+            }
+            vd.isStudioPlaying = false;
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+            return;
+        }
+
+        var gKey = (vd.config && vd.config.gearKeyV66) || 'jbuf-lock';
+        var isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || vd.isReversed);
+        vd.isReversed = isRev;
+        var targetSpd = Math.max(0.1, Math.min(16.0, Number(window._jennyVideoSpeedV170 || vd.speed || (window.getTargetPlaybackSpeedDeckB ? window.getTargetPlaybackSpeedDeckB() : 1.0)) || 1.0));
+        vd.speed = targetSpd;
+
+        var isVidAdvancing = window.isVideoElementActivelyAdvancingFramesV372(vid, st);
+
+        // Если видео стоит на паузе ИЛИ (в прямом ходе) кадры видео ещё буферизуются после перемотки/старта:
+        // глушим/останавливаем vd.sourceNode, чтобы он НИКОГДА не заикался ("тум-тум-тум" / "ди-ди-ди") на стоячем кадре!
+        if (st.userPaused || (!isRev && !isVidAdvancing && !st._autoHealingRemuxV369)) {
+            if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+            if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+            if (vd.sourceNode) {
+                vd.sourceNode.onended = null;
+                try { vd.sourceNode.stop(); } catch (e) {}
+                try { vd.sourceNode.disconnect(); } catch (e) {}
+                vd.sourceNode = null;
+            }
+            vd.isStudioPlaying = false;
+            if (st.userPaused) {
+                if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
+                if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
+            } else {
+                // Пока <video> буферизует новую точку перемотки — держим тишину, чтобы не было двойного/рваного звука
+                if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+                if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+            }
+            return;
+        }
+
+        var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+        var effLeadSec = window.getEffectiveRamAudioLeadSecV367 ? window.getEffectiveRamAudioLeadSecV367() : 0.14;
+        var audioTargetSec = isRev
+            ? Math.max(0, curSec - effLeadSec * targetSpd)
+            : Math.max(0, curSec + effLeadSec * targetSpd);
+
+        var pSec = (vd.studioBuffer && vd.studioBuffer._pieceSecV72) || 45;
+        var curP = (vd.studioBuffer && vd.studioBuffer._pieceMapV72 && vd.studioBuffer._pieceMapV72.length > 0)
+            ? Math.max(0, Math.min(vd.studioBuffer._pieceMapV72.length - 1, Math.floor((isRev ? Math.max(0, audioTargetSec - 0.3) : audioTargetSec) / pSec)))
+            : -1;
+        var isPieceReady = Boolean(
+            vd.studioBuffer &&
+            (!vd.studioBuffer._pieceMapV72 || vd.studioBuffer._pieceMapV72.length === 0 || (curP >= 0 && vd.studioBuffer._pieceMapV72[curP] === 2))
+        );
+        if (!isPieceReady && typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
+            vd._ensureUrgentPieceAtSecV369(audioTargetSec);
+        }
+
+        var studioOn = Boolean(!vd.config || vd.config.studioMode !== false);
+        var useRamEngine = studioOn && isPieceReady && (isRev || gKey !== 'neutral');
+
+        if (!useRamEngine) {
+            if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+            if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+            if (vd.sourceNode) {
+                vd.sourceNode.onended = null;
+                try { vd.sourceNode.stop(); } catch (e) {}
+                try { vd.sourceNode.disconnect(); } catch (e) {}
+                vd.sourceNode = null;
+            }
+            vd.isStudioPlaying = false;
+            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
+            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
+            var lockPitch = (gKey !== 'web-shift' && gKey !== 'jbuf-shift' && gKey !== 'vinyl-shift');
+            vid.preservesPitch = lockPitch; vid.mozPreservesPitch = lockPitch; vid.webkitPreservesPitch = lockPitch;
+            if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
+                try { vid.playbackRate = targetSpd; } catch (e) {}
+            }
+            return;
+        }
+
+        // Если vd.sourceNode уже играет с теми же параметрами (скорость, передача, направление):
+        // НЕ УБИВАЕМ узел при мелких колебаниях vid.currentTime (< 0.85 сек)!
+        // Вместо этого плавно подтягиваем фазу через микро-PLL (playbackRate ±2.5%) — 0% заиканий и 100% синхрон!
+        if (
+            !forceResyncNow &&
+            !isDragging &&
+            vd.isStudioPlaying &&
+            vd.sourceNode &&
+            vd._ramAnchorCtxTimeV367 !== undefined &&
+            vd._ramAnchorMediaSecV367 !== undefined &&
+            vd._ramAnchorSpeedV367 === targetSpd &&
+            vd._ramAnchorGearV367 === gKey &&
+            vd._ramAnchorRevV367 === isRev
+        ) {
+            var elapsedCtx = vd.ctx.currentTime - vd._ramAnchorCtxTimeV367;
+            var expectedAudioSec = isRev
+                ? (vd._ramAnchorMediaSecV367 - elapsedCtx * targetSpd)
+                : (vd._ramAnchorMediaSecV367 + elapsedCtx * targetSpd);
+            // Signed error: > 0 means audio is BEHIND target and needs to speed up slightly; < 0 means audio is AHEAD
+            var signedErrSec = isRev
+                ? (expectedAudioSec - audioTargetSec)
+                : (audioTargetSec - expectedAudioSec);
+            var absDriftSec = Math.abs(signedErrSec);
+            var maxHardRebuildDrift = (isRev && !st._revStreamStartedPlayingV220) ? 1.8 : 0.85;
+
+            if (absDriftSec < maxHardRebuildDrift && elapsedCtx < (vd._ramWinRealDurSecV367 || 18.0) - 1.1) {
+                var baseNodeRate = vd._ramBaseNodeRateV372 || ((gKey === 'jbuf-lock' || gKey === 'web-lock') ? 1.0 : targetSpd);
+                var pllFactor = 1.0;
+                if (absDriftSec > 0.035 && (!isRev || st._revStreamStartedPlayingV220)) {
+                    // Мягкая подтяжка темпа на ±1..3.5% (незаметная для слуха, но быстро выбирающая отставание без щелчка!)
+                    pllFactor = Math.max(0.965, Math.min(1.035, 1.0 + signedErrSec * 0.14));
+                }
+                try {
+                    vd.sourceNode.playbackRate.value = baseNodeRate * pllFactor;
+                } catch (e) {}
+                // Постепенно сдвигаем якорную точку к подтянутой фазе
+                if (pllFactor !== 1.0) {
+                    var dtPull = (pllFactor - 1.0) * 0.22 * targetSpd;
+                    vd._ramAnchorMediaSecV367 += isRev ? (-dtPull) : dtPull;
+                }
+                if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
+                    try { vid.playbackRate = targetSpd; } catch (e) {}
+                }
+                return;
+            }
+        }
+
+        if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+        if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+
+        var buildStartWallMs = performance.now();
+        var WIN_SEC = Math.max(24.0, Math.min(54.0, targetSpd * 24.0));
+        var rawWinBuf = null;
+        if (isRev && vd.reversedStudioBuffer) {
+            var durRev = vd.reversedStudioBuffer.duration;
+            var revStartSec = Math.max(0, Math.min(durRev - 0.05, durRev - audioTargetSec));
+            rawWinBuf = window.extractVideoWindowBufferV131(vd.reversedStudioBuffer, revStartSec, WIN_SEC, false);
+        } else if (vd.studioBuffer) {
+            rawWinBuf = window.extractVideoWindowBufferV131(vd.studioBuffer, audioTargetSec, WIN_SEC, isRev);
+        }
+        if (!rawWinBuf) return;
+
+        var playBuf = rawWinBuf, nodeRate = 1.0;
+        if (gKey === 'jbuf-lock' || gKey === 'web-lock') {
+            var tensionPct = (vd.config && vd.config.hoseTensionPct !== undefined) ? vd.config.hoseTensionPct : 100;
+            playBuf = window.buildElasticHoseBufferDeckB ? window.buildElasticHoseBufferDeckB(rawWinBuf, targetSpd, tensionPct) : rawWinBuf;
+            nodeRate = (playBuf === rawWinBuf) ? targetSpd : 1.0;
+        } else {
+            playBuf = rawWinBuf;
+            nodeRate = targetSpd;
+        }
+
+        // Компенсируем миллисекунды, потраченные на нарезку/сшивку буфера (buildElapsedSec),
+        // чтобы звук стартовал строго в той точке, где видео находится ПОСЛЕ окончания сборки буфера!
+        var buildElapsedSec = Math.max(0, (performance.now() - buildStartWallMs) / 1000.0);
+        var startOffsetInPlayBuf = (nodeRate === 1.0) ? buildElapsedSec : (buildElapsedSec * targetSpd);
+        if (startOffsetInPlayBuf >= playBuf.duration - 0.1) {
+            startOffsetInPlayBuf = 0;
+        }
+        var compensatedMediaAnchorSec = isRev
+            ? Math.max(0, audioTargetSec - buildElapsedSec * targetSpd)
+            : (audioTargetSec + buildElapsedSec * targetSpd);
+
+        if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+        if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+
+        if (vd.sourceNode) {
+            vd.sourceNode.onended = null;
+            try { vd.sourceNode.stop(); } catch (e) {}
+            try { vd.sourceNode.disconnect(); } catch (e) {}
+            vd.sourceNode = null;
+        }
+
+        if (!st.userPaused && (!window._jennyDualDeckV211 || window._jennyDualDeckV211.deckB !== false)) {
+            if (vd.ctx.state === 'suspended') {
+                try { vd.ctx.resume(); } catch (e) {}
+            }
+            vd.sourceNode = vd.ctx.createBufferSource();
+            vd.sourceNode.buffer = playBuf;
+            vd.sourceNode.playbackRate.value = nodeRate;
+            vd.sourceNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+            if (st.dspBypass && vd.directBypassGain) vd.directBypassGain.gain.value = 1.0;
+            vd.sourceNode.start(0, startOffsetInPlayBuf);
+            vd.isStudioPlaying = true;
+
+            var remBufDur = Math.max(0.5, playBuf.duration - startOffsetInPlayBuf);
+            var realDurSec = (nodeRate === 1.0) ? remBufDur : (remBufDur / Math.max(0.25, nodeRate));
+            vd._ramAnchorCtxTimeV367 = vd.ctx.currentTime;
+            vd._ramAnchorMediaSecV367 = compensatedMediaAnchorSec;
+            vd._ramAnchorSpeedV367 = targetSpd;
+            vd._ramAnchorGearV367 = gKey;
+            vd._ramAnchorRevV367 = isRev;
+            vd._ramBaseNodeRateV372 = nodeRate;
+            vd._ramWinRealDurSecV367 = realDurSec;
+
+            if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
+                try { vid.playbackRate = targetSpd; } catch (e) {}
+            }
+
+            vd.horizonTimer = setTimeout(function() {
+                if (st.active && !st.userPaused) {
+                    window.syncVideoRamEngineV211(false, true);
+                }
+            }, Math.max(500, (realDurSec - 0.85) * 1000));
+        }
+    };
+})();
+/* ================= END JENNY_V372_DECK_A_EXACT_REVERSE_INVERSION_AND_DECK_B_ANTI_STUTTER_PLL_PATCH ================= */
