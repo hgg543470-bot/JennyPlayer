@@ -17856,7 +17856,7 @@ let vsyncTicks = 0;
             var hasFwdA = Boolean(window.studioBuffer);
             var hasRevA = Boolean(window.reversedStudioBuffer);
             var prefixA = (window.appConfig && window.appConfig.studioMode)
-                ? ((hasFwdA && hasRevA) ? 'RAM ⏩⏪ 🚀: ' : 'RAM 🚀: ')
+                ? 'RAM 🚀: '
                 : '🎵 ';
             var wantTitleA = prefixA + window.currentPlayingTrack;
             if (npA && npA.innerText !== wantTitleA && npA.innerText.indexOf('⏳') === -1) {
@@ -20602,7 +20602,7 @@ let vsyncTicks = 0;
             }
             if (titleEl) {
                 var hasRev = Boolean(window.reversedStudioBuffer);
-                titleEl.innerText = (hasRev ? 'RAM ⏩⏪ 🚀: ' : 'RAM 🚀: ') + filename;
+                titleEl.innerText = 'RAM 🚀: ' + filename;
             }
             if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
         } catch (err) {
@@ -32529,7 +32529,7 @@ let vsyncTicks = 0;
             }
             if (titleEl) {
                 var hasRev = Boolean(window.reversedStudioBuffer);
-                titleEl.innerText = (hasRev ? 'RAM ⏩⏪ 🚀: ' : 'RAM 🚀: ') + filename;
+                titleEl.innerText = 'RAM 🚀: ' + filename;
             }
             if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
         } catch (err) {
@@ -37039,8 +37039,8 @@ let vsyncTicks = 0;
         return r;
     };
 
-    // 5. FIX REVERSE (`⏪`) SO IT ALWAYS UNPAUSES, PRIORITIZES THE CURRENT RAM PIECE,
-    //    AND IMMEDIATELY PLAYS REVERSED AUDIO FROM BUFFER #4 (`vd.reversedStudioBuffer`)!
+    // 5. FIX REVERSE (`⏪`) SO IT RESPECTS PAUSE STATE (st.userPaused) LIKE AUDIO DECK A,
+    //    PRIORITIZES THE CURRENT RAM PIECE, AND PLAYS BUFFER #4 WHEN NOT PAUSED!
     var _origStartRevV369 = window.startImmediateVideoReverseEngineV217;
     window.startImmediateVideoReverseEngineV217 = function(revSpd, forceReloadTrackOrSeek, explicitStartSec) {
         var vid = document.getElementById('jennyVideoElV130');
@@ -37048,14 +37048,49 @@ let vsyncTicks = 0;
         var vd = window.videoDeckV131;
         if (!vid || !st || !st.active || !vd) return;
 
-        // Always unpause when user activates or adjusts Reverse so it never sits stuck on ⏸/▶!
-        st.userPaused = false;
-        window._vidPlayIntentV132 = true;
-        window._vidIsBufferingV132 = false;
+        var spd = Math.max(0.1, Math.min(8.0, Number(revSpd) || window._lastRevVideoSpeedV217 || 1.0));
+        window._lastRevVideoSpeedV217 = spd;
 
         var startSec = (explicitStartSec !== undefined && isFinite(explicitStartSec))
             ? Number(explicitStartSec)
             : (window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (st._lastTrueMediaSecV227 || vid.currentTime || 0));
+
+        // Immediately prioritize the RAM piece at `startSec` even while paused so Buffer #4 is ready!
+        if (typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
+            vd._ensureUrgentPieceAtSecV369(startSec);
+        }
+
+        // [V371] Если Видеодека Б стоит на паузе (st.userPaused === true) — меняем направление на Реверс
+        // и обновляем шкалу (-14:15 | 7:23), НО НЕ ВКЛЮЧАЕМ воспроизведение самопроизвольно (1:1 как в Деке А)!
+        if (st.userPaused) {
+            window.isReversedDeckB = true;
+            vd.isReversed = true;
+            vd.speed = spd;
+            window._jennyVideoSpeedV170 = spd;
+            st._pausedSeekSecV355 = startSec;
+            st._revAnchorSecV219 = startSec;
+            st._lastTrueMediaSecV227 = startSec;
+            var durPaused = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+            if (typeof window.updateProgressUIDeckB === 'function') {
+                window.updateProgressUIDeckB(startSec, durPaused, true);
+            }
+            if (typeof window.syncDeckBSpeedLockIndicatorV227 === 'function') {
+                window.syncDeckBSpeedLockIndicatorV227();
+            }
+            if (typeof window.syncVideoPlayerButtonsUIV217 === 'function') {
+                window.syncVideoPlayerButtonsUIV217();
+            }
+            if (typeof window.syncVideoPlayBtnIconV132 === 'function') {
+                window.syncVideoPlayBtnIconV132();
+            }
+            if (typeof window.syncDeckBPlayBtnIconV216 === 'function') {
+                window.syncDeckBPlayBtnIconV216();
+            }
+            return;
+        }
+
+        window._vidPlayIntentV132 = true;
+        window._vidIsBufferingV132 = false;
 
         // Immediately prioritize the RAM piece at `startSec` if it isn't unpacked yet!
         if (typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
@@ -37762,3 +37797,837 @@ let vsyncTicks = 0;
     }, 450);
 })();
 /* ================= END JENNY_V369_SIX_FIXES_RAM_TURBO_REVERSE_STALL_HEAL_AND_UNIFIED_TELEMETRY ================= */
+
+/* ================= BEGIN JENNY_V370_DECK_A_FULL_TRACK_PLAYBACK_AND_PAUSE_IMMUNITY_PATCH ================= */
+(function() {
+    if (window._jennyV370DeckAFullTrackPatchInstalled) return;
+    window._jennyV370DeckAFullTrackPatchInstalled = true;
+
+    var PLAY_ICON_SVG_V370 = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    var PAUSE_ICON_SVG_V370 = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+
+    // -------------------------------------------------------------------------
+    // 1. ТОЧНЫЙ ДЕТЕКТОР ИГРАЮЩЕЙ ДЕКИ А И НЕПРЕРЫВНЫЕ ЧАСЫ WEBAUDIO (#370)
+    //    - Исправляет ошибку, при которой после остановки studioSourceNode переменная
+    //      window.studioSourceNode оставалась не-null, из-за чего иконка паузы (⏸)
+    //      зависала на кнопке #playPauseBtn и в строке песни, блокируя повторный запуск!
+    //    - Сохраняет точную секунду трека при паузе (lastKnownSec), чтобы шкала
+    //      никогда не прыгала с 0:29 обратно в 0:00 (-4:57).
+    // -------------------------------------------------------------------------
+    window.isDeckAActuallyPlayingV232 = function() {
+        var player = document.getElementById('audioPlayer');
+        var htmlPlaying = Boolean(player && !player.paused && !player.ended && player.src && (!window.htmlGain || !window.htmlGain.gain || window.htmlGain.gain.value > 0.001));
+        var ramPlaying = Boolean(window.isStudioPlaying && window.studioSourceNode);
+        return Boolean((htmlPlaying || ramPlaying) && !window._userPausedV75_2);
+    };
+
+    window.getTruePlaybackTimeV74_2 = function() {
+        var player = document.getElementById('audioPlayer');
+        if (window._pendingSeekTargetV75 && (performance.now() - window._pendingSeekTargetV75.ts < 320)) {
+            return window._pendingSeekTargetV75.sec;
+        }
+        var pTime = (player && isFinite(player.currentTime)) ? player.currentTime : 0;
+        var clk = window._studioClockV74_1;
+        var maxDur = (window.studioBuffer && window.studioBuffer.duration > 0)
+            ? window.studioBuffer.duration
+            : ((player && isFinite(player.duration) && player.duration > 0) ? player.duration : 999999);
+
+        if (window.isStudioPlaying && window.studioSourceNode && clk && clk.active && window.audioCtx && !window._userPausedV75_2) {
+            var spd = clk.speed || ((typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0);
+            var elapsedCtx = Math.max(0, window.audioCtx.currentTime - clk.startCtxTime);
+            var est = clk.startTrackSec + elapsedCtx * spd;
+            var clampedEst = Math.max(0, Math.min(maxDur - 0.02, est));
+            clk.lastKnownSec = clampedEst;
+            clk.trackName = window.currentPlayingTrack || '';
+            if (!player || player.paused || pTime < 0.08 || Math.abs(pTime - clampedEst) > 0.45) {
+                return clampedEst;
+            }
+        }
+
+        if (clk && typeof clk.lastKnownSec === 'number' && isFinite(clk.lastKnownSec) && clk.trackName === (window.currentPlayingTrack || '')) {
+            if (pTime < 0.08 && clk.lastKnownSec > 0.25) {
+                return Math.max(0, Math.min(maxDur - 0.02, clk.lastKnownSec));
+            }
+        }
+        return pTime;
+    };
+
+    var _origSetExactPosV370 = window.setExactPlaybackPositionV75;
+    window.setExactPlaybackPositionV75 = function(targetSec) {
+        var cleanSec = Math.max(0, parseFloat(targetSec) || 0);
+        if (!window._studioClockV74_1) {
+            window._studioClockV74_1 = { active: false, startCtxTime: 0, startTrackSec: 0, speed: 1.0 };
+        }
+        window._studioClockV74_1.startTrackSec = cleanSec;
+        window._studioClockV74_1.lastKnownSec = cleanSec;
+        window._studioClockV74_1.trackName = window.currentPlayingTrack || '';
+        window._studioClockV74_1.startCtxTime = window.audioCtx ? window.audioCtx.currentTime : 0;
+        window._internalSeekSyncGuardV370 = true;
+        try {
+            if (typeof _origSetExactPosV370 === 'function') {
+                return _origSetExactPosV370.apply(this, arguments);
+            }
+        } finally {
+            setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 60);
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. ЗАЩИТА АКТИВНОГО WEBAUDIO RAM-ДВИЖКА ДЕКИ А ОТ ЛОЖНОГО СОБЫТИЯ player.onpause
+    //    НА ~28–30 СЕКУНДЕ (КОГДА <audio id="audioPlayer"> ЗАКРЫВАЕТ СВОЙ СОКЕТ ИЛИ ТАЙМАУТИТ,
+    //    ПОКА ЗВУК УЖЕ ИГРАЕТ ИЗ ОЗУ ЧЕРЕЗ window.studioSourceNode!)
+    // -------------------------------------------------------------------------
+    function installDeckAAudioPlayerPauseShieldV370() {
+        var player = document.getElementById('audioPlayer');
+        if (!player || player._v370PauseShieldInstalled) return;
+        player._v370PauseShieldInstalled = true;
+
+        // Перехватываем событие pause на стадии capture ДО обработчиков engine_audio.js:539 и ui_playback.js:512!
+        player.addEventListener('pause', function(ev) {
+            // Если сейчас активно играет WebAudio RAM-буфер (window.studioSourceNode) и пользователь НЕ нажимал паузу:
+            // это фоновый останов/таймаут беззвучного <audio> элемента (htmlGain = 0).
+            // НИКОГДА не глушим inputMixer и НЕ останавливаем studioSourceNode!
+            if (window.isStudioPlaying && window.studioSourceNode && !window._userPausedV75_2 && !player.ended) {
+                if (ev && typeof ev.stopImmediatePropagation === 'function') {
+                    ev.stopImmediatePropagation();
+                }
+                if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
+                    try {
+                        var now = window.audioCtx.currentTime;
+                        window.inputMixer.gain.cancelScheduledValues(now);
+                        window.inputMixer.gain.setValueAtTime(1.0, now);
+                        window.inputMixer.gain.value = 1.0;
+                    } catch (e) {}
+                }
+                if (typeof window.updateTrackListPlayIcons === 'function') {
+                    window.updateTrackListPlayIcons();
+                }
+                return;
+            }
+        }, true);
+
+        // Также переопределяем player.onpause (из ui_playback.js:512), чтобы он:
+        // 1) Никогда не убивал живой studioSourceNode, если _userPausedV75_2 === false
+        // 2) При реальной паузе обнулял studioSourceNode = null и очищал _activeBufferSourcesV71
+        player.onpause = function() {
+            if (window.isStudioPlaying && window.studioSourceNode && !window._userPausedV75_2 && !player.ended) {
+                if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
+                    try {
+                        var now = window.audioCtx.currentTime;
+                        window.inputMixer.gain.cancelScheduledValues(now);
+                        window.inputMixer.gain.setValueAtTime(1.0, now);
+                        window.inputMixer.gain.value = 1.0;
+                    } catch (e) {}
+                }
+                if (typeof window.updateTrackListPlayIcons === 'function') {
+                    window.updateTrackListPlayIcons();
+                }
+                return;
+            }
+
+            if (window._studioClockV74_1 && window.audioCtx) {
+                var clk = window._studioClockV74_1;
+                if (clk.active) {
+                    var spd = clk.speed || 1.0;
+                    var curEst = clk.startTrackSec + Math.max(0, window.audioCtx.currentTime - clk.startCtxTime) * spd;
+                    clk.lastKnownSec = Math.max(0, curEst);
+                    clk.startTrackSec = clk.lastKnownSec;
+                    clk.active = false;
+                }
+            }
+
+            if (window.studioSourceNode) {
+                try { window.studioSourceNode.onended = null; } catch (e) {}
+                try { window.studioSourceNode.stop(0); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+                window.studioSourceNode = null;
+            }
+            if (window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.forEach === 'function') {
+                window._activeBufferSourcesV71.forEach(function(n) {
+                    if (!n) return;
+                    try { n.onended = null; n.stop(0); n.disconnect(); } catch (e) {}
+                });
+                window._activeBufferSourcesV71.clear();
+            }
+            window.isStudioPlaying = false;
+
+            var btn = document.getElementById('playPauseBtn');
+            if (btn) btn.innerHTML = PLAY_ICON_SVG_V370;
+            if ('mediaSession' in navigator) {
+                try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
+            }
+            if (typeof window.updateTrackListPlayIcons === 'function') {
+                window.updateTrackListPlayIcons();
+            }
+        };
+
+        // Защищаем player.onplay (из ui_playback.js:488), чтобы поздний старт <audio> не сбивал уже играющий studioSourceNode!
+        player.onplay = function() {
+            var btn = document.getElementById('playPauseBtn');
+            if (btn) btn.innerHTML = PAUSE_ICON_SVG_V370;
+            if ('mediaSession' in navigator) {
+                try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
+            }
+            if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
+                try {
+                    var now = window.audioCtx.currentTime;
+                    window.inputMixer.gain.cancelScheduledValues(now);
+                    window.inputMixer.gain.setValueAtTime(1.0, now);
+                    window.inputMixer.gain.value = 1.0;
+                } catch (e) {}
+            }
+            var targetSpd = typeof window.getTargetPlaybackSpeed === 'function' ? window.getTargetPlaybackSpeed() : 1.0;
+            if (Math.abs(player.playbackRate - targetSpd) > 0.001 && player.playbackRate !== 10.0) {
+                try { player.playbackRate = targetSpd; } catch (e) {}
+            }
+            if (window.isStudioPlaying && window.studioSourceNode) {
+                if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+                if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+                return;
+            }
+            if (window.studioBuffer && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+        };
+    }
+    installDeckAAudioPlayerPauseShieldV370();
+    setTimeout(installDeckAAudioPlayerPauseShieldV370, 150);
+    setTimeout(installDeckAAudioPlayerPauseShieldV370, 600);
+
+    // -------------------------------------------------------------------------
+    // 3. ЗАЩИТА prioritizeRamPieceAtCursorV72 ОТ ЛОЖНОГО СБРОСА ПРИ ВНУТРЕННЕЙ СИНХРОНИЗАЦИИ ЧАСОВ
+    //    И БЫСТРАЯ ПАРАЛЛЕЛЬНАЯ РАСПАКОВКА decodeHugeTrackToRamV71 БЕЗ ОБРЫВА НА 30 СЕКУНДЕ!
+    // -------------------------------------------------------------------------
+    var _origPrioritizePieceV370 = window.prioritizeRamPieceAtCursorV72;
+    window.prioritizeRamPieceAtCursorV72 = function() {
+        if (window._internalSeekSyncGuardV370 || window._bgPieceFetchProtectedV370) {
+            return;
+        }
+        if (typeof _origPrioritizePieceV370 === 'function') {
+            return _origPrioritizePieceV370.apply(this, arguments);
+        }
+    };
+
+    function invalidateDeckAHoseCacheV370() {
+        if (window._hoseSplicerCacheV46) {
+            window._hoseSplicerCacheV46.srcBuffer = null;
+            window._hoseSplicerCacheV46.splicedBuffer = null;
+        }
+    }
+    window.invalidateDeckAHoseCacheV370 = invalidateDeckAHoseCacheV370;
+
+    // Усовершенствованный декодер треков через FFmpeg PCM (/api/pcm_chunk_v71/):
+    // - Всегда узнаёт точную длительность трека через /api/pcm_meta_v71/ (не полагаясь на грубую оценку по размеру)
+    // - Качает куски по 60 сек в 3 параллельных потока, сбрасывая кэш _hoseSplicerCacheV46 после каждого куска
+    // - Автоматически подхватывает новые куски на лету без обрыва звука после первых 30 секунд!
+    window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMeta) {
+        if (window._hugeRamCacheV71 && window._hugeRamCacheV71.name === filename && window._hugeRamCacheV71.buf && window._hugeRamCacheV71.complete) {
+            window.studioBuffer = window._hugeRamCacheV71.buf;
+            return window.studioBuffer;
+        }
+
+        var dur = 0;
+        try {
+            var mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename));
+            if (mr.ok) {
+                var md = await mr.json();
+                dur = parseFloat(md.duration) || 0;
+            }
+        } catch (e) {}
+        if (!dur && preMeta && preMeta.duration) {
+            dur = parseFloat(preMeta.duration) || 0;
+        }
+        if (!dur && window.lastData && window.lastData.track_meta && window.lastData.track_meta[filename]) {
+            dur = parseFloat(window.lastData.track_meta[filename].dur) || 0;
+        }
+        if (!dur && player && isFinite(player.duration) && player.duration > 0) {
+            dur = player.duration;
+        }
+        if (dur <= 0) return null;
+
+        var srCandidates = (dur > 5400) ? [16000, 12000, 8000] : ((dur > 2400) ? [24000, 16000, 12000] : [44100, 32000, 24000]);
+        var sr = srCandidates[0];
+        var totalFrames = Math.floor(dur * sr);
+        var audioBuf = null;
+        for (var sIdx = 0; sIdx < srCandidates.length; sIdx++) {
+            try {
+                sr = srCandidates[sIdx];
+                totalFrames = Math.floor(dur * sr);
+                audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
+                if (audioBuf) break;
+            } catch (allocErr) {}
+        }
+        if (!audioBuf) return null;
+
+        var chL = audioBuf.getChannelData(0);
+        var chR = audioBuf.getChannelData(1);
+
+        var PIECE_SEC = (dur <= 600) ? 60 : 45;
+        var numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
+        var pieceMap = new Uint8Array(numPieces); // 0 = пусто, 1 = качается, 2 = готов в RAM
+
+        audioBuf._pieceSecV72 = PIECE_SEC;
+        audioBuf._pieceMapV72 = pieceMap;
+        audioBuf._loadedCountV72 = 0;
+        audioBuf._allPiecesLoadedV72 = false;
+        audioBuf._trueDurationV72 = dur;
+
+        window._hugeRamCacheV71 = { name: filename, buf: audioBuf, complete: false };
+        var pieceFailCounts = new Uint8Array(numPieces);
+
+        var fetchPiece = async function(pIdx) {
+            if (pIdx < 0 || pIdx >= numPieces || pieceMap[pIdx] === 2) return true;
+            pieceMap[pIdx] = 1;
+            var stSec = pIdx * PIECE_SEC;
+            var dSec = Math.min(PIECE_SEC, dur - stSec);
+            try {
+                var url = '/api/pcm_chunk_v71/' + encodeURIComponent(filename) + '?start=' + stSec + '&dur=' + dSec + '&sr=' + sr;
+                var res = await fetch(url);
+                if (!res.ok) { pieceMap[pIdx] = 0; return false; }
+                var ab = await res.arrayBuffer();
+                var totalFloats = Math.floor(ab.byteLength / 4);
+                var frames = Math.floor(totalFloats / 2);
+                if (frames > 0) {
+                    var startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
+                    var maxCopy = Math.min(frames, totalFrames - startFrame);
+                    if (maxCopy > 0) {
+                        var leftArr = new Float32Array(ab, 0, frames);
+                        var rightArr = new Float32Array(ab, frames * 4, frames);
+                        chL.set(leftArr.subarray(0, maxCopy), startFrame);
+                        chR.set(rightArr.subarray(0, maxCopy), startFrame);
+                    }
+                }
+                pieceMap[pIdx] = 2;
+                audioBuf._loadedCountV72++;
+                invalidateDeckAHoseCacheV370();
+                if (audioBuf._loadedCountV72 === 1 && window.appConfig && window.appConfig.opt_autoRms) {
+                    window.computeBufferAutoGain(audioBuf, window.appConfig.val_autoRms);
+                    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph(true);
+                }
+                return true;
+            } catch (err) {
+                pieceMap[pIdx] = 0;
+                return false;
+            }
+        };
+
+        // 1) Сначала мгновенно загружаем стартовый кусок под курсором (обычно Piece 0: 0..60 сек),
+        //    чтобы музыка заиграла в первые же мгновения!
+        var initCurSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0);
+        var firstPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(initCurSec / PIECE_SEC)));
+        await fetchPiece(firstPiece);
+        if (window.currentPlayingTrack !== filename) return null;
+
+        if (pieceMap[firstPiece] === 2) {
+            window.studioBuffer = audioBuf;
+            if (!window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            }
+        }
+
+        // 2) Докачиваем все остальные куски параллельно в 3 воркера!
+        var workerLoop = async function() {
+            while (audioBuf._loadedCountV72 < numPieces) {
+                if (window.currentPlayingTrack !== filename) return;
+                var curSecNow = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0);
+                var curP = Math.max(0, Math.min(numPieces - 1, Math.floor(curSecNow / PIECE_SEC)));
+                var pick = -1;
+                for (var off = 0; off < numPieces; off++) {
+                    var cand = (curP + off) % numPieces;
+                    if (pieceMap[cand] === 0 && pieceFailCounts[cand] < 3) {
+                        pick = cand;
+                        break;
+                    }
+                }
+                if (pick === -1) {
+                    var anyInFlight = false;
+                    for (var k = 0; k < numPieces; k++) {
+                        if (pieceMap[k] === 1) { anyInFlight = true; break; }
+                    }
+                    if (!anyInFlight) break;
+                    await new Promise(function(r) { setTimeout(r, 80); });
+                    continue;
+                }
+                var ok = await fetchPiece(pick);
+                if (!ok) {
+                    pieceFailCounts[pick] = (pieceFailCounts[pick] || 0) + 1;
+                    await new Promise(function(r) { setTimeout(r, 150); });
+                } else if (window.currentPlayingTrack === filename) {
+                    window.studioBuffer = audioBuf;
+                    // Если узел играет со скоростью != 1.0 (или был собран из неполного буфера), бесшовно обновляем буфер!
+                    var spdNow = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
+                    if (Math.abs(spdNow - 1.0) > 0.003 && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                        window.syncMasterPlaybackEngineV59(false);
+                    }
+                }
+            }
+        };
+
+        await Promise.all([workerLoop(), workerLoop(), workerLoop()]);
+        if (window.currentPlayingTrack !== filename) return null;
+
+        audioBuf._allPiecesLoadedV72 = true;
+        window._hugeRamCacheV71 = { name: filename, buf: audioBuf, complete: true };
+        invalidateDeckAHoseCacheV370();
+
+        if (!window.reversedStudioBuffer) {
+            try {
+                if (typeof window.reverseAudioBufferInDeckAWorker === 'function') {
+                    window.reversedStudioBuffer = await window.reverseAudioBufferInDeckAWorker(audioBuf, window.audioCtx);
+                }
+                if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
+                    window.reversedStudioBuffer = await window.cloneAndReverseBuffer(audioBuf);
+                }
+            } catch (e) {}
+        }
+        return audioBuf;
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. БЕСШОВНЫЙ ПЕРЕЗАПУСК И ОКОНЧАНИЕ ТРЕКА В WEBAUDIO RAM-ДВИЖКЕ ДЕКИ А (#370)
+    //    - Не пересоздаёт и не прерывает уже играющий window.studioSourceNode на ~28 сек,
+    //      когда фоновая сборка reversedStudioBuffer завершается в playTrack!
+    //    - Привязывает точный обработчик onended к window.studioSourceNode, чтобы:
+    //      а) Если узел когда-либо остановился раньше конца песни (curSec < dur - 0.5) без паузы,
+    //         он мгновенно продолжал играть с этой же миллисекунды!
+    //      б) По достижении конца песни автоматически включал следующий трек (playNextTrack).
+    // -------------------------------------------------------------------------
+    var _origForceStopV370 = window.forceStopPauseDeckAAudioV232;
+    window.forceStopPauseDeckAAudioV232 = function(fullUnload) {
+        if (!fullUnload && window._studioClockV74_1 && window.audioCtx) {
+            var clk = window._studioClockV74_1;
+            if (clk.active) {
+                var spd = clk.speed || 1.0;
+                var curEst = clk.startTrackSec + Math.max(0, window.audioCtx.currentTime - clk.startCtxTime) * spd;
+                clk.lastKnownSec = Math.max(0, curEst);
+                clk.startTrackSec = clk.lastKnownSec;
+            }
+            clk.active = false;
+        } else if (fullUnload && window._studioClockV74_1) {
+            window._studioClockV74_1.active = false;
+            window._studioClockV74_1.lastKnownSec = 0;
+            window._studioClockV74_1.startTrackSec = 0;
+        }
+        return typeof _origForceStopV370 === 'function' ? _origForceStopV370.apply(this, arguments) : undefined;
+    };
+
+    function bindStudioNodeAutoHealAndEndV370(node, trackName) {
+        if (!node || node._v370BoundOnEnded) return;
+        node._v370BoundOnEnded = true;
+        node.onended = function() {
+            if (window.studioSourceNode !== node) return;
+            window.studioSourceNode = null;
+            if (window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.delete === 'function') {
+                window._activeBufferSourcesV71.delete(node);
+            }
+            window.isStudioPlaying = false;
+
+            if (window._userPausedV75_2 || window.currentPlayingTrack !== trackName) {
+                if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+                return;
+            }
+
+            var dur = (window.studioBuffer && window.studioBuffer.duration) || 0;
+            var curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : 0;
+
+            // Если буфер остановился раньше конца песни (например, закончился кусок до полной докачки),
+            // немедленно перезапускаем воспроизведение с текущей секунды curSec!
+            if (dur > 2.0 && curSec < dur - 0.35) {
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+                return;
+            }
+
+            // Песня доиграла до конца -> переключаем на следующую!
+            var nowAdv = performance.now();
+            if (nowAdv - (window._lastAutoAdvanceWallV360 || 0) > 1200) {
+                window._lastAutoAdvanceWallV360 = nowAdv;
+                var wasRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+                if (wasRev && typeof window.playPreviousTrack === 'function') {
+                    window.playPreviousTrack();
+                } else if (typeof window.playNextTrack === 'function') {
+                    window.playNextTrack();
+                }
+            }
+        };
+    }
+
+    function installCleanSyncMasterV370() {
+        var prevSync = window.syncMasterPlaybackEngineV59;
+        if (typeof prevSync !== 'function' || prevSync._v370Wrapped) return;
+
+        var wrappedV370 = function(isDraggingArc) {
+            var player = document.getElementById('audioPlayer');
+            var trueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+                ? window.getTruePlaybackTimeV74_2()
+                : ((player && player.currentTime) || 0);
+
+            if (window.audioCtx && window.inputMixer && window.inputMixer.gain && !window._userPausedV75_2) {
+                try {
+                    var now = window.audioCtx.currentTime;
+                    window.inputMixer.gain.cancelScheduledValues(now);
+                    window.inputMixer.gain.setValueAtTime(1.0, now);
+                    window.inputMixer.gain.value = 1.0;
+                } catch (e) {}
+            }
+
+            window._internalSeekSyncGuardV370 = true;
+            var res;
+            try {
+                res = prevSync.apply(this, arguments);
+            } finally {
+                setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 60);
+            }
+
+            // Если должен играть RAM-движок, а origSync остановил studioSourceNode (потому что <audio> стоит на паузе),
+            // гарантированно запускаем/поддерживаем studioSourceNode с позиции trueSec!
+            var gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+            var isRamGear = (gKey === 'jbuf-lock' || gKey === 'jbuf-shift' || gKey === 'vinyl-shift');
+            var shouldPlay = !window._userPausedV75_2 && Boolean(
+                window.isStudioPlaying ||
+                window._resumingFromUserPlayV232 ||
+                window._trackActivelyLoadingToRamV237 ||
+                (player && !player.paused)
+            );
+
+            if (!isDraggingArc && shouldPlay && isRamGear && window.studioBuffer && window.audioCtx && (!window.isStudioPlaying || !window.studioSourceNode)) {
+                var targetSpd = (typeof window.getActiveTargetSpeedV59 === 'function')
+                    ? window.getActiveTargetSpeedV59()
+                    : ((player && player.playbackRate) || 1.0);
+                var tensionPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined)
+                    ? window.appConfig.hoseTensionPct
+                    : 100;
+                var isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+                var baseBuf = isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer;
+                if (baseBuf) {
+                    var activeBuf = (gKey === 'jbuf-lock' && typeof window.buildElasticHoseBufferV46 === 'function')
+                        ? window.buildElasticHoseBufferV46(baseBuf, targetSpd, tensionPct)
+                        : baseBuf;
+                    var nodeRate = (gKey === 'jbuf-lock') ? 1.0 : targetSpd;
+                    if (activeBuf) {
+                        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+                        var node = window.audioCtx.createBufferSource();
+                        node._isHoseSpliced = (gKey === 'jbuf-lock');
+                        node.buffer = activeBuf;
+                        node.playbackRate.value = nodeRate;
+                        node.connect(window.inputMixer);
+                        if (window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.add === 'function') {
+                            window._activeBufferSourcesV71.add(node);
+                        }
+                        var startOffset = (gKey === 'jbuf-lock')
+                            ? (Math.max(0, trueSec) / Math.max(0.05, targetSpd))
+                            : Math.max(0, trueSec);
+                        if (!isFinite(startOffset) || startOffset < 0) startOffset = 0;
+                        if (startOffset >= activeBuf.duration) startOffset = Math.max(0, activeBuf.duration - 0.05);
+                        window.studioSourceNode = node;
+                        window.isStudioPlaying = true;
+                        node.start(0, startOffset);
+                        window._studioClockV74_1 = {
+                            active: true,
+                            startCtxTime: window.audioCtx.currentTime,
+                            startTrackSec: Math.max(0, trueSec),
+                            lastKnownSec: Math.max(0, trueSec),
+                            trackName: window.currentPlayingTrack || '',
+                            speed: targetSpd
+                        };
+                    }
+                }
+            }
+
+            if (window.studioSourceNode && window.isStudioPlaying) {
+                bindStudioNodeAutoHealAndEndV370(window.studioSourceNode, window.currentPlayingTrack || '');
+            }
+            if (typeof window.updateTrackListPlayIcons === 'function') {
+                window.updateTrackListPlayIcons();
+            }
+            return res;
+        };
+
+        wrappedV370._v370Wrapped = true;
+        window.syncMasterPlaybackEngineV59 = wrappedV370;
+        window.applyElasticHoseBufferLiveV46 = wrappedV370;
+    }
+
+    installCleanSyncMasterV370();
+    setTimeout(installCleanSyncMasterV370, 250);
+    setTimeout(installCleanSyncMasterV370, 750);
+})();
+/* ================= END JENNY_V370_DECK_A_FULL_TRACK_PLAYBACK_AND_PAUSE_IMMUNITY_PATCH ================= */
+
+/* ================= BEGIN JENNY_V371_SEEK_LIVE_DECK_A_SVG_BUFFER_BADGES_AND_PAUSE_SAFE_REV_PATCH ================= */
+(function() {
+    if (window._jennyV371PatchInstalled) return;
+    window._jennyV371PatchInstalled = true;
+
+    // -------------------------------------------------------------------------
+    // 1. АККУРАТНЫЕ МИНИ-SVG ИНДИКАТОРЫ ДВУХ БУФЕРОВ ОЗУ НА ВЕРХНЕЙ СТРОЧКЕ
+    //    НАД НАЗВАНИЕМ ТРЕКА (#durationTime) ВМЕСТО ДУБЛИРУЮЩЕГОСЯ ВРЕМЕНИ 2:12
+    //    И ПОЛНОЕ УДАЛЕНИЕ ЖЁЛТЫХ ЗНАЧКОВ ⏩⏪ ИЗ ТЕКСТА #nowPlaying (75172.mp4 00:02–01:13)
+    // -------------------------------------------------------------------------
+    function buildDeckARamSvgHeaderHTMLV371(durSec, isRev, hasFwd, hasRev, isLoading) {
+        var durStr = (typeof window.formatTimeMMSS === 'function')
+            ? window.formatTimeMMSS(durSec)
+            : '0:00';
+
+        // Левый SVG-значок: Буфер #2 (Реверс ◀)
+        var revColor = hasRev
+            ? (isRev ? '#f0abfc' : '#a855f7')
+            : (isLoading ? '#eab308' : '#484f58');
+        var revBg = hasRev
+            ? (isRev ? 'rgba(192,132,252,0.28)' : 'rgba(168,85,247,0.12)')
+            : 'rgba(255,255,255,0.04)';
+        var revBorder = hasRev
+            ? (isRev ? '#e879f9' : 'rgba(168,85,247,0.45)')
+            : 'rgba(139,148,158,0.22)';
+
+        // Правый SVG-значок: Буфер #1 (Вперёд ▶)
+        var fwdColor = hasFwd
+            ? (!isRev ? '#4ade80' : '#a855f7')
+            : (isLoading ? '#eab308' : '#484f58');
+        var fwdBg = hasFwd
+            ? (!isRev ? 'rgba(74,222,128,0.22)' : 'rgba(168,85,247,0.12)')
+            : 'rgba(255,255,255,0.04)';
+        var fwdBorder = hasFwd
+            ? (!isRev ? '#4ade80' : 'rgba(168,85,247,0.45)')
+            : 'rgba(139,148,158,0.22)';
+
+        var svgRevChip =
+            '<span style="display:inline-flex;align-items:center;gap:2px;padding:0px 4px;border-radius:4px;background:' + revBg + ';border:1px solid ' + revBorder + ';color:' + revColor + ';font-size:9px;font-weight:800;line-height:11px;">' +
+                '<svg viewBox="0 0 16 12" width="10" height="8" fill="currentColor" style="display:block;">' +
+                    '<path d="M7.5 2L2 6l5.5 4V2z"/>' +
+                    '<rect x="9.5" y="2.5" width="1.6" height="7" rx="0.6"/>' +
+                    '<rect x="12.5" y="1.5" width="1.6" height="9" rx="0.6"/>' +
+                '</svg>' +
+                '<span>R</span>' +
+            '</span>';
+
+        var svgFwdChip =
+            '<span style="display:inline-flex;align-items:center;gap:2px;padding:0px 4px;border-radius:4px;background:' + fwdBg + ';border:1px solid ' + fwdBorder + ';color:' + fwdColor + ';font-size:9px;font-weight:800;line-height:11px;">' +
+                '<span>F</span>' +
+                '<svg viewBox="0 0 16 12" width="10" height="8" fill="currentColor" style="display:block;">' +
+                    '<rect x="1.9" y="1.5" width="1.6" height="9" rx="0.6"/>' +
+                    '<rect x="4.9" y="2.5" width="1.6" height="7" rx="0.6"/>' +
+                    '<path d="M8.5 2v8L14 6 8.5 2z"/>' +
+                '</svg>' +
+            '</span>';
+
+        return '<span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle;">' +
+            svgRevChip +
+            '<span style="color:#8b949e;font-size:11px;font-weight:700;letter-spacing:0.3px;">' + durStr + '</span>' +
+            svgFwdChip +
+        '</span>';
+    }
+
+    window.updateCenterCurrentTime = function(curSec, durSec, isVisualReverse) {
+        var centerTimeEl = document.getElementById('durationTime');
+        if (!centerTimeEl) return;
+        var npEl = document.getElementById('nowPlaying');
+        if (npEl && npEl.innerText && npEl.innerText.indexOf('⏩⏪') !== -1) {
+            npEl.innerText = npEl.innerText.replace(/\s*⏩⏪\s*/g, ' ');
+        }
+        var effDur = (isFinite(durSec) && durSec > 0)
+            ? durSec
+            : ((window.studioBuffer && window.studioBuffer.duration > 0) ? window.studioBuffer.duration : 0);
+        var hasFwd = Boolean(window.studioBuffer);
+        var hasRev = Boolean(window.reversedStudioBuffer);
+        var isRev = Boolean(isVisualReverse || window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        var isLoading = Boolean(window._trackActivelyLoadingToRamV237);
+        var durRounded = Math.floor(Math.max(0, effDur));
+        var sig = [durRounded, isRev ? 1 : 0, hasFwd ? 1 : 0, hasRev ? 1 : 0, isLoading ? 1 : 0].join('|');
+        if (centerTimeEl._v371BadgeSig !== sig) {
+            centerTimeEl._v371BadgeSig = sig;
+            centerTimeEl.innerHTML = buildDeckARamSvgHeaderHTMLV371(effDur, isRev, hasFwd, hasRev, isLoading);
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. МГНОВЕННАЯ ПЕРЕМОТКА (SEEK) НА ИГРАЮЩЕЙ И СТОЯЩЕЙ НА ПАУЗЕ ДЕКЕ А
+    //    (75172.mp4 01:13–01:28)
+    //    - Исправляет ошибку, при которой во время игры WebAudio RAM-буфера
+    //      тап по #seekZone менял только player.currentTime, а getTruePlaybackTimeV74_2()
+    //      считал это расхождением (> 0.45 сек) и возвращал старое время _studioClockV74_1,
+    //      перезаписывая player.currentTime обратно и не пересоздавая studioSourceNode!
+    // -------------------------------------------------------------------------
+    window.seekDeckAToExactSecondV371 = function(targetSec) {
+        var player = document.getElementById('audioPlayer');
+        var effDur = (window.studioBuffer && window.studioBuffer.duration > 0)
+            ? window.studioBuffer.duration
+            : ((player && isFinite(player.duration) && player.duration > 0) ? player.duration : 0);
+
+        var cleanSec = Math.max(0, parseFloat(targetSec) || 0);
+        if (effDur > 0.05) {
+            cleanSec = Math.max(0, Math.min(effDur - 0.02, cleanSec));
+        }
+
+        var activeSpd = (typeof window.getActiveTargetSpeedV59 === 'function')
+            ? window.getActiveTargetSpeedV59()
+            : ((player && player.playbackRate) || 1.0);
+
+        window._pendingSeekTargetV75 = { sec: cleanSec, ts: performance.now() };
+        window._studioClockV74_1 = {
+            active: Boolean(!window._userPausedV75_2 && (window.isStudioPlaying || (player && !player.paused))),
+            startCtxTime: window.audioCtx ? window.audioCtx.currentTime : 0,
+            startTrackSec: cleanSec,
+            lastKnownSec: cleanSec,
+            trackName: window.currentPlayingTrack || '',
+            speed: activeSpd
+        };
+
+        if (player) {
+            window._internalSeekSyncGuardV370 = true;
+            try {
+                player.currentTime = cleanSec;
+            } catch (e) {}
+            setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 60);
+        }
+
+        // Если трек ещё докачивается по кускам, даём приоритет куску под новой точкой перемотки!
+        if (window.studioBuffer && window.studioBuffer._pieceMapV72 && !window.studioBuffer._allPiecesLoadedV72) {
+            if (typeof _origPrioritizePieceV370 === 'function') {
+                try { _origPrioritizePieceV370(); } catch (e) {}
+            }
+        }
+
+        var isVisualReverse = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+        if (effDur > 0 && typeof window.updateProgressUI === 'function') {
+            window.updateProgressUI(cleanSec, effDur, isVisualReverse);
+        }
+
+        var isPlayingNow = !window._userPausedV75_2 && Boolean(
+            window.isStudioPlaying ||
+            window.studioSourceNode ||
+            (player && !player.paused)
+        );
+
+        if (isPlayingNow) {
+            // Останавливаем старый studioSourceNode ПЕРЕД вызовом syncMasterPlaybackEngineV59,
+            // чтобы движок гарантированно запустил новый узел ровно с новой секунды cleanSec!
+            if (window.studioSourceNode) {
+                try { window.studioSourceNode.onended = null; } catch (e) {}
+                try { window.studioSourceNode.stop(0); } catch (e) {}
+                try { window.studioSourceNode.disconnect(); } catch (e) {}
+                window.studioSourceNode = null;
+            }
+            if (window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.forEach === 'function') {
+                window._activeBufferSourcesV71.forEach(function(n) {
+                    if (!n) return;
+                    try { n.onended = null; n.stop(0); n.disconnect(); } catch (e) {}
+                });
+                window._activeBufferSourcesV71.clear();
+            }
+            window.isStudioPlaying = false;
+            window._resumingFromUserPlayV232 = true;
+            try {
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+            } finally {
+                window._resumingFromUserPlayV232 = false;
+            }
+        }
+    };
+
+    window.setExactPlaybackPositionV75 = function(targetSec) {
+        window.seekDeckAToExactSecondV371(targetSec);
+    };
+
+    // Перехватываем прямое присваивание player.currentTime = ... (например, из setupSeekZone в ui_v71.js:27594
+    // или из 10x перемотки удержанием боковых таймеров в ui_controls.js:87), чтобы любое внешнее изменение
+    // currentTime мгновенно обновляло _studioClockV74_1 и перезапускало studioSourceNode с новой позиции!
+    function installAudioPlayerCurrentTimeSeekHookV371() {
+        var player = document.getElementById('audioPlayer');
+        if (!player || player._v371CurrentTimeHooked) return;
+        var proto = window.HTMLMediaElement && window.HTMLMediaElement.prototype;
+        var desc = proto ? Object.getOwnPropertyDescriptor(proto, 'currentTime') : null;
+        if (!desc || typeof desc.get !== 'function' || typeof desc.set !== 'function') return;
+
+        player._v371CurrentTimeHooked = true;
+        Object.defineProperty(player, 'currentTime', {
+            configurable: true,
+            enumerable: true,
+            get: function() {
+                return desc.get.call(this);
+            },
+            set: function(val) {
+                var numVal = Math.max(0, parseFloat(val) || 0);
+                try { desc.set.call(this, numVal); } catch (e) {}
+                if (window._internalSeekSyncGuardV370) {
+                    return;
+                }
+                // Внешняя перемотка (тап по #seekZone, 10x удержание таймера или разворот реверса)!
+                var activeSpd = (typeof window.getActiveTargetSpeedV59 === 'function')
+                    ? window.getActiveTargetSpeedV59()
+                    : ((this && this.playbackRate) || 1.0);
+                window._pendingSeekTargetV75 = { sec: numVal, ts: performance.now() };
+                window._studioClockV74_1 = {
+                    active: Boolean(!window._userPausedV75_2 && (window.isStudioPlaying || !this.paused)),
+                    startCtxTime: window.audioCtx ? window.audioCtx.currentTime : 0,
+                    startTrackSec: numVal,
+                    lastKnownSec: numVal,
+                    trackName: window.currentPlayingTrack || '',
+                    speed: activeSpd
+                };
+                if (!window._userPausedV75_2 && window.isStudioPlaying && window.studioSourceNode) {
+                    // Сбрасываем текущий узел, чтобы следующий же вызов syncMasterPlaybackEngineV59(false)
+                    // (на следующей строке handleTapSeek) гарантированно запустил звук с новой точки numVal!
+                    try { window.studioSourceNode.onended = null; } catch (e) {}
+                    try { window.studioSourceNode.stop(0); } catch (e) {}
+                    try { window.studioSourceNode.disconnect(); } catch (e) {}
+                    window.studioSourceNode = null;
+                    if (window._activeBufferSourcesV71 && typeof window._activeBufferSourcesV71.clear === 'function') {
+                        window._activeBufferSourcesV71.clear();
+                    }
+                    window.isStudioPlaying = false;
+                    window._resumingFromUserPlayV232 = true;
+                    setTimeout(function() { window._resumingFromUserPlayV232 = false; }, 40);
+                }
+            }
+        });
+    }
+    installAudioPlayerCurrentTimeSeekHookV371();
+    setTimeout(installAudioPlayerCurrentTimeSeekHookV371, 150);
+    setTimeout(installAudioPlayerCurrentTimeSeekHookV371, 500);
+
+    // Также страхуем клик/тап по #seekZone на случай, если player.duration == NaN/0 (когда длительность известна только из window.studioBuffer.duration)!
+    function installSeekZoneFallbackTapV371() {
+        var zone = document.getElementById('seekZone');
+        if (!zone || zone._v371FallbackBound) return;
+        zone._v371FallbackBound = true;
+
+        var downX = 0, downY = 0, downTs = 0;
+        zone.addEventListener('touchstart', function(e) {
+            if (e.touches && e.touches.length > 0) {
+                downX = e.touches[0].clientX;
+                downY = e.touches[0].clientY;
+                downTs = performance.now();
+            }
+        }, { passive: true });
+
+        zone.addEventListener('touchend', function(e) {
+            var upX = (e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0].clientX : downX;
+            var upY = (e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches[0].clientY : downY;
+            var dt = performance.now() - downTs;
+            if (dt < 240 && Math.abs(upX - downX) < 18 && Math.abs(upY - downY) < 18) {
+                var rect = zone.getBoundingClientRect();
+                if (rect.width > 10) {
+                    var perc = Math.max(0, Math.min(1, (upX - rect.left) / rect.width));
+                    var player = document.getElementById('audioPlayer');
+                    var effDur = (window.studioBuffer && window.studioBuffer.duration > 0)
+                        ? window.studioBuffer.duration
+                        : ((player && isFinite(player.duration) && player.duration > 0) ? player.duration : 0);
+                    if (effDur > 0) {
+                        var isVisualReverse = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+                        if (isVisualReverse) perc = 1.0 - perc;
+                        window.seekDeckAToExactSecondV371(perc * effDur);
+                    }
+                }
+            }
+        }, { passive: true });
+    }
+    installSeekZoneFallbackTapV371();
+    setTimeout(installSeekZoneFallbackTapV371, 250);
+    setTimeout(installSeekZoneFallbackTapV371, 800);
+})();
+/* ================= END JENNY_V371_SEEK_LIVE_DECK_A_SVG_BUFFER_BADGES_AND_PAUSE_SAFE_REV_PATCH ================= */

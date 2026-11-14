@@ -1144,7 +1144,7 @@ def get_pcm_chunk_v71(filename):
         return "Not found"
     try:
         st_sec = max(0.0, float(request.query.get('start', 0.0)))
-        dur_sec = max(0.1, min(120.0, float(request.query.get('dur', 30.0))))
+        dur_sec = max(0.1, min(600.0, float(request.query.get('dur', 60.0))))
         sr = int(request.query.get('sr', 44100))
         if sr < 8000 or sr > 96000:
             sr = 44100
@@ -1153,13 +1153,18 @@ def get_pcm_chunk_v71(filename):
         ffmpeg_bin = find_ffmpeg_binary()
         cmd = [
             ffmpeg_bin, '-v', 'error',
+            '-probesize', '262144',
+            '-analyzeduration', '200000',
+            '-noaccurate_seek',
             '-ss', f"{st_sec:.3f}",
             '-t', f"{dur_sec:.3f}",
             '-i', src_path,
-            '-vn', '-ac', '2', '-ar', str(sr),
+            '-vn', '-sn', '-dn',
+            '-threads', '4',
+            '-ac', '2', '-ar', str(sr),
             '-f', 'f32le', '-acodec', 'pcm_f32le', '-'
         ]
-        pr = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+        pr = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=35)
         raw_interleaved = pr.stdout or b""
         n_floats = len(raw_interleaved) // 4
         frames = n_floats // 2
@@ -1180,6 +1185,43 @@ def get_pcm_chunk_v71(filename):
         return str(e)
 
 
+def _sniff_true_audio_mime_v370(fp):
+    ext = os.path.splitext(fp)[1].lower()
+    try:
+        with open(fp, "rb") as mf:
+            hdr = mf.read(16)
+        if len(hdr) >= 4:
+            if hdr[:4] == b"OggS":
+                return "audio/ogg"
+            if hdr[:4] == b"\x1a\x45\xdf\xa3":
+                return "video/webm" if ext in (".webm", ".mkv") else "audio/webm"
+            if hdr[:4] == b"RIFF":
+                return "audio/wav"
+            if hdr[:4] == b"fLaC":
+                return "audio/flac"
+            if hdr[:3] == b"ID3" or (hdr[0] == 0xFF and (hdr[1] & 0xE0) == 0xE0):
+                return "audio/mpeg"
+            if len(hdr) >= 8 and hdr[4:8] in (b"ftyp", b"moov", b"mdat", b"styp"):
+                return "video/mp4" if ext in (".mp4", ".m4v", ".mov") else "audio/mp4"
+    except Exception:
+        pass
+    if ext in (".opus", ".ogg"):
+        return "audio/ogg"
+    if ext == ".mp3":
+        return "audio/mpeg"
+    if ext == ".flac":
+        return "audio/flac"
+    if ext == ".wav":
+        return "audio/wav"
+    if ext in (".m4a", ".aac"):
+        return "audio/mp4"
+    if ext in (".mp4", ".m4v"):
+        return "video/mp4"
+    if ext == ".webm":
+        return "video/webm"
+    return "application/octet-stream"
+
+
 @route('/api/media/<filename:path>', method=['GET', 'HEAD'])
 def serve_media(filename):
     if filename.lower().endswith('.xflac'):
@@ -1198,12 +1240,11 @@ def serve_media(filename):
         response.status = 404
         return "Not found"
     tr = read_jenny_rev_trailer(fp)
+    mime = _sniff_true_audio_mime_v370(fp)
     if not tr or not tr.get("audio_end"):
-        return static_file(os.path.basename(fp), root=os.path.dirname(fp))
+        return static_file(os.path.basename(fp), root=os.path.dirname(fp), mimetype=mime)
 
     audio_end = int(tr["audio_end"])
-    ext = os.path.splitext(fp)[1].lower()
-    mime = "audio/ogg" if ext in (".opus", ".ogg") else "application/octet-stream"
     headers = {
         "Content-Type": mime,
         "Accept-Ranges": "bytes",
