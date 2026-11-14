@@ -6,7 +6,7 @@
 #include <math.h>
 #include <time.h>
 
-#if defined(__aarch64__) || defined(__ARM_NEON)
+#if defined(__aarch64__)
 #include <arm_neon.h>
 #define JV_HAS_NEON 1
 #else

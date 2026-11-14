@@ -11,11 +11,11 @@ android {
         applicationId "com.jenny.player"
         minSdk 24
         targetSdk 33
-        versionCode 369
-        versionName "1.1-b369"
+        versionCode 373
+        versionName "1.1-b373"
         
         ndk {
-            abiFilters "arm64-v8a"
+            abiFilters "arm64-v8a", "armeabi-v7a"
         }
         
         python {
@@ -25,6 +25,25 @@ android {
                 install "bottle"
                 install "waitress"
             }
+        }
+    }
+
+    signingConfigs {
+        debug {
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
         }
     }
     

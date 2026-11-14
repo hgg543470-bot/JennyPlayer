@@ -37267,7 +37267,7 @@ let vsyncTicks = 0;
         }
 
         // If frames have stopped advancing for > 1.35s (or stream prematurely ended/stalled), seamlessly reconnect live_remux at curSec!
-        if (stalledMs > 1350 && sinceLastHeal > 2200) {
+        if (!window._vidIsBufferingV132 && !vid.seeking && (now - (st._lastSeekWallTsV372 || st._pendingSeekTsV167 || 0) > 6500) && stalledMs > 4500 && sinceLastHeal > 8000) {
             window._lastWatchdogHealTsV369 = now;
             window._lastWatchdogProgressTsV369 = now;
             st._autoHealingRemuxV369 = true;
@@ -38643,28 +38643,22 @@ let vsyncTicks = 0;
 })();
 /* ================= END JENNY_V371_SEEK_LIVE_DECK_A_SVG_BUFFER_BADGES_AND_PAUSE_SAFE_REV_PATCH ================= */
 
-/* ================= BEGIN JENNY_V372_DECK_A_EXACT_REVERSE_INVERSION_AND_DECK_B_ANTI_STUTTER_PLL_PATCH ================= */
+/* ================= BEGIN JENNY_V372_CLEAN_ARCHITECTURE_PATCH ================= */
 (function() {
-    if (window._jennyV372PatchInstalled) return;
-    window._jennyV372PatchInstalled = true;
+    if (window._jennyV372CleanArchInstalled) return;
+    window._jennyV372CleanArchInstalled = true;
 
     // -------------------------------------------------------------------------
-    // 1. ПРАВИЛЬНАЯ ЗЕРКАЛЬНАЯ ИНВЕРСИЯ ВРЕМЕНИ ДЕКИ А ПРИ ПЕРЕКЛЮЧЕНИИ
-    //    ВПЕРЁД (F ▶) <-> НАЗАД (◀ R) (75208.mp4 00:07–00:39)
-    //    - В режиме Вперёд (F ▶): curTime = прошедшее с начала время (например, 0:29 из 2:37, остаток -2:07).
-    //    - В режиме Реверс (◀ R): буфер reversedStudioBuffer развёрнут с конца к началу,
-    //      поэтому та же самая точка песни (0:29 от начала) находится в reversedStudioBuffer
-    //      на смещении (dur - 0:29) = 2:08! Тогда updateProgressUI(2:08, 2:37, true) показывает
-    //      слева -0:29 (сколько осталось идти назад до 0:00!), справа 2:07, а звук играет
-    //      ровно с 29-й секунды назад к 0:00 (а НЕ с 29-й секунды с конца!).
-    //    - Раньше в ui_controls.js:24 и 53 стояло условие if (isFinite(player.duration)),
-    //      которое не срабатывало, когда длительность известна из window.studioBuffer.duration,
-    //      и брало player.currentTime вместо getTruePlaybackTimeV74_2().
+    // 1. EXACT MIRROR INVERSION FOR AUDIO DECK A FORWARD (F ▶) <-> REVERSE (◀ R)
+    //    (75208.mp4 00:07–00:39: 0:29 | -2:07 -> -0:29 | 2:07)
     // -------------------------------------------------------------------------
     function getEffectiveDeckADurationV372() {
         var player = document.getElementById('audioPlayer');
         if (window.studioBuffer && window.studioBuffer.duration > 0) {
             return window.studioBuffer.duration;
+        }
+        if (window.reversedStudioBuffer && window.reversedStudioBuffer.duration > 0) {
+            return window.reversedStudioBuffer.duration;
         }
         if (player && isFinite(player.duration) && player.duration > 0) {
             return player.duration;
@@ -38750,8 +38744,6 @@ let vsyncTicks = 0;
         }
     };
 
-    // Также исправляем разворот позиции в startScrub и stopScrub (когда направление меняется через дугу скоростей Деки А),
-    // чтобы они брали dur из getEffectiveDeckADurationV372() и текущую позицию из getTruePlaybackTimeV74_2()!
     var _origStartScrubV372 = window.startScrub;
     if (typeof _origStartScrubV372 === 'function') {
         window.startScrub = function(side, speed) {
@@ -38789,77 +38781,223 @@ let vsyncTicks = 0;
     }
 
     // -------------------------------------------------------------------------
-    // 2. УСТРАНЕНИЕ ЗАИКАНИЯ ЗВУКА ("ТУМ-ТУМ-ТУМ" / "ДИ-ДИ-ДИ" / "ЗОЙД-ЗОЙД")
-    //    И ОТСТАВАНИЯ АУДИО ПОСЛЕ ПЕРЕМОТКИ НА ВИДЕОДЕКЕ Б (75208.mp4 00:48–01:31)
-    //    Причины, найденные по видео 75208.mp4:
-    //    А) После перемотки .mkv (live_remux) на 6:25 или 11:21 <video> декодирует
-    //       первый кадр (readyState >= 2), но vid.currentTime ещё 1.5–2.5 сек стоит
-    //       на 0.000, пока буферизуется x265-поток. Старый таймер (220 мс) запускал
-    //       RAM-буфер #3 сразу и каждые 220 мс видел расхождение 0.220с > 0.085с,
-    //       убивая и перезапуская vd.sourceNode на одном и том же слоге ("ди-ди-ди-ди")!
-    //    Б) Во время обычной игры шаг обновления vid.currentTime в WebView составляет
-    //       ~100–200 мс, из-за чего жёсткий порог 0.085с вызывал пересоздание узла
-    //       прямо посреди слова ("Зойд-Зойдбер") и накапливал отставание звука.
-    //    Решение V372:
-    //    1) Отслеживаем реальное движение кадров <video> (vid.currentTime реально
-    //       сдвинулся с места после старта/перемотки!). Пока кадры видео стоят на паузе
-    //       буферизации после seek — НЕ запускаем и НЕ перезапускаем vd.sourceNode вхолостую!
-    //    2) Когда vd.sourceNode уже играет, малый и средний дрейф (до 0.85 сек)
-    //       компенсируется плавной микро-подстройкой скорости playbackRate (±1..3% PLL)
-    //       БЕЗ остановки vd.sourceNode и БЕЗ повтора слогов!
-    //    3) При старте нового окна учитывается время сборки буфера (buildElapsedSec),
-    //       поэтому звук сразу встаёт в 0 мс синхрон с кадром видео!
+    // 2. ELIMINATE THE 2.4-SECOND TIMER FREEZE (`dt < 2400`) IN
+    //    `getEffectiveVideoCurrentTimeV167` / `getEffectiveVideoCurrentTimeV210`
+    //    AND PREVENT MULTIPLE LIVE_REMUX REQUESTS ON `#v130SeekSlider` DRAG/TAP
     // -------------------------------------------------------------------------
-    window.isVideoElementActivelyAdvancingFramesV372 = function(vid, st) {
-        if (!vid || !st || !st.active || st.userPaused || vid.paused || vid.ended || vid.seeking || vid.readyState < 2) {
-            return false;
-        }
-        if (window._vidIsBufferingV132) {
-            return false;
-        }
-        var now = performance.now();
-        var rawT = Number(vid.currentTime || 0);
+    window.getEffectiveVideoCurrentTimeV167 = window.getEffectiveVideoCurrentTimeV210 = function(vid) {
+        if (!vid) vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
 
-        // Если только что была перемотка или запуск live_remux, ждём, пока vid.currentTime реально сдвинется (> 0.06 сек)!
-        if (st.usingRemux && rawT < 0.06 && (now - (st._lastSeekWallTsV372 || 0) < 4500)) {
-            return false;
+        if (!st.userPaused && st._pausedSeekSecV355 !== undefined) {
+            st._pausedSeekSecV355 = undefined;
+            st._didSeekWhilePausedV355 = false;
         }
-
-        if (st._lastRawVidTimeForAdvanceV372 === undefined || st._lastRawVidTimeForAdvanceV372 < 0) {
-            st._lastRawVidTimeForAdvanceV372 = rawT;
-            st._lastRawVidAdvanceWallTsV372 = now;
-        } else if (Math.abs(rawT - st._lastRawVidTimeForAdvanceV372) > 0.012) {
-            st._lastRawVidTimeForAdvanceV372 = rawT;
-            st._lastRawVidAdvanceWallTsV372 = now;
-            st._vidAdvancingAfterSeekV372 = true;
+        if (st.active && st.userPaused && st._pausedSeekSecV355 !== undefined && isFinite(st._pausedSeekSecV355)) {
+            st._lastTrueMediaSecV227 = Number(st._pausedSeekSecV355);
+            return Number(st._pausedSeekSecV355);
         }
 
-        var sinceLastFrameMoveMs = now - (st._lastRawVidAdvanceWallTsV372 || 0);
-        // Если после перемотки кадры ещё ни разу не сдвинулись — видео ещё буферизует точку seek!
-        if (!st._vidAdvancingAfterSeekV372 && (now - (st._lastSeekWallTsV372 || 0) < 4000)) {
-            return false;
+        // Reverse mode time tracking
+        if (st.active && isRev && st._playingHardwareRevStreamV219 && st._revAnchorSecV219 !== undefined) {
+            if (!st._revStreamStartedPlayingV220) {
+                if (!st.userPaused && vd.isStudioPlaying && vd.ctx && vd._ramAnchorCtxTimeV367 !== undefined && vd._ramAnchorMediaSecV367 !== undefined) {
+                    var el = Math.max(0, vd.ctx.currentTime - vd._ramAnchorCtxTimeV367);
+                    var spd = Number(vd.speed || window._jennyVideoSpeedV170 || 1.0);
+                    var effRamRev = Math.max(0, vd._ramAnchorMediaSecV367 - el * spd);
+                    st._lastTrueMediaSecV227 = effRamRev;
+                    return effRamRev;
+                }
+                if (!st.userPaused && st._revWallClockStartTsV369 && st._revWallClockAnchorSecV369 !== undefined) {
+                    var wallEl = Math.max(0, (performance.now() - st._revWallClockStartTsV369) / 1000.0);
+                    var spdW = Number(vd.speed || window._jennyVideoSpeedV170 || 1.0);
+                    return Math.max(0, st._revWallClockAnchorSecV369 - wallEl * spdW);
+                }
+                return Math.max(0, Number(st._revAnchorSecV219));
+            }
+            var progressed = (vid && isFinite(vid.currentTime)) ? Math.max(0, vid.currentTime) : 0;
+            var eff = Math.max(0, Number(st._revAnchorSecV219) - progressed);
+            st._lastTrueMediaSecV227 = eff;
+            return eff;
         }
-        // Если кадры видео замерли больше чем на 420 мс — не дёргаем звук назад!
-        if (sinceLastFrameMoveMs > 420) {
-            return false;
+
+        // Forward mode: ONLY hold `st._pendingSeekSecV167` while the user is actively dragging the slider
+        // OR while `<video>` is genuinely still buffering/seeking (`_vidIsBufferingV132`, `vid.seeking`, `vid.readyState < 2`).
+        // The instant `<video>` has decoded frames at the new seek target, clear `_pendingSeekSecV167` (0ms freeze instead of 2400ms)!
+        if (st._pendingSeekSecV167 !== undefined) {
+            var dt = performance.now() - (st._pendingSeekTsV167 || 0);
+            var stillSeekingOrDragging = Boolean(
+                window._v130UserDraggingSeekV212 ||
+                window._vidIsBufferingV132 ||
+                !vid ||
+                vid.readyState < 2 ||
+                vid.seeking
+            );
+            if (stillSeekingOrDragging && dt < 3500) {
+                return st._pendingSeekSecV167;
+            }
+            st._pendingSeekSecV167 = undefined;
         }
-        return true;
+
+        var rawCur = (vid && isFinite(vid.currentTime)) ? vid.currentTime : 0;
+        var totalCur = rawCur + (st.remuxBaseOffset || 0);
+        if (st.active && isFinite(totalCur) && totalCur >= 0) {
+            st._lastTrueMediaSecV227 = totalCur;
+        }
+        return totalCur;
     };
 
+    // Helper to stop Deck B RAM sourceNode cleanly
+    window.stopDeckBRamSourceNodeV372 = function(vd) {
+        vd = vd || window.videoDeckV131;
+        if (!vd) return;
+        if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
+        if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
+        if (vd.sourceNode) {
+            vd.sourceNode.onended = null;
+            try { vd.sourceNode.stop(); } catch (e) {}
+            try { vd.sourceNode.disconnect(); } catch (e) {}
+            vd.sourceNode = null;
+        }
+        vd.isStudioPlaying = false;
+    };
+
+    // Fast requestAnimationFrame detector that starts `syncVideoRamEngineV211` the exact frame `<video>` begins moving after a seek/start
+    window.armDeckBVideoFrameAdvanceV372 = function() {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        if (!vid || !st || !vd) return;
+        if (vd._frameAdvanceRafV372) {
+            cancelAnimationFrame(vd._frameAdvanceRafV372);
+            vd._frameAdvanceRafV372 = null;
+        }
+        var initialRawT = Number(vid.currentTime || 0);
+        var startPollWall = performance.now();
+
+        var checkFrame = function() {
+            vd._frameAdvanceRafV372 = null;
+            if (!st.active || st.userPaused) return;
+            var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+            if (isRev) return;
+
+            if (window._v130UserDraggingSeekV212 || window._vidIsBufferingV132 || vid.seeking || vid.readyState < 2 || vid.paused) {
+                initialRawT = Number(vid.currentTime || 0);
+                startPollWall = performance.now();
+                vd._frameAdvanceRafV372 = requestAnimationFrame(checkFrame);
+                return;
+            }
+            var curRawT = Number(vid.currentTime || 0);
+            var readyWaitMs = performance.now() - startPollWall;
+            // As soon as `vid.currentTime` ticks forward by >= 10ms (or readyState >= 3 for > 80ms):
+            if (Math.abs(curRawT - initialRawT) >= 0.010 || (vid.readyState >= 3 && readyWaitMs >= 80)) {
+                st._vidAdvancingAfterSeekV372 = true;
+                st._pendingSeekSecV167 = undefined;
+                window.syncVideoRamEngineV211(false, true);
+                if (typeof window.updateVideoAvSyncRadarUIV367 === 'function') {
+                    window.updateVideoAvSyncRadarUIV367();
+                }
+                return;
+            }
+            vd._frameAdvanceRafV372 = requestAnimationFrame(checkFrame);
+        };
+        vd._frameAdvanceRafV372 = requestAnimationFrame(checkFrame);
+    };
+
+    // Fix `seekDeckBAndPlayerSyncedV212`:
+    // 1) When `showToastMsg === true && !fromExplicitUser && window._v130UserDraggingSeekV212` (live finger drag on `#v130SeekSlider`),
+    //    update ONLY the visual slider & time labels — NEVER reload `vid.src = '/api/video/live_remux'` on `touchstart`/`touchmove`/`input`!
+    // 2) Deduplicate identical seek commits within 180ms so `touchend` + `mouseup` + `change` on `#v130SeekSlider` only trigger ONE seek!
+    // 3) Reset the Stall Watchdog timer (`window._lastWatchdogProgressTsV369`) so it never aborts a seek 1.35s later!
+    var _origSeekDeckBV369 = window.seekDeckBAndPlayerSyncedV212;
+    if (typeof _origSeekDeckBV369 === 'function') {
+        window.seekDeckBAndPlayerSyncedV212 = function(targetSec, showToastMsg, fromExplicitUser) {
+            var vid = document.getElementById('jennyVideoElV130');
+            var st = window._vidStateV130 || {};
+            var vd = window.videoDeckV131 || {};
+            if (!vid || !st || !st.active) return;
+
+            var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+            var rawTargetSec = Number(targetSec) || 0;
+            var clamped = (isFinite(dur) && dur > 0)
+                ? Math.max(0.0, Math.min(Math.max(0.0, dur - 0.2), rawTargetSec))
+                : Math.max(0.0, rawTargetSec);
+
+            var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+
+            // If this is a live drag preview on `#v130SeekSlider` (`showToastMsg === true && !fromExplicitUser && window._v130UserDraggingSeekV212`),
+            // update ONLY the UI numbers and slider in ALL modes (including normal forward playback!) without reloading FFmpeg!
+            if (showToastMsg === true && !fromExplicitUser && window._v130UserDraggingSeekV212) {
+                st._pendingSeekSecV167 = clamped;
+                st._pendingSeekTsV167 = performance.now();
+                var fmt = window.formatVideoTimeV210 || window.fmtKhSecV90 || function(s) {
+                    s = Math.max(0, Math.floor(s || 0));
+                    var m = Math.floor(s / 60), sc = s % 60;
+                    return m + ':' + (sc < 10 ? '0' + sc : sc);
+                };
+                var cEl = document.getElementById('v130CurTime');
+                var seek = document.getElementById('v130SeekSlider');
+                if (cEl) cEl.innerText = fmt(clamped);
+                if (seek && dur > 0) {
+                    seek.max = '1000';
+                    seek.value = String(Math.max(0, Math.min(1000, Math.round((clamped / dur) * 1000))));
+                }
+                if (typeof window.updateProgressUIDeckB === 'function') {
+                    window.updateProgressUIDeckB(clamped, dur, isRev);
+                }
+                return;
+            }
+
+            // Deduplicate double commit events (`touchend` + `mouseup` + `change`) firing within 220ms for the same target second
+            var now = performance.now();
+            if (
+                st._lastCommittedSeekTsV372 &&
+                (now - st._lastCommittedSeekTsV372 < 220) &&
+                Math.abs((st._lastCommittedSeekSecV372 || 0) - clamped) < 0.5
+            ) {
+                return;
+            }
+            st._lastCommittedSeekTsV372 = now;
+            st._lastCommittedSeekSecV372 = clamped;
+            st._lastSeekWallTsV372 = now;
+            st._vidAdvancingAfterSeekV372 = false;
+            window._lastWatchdogProgressTsV369 = now;
+            window._lastWatchdogHealTsV369 = now;
+
+            // Stop old RAM audio node immediately and keep native `<video>` audio muted if RAM studio buffer is active
+            window.stopDeckBRamSourceNodeV372(vd);
+            if (vd.studioBuffer && (!vd.config || vd.config.studioMode !== false)) {
+                if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+                if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+            }
+
+            if (typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
+                vd._ensureUrgentPieceAtSecV369(clamped);
+            }
+
+            var res = _origSeekDeckBV369.call(this, clamped, showToastMsg, fromExplicitUser);
+
+            if (!st.userPaused && !isRev) {
+                window.armDeckBVideoFrameAdvanceV372();
+            }
+            return res;
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. CLEAN, ZERO-STUTTER `syncVideoRamEngineV211` / `syncVideoRamEngineV131`:
+    //    - Never unmutes native `<video>` (`vd.htmlGain`) during a seek when RAM Buffer #3 is active!
+    //    - Plays directly from `vd.studioBuffer` at 1.0x Forward (0ms WSOLA overhead, no 16s window cuts)!
+    //    - Never kills `vd.sourceNode` during normal playback!
+    // -------------------------------------------------------------------------
     window.syncVideoRamEngineV211 = window.syncVideoRamEngineV131 = function(isDragging, forceResyncNow) {
         var vd = window.videoDeckV131, st = window._vidStateV130, vid = document.getElementById('jennyVideoElV130');
         if (!vid || !vd || !vd.ctx || !st || !st.active) return;
 
         if (st.videoStreamModeV217 === 'v_only') {
-            if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
-            if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
-            if (vd.sourceNode) {
-                vd.sourceNode.onended = null;
-                try { vd.sourceNode.stop(); } catch (e) {}
-                try { vd.sourceNode.disconnect(); } catch (e) {}
-                vd.sourceNode = null;
-            }
-            vd.isStudioPlaying = false;
+            window.stopDeckBRamSourceNodeV372(vd);
             if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
             if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
             return;
@@ -38870,31 +39008,6 @@ let vsyncTicks = 0;
         vd.isReversed = isRev;
         var targetSpd = Math.max(0.1, Math.min(16.0, Number(window._jennyVideoSpeedV170 || vd.speed || (window.getTargetPlaybackSpeedDeckB ? window.getTargetPlaybackSpeedDeckB() : 1.0)) || 1.0));
         vd.speed = targetSpd;
-
-        var isVidAdvancing = window.isVideoElementActivelyAdvancingFramesV372(vid, st);
-
-        // Если видео стоит на паузе ИЛИ (в прямом ходе) кадры видео ещё буферизуются после перемотки/старта:
-        // глушим/останавливаем vd.sourceNode, чтобы он НИКОГДА не заикался ("тум-тум-тум" / "ди-ди-ди") на стоячем кадре!
-        if (st.userPaused || (!isRev && !isVidAdvancing && !st._autoHealingRemuxV369)) {
-            if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
-            if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
-            if (vd.sourceNode) {
-                vd.sourceNode.onended = null;
-                try { vd.sourceNode.stop(); } catch (e) {}
-                try { vd.sourceNode.disconnect(); } catch (e) {}
-                vd.sourceNode = null;
-            }
-            vd.isStudioPlaying = false;
-            if (st.userPaused) {
-                if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
-                if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
-            } else {
-                // Пока <video> буферизует новую точку перемотки — держим тишину, чтобы не было двойного/рваного звука
-                if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
-                if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
-            }
-            return;
-        }
 
         var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
         var effLeadSec = window.getEffectiveRamAudioLeadSecV367 ? window.getEffectiveRamAudioLeadSecV367() : 0.14;
@@ -38917,16 +39030,27 @@ let vsyncTicks = 0;
         var studioOn = Boolean(!vd.config || vd.config.studioMode !== false);
         var useRamEngine = studioOn && isPieceReady && (isRev || gKey !== 'neutral');
 
-        if (!useRamEngine) {
-            if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
-            if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
-            if (vd.sourceNode) {
-                vd.sourceNode.onended = null;
-                try { vd.sourceNode.stop(); } catch (e) {}
-                try { vd.sourceNode.disconnect(); } catch (e) {}
-                vd.sourceNode = null;
+        // Check if `<video>` is currently paused or buffering a seek
+        var isVidReadyAndPlaying = Boolean(!vid.paused && !vid.ended && vid.readyState >= 2 && !vid.seeking && !window._vidIsBufferingV132);
+        var isWaitingForSeekFrame = Boolean(!isRev && (!isVidReadyAndPlaying || st._vidAdvancingAfterSeekV372 === false));
+
+        if (st.userPaused || isWaitingForSeekFrame) {
+            window.stopDeckBRamSourceNodeV372(vd);
+            if (!st.userPaused && isWaitingForSeekFrame) {
+                // Keep native `<video>` audio muted while buffering a seek so it never double-plays before RAM Buffer #3 starts!
+                if (studioOn && (vd.studioBuffer || vd._isLoadingRamV359)) {
+                    if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+                    if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+                }
+                if (!vd._frameAdvanceRafV372) {
+                    window.armDeckBVideoFrameAdvanceV372();
+                }
             }
-            vd.isStudioPlaying = false;
+            return;
+        }
+
+        if (!useRamEngine) {
+            window.stopDeckBRamSourceNodeV372(vd);
             if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
             if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
             var lockPitch = (gKey !== 'web-shift' && gKey !== 'jbuf-shift' && gKey !== 'vinyl-shift');
@@ -38937,9 +39061,11 @@ let vsyncTicks = 0;
             return;
         }
 
-        // Если vd.sourceNode уже играет с теми же параметрами (скорость, передача, направление):
-        // НЕ УБИВАЕМ узел при мелких колебаниях vid.currentTime (< 0.85 сек)!
-        // Вместо этого плавно подтягиваем фазу через микро-PLL (playbackRate ±2.5%) — 0% заиканий и 100% синхрон!
+        // Mute native `<video>` audio path completely while RAM Buffer #3 / #4 is active
+        if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
+        if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+
+        // If `vd.sourceNode` is ALREADY playing with the same speed, gear, and direction:
         if (
             !forceResyncNow &&
             !isDragging &&
@@ -38955,28 +39081,86 @@ let vsyncTicks = 0;
             var expectedAudioSec = isRev
                 ? (vd._ramAnchorMediaSecV367 - elapsedCtx * targetSpd)
                 : (vd._ramAnchorMediaSecV367 + elapsedCtx * targetSpd);
-            // Signed error: > 0 means audio is BEHIND target and needs to speed up slightly; < 0 means audio is AHEAD
             var signedErrSec = isRev
                 ? (expectedAudioSec - audioTargetSec)
                 : (audioTargetSec - expectedAudioSec);
             var absDriftSec = Math.abs(signedErrSec);
-            var maxHardRebuildDrift = (isRev && !st._revStreamStartedPlayingV220) ? 1.8 : 0.85;
 
-            if (absDriftSec < maxHardRebuildDrift && elapsedCtx < (vd._ramWinRealDurSecV367 || 18.0) - 1.1) {
-                var baseNodeRate = vd._ramBaseNodeRateV372 || ((gKey === 'jbuf-lock' || gKey === 'web-lock') ? 1.0 : targetSpd);
-                var pllFactor = 1.0;
-                if (absDriftSec > 0.035 && (!isRev || st._revStreamStartedPlayingV220)) {
-                    // Мягкая подтяжка темпа на ±1..3.5% (незаметная для слуха, но быстро выбирающая отставание без щелчка!)
-                    pllFactor = Math.max(0.965, Math.min(1.035, 1.0 + signedErrSec * 0.14));
+            var remWindowSec = (vd._ramWinRealDurSecV367 || 1800.0) - elapsedCtx;
+            if (remWindowSec > 1.0) {
+                // Do not touch playback during the first 1.5s after starting `vd.sourceNode`
+                if (elapsedCtx < 1.5 || absDriftSec < 0.45) {
+                    var baseNodeRate = vd._ramBaseNodeRateV372 || ((gKey === 'jbuf-lock' || gKey === 'web-lock') ? 1.0 : targetSpd);
+                    var pllFactor = 1.0;
+                    if (elapsedCtx >= 0.8 && absDriftSec > 0.035 && (!isRev || st._revStreamStartedPlayingV220)) {
+                        pllFactor = Math.max(0.97, Math.min(1.03, 1.0 + signedErrSec * 0.12));
+                    }
+                    try {
+                        vd.sourceNode.playbackRate.value = baseNodeRate * pllFactor;
+                    } catch (e) {}
+                    if (pllFactor !== 1.0) {
+                        var dtPull = (pllFactor - 1.0) * 0.22 * targetSpd;
+                        vd._ramAnchorMediaSecV367 += isRev ? (-dtPull) : dtPull;
+                    }
+                    vd._driftHitsV372 = 0;
+                    if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
+                        try { vid.playbackRate = targetSpd; } catch (e) {}
+                    }
+                    return;
                 }
-                try {
-                    vd.sourceNode.playbackRate.value = baseNodeRate * pllFactor;
-                } catch (e) {}
-                // Постепенно сдвигаем якорную точку к подтянутой фазе
-                if (pllFactor !== 1.0) {
-                    var dtPull = (pllFactor - 1.0) * 0.22 * targetSpd;
-                    vd._ramAnchorMediaSecV367 += isRev ? (-dtPull) : dtPull;
+                // Even if drift >= 0.45s, require 3 consecutive checks (~660ms) so a single WebView currentTime hiccup never cuts audio
+                vd._driftHitsV372 = (vd._driftHitsV372 || 0) + 1;
+                if (vd._driftHitsV372 < 3) {
+                    return;
                 }
+            }
+        }
+
+        window.stopDeckBRamSourceNodeV372(vd);
+        vd._driftHitsV372 = 0;
+
+        if (st.userPaused || (window._jennyDualDeckV211 && window._jennyDualDeckV211.deckB === false)) {
+            return;
+        }
+        if (vd.ctx.state === 'suspended') {
+            try { vd.ctx.resume(); } catch (e) {}
+        }
+
+        // FAST PATH: At 1.0x Forward (or any speed in shift gears), play directly from `vd.studioBuffer` (or `vd.reversedStudioBuffer` at 1.0x Reverse)
+        // with ZERO window slicing and ZERO WSOLA rebuilds!
+        var canPlayFullBufferDirectly = Boolean(
+            Math.abs(targetSpd - 1.0) < 0.005 ||
+            (gKey !== 'jbuf-lock' && gKey !== 'web-lock')
+        );
+
+        if (canPlayFullBufferDirectly) {
+            var directBuf = isRev ? vd.reversedStudioBuffer : vd.studioBuffer;
+            if (directBuf && directBuf.duration > 0.1) {
+                var liveCur = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
+                var liveTargetSec = isRev
+                    ? Math.max(0, liveCur - effLeadSec * targetSpd)
+                    : Math.max(0, liveCur + effLeadSec * targetSpd);
+                var bufStartOffset = isRev
+                    ? Math.max(0, Math.min(directBuf.duration - 0.02, directBuf.duration - liveTargetSec))
+                    : Math.max(0, Math.min(directBuf.duration - 0.02, liveTargetSec));
+
+                vd.sourceNode = vd.ctx.createBufferSource();
+                vd.sourceNode.buffer = directBuf;
+                vd.sourceNode.playbackRate.value = targetSpd;
+                vd.sourceNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+                if (st.dspBypass && vd.directBypassGain) vd.directBypassGain.gain.value = 1.0;
+                vd.sourceNode.start(0, bufStartOffset);
+                vd.isStudioPlaying = true;
+
+                var fullRemDur = (directBuf.duration - bufStartOffset) / Math.max(0.25, targetSpd);
+                vd._ramAnchorCtxTimeV367 = vd.ctx.currentTime;
+                vd._ramAnchorMediaSecV367 = liveTargetSec;
+                vd._ramAnchorSpeedV367 = targetSpd;
+                vd._ramAnchorGearV367 = gKey;
+                vd._ramAnchorRevV367 = isRev;
+                vd._ramBaseNodeRateV372 = targetSpd;
+                vd._ramWinRealDurSecV367 = fullRemDur;
+
                 if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
                     try { vid.playbackRate = targetSpd; } catch (e) {}
                 }
@@ -38984,11 +39168,9 @@ let vsyncTicks = 0;
             }
         }
 
-        if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
-        if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
-
+        // WSOLA WINDOW PATH (only when `targetSpd !== 1.0` in pitch-locked `jbuf-lock` / `web-lock` mode):
         var buildStartWallMs = performance.now();
-        var WIN_SEC = Math.max(24.0, Math.min(54.0, targetSpd * 24.0));
+        var WIN_SEC = Math.max(28.0, Math.min(60.0, targetSpd * 28.0));
         var rawWinBuf = null;
         if (isRev && vd.reversedStudioBuffer) {
             var durRev = vd.reversedStudioBuffer.duration;
@@ -38999,18 +39181,10 @@ let vsyncTicks = 0;
         }
         if (!rawWinBuf) return;
 
-        var playBuf = rawWinBuf, nodeRate = 1.0;
-        if (gKey === 'jbuf-lock' || gKey === 'web-lock') {
-            var tensionPct = (vd.config && vd.config.hoseTensionPct !== undefined) ? vd.config.hoseTensionPct : 100;
-            playBuf = window.buildElasticHoseBufferDeckB ? window.buildElasticHoseBufferDeckB(rawWinBuf, targetSpd, tensionPct) : rawWinBuf;
-            nodeRate = (playBuf === rawWinBuf) ? targetSpd : 1.0;
-        } else {
-            playBuf = rawWinBuf;
-            nodeRate = targetSpd;
-        }
+        var tensionPct = (vd.config && vd.config.hoseTensionPct !== undefined) ? vd.config.hoseTensionPct : 100;
+        var playBuf = window.buildElasticHoseBufferDeckB ? window.buildElasticHoseBufferDeckB(rawWinBuf, targetSpd, tensionPct) : rawWinBuf;
+        var nodeRate = (playBuf === rawWinBuf) ? targetSpd : 1.0;
 
-        // Компенсируем миллисекунды, потраченные на нарезку/сшивку буфера (buildElapsedSec),
-        // чтобы звук стартовал строго в той точке, где видео находится ПОСЛЕ окончания сборки буфера!
         var buildElapsedSec = Math.max(0, (performance.now() - buildStartWallMs) / 1000.0);
         var startOffsetInPlayBuf = (nodeRate === 1.0) ? buildElapsedSec : (buildElapsedSec * targetSpd);
         if (startOffsetInPlayBuf >= playBuf.duration - 0.1) {
@@ -39020,48 +39194,56 @@ let vsyncTicks = 0;
             ? Math.max(0, audioTargetSec - buildElapsedSec * targetSpd)
             : (audioTargetSec + buildElapsedSec * targetSpd);
 
-        if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = 0.0;
-        if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = 0.0;
+        vd.sourceNode = vd.ctx.createBufferSource();
+        vd.sourceNode.buffer = playBuf;
+        vd.sourceNode.playbackRate.value = nodeRate;
+        vd.sourceNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
+        if (st.dspBypass && vd.directBypassGain) vd.directBypassGain.gain.value = 1.0;
+        vd.sourceNode.start(0, startOffsetInPlayBuf);
+        vd.isStudioPlaying = true;
 
-        if (vd.sourceNode) {
-            vd.sourceNode.onended = null;
-            try { vd.sourceNode.stop(); } catch (e) {}
-            try { vd.sourceNode.disconnect(); } catch (e) {}
-            vd.sourceNode = null;
+        var remBufDur = Math.max(0.5, playBuf.duration - startOffsetInPlayBuf);
+        var realDurSec = (nodeRate === 1.0) ? remBufDur : (remBufDur / Math.max(0.25, nodeRate));
+        vd._ramAnchorCtxTimeV367 = vd.ctx.currentTime;
+        vd._ramAnchorMediaSecV367 = compensatedMediaAnchorSec;
+        vd._ramAnchorSpeedV367 = targetSpd;
+        vd._ramAnchorGearV367 = gKey;
+        vd._ramAnchorRevV367 = isRev;
+        vd._ramBaseNodeRateV372 = nodeRate;
+        vd._ramWinRealDurSecV367 = realDurSec;
+
+        if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
+            try { vid.playbackRate = targetSpd; } catch (e) {}
         }
 
-        if (!st.userPaused && (!window._jennyDualDeckV211 || window._jennyDualDeckV211.deckB !== false)) {
-            if (vd.ctx.state === 'suspended') {
-                try { vd.ctx.resume(); } catch (e) {}
+        vd.horizonTimer = setTimeout(function() {
+            if (st.active && !st.userPaused) {
+                window.syncVideoRamEngineV211(false, true);
             }
-            vd.sourceNode = vd.ctx.createBufferSource();
-            vd.sourceNode.buffer = playBuf;
-            vd.sourceNode.playbackRate.value = nodeRate;
-            vd.sourceNode.connect(st.dspBypass ? vd.directBypassGain : vd.inputMixer);
-            if (st.dspBypass && vd.directBypassGain) vd.directBypassGain.gain.value = 1.0;
-            vd.sourceNode.start(0, startOffsetInPlayBuf);
-            vd.isStudioPlaying = true;
-
-            var remBufDur = Math.max(0.5, playBuf.duration - startOffsetInPlayBuf);
-            var realDurSec = (nodeRate === 1.0) ? remBufDur : (remBufDur / Math.max(0.25, nodeRate));
-            vd._ramAnchorCtxTimeV367 = vd.ctx.currentTime;
-            vd._ramAnchorMediaSecV367 = compensatedMediaAnchorSec;
-            vd._ramAnchorSpeedV367 = targetSpd;
-            vd._ramAnchorGearV367 = gKey;
-            vd._ramAnchorRevV367 = isRev;
-            vd._ramBaseNodeRateV372 = nodeRate;
-            vd._ramWinRealDurSecV367 = realDurSec;
-
-            if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
-                try { vid.playbackRate = targetSpd; } catch (e) {}
-            }
-
-            vd.horizonTimer = setTimeout(function() {
-                if (st.active && !st.userPaused) {
-                    window.syncVideoRamEngineV211(false, true);
-                }
-            }, Math.max(500, (realDurSec - 0.85) * 1000));
-        }
+        }, Math.max(500, (realDurSec - 0.85) * 1000));
     };
+
+    // Keep telemetry badge showing "🟢 ОЗУ Буфер #3" even during the brief 200ms seek transition when RAM buffer is already loaded
+    var _origUpdateRadarV367 = window.updateVideoAvSyncRadarUIV367;
+    if (typeof _origUpdateRadarV367 === 'function') {
+        window.updateVideoAvSyncRadarUIV367 = function() {
+            var vd = window.videoDeckV131;
+            var st = window._vidStateV130;
+            var savedPlaying = vd ? vd.isStudioPlaying : false;
+            var savedNode = vd ? vd.sourceNode : null;
+            if (vd && st && st.active && vd.studioBuffer && !vd.isStudioPlaying && (window._vidIsBufferingV132 || st._vidAdvancingAfterSeekV372 === false)) {
+                vd.isStudioPlaying = true;
+                vd.sourceNode = vd.sourceNode || {};
+            }
+            try {
+                return _origUpdateRadarV367.apply(this, arguments);
+            } finally {
+                if (vd) {
+                    vd.isStudioPlaying = savedPlaying;
+                    vd.sourceNode = savedNode;
+                }
+            }
+        };
+    }
 })();
-/* ================= END JENNY_V372_DECK_A_EXACT_REVERSE_INVERSION_AND_DECK_B_ANTI_STUTTER_PLL_PATCH ================= */
+/* ================= END JENNY_V372_CLEAN_ARCHITECTURE_PATCH ================= */

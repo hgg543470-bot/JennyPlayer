@@ -4399,8 +4399,11 @@ def _get_native_lib_dirs_v140():
                 pass
 
     # 4. Папка проекта jniLibs и папка cores
+    _abi_sub = "armeabi-v7a" if struct.calcsize("P") == 4 else "arm64-v8a"
     for extra in (
+        f"/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/{_abi_sub}",
         "/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/arm64-v8a",
+        "/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/armeabi-v7a",
         "/storage/emulated/0/scripts/JennyPlayer/cores",
     ):
         if os.path.isdir(extra) and extra not in dirs:

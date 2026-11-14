@@ -23,36 +23,104 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Кэш нативного FFmpeg на GitHub
-      id: cache-ffmpeg
+    - name: Установка Go (для сборки торрент-ядер под 64-bit arm64-v8a и 32-bit armeabi-v7a)
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22.x'
+
+    - name: Кэш нативного FFmpeg (ARM64 + ARM32) и Go-ядер на GitHub
+      id: cache-native-dual
       uses: actions/cache@v4
       with:
-        path: app/src/main/jniLibs/arm64-v8a/libffmpeg.so
-        key: jenny-ffmpeg-arm64-v9.0.2
+        path: |
+          app/src/main/jniLibs/arm64-v8a/libffmpeg.so
+          app/src/main/jniLibs/armeabi-v7a/libffmpeg.so
+          app/src/main/jniLibs/armeabi-v7a/libjtorrent.so
+          app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so
+        key: jenny-dual-abi-native-v9.0.2-b373
 
-    - name: Загрузка FFmpeg (только если нет в кэше GitHub)
-      if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+    - name: Загрузка FFmpeg для 64-бит (arm64-v8a) и 32-бит (armeabi-v7a, Galaxy A30s/A20s)
       run: |
-        mkdir -p app/src/main/jniLibs/arm64-v8a
-        curl -fL -o ffmpeg-android.zip https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-android-arm64.zip
-        unzip -p ffmpeg-android.zip ffmpeg > app/src/main/jniLibs/arm64-v8a/libffmpeg.so
-        rm -f ffmpeg-android.zip
+        mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a
+        if [ ! -s app/src/main/jniLibs/arm64-v8a/libffmpeg.so ]; then
+          curl -fL -o ffmpeg-arm64.zip https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-android-arm64.zip
+          unzip -p ffmpeg-arm64.zip ffmpeg > app/src/main/jniLibs/arm64-v8a/libffmpeg.so
+          rm -f ffmpeg-arm64.zip
+        fi
+        if [ ! -s app/src/main/jniLibs/armeabi-v7a/libffmpeg.so ]; then
+          curl -fL -o ffmpeg-arm32.zip https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-android-arm.zip
+          unzip -p ffmpeg-arm32.zip ffmpeg > app/src/main/jniLibs/armeabi-v7a/libffmpeg.so
+          rm -f ffmpeg-arm32.zip
+        fi
 
-    - name: Сборка нативного C++/NEON ядра libjenny_vcore.so (ARM64)
+    - name: Сборка всех C/C++ ядер (libxflac, libhose_dsp, libjenny_vcore, libjenny_yt_core, libc++_shared) под ARM64 и ARM32
       run: |
-        mkdir -p app/src/main/jniLibs/arm64-v8a
-        NDK_CLANG=$(find $ANDROID_HOME/ndk $ANDROID_NDK_LATEST_HOME -name "aarch64-linux-android24-clang++" 2>/dev/null | head -n 1)
-        if [ -n "$NDK_CLANG" ]; then
-          echo "Compiling libjenny_vcore.so with $NDK_CLANG"
-          "$NDK_CLANG" -O3 -march=armv8-a+simd -ffast-math -fPIC -shared app/src/main/python/jenny_vcore.cpp -o app/src/main/jniLibs/arm64-v8a/libjenny_vcore.so -lm -ldl
-          if [ ! -f app/src/main/python/jenny_yt_core.cpp ]; then echo "Ly8gSkVOTlkgWU9VVFVCRSBDT1JFIFYyMzAgKGxpYmplbm55X3l0X2NvcmUuc28pCi8vIEhvdC1zd2FwcGFibGUgQy9DKysgbmF0aXZlIHN0cmVhbSBwb2xpY3kgc2VsZWN0b3IsIElubmVyVHViZSBwYXlsb2FkIGJ1aWxkZXIgJiBzaWduYXR1cmUgaGVscGVyCiNpbmNsdWRlIDxzdGRpbnQuaD4KI2luY2x1ZGUgPHN0ZGxpYi5oPgojaW5jbHVkZSA8c3RyaW5nLmg+CiNpbmNsdWRlIDxzdGRpby5oPgoKZXh0ZXJuICJDIiB7CgovLyBCaXRtYXNrIGZsYWdzIGZvciBtb2RlX2ZsYWdzOgovLyAxID0gTWF4IHF1YWxpdHkgdXAgdG8gY2VpbGluZyAoZS5nLiA8PSAxMDgwcDogaWYgdmlkZW8gbWF4IGlzIDQ4MHAgLT4gNDgwcCwgaWYgMjQwcCAtPiAyNDBwLCBpZiA0SyAtPiAxMDgwcCkKLy8gMiA9IFNwZWNpZmljIHF1YWxpdHkgZm9yIFdpLUZpCi8vIDQgPSBTcGVjaWZpYyBxdWFsaXR5IGZvciBNb2JpbGUgY2VsbHVsYXIgbmV0d29yawpzdGF0aWMgaW50IGdfbW9kZV9mbGFncyAgICAgID0gMTsKc3RhdGljIGludCBnX21heF9jZWlsaW5nX2ggICA9IDEwODA7CnN0YXRpYyBpbnQgZ193aWZpX3RhcmdldF9oICAgPSAxMDgwOwpzdGF0aWMgaW50IGdfbW9iaWxlX3RhcmdldF9oID0gNDgwOwpzdGF0aWMgaW50IGdfbmV0X3R5cGUgICAgICAgID0gMTsgLy8gMSA9IFdpLUZpLCAyID0gTW9iaWxlLCAwID0gQXV0bwpzdGF0aWMgY2hhciBnX2FjdGl2ZV9wcm9maWxlWzY0XSA9ICJ5dF92MV9zbyI7CnN0YXRpYyBjaGFyIGdfbGFzdF9kZWNpc2lvblsyNTZdID0gImluaXQiOwoKY29uc3QgY2hhciogeXRfY29yZV9nZXRfdmVyc2lvbih2b2lkKSB7CiAgICByZXR1cm4gIjEuMC4yMzAtYXJtNjQtaW5uZXJ0dWJlIjsKfQoKY29uc3QgY2hhciogeXRfY29yZV9nZXRfbGFzdF9kZWNpc2lvbih2b2lkKSB7CiAgICByZXR1cm4gZ19sYXN0X2RlY2lzaW9uOwp9Cgp2b2lkIHl0X2NvcmVfc2V0X3Byb2ZpbGUoY29uc3QgY2hhciogcHJvZmlsZV9pZCkgewogICAgaWYgKCFwcm9maWxlX2lkKSByZXR1cm47CiAgICBzdHJuY3B5KGdfYWN0aXZlX3Byb2ZpbGUsIHByb2ZpbGVfaWQsIHNpemVvZihnX2FjdGl2ZV9wcm9maWxlKSAtIDEpOwogICAgZ19hY3RpdmVfcHJvZmlsZVtzaXplb2YoZ19hY3RpdmVfcHJvZmlsZSkgLSAxXSA9ICdcMCc7Cn0KCmNvbnN0IGNoYXIqIHl0X2NvcmVfZ2V0X3Byb2ZpbGUodm9pZCkgewogICAgcmV0dXJuIGdfYWN0aXZlX3Byb2ZpbGU7Cn0KCnZvaWQgeXRfY29yZV9zZXRfcG9saWN5KGludCBtb2RlX2ZsYWdzLCBpbnQgbWF4X2NlaWxpbmdfaCwgaW50IHdpZmlfdGFyZ2V0X2gsIGludCBtb2JpbGVfdGFyZ2V0X2gsIGludCBuZXRfdHlwZSkgewogICAgZ19tb2RlX2ZsYWdzICAgICAgPSBtb2RlX2ZsYWdzOwogICAgZ19tYXhfY2VpbGluZ19oICAgPSBtYXhfY2VpbGluZ19oID4gMCA/IG1heF9jZWlsaW5nX2ggOiAxMDgwOwogICAgZ193aWZpX3RhcmdldF9oICAgPSB3aWZpX3RhcmdldF9oID4gMCA/IHdpZmlfdGFyZ2V0X2ggOiAxMDgwOwogICAgZ19tb2JpbGVfdGFyZ2V0X2ggPSBtb2JpbGVfdGFyZ2V0X2ggPiAwID8gbW9iaWxlX3RhcmdldF9oIDogNDgwOwogICAgZ19uZXRfdHlwZSAgICAgICAgPSBuZXRfdHlwZTsKfQoKaW50IHl0X2NvcmVfY29tcHV0ZV9lZmZlY3RpdmVfbGltaXQoaW50IG1vZGVfZmxhZ3MsIGludCBtYXhfY2VpbGluZ19oLCBpbnQgd2lmaV90YXJnZXRfaCwgaW50IG1vYmlsZV90YXJnZXRfaCwgaW50IG5ldF90eXBlKSB7CiAgICBpbnQgbGltaXRfaCA9IChtYXhfY2VpbGluZ19oID4gMCkgPyBtYXhfY2VpbGluZ19oIDogMTA4MDsKCiAgICBpZiAobmV0X3R5cGUgPT0gMSAmJiAobW9kZV9mbGFncyAmIDIpKSB7CiAgICAgICAgbGltaXRfaCA9ICh3aWZpX3RhcmdldF9oID4gMCkgPyB3aWZpX3RhcmdldF9oIDogbGltaXRfaDsKICAgICAgICBpZiAoKG1vZGVfZmxhZ3MgJiAxKSAmJiBtYXhfY2VpbGluZ19oID4gMCAmJiBsaW1pdF9oID4gbWF4X2NlaWxpbmdfaCkgewogICAgICAgICAgICBsaW1pdF9oID0gbWF4X2NlaWxpbmdfaDsKICAgICAgICB9CiAgICAgICAgcmV0dXJuIGxpbWl0X2g7CiAgICB9CgogICAgaWYgKG5ldF90eXBlID09IDIgJiYgKG1vZGVfZmxhZ3MgJiA0KSkgewogICAgICAgIGxpbWl0X2ggPSAobW9iaWxlX3RhcmdldF9oID4gMCkgPyBtb2JpbGVfdGFyZ2V0X2ggOiA0ODA7CiAgICAgICAgaWYgKChtb2RlX2ZsYWdzICYgMSkgJiYgbWF4X2NlaWxpbmdfaCA+IDAgJiYgbGltaXRfaCA+IG1heF9jZWlsaW5nX2gpIHsKICAgICAgICAgICAgbGltaXRfaCA9IG1heF9jZWlsaW5nX2g7CiAgICAgICAgfQogICAgICAgIHJldHVybiBsaW1pdF9oOwogICAgfQoKICAgIGlmIChtb2RlX2ZsYWdzICYgMSkgewogICAgICAgIHJldHVybiAobWF4X2NlaWxpbmdfaCA+IDApID8gbWF4X2NlaWxpbmdfaCA6IDEwODA7CiAgICB9CgogICAgcmV0dXJuIGxpbWl0X2g7Cn0KCmludCB5dF9jb3JlX3NlbGVjdF9iZXN0X3N0cmVhbV9pbmRleCgKICAgIGNvbnN0IGludCogaGVpZ2h0cywKICAgIGNvbnN0IGludCogaXNfY29tYmluZWQsCiAgICBjb25zdCBpbnQqIGJpdHJhdGVzLAogICAgaW50IGNvdW50LAogICAgaW50IGVmZmVjdGl2ZV9saW1pdF9oLAogICAgaW50IHByZWZlcl9jb21iaW5lZAopIHsKICAgIGlmICghaGVpZ2h0cyB8fCBjb3VudCA8PSAwKSByZXR1cm4gLTE7CiAgICBpZiAoZWZmZWN0aXZlX2xpbWl0X2ggPD0gMCkgZWZmZWN0aXZlX2xpbWl0X2ggPSAxMDgwOwoKICAgIGludCBiZXN0X2lkeCA9IC0xOwogICAgaW50IGJlc3RfaCA9IC0xOwogICAgaW50IGJlc3RfY29tYiA9IC0xOwogICAgaW50IGJlc3RfYnIgPSAtMTsKCiAgICBpbnQgbWF4X2FjdHVhbF9oID0gMDsKICAgIGZvciAoaW50IGkgPSAwOyBpIDwgY291bnQ7IGkrKykgewogICAgICAgIGlmIChoZWlnaHRzW2ldID4gbWF4X2FjdHVhbF9oKSBtYXhfYWN0dWFsX2ggPSBoZWlnaHRzW2ldOwogICAgICAgIGludCBoID0gaGVpZ2h0c1tpXTsKICAgICAgICBpZiAoaCA8PSAwIHx8IGggPiBlZmZlY3RpdmVfbGltaXRfaCkgY29udGludWU7CgogICAgICAgIGludCBjb21iID0gKGlzX2NvbWJpbmVkICYmIGlzX2NvbWJpbmVkW2ldKSA/IDEgOiAwOwogICAgICAgIGludCBiciA9IGJpdHJhdGVzID8gYml0cmF0ZXNbaV0gOiAwOwoKICAgICAgICBpbnQgaXNfYmV0dGVyID0gMDsKICAgICAgICBpZiAoaCA+IGJlc3RfaCkgewogICAgICAgICAgICBpc19iZXR0ZXIgPSAxOwogICAgICAgIH0gZWxzZSBpZiAoaCA9PSBiZXN0X2gpIHsKICAgICAgICAgICAgaWYgKHByZWZlcl9jb21iaW5lZCAmJiBjb21iID4gYmVzdF9jb21iKSB7CiAgICAgICAgICAgICAgICBpc19iZXR0ZXIgPSAxOwogICAgICAgICAgICB9IGVsc2UgaWYgKCghcHJlZmVyX2NvbWJpbmVkIHx8IGNvbWIgPT0gYmVzdF9jb21iKSAmJiBiciA+IGJlc3RfYnIpIHsKICAgICAgICAgICAgICAgIGlzX2JldHRlciA9IDE7CiAgICAgICAgICAgIH0KICAgICAgICB9CgogICAgICAgIGlmIChpc19iZXR0ZXIpIHsKICAgICAgICAgICAgYmVzdF9pZHggPSBpOwogICAgICAgICAgICBiZXN0X2ggPSBoOwogICAgICAgICAgICBiZXN0X2NvbWIgPSBjb21iOwogICAgICAgICAgICBiZXN0X2JyID0gYnI7CiAgICAgICAgfQogICAgfQoKICAgIGlmIChiZXN0X2lkeCA8IDApIHsKICAgICAgICBpbnQgbWluX2ggPSA5OTk5OTk7CiAgICAgICAgZm9yIChpbnQgaSA9IDA7IGkgPCBjb3VudDsgaSsrKSB7CiAgICAgICAgICAgIGlmIChoZWlnaHRzW2ldID4gMCAmJiBoZWlnaHRzW2ldIDwgbWluX2gpIHsKICAgICAgICAgICAgICAgIG1pbl9oID0gaGVpZ2h0c1tpXTsKICAgICAgICAgICAgICAgIGJlc3RfaWR4ID0gaTsKICAgICAgICAgICAgICAgIGJlc3RfaCA9IGhlaWdodHNbaV07CiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICB9CgogICAgc25wcmludGYoCiAgICAgICAgZ19sYXN0X2RlY2lzaW9uLAogICAgICAgIHNpemVvZihnX2xhc3RfZGVjaXNpb24pLAogICAgICAgICJzZWxlY3RlZF9oPSVkcCAobGltaXQ8PSVkcCwgdmlkZW9fbWF4PSVkcCwgcHJvZmlsZT0lcykiLAogICAgICAgIGJlc3RfaCA+IDAgPyBiZXN0X2ggOiAwLAogICAgICAgIGVmZmVjdGl2ZV9saW1pdF9oLAogICAgICAgIG1heF9hY3R1YWxfaCwKICAgICAgICBnX2FjdGl2ZV9wcm9maWxlCiAgICApOwogICAgcmV0dXJuIGJlc3RfaWR4Owp9Cgp9IC8vIGV4dGVybiAiQyIK" | base64 -d > app/src/main/python/jenny_yt_core.cpp; fi
-          "$NDK_CLANG" -O3 -march=armv8-a+simd -ffast-math -fPIC -shared app/src/main/python/jenny_yt_core.cpp -o app/src/main/jniLibs/arm64-v8a/libjenny_yt_core.so -lm -ldl
-          python3 -m pip install --upgrade --target /tmp/ytdlp_apk_pkg --no-deps yt-dlp && rm -rf app/src/main/python/yt_dlp && mv /tmp/ytdlp_apk_pkg/yt_dlp app/src/main/python/yt_dlp
+        mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a
+        NDK_CLANG64=$(find $ANDROID_HOME/ndk $ANDROID_NDK_LATEST_HOME -name "aarch64-linux-android24-clang++" 2>/dev/null | head -n 1)
+        NDK_CLANG32=$(find $ANDROID_HOME/ndk $ANDROID_NDK_LATEST_HOME -name "armv7a-linux-androideabi24-clang++" 2>/dev/null | head -n 1)
+        NDK_SYSROOT=$(dirname $(dirname "$NDK_CLANG64"))/sysroot
+
+        # Копируем системную библиотеку libc++_shared.so из NDK для обеих архитектур
+        if [ -f "$NDK_SYSROOT/usr/lib/aarch64-linux-android/libc++_shared.so" ]; then
+          cp -f "$NDK_SYSROOT/usr/lib/aarch64-linux-android/libc++_shared.so" app/src/main/jniLibs/arm64-v8a/libc++_shared.so
+        fi
+        if [ -f "$NDK_SYSROOT/usr/lib/arm-linux-androideabi/libc++_shared.so" ]; then
+          cp -f "$NDK_SYSROOT/usr/lib/arm-linux-androideabi/libc++_shared.so" app/src/main/jniLibs/armeabi-v7a/libc++_shared.so
+        fi
+
+        # 64-bit (arm64-v8a)
+        if [ -n "$NDK_CLANG64" ]; then
+          "$NDK_CLANG64" -O3 -march=armv8-a+simd -ffast-math -fPIC -shared app/src/main/python/jenny_vcore.cpp -o app/src/main/jniLibs/arm64-v8a/libjenny_vcore.so -lm -ldl
+          cp -f app/src/main/jniLibs/arm64-v8a/libjenny_vcore.so app/src/main/jniLibs/arm64-v8a/libjenny_yt_core.so
+          "$NDK_CLANG64" -O3 -ffast-math -fPIC -shared app/src/main/python/hose_splicer.cpp -o app/src/main/jniLibs/arm64-v8a/libhose_dsp.so -lm
+          "$NDK_CLANG64" -x c++ -O3 -ffast-math -fPIC -shared app/src/main/jniLibs/xflac.hpp -o app/src/main/jniLibs/arm64-v8a/libxflac.so -lm
+        fi
+
+        # 32-bit (armeabi-v7a — для Samsung Galaxy A30s SM-A307FN/DS, A20s и всех 32-битных систем Android)
+        if [ -n "$NDK_CLANG32" ]; then
+          "$NDK_CLANG32" -O3 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -ffast-math -fPIC -shared app/src/main/python/jenny_vcore.cpp -o app/src/main/jniLibs/armeabi-v7a/libjenny_vcore.so -lm -ldl
+          cp -f app/src/main/jniLibs/armeabi-v7a/libjenny_vcore.so app/src/main/jniLibs/armeabi-v7a/libjenny_yt_core.so
+          "$NDK_CLANG32" -O3 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -ffast-math -fPIC -shared app/src/main/python/hose_splicer.cpp -o app/src/main/jniLibs/armeabi-v7a/libhose_dsp.so -lm
+          "$NDK_CLANG32" -x c++ -O3 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -ffast-math -fPIC -shared app/src/main/jniLibs/xflac.hpp -o app/src/main/jniLibs/armeabi-v7a/libxflac.so -lm
+        fi
+
+        python3 -m pip install --upgrade --target /tmp/ytdlp_apk_pkg --no-deps yt-dlp && rm -rf app/src/main/python/yt_dlp && mv /tmp/ytdlp_apk_pkg/yt_dlp app/src/main/python/yt_dlp
+
+    - name: Сборка Go торрент-ядер (libjtorrent.so и libomnitorrent.so) для ARM32 (armeabi-v7a) и ARM64
+      run: |
+        mkdir -p /tmp/gobuild_jtor /tmp/gobuild_omni app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a
+
+        # 1) libomnitorrent.so (чистый stdlib, собирается за ~2 сек)
+        if [ ! -s app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so ]; then
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so app/src/main/python/omni_torrent_core.go
+        fi
+        cp -f app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so app/src/main/jniLibs/armeabi-v7a/libomnitorrent_v36ir.so
+        cp -f app/src/main/jniLibs/armeabi-v7a/libomnitorrent.so app/src/main/jniLibs/armeabi-v7a/libomnitorrent_v40ir.so
+        if [ ! -s app/src/main/jniLibs/arm64-v8a/libomnitorrent.so ]; then
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o app/src/main/jniLibs/arm64-v8a/libomnitorrent.so app/src/main/python/omni_torrent_core.go
+          cp -f app/src/main/jniLibs/arm64-v8a/libomnitorrent.so app/src/main/jniLibs/arm64-v8a/libomnitorrent_v36ir.so
+          cp -f app/src/main/jniLibs/arm64-v8a/libomnitorrent.so app/src/main/jniLibs/arm64-v8a/libomnitorrent_v40ir.so
+        fi
+
+        # 2) libjtorrent.so (anacrolix/torrent v1.56.1)
+        if [ ! -s app/src/main/jniLibs/armeabi-v7a/libjtorrent.so ] || [ ! -s app/src/main/jniLibs/arm64-v8a/libjtorrent.so ]; then
+          cp app/src/main/python/jtorrent_core.go /tmp/gobuild_jtor/
+          cd /tmp/gobuild_jtor
+          go mod init jtorrent_build
+          go get github.com/anacrolix/torrent@v1.56.1
+          go mod tidy
+          if [ ! -s "$GITHUB_WORKSPACE/app/src/main/jniLibs/armeabi-v7a/libjtorrent.so" ]; then
+            CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o "$GITHUB_WORKSPACE/app/src/main/jniLibs/armeabi-v7a/libjtorrent.so" jtorrent_core.go
+          fi
+          if [ ! -s "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libjtorrent.so" ]; then
+            CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libjtorrent.so" jtorrent_core.go
+          fi
+          cd "$GITHUB_WORKSPACE"
         fi
 
     - name: Права на нативные библиотеки (.so)
       run: |
-        chmod 755 app/src/main/jniLibs/arm64-v8a/*.so
+        chmod 755 app/src/main/jniLibs/arm64-v8a/*.so app/src/main/jniLibs/armeabi-v7a/*.so
         rm -f icon_raw.jpg
 
     - name: Подготовка Gradle с кэшем
@@ -66,14 +134,14 @@ jobs:
         import os, re, subprocess
         bnum = os.environ.get("GITHUB_RUN_NUMBER", "1")
         msg = subprocess.check_output(["git", "log", "-1", "--pretty=%s"], text=True).strip()
-        msg = "".join(c for c in msg if ord(c) >= 32 and c not in (chr(34), chr(39), chr(92), "$"))[:48]
+        msg = "".join(c for c in msg if ord(c) >= 32 and ord(c) < 127 and c not in (chr(34), chr(39), chr(92), "$"))[:48]
         s = open("app/build.gradle", "r", encoding="utf-8").read()
-        s = re.sub("versionCode\s+\d+", lambda _: f"versionCode {bnum}", s)
-        s = re.sub("versionName\s+\"[^\"]*\"", lambda _: f"versionName \"#{bnum} ({msg})\"", s)
+        s = re.sub(r"versionCode\s+\d+", lambda _: f"versionCode {bnum}", s)
+        s = re.sub(r'versionName\s+"[^"]*"', lambda _: f'versionName "#{bnum} ({msg})"', s)
         open("app/build.gradle", "w", encoding="utf-8").write(s)
         STAMP_EOF
 
-    - name: Сборка APK
+    - name: Сборка универсального APK (ARM64 + ARM32 armeabi-v7a)
       run: gradle assembleDebug
 
     - name: Выдача готового файла
