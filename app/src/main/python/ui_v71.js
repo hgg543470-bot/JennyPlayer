@@ -33078,13 +33078,16 @@ let vsyncTicks = 0;
             if (r && r.status === 'ok') {
                 var durLabel = r.duration_sec ? (' • ' + window.fmtRadioRecDurationV240(r.duration_sec)) : '';
                 if (statusEl) statusEl.innerText = '✅ Сохранено: ' + r.filename + ' (' + r.size_mb + ' MB' + durLabel + ')';
+                if (typeof window.refreshJennyHubSummaryV242 === 'function') window.refreshJennyHubSummaryV242();
                 if (typeof window.scheduleCoalescedFetchDataV237 === 'function') window.scheduleCoalescedFetchDataV237(200);
                 else if (typeof window.fetchData === 'function') window.fetchData();
                 if (typeof window.showToast === 'function') {
                     window.showToast('✅ ' + (reasonMsg ? (reasonMsg + ': ') : 'Записано: ') + r.filename + ' (' + r.size_mb + ' MB' + durLabel + ')');
                 }
-            } else if (statusEl) {
-                statusEl.innerText = '❌ ' + ((r && r.error) || 'Ошибка записи');
+            } else {
+                var errTxt = (r && r.error) || 'Ошибка записи';
+                if (statusEl) statusEl.innerText = '❌ ' + errTxt;
+                if (typeof window.showToast === 'function') window.showToast('❌ ' + errTxt);
             }
         } catch (e) {
             if (btn) {
@@ -33106,50 +33109,73 @@ let vsyncTicks = 0;
             window._radioStateV91.audio = null;
         }
         document.querySelectorAll('.rad-play-btn-v91').forEach(function(b) { b.innerText = '▶'; });
-        // If radio was recording and user stopped the radio stream, automatically stop & save the recording!
         if (wasPlaying && window._radioStateV91 && window._radioStateV91.isRecording) {
             window.finalizeActiveRadioRecordingV240('Эфир остановлен, запись сохранена');
         }
     };
 
     window.toggleRadioRecordToXflacV91 = async function() {
-        var st = window._radioStateV91.currentStation || (window._radioStateV91.stations && window._radioStateV91.stations[0]);
+        var st = window._radioStateV91 && (window._radioStateV91.currentStation || (window._radioStateV91.stations && window._radioStateV91.stations[0]));
         var btn = document.getElementById('btnRadioRecV91');
+        var statusEl = document.getElementById('radNowPlayingTitleV91');
         if (!window._radioStateV91.isRecording) {
-            if (!st) return;
-            var r = await (await window.fetch('/api/radio/record_start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    url: st.url,
-                    title: st.title,
-                    lossless: Boolean(st.lossless),
-                    format_mode: window._radioStateV91.formatMode
-                })
-            })).json();
-            if (r && r.status === 'ok') {
-                window._radioStateV91.isRecording = true;
-                var targetFmt = st.lossless ? 'xFLAC' : 'прямой MP3';
-                if (btn) {
-                    btn.innerText = '⏹ Стоп (' + targetFmt + ' • 00:00 • 0 МБ)';
-                    btn.style.background = '#da3633';
-                }
-                clearInterval(window._radioStateV91.recTimer);
-                window._radioStateV91.recTimer = setInterval(async function() {
-                    try {
-                        var stData = await (await window.fetch('/api/radio/record_status')).json();
-                        var curBtn = document.getElementById('btnRadioRecV91');
-                        if (stData && stData.active) {
-                            if (curBtn) {
-                                curBtn.innerText = '⏹ Стоп (' + targetFmt + ' • ' + window.fmtRadioRecDurationV240(stData.sec) + ' • ' + stData.wav_mb + ' МБ)';
-                                curBtn.style.background = '#da3633';
+            if (!st) {
+                st = { id: 'rp_main', title: 'Radio Paradise — Main Mix', genre: 'Rock', codec: 'FLAC 1411k', lossless: true, url: 'http://stream.radioparadise.com/flacm' };
+                window._radioStateV91.currentStation = st;
+            }
+            if (btn) {
+                btn.innerText = '⏳ Подключение к записи эфира...';
+                btn.style.background = '#9e6a03';
+            }
+            try {
+                var r = await (await window.fetch('/api/radio/record_start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: st.url,
+                        title: st.title,
+                        lossless: Boolean(st.lossless),
+                        format_mode: window._radioStateV91.formatMode
+                    })
+                })).json();
+                if (r && r.status === 'ok') {
+                    window._radioStateV91.isRecording = true;
+                    window._radioStateV91._recStartGraceUntilTsV376 = Date.now() + 2500;
+                    var targetFmt = st.lossless ? 'xFLAC' : 'прямой MP3';
+                    if (btn) {
+                        btn.innerText = '⏹ Стоп (' + targetFmt + ' • 00:00 • 0 МБ)';
+                        btn.style.background = '#da3633';
+                    }
+                    clearInterval(window._radioStateV91.recTimer);
+                    window._radioStateV91.recTimer = setInterval(async function() {
+                        try {
+                            var stData = await (await window.fetch('/api/radio/record_status')).json();
+                            var curBtn = document.getElementById('btnRadioRecV91');
+                            if (stData && stData.active) {
+                                if (curBtn) {
+                                    curBtn.innerText = '⏹ Стоп (' + targetFmt + ' • ' + window.fmtRadioRecDurationV240(stData.sec) + ' • ' + stData.wav_mb + ' МБ)';
+                                    curBtn.style.background = '#da3633';
+                                }
+                            } else if (window._radioStateV91.isRecording && Date.now() >= (window._radioStateV91._recStartGraceUntilTsV376 || 0)) {
+                                window.finalizeActiveRadioRecordingV240('Поток завершён, запись сохранена');
                             }
-                        } else if (window._radioStateV91.isRecording) {
-                            // Server stream ended on its own -> finalize & save immediately instead of leaving timer stuck!
-                            window.finalizeActiveRadioRecordingV240('Поток завершён, запись сохранена');
-                        }
-                    } catch (e) {}
-                }, 600);
+                        } catch (e) {}
+                    }, 600);
+                } else {
+                    var errMsg = (r && r.error) || 'Не удалось запустить запись';
+                    if (btn) {
+                        btn.innerText = st.lossless ? '⏺ Записать эфир в .xFLAC (Lossless)' : '⏺ Сохранить прямой эфир в .MP3 (без пережатия)';
+                        btn.style.background = '#238636';
+                    }
+                    if (statusEl) statusEl.innerText = '❌ ' + errMsg;
+                    if (typeof window.showToast === 'function') window.showToast('❌ ' + errMsg);
+                }
+            } catch (eStart) {
+                if (btn) {
+                    btn.innerText = st.lossless ? '⏺ Записать эфир в .xFLAC (Lossless)' : '⏺ Сохранить прямой эфир в .MP3 (без пережатия)';
+                    btn.style.background = '#238636';
+                }
+                if (statusEl) statusEl.innerText = '❌ Ошибка соединения с сервером записи';
             }
         } else {
             await window.finalizeActiveRadioRecordingV240('');
@@ -34184,6 +34210,7 @@ let vsyncTicks = 0;
     // 4. 4 MB RAM PRE-BUFFERED LOSSLESS FLAC RADIO STREAMING
     // -------------------------------------------------------------------------
     window.stopFlacRadioStreamV91 = function() {
+        var wasPlaying = Boolean(window._radioStateV91 && window._radioStateV91.audio && !window._radioStateV91.audio.paused);
         if (window._radioStateV91 && window._radioStateV91.audio) {
             try {
                 window._radioStateV91.audio.pause();
@@ -34193,6 +34220,9 @@ let vsyncTicks = 0;
         }
         window.fetch('/api/radio/stop_buffered_v242', { method: 'POST' }).catch(function() {});
         document.querySelectorAll('.rad-play-btn-v91').forEach(function(b) { b.innerText = '▶'; });
+        if (wasPlaying && window._radioStateV91 && window._radioStateV91.isRecording && typeof window.finalizeActiveRadioRecordingV240 === 'function') {
+            window.finalizeActiveRadioRecordingV240('Эфир остановлен, запись сохранена');
+        }
     };
 
     window.playFlacRadioStationV91 = async function(idx, btnEl) {

@@ -257,7 +257,9 @@ def _get_xflac_lib_v84():
         candidates.append(os.path.join(pd, "libxflac.so"))
     candidates.extend([
         "libxflac.so",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "jniLibs", "armeabi-v7a" if struct.calcsize("P") == 4 else "arm64-v8a", "libxflac.so"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "jniLibs", "arm64-v8a", "libxflac.so"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "jniLibs", "armeabi-v7a", "libxflac.so"),
         "/storage/emulated/0/scripts/JennyPlayer/app/src/main/jniLibs/arm64-v8a/libxflac.so",
         "/data/data/com.termux/files/home/JennyPlayer/app/src/main/jniLibs/arm64-v8a/libxflac.so"
     ])
@@ -11412,52 +11414,204 @@ import struct as _struct_v240
 
 # 1. EXACT RADIO LIVE PCM RECORDER (HANDLES CHAINED OGG-FLAC LIKE RADIO PARADISE WITHOUT 1:39 EOS CUTOFF
 #    AND COMPUTES EXACT RECORDED AUDIO SECONDS FROM ACTUAL PCM BYTES!)
-_RADIO_REC_PROC_V240 = {"proc": None}
+_RADIO_REC_PROC_V240 = {"proc": None, "stdin_closed": False}
+_RADIO_LIVE_TEE_LOCK_V376 = threading.Lock()
+_RADIO_LIVE_TEE_STATE_V376 = {
+    "url": "",
+    "active": False,
+    "preroll": [],
+    "preroll_bytes": 0,
+    "subscribers": [],
+}
+
+
+def _radio_ssl_ctx_v376():
+    if "_yt_ssl_ctx_v230" in globals():
+        try:
+            return _yt_ssl_ctx_v230()
+        except Exception:
+            pass
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    except Exception:
+        return None
+
+
+def _radio_open_urllib_stream_v376(url: str, timeout_sec: float = 15.0):
+    hdrs = dict(globals().get("OST_HEADERS") or {})
+    hdrs.setdefault("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36")
+    hdrs["Icy-MetaData"] = "0"
+    hdrs["Accept"] = "*/*"
+    hdrs["Connection"] = "keep-alive"
+    req = urllib.request.Request(url, headers=hdrs)
+    ctx = _radio_ssl_ctx_v376()
+    if ctx is not None and url.lower().startswith("https://"):
+        return urllib.request.urlopen(req, timeout=timeout_sec, context=ctx)
+    try:
+        return urllib.request.urlopen(req, timeout=timeout_sec, context=ctx)
+    except Exception:
+        return urllib.request.urlopen(req, timeout=timeout_sec)
+
+
+def _radio_tee_publish_chunk_v376(url: str, chunk: bytes):
+    if not chunk:
+        return
+    with _RADIO_LIVE_TEE_LOCK_V376:
+        if _RADIO_LIVE_TEE_STATE_V376.get("url") != url:
+            _RADIO_LIVE_TEE_STATE_V376["url"] = url
+            _RADIO_LIVE_TEE_STATE_V376["preroll"] = []
+            _RADIO_LIVE_TEE_STATE_V376["preroll_bytes"] = 0
+        _RADIO_LIVE_TEE_STATE_V376["active"] = True
+        pr = _RADIO_LIVE_TEE_STATE_V376["preroll"]
+        pr.append(chunk)
+        _RADIO_LIVE_TEE_STATE_V376["preroll_bytes"] += len(chunk)
+        while _RADIO_LIVE_TEE_STATE_V376["preroll_bytes"] > 98304 and len(pr) > 1:
+            old_c = pr.pop(0)
+            _RADIO_LIVE_TEE_STATE_V376["preroll_bytes"] -= len(old_c)
+        for sub_q in list(_RADIO_LIVE_TEE_STATE_V376.get("subscribers") or []):
+            try:
+                sub_q.put_nowait(chunk)
+            except Exception:
+                pass
 
 
 def _radio_live_pcm_worker_v240(url: str, dst_path: str, is_lossless: bool):
     proc = None
+    pcm_reader_thr = None
+    raw_stream_path = _RADIO_REC_V91.get("tmp_stream") or (dst_path + ".stream")
+    _RADIO_REC_V91["tmp_stream"] = raw_stream_path
+    sub_q = None
     try:
-        if not is_lossless:
-            hdrs = dict(OST_HEADERS)
-            hdrs["Icy-MetaData"] = "0"
-            req = urllib.request.Request(url, headers=hdrs)
-            with urllib.request.urlopen(req, timeout=15) as resp, open(dst_path, "wb") as out_f:
-                while not _RADIO_REC_V91.get("stop_flag"):
-                    chunk = resp.read(16384)
-                    if not chunk:
-                        break
-                    out_f.write(chunk)
-                    out_f.flush()
-                    _RADIO_REC_V91["bytes"] = int(_RADIO_REC_V91.get("bytes") or 0) + len(chunk)
-                    _RADIO_REC_V91["last_byte_ts"] = time.time()
-            return
-
-        # Lossless mode: decode live via FFmpeg into raw 44.1kHz 16-bit stereo PCM (176,400 bytes = 1.000s)!
-        # FFmpeg transparently decodes chained Ogg-FLAC logical bitstreams across unlimited track changes!
         ff_bin = find_ffmpeg_binary()
-        cmd = [
-            ff_bin, '-hide_banner', '-loglevel', 'error',
-            '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-            '-user_agent', OST_HEADERS.get('User-Agent', 'Mozilla/5.0'),
-            '-i', url,
-            '-vn', '-sn', '-dn',
-            '-ac', '2', '-ar', '44100',
-            '-f', 's16le', '-'
-        ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=32768)
-        _RADIO_REC_PROC_V240["proc"] = proc
-        with open(dst_path, "wb") as out_f:
-            while not _RADIO_REC_V91.get("stop_flag"):
-                chunk = proc.stdout.read(16384)
+        if is_lossless and ff_bin:
+            cmd = [
+                ff_bin, '-hide_banner', '-loglevel', 'error',
+                '-i', 'pipe:0',
+                '-vn', '-sn', '-dn',
+                '-ac', '2', '-ar', '44100',
+                '-f', 's16le', '-'
+            ]
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    bufsize=32768
+                )
+                _RADIO_REC_PROC_V240["proc"] = proc
+                _RADIO_REC_PROC_V240["stdin_closed"] = False
+
+                def _pcm_stdout_reader():
+                    try:
+                        with open(dst_path, "wb") as pcm_f:
+                            while True:
+                                pcm_chunk = proc.stdout.read(16384)
+                                if not pcm_chunk:
+                                    break
+                                pcm_f.write(pcm_chunk)
+                                pcm_f.flush()
+                                cur_pcm = int(_RADIO_REC_V91.get("pcm_bytes") or 0) + len(pcm_chunk)
+                                _RADIO_REC_V91["pcm_bytes"] = cur_pcm
+                                _RADIO_REC_V91["bytes"] = max(cur_pcm, int(_RADIO_REC_V91.get("raw_stream_bytes") or 0))
+                                _RADIO_REC_V91["last_byte_ts"] = time.time()
+                    except Exception:
+                        pass
+
+                pcm_reader_thr = threading.Thread(target=_pcm_stdout_reader, name="JennyRadioRecPcmOutV376", daemon=True)
+                pcm_reader_thr.start()
+            except Exception:
+                proc = None
+
+        with open(raw_stream_path, "wb") as raw_f:
+            def _handle_incoming_chunk(chunk: bytes):
                 if not chunk:
-                    break
-                out_f.write(chunk)
-                _RADIO_REC_V91["bytes"] = int(_RADIO_REC_V91.get("bytes") or 0) + len(chunk)
+                    return
+                raw_f.write(chunk)
+                raw_f.flush()
+                cur_raw = int(_RADIO_REC_V91.get("raw_stream_bytes") or 0) + len(chunk)
+                _RADIO_REC_V91["raw_stream_bytes"] = cur_raw
+                cur_pcm = int(_RADIO_REC_V91.get("pcm_bytes") or 0)
+                _RADIO_REC_V91["bytes"] = cur_pcm if cur_pcm > 0 else cur_raw
                 _RADIO_REC_V91["last_byte_ts"] = time.time()
+                if proc and proc.stdin and not _RADIO_REC_PROC_V240.get("stdin_closed"):
+                    try:
+                        proc.stdin.write(chunk)
+                        proc.stdin.flush()
+                    except Exception:
+                        pass
+
+            # 1) If buffered radio playback is ALREADY streaming this exact URL in Python,
+            #    subscribe to its live upstream tee first (0 duplicate Icecast connections!).
+            import queue as _q_v376
+            with _RADIO_LIVE_TEE_LOCK_V376:
+                if _RADIO_LIVE_TEE_STATE_V376.get("active") and _RADIO_LIVE_TEE_STATE_V376.get("url") == url:
+                    sub_q = _q_v376.Queue(maxsize=512)
+                    for pr_chunk in (_RADIO_LIVE_TEE_STATE_V376.get("preroll") or [])[-4:]:
+                        try:
+                            sub_q.put_nowait(pr_chunk)
+                        except Exception:
+                            pass
+                    _RADIO_LIVE_TEE_STATE_V376["subscribers"].append(sub_q)
+
+            while sub_q is not None and not _RADIO_REC_V91.get("stop_flag"):
+                try:
+                    c_tee = sub_q.get(timeout=0.65)
+                    if c_tee is None:
+                        break
+                    _handle_incoming_chunk(c_tee)
+                except _q_v376.Empty:
+                    with _RADIO_LIVE_TEE_LOCK_V376:
+                        still_tee = bool(_RADIO_LIVE_TEE_STATE_V376.get("active") and _RADIO_LIVE_TEE_STATE_V376.get("url") == url)
+                    if not still_tee or (int(_RADIO_REC_V91.get("raw_stream_bytes") or 0) == 0):
+                        break
+
+            if sub_q is not None:
+                with _RADIO_LIVE_TEE_LOCK_V376:
+                    if sub_q in _RADIO_LIVE_TEE_STATE_V376.get("subscribers", []):
+                        _RADIO_LIVE_TEE_STATE_V376["subscribers"].remove(sub_q)
+                sub_q = None
+
+            # 2) Direct Python urllib HTTP/HTTPS stream (with auto-reconnect while recording is active)
+            retries = 0
+            while not _RADIO_REC_V91.get("stop_flag") and retries < 4:
+                try:
+                    with _radio_open_urllib_stream_v376(url, timeout_sec=15.0) as resp:
+                        retries = 0
+                        while not _RADIO_REC_V91.get("stop_flag"):
+                            chunk = resp.read(16384)
+                            if not chunk:
+                                break
+                            _handle_incoming_chunk(chunk)
+                    if _RADIO_REC_V91.get("stop_flag"):
+                        break
+                    retries += 1
+                    time.sleep(0.25)
+                except Exception as e_net:
+                    _RADIO_REC_V91["err"] = str(e_net)
+                    retries += 1
+                    if _RADIO_REC_V91.get("stop_flag") or retries >= 4:
+                        break
+                    time.sleep(0.35)
+
+        if proc and proc.stdin and not _RADIO_REC_PROC_V240.get("stdin_closed"):
+            _RADIO_REC_PROC_V240["stdin_closed"] = True
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+        if pcm_reader_thr and pcm_reader_thr.is_alive():
+            pcm_reader_thr.join(timeout=2.2)
     except Exception as e:
         _RADIO_REC_V91["err"] = str(e)
     finally:
+        if sub_q is not None:
+            with _RADIO_LIVE_TEE_LOCK_V376:
+                if sub_q in _RADIO_LIVE_TEE_STATE_V376.get("subscribers", []):
+                    _RADIO_LIVE_TEE_STATE_V376["subscribers"].remove(sub_q)
         _RADIO_REC_PROC_V240["proc"] = None
         if proc:
             try:
@@ -11494,7 +11648,18 @@ def api_radio_rec_start_v240():
     response.content_type = 'application/json; charset=utf-8'
     try:
         if _RADIO_REC_V91.get("active"):
-            return json.dumps({"status": "error", "error": "Запись уже идёт"}, ensure_ascii=False)
+            _RADIO_REC_V91["stop_flag"] = True
+            old_p = _RADIO_REC_PROC_V240.get("proc")
+            if old_p:
+                try:
+                    old_p.kill()
+                except Exception:
+                    pass
+            old_t = _RADIO_REC_V91.get("thread")
+            if old_t and old_t.is_alive():
+                old_t.join(timeout=0.8)
+            _RADIO_REC_V91["active"] = False
+
         load_multi_dirs_v71()
         req = json.loads(request.body.read().decode('utf-8') or "{}")
         s_url = (req.get("url") or "").strip()
@@ -11503,16 +11668,23 @@ def api_radio_rec_start_v240():
         fmt = (req.get("format_mode") or "xflac_psycho").strip().lower()
         xf_mode = {'xflac_lossless': 0, 'xflac_psycho': 25, 'xflac_ultra': 15, 'xflac_hifi': 45}.get(fmt, 25)
         os.makedirs(MUSIC_DIR, exist_ok=True)
+        pid_tag = f"{os.getpid()}_{int(time.time() * 1000) % 1000000}"
         ext_tmp = ".pcm" if is_ll else ".stream"
-        tmp_raw = os.path.join(MUSIC_DIR, f"temp_final_radraw_{os.getpid()}{ext_tmp}")
+        tmp_raw = os.path.join(MUSIC_DIR, f"temp_final_radraw_{pid_tag}{ext_tmp}")
+        tmp_stream = os.path.join(MUSIC_DIR, f"temp_final_radstream_{pid_tag}.stream")
         _RADIO_REC_V91.update({
             "active": True,
             "stop_flag": False,
             "tmp_raw": tmp_raw,
+            "tmp_stream": tmp_stream,
             "station": s_title,
+            "title": s_title,
+            "url": s_url,
             "start_ts": time.time(),
             "last_byte_ts": time.time(),
             "bytes": 0,
+            "pcm_bytes": 0,
+            "raw_stream_bytes": 0,
             "xf_mode": xf_mode,
             "lossless": is_ll,
             "err": "",
@@ -11529,16 +11701,18 @@ def api_radio_rec_start_v240():
 def api_radio_rec_status_v240():
     response.content_type = 'application/json; charset=utf-8'
     act = bool(_RADIO_REC_V91.get("active"))
-    raw_b = int(_RADIO_REC_V91.get("bytes") or 0)
+    pcm_b = int(_RADIO_REC_V91.get("pcm_bytes") or 0)
+    raw_s_b = int(_RADIO_REC_V91.get("raw_stream_bytes") or 0)
+    raw_b = pcm_b if pcm_b > 0 else max(raw_s_b, int(_RADIO_REC_V91.get("bytes") or 0))
     is_ll = bool(_RADIO_REC_V91.get("lossless", True))
-    if is_ll:
-        # Exact audio seconds decoded into 44.1kHz 16-bit stereo PCM (176,400 bytes/sec)!
-        sec = int(raw_b // 176400)
+    start_ts = float(_RADIO_REC_V91.get("start_ts") or time.time())
+    last_ts = float(_RADIO_REC_V91.get("last_byte_ts") or start_ts)
+    if is_ll and pcm_b >= 176400:
+        sec = int(pcm_b // 176400)
+    elif raw_b > 0:
+        sec = max(1, int((time.time() if act else last_ts) - start_ts))
     else:
-        # For direct MP3 stream, cap by actual data flow so stalled stream never inflates timer
-        last_ts = float(_RADIO_REC_V91.get("last_byte_ts") or _RADIO_REC_V91.get("start_ts") or time.time())
-        start_ts = float(_RADIO_REC_V91.get("start_ts") or last_ts)
-        sec = max(0, int(last_ts - start_ts)) if raw_b > 0 else 0
+        sec = max(0, int(time.time() - start_ts)) if act and (time.time() - start_ts) < 4.0 else 0
     mb = round(raw_b / (1024.0 * 1024.0), 2)
     return json.dumps({
         "active": act,
@@ -11552,55 +11726,92 @@ def api_radio_rec_status_v240():
 def api_radio_rec_stop_v240():
     response.content_type = 'application/json; charset=utf-8'
     traw = _RADIO_REC_V91.get("tmp_raw") or ""
+    tstream = _RADIO_REC_V91.get("tmp_stream") or ""
+    twav = os.path.join(MUSIC_DIR, f"temp_final_radwav_{os.getpid()}.wav")
     try:
         _RADIO_REC_V91["stop_flag"] = True
         p = _RADIO_REC_PROC_V240.get("proc")
+        if p and p.stdin and not _RADIO_REC_PROC_V240.get("stdin_closed"):
+            _RADIO_REC_PROC_V240["stdin_closed"] = True
+            try:
+                p.stdin.close()
+            except Exception:
+                pass
+        thr = _RADIO_REC_V91.get("thread")
+        if thr and thr.is_alive():
+            thr.join(timeout=3.0)
         if p:
             try:
                 p.terminate()
             except Exception:
                 pass
-        thr = _RADIO_REC_V91.get("thread")
-        if thr and thr.is_alive():
-            thr.join(timeout=2.5)
-        if p:
             try:
                 p.kill()
             except Exception:
                 pass
         _RADIO_REC_V91["active"] = False
 
-        if not traw or not os.path.isfile(traw) or os.path.getsize(traw) < 16384:
-            err_detail = _RADIO_REC_V91.get("err") or "Поток станции не отдал аудиоданных"
-            return json.dumps({"status": "error", "error": f"Мало данных ({err_detail})"}, ensure_ascii=False)
-
         safe_st = re.sub(r'[\\/:*?"<>|\[\]]+', '_', _RADIO_REC_V91.get("station") or "Radio").strip()[:100]
         stamp = time.strftime("%H%M%S")
         is_ll = bool(_RADIO_REC_V91.get("lossless", True))
 
+        pcm_size = os.path.getsize(traw) if (traw and os.path.isfile(traw)) else 0
+        stream_size = os.path.getsize(tstream) if (tstream and os.path.isfile(tstream)) else 0
+
         if not is_ll:
+            src_mp3 = tstream if stream_size >= pcm_size else traw
+            if not src_mp3 or not os.path.isfile(src_mp3) or os.path.getsize(src_mp3) < 4096:
+                err_detail = _RADIO_REC_V91.get("err") or "Поток станции не отдал аудиоданных"
+                return json.dumps({"status": "error", "error": f"Мало данных ({err_detail})"}, ensure_ascii=False)
             final_name = f"Radio - {safe_st}_{stamp}.mp3"
             final_path = os.path.join(MUSIC_DIR, final_name)
-            shutil.move(traw, final_path)
-            traw = ""
-            rec_dur_sec = 0.0
+            shutil.move(src_mp3, final_path)
+            if src_mp3 == tstream:
+                tstream = ""
+            else:
+                traw = ""
+            rec_dur_sec = max(1.0, round(float(_RADIO_REC_V91.get("last_byte_ts") or time.time()) - float(_RADIO_REC_V91.get("start_ts") or time.time()), 1))
         else:
-            with open(traw, "rb") as f:
-                pcm_b = f.read()
-            # Align to 4-byte stereo frame boundary
-            aligned_len = (len(pcm_b) // 4) * 4
-            pcm_b = pcm_b[:aligned_len]
-            if aligned_len < 16384:
-                return json.dumps({"status": "error", "error": "Слишком короткая запись эфира"}, ensure_ascii=False)
-            rec_dur_sec = round(aligned_len / 176400.0, 1)
-            wav_b = _wrap_s16le_pcm_as_wav_bytes_v240(pcm_b, 44100, 2)
+            wav_b = b""
+            rec_dur_sec = 0.0
+            if pcm_size >= 8192:
+                with open(traw, "rb") as f:
+                    pcm_b = f.read()
+                aligned_len = (len(pcm_b) // 4) * 4
+                pcm_b = pcm_b[:aligned_len]
+                if aligned_len >= 8192:
+                    rec_dur_sec = round(aligned_len / 176400.0, 1)
+                    wav_b = _wrap_s16le_pcm_as_wav_bytes_v240(pcm_b, 44100, 2)
+
+            if not wav_b and stream_size >= 4096:
+                ff_bin = find_ffmpeg_binary()
+                subprocess.run(
+                    [ff_bin, '-y', '-i', tstream, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', twav],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=35
+                )
+                if os.path.isfile(twav) and os.path.getsize(twav) >= 4096:
+                    with open(twav, "rb") as f:
+                        wav_b = f.read()
+                    rec_dur_sec = round(max(0, len(wav_b) - 44) / 176400.0, 1)
+
+            if not wav_b or len(wav_b) < 4096:
+                err_detail = _RADIO_REC_V91.get("err") or "Поток станции не отдал аудиоданных"
+                return json.dumps({"status": "error", "error": f"Мало данных ({err_detail})"}, ensure_ascii=False)
+
             xf_mode = int(_RADIO_REC_V91.get("xf_mode", 25))
             suf = {0: "_bitperfect.xflac", 15: "_ultra.xflac", 25: "_psycho.xflac", 45: "_hifi.xflac"}.get(xf_mode, "_psycho.xflac")
             final_name = f"Radio - {safe_st}_{stamp}{suf}"
             final_path = os.path.join(MUSIC_DIR, final_name)
-            xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_b, xf_mode)
-            with open(final_path, "wb") as out_f:
-                out_f.write(xfc_bytes)
+            try:
+                xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_b, xf_mode)
+                with open(final_path, "wb") as out_f:
+                    out_f.write(xfc_bytes)
+            except Exception:
+                # Fallback to standard WAV if libxflac.so is unavailable so user recording is never lost
+                final_name = f"Radio - {safe_st}_{stamp}.wav"
+                final_path = os.path.join(MUSIC_DIR, final_name)
+                with open(final_path, "wb") as out_f:
+                    out_f.write(wav_b)
 
         db = load_custom_tags_db_v74()
         db[final_name] = {
@@ -11623,11 +11834,12 @@ def api_radio_rec_stop_v240():
         response.status = 500
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
     finally:
-        if traw and os.path.isfile(traw):
-            try:
-                os.remove(traw)
-            except Exception:
-                pass
+        for fp_tmp in (traw, tstream, twav):
+            if fp_tmp and os.path.isfile(fp_tmp):
+                try:
+                    os.remove(fp_tmp)
+                except Exception:
+                    pass
 
 _override_bottle_route_v212('/api/radio/record_start', 'POST', api_radio_rec_start_v240)
 _override_bottle_route_v212('/api/radio/record_status', 'GET', api_radio_rec_status_v240)
@@ -12386,7 +12598,7 @@ _override_bottle_route_v212('/api/soundcloud/download_track', 'POST', api_soundc
 
 _orig_rad_stop_v242 = api_radio_rec_stop_v240
 def api_radio_rec_stop_v242():
-    st_title = str(_RADIO_REC_V91.get("title") or "Radio Stream")
+    st_title = str(_RADIO_REC_V91.get("station") or _RADIO_REC_V91.get("title") or "Radio Stream")
     is_ll = bool(_RADIO_REC_V91.get("lossless", True))
     res_raw = _orig_rad_stop_v242()
     try:
@@ -12592,16 +12804,27 @@ _startup_resume_downloads_and_clean_streams_v143 = _rehydrate_persisted_torrents
 # ==============================================================================
 _ACTIVE_RADIO_BUF_LOCK_V242 = threading.Lock()
 _ACTIVE_RADIO_BUF_PROCS_V242 = []
+_ACTIVE_RADIO_BUF_STOP_FLAGS_V376 = []
 _RADIO_MAX_RAM_BYTES_V242 = 4 * 1024 * 1024   # 4 MB RAM cushion (~38 sec of lossless FLAC!)
-_RADIO_PREROLL_BYTES_V242 = 180 * 1024        # ~180 KB fast initial burst (~1.6 sec) before starting playback
+_RADIO_PREROLL_BYTES_V242 = 128 * 1024        # ~128 KB fast initial burst (~1.1 sec) before starting playback
 
 
 def _kill_active_radio_buf_procs_v242():
     with _ACTIVE_RADIO_BUF_LOCK_V242:
+        while _ACTIVE_RADIO_BUF_STOP_FLAGS_V376:
+            sf = _ACTIVE_RADIO_BUF_STOP_FLAGS_V376.pop()
+            sf[0] = True
         while _ACTIVE_RADIO_BUF_PROCS_V242:
             p = _ACTIVE_RADIO_BUF_PROCS_V242.pop()
             try:
                 p.kill()
+            except Exception:
+                pass
+    with _RADIO_LIVE_TEE_LOCK_V376:
+        _RADIO_LIVE_TEE_STATE_V376["active"] = False
+        for sub_q in list(_RADIO_LIVE_TEE_STATE_V376.get("subscribers") or []):
+            try:
+                sub_q.put_nowait(None)
             except Exception:
                 pass
 
@@ -12616,66 +12839,110 @@ def api_radio_buffered_stream_v242():
     _kill_active_radio_buf_procs_v242()
     ff_bin = find_ffmpeg_binary()
 
-    # Decode upstream (including chained Ogg-FLAC or 96kHz/24-bit Hi-Res) into a single unbroken continuous stream
-    cmd = [
-        ff_bin, "-hide_banner", "-loglevel", "error",
-        "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "4",
-        "-rw_timeout", "15000000",
-        "-probesize", "262144", "-analyzeduration", "500000",
-        "-i", raw_url,
-        "-vn", "-sn", "-dn",
-    ]
-    if is_lossless:
-        mime_type = "audio/flac"
-        cmd.extend([
-            "-ac", "2", "-ar", "44100", "-sample_fmt", "s16",
-            "-c:a", "flac", "-compression_level", "3",
-            "-flush_packets", "1", "-f", "flac", "-"
-        ])
-    else:
-        mime_type = "audio/mpeg"
-        cmd.extend([
-            "-ac", "2", "-ar", "44100",
-            "-c:a", "libmp3lame", "-b:a", "256k",
-            "-flush_packets", "1", "-f", "mp3", "-"
-        ])
-
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=65536)
-    with _ACTIVE_RADIO_BUF_LOCK_V242:
-        _ACTIVE_RADIO_BUF_PROCS_V242.append(proc)
-
     chunk_q = _py_queue_v242.Queue()
     buffered_bytes = [0]
     buf_cond = threading.Condition()
     eof_flag = [False]
     stop_flag = [False]
+    proc_holder = [None]
 
-    def _upstream_ram_reader():
+    with _ACTIVE_RADIO_BUF_LOCK_V242:
+        _ACTIVE_RADIO_BUF_STOP_FLAGS_V376.append(stop_flag)
+
+    if is_lossless and ff_bin:
+        mime_type = "audio/flac"
+        cmd = [
+            ff_bin, "-hide_banner", "-loglevel", "error",
+            "-i", "pipe:0",
+            "-vn", "-sn", "-dn",
+            "-ac", "2", "-ar", "44100", "-sample_fmt", "s16",
+            "-c:a", "flac", "-compression_level", "3",
+            "-flush_packets", "1", "-f", "flac", "-"
+        ]
         try:
-            while not stop_flag[0]:
-                data = proc.stdout.read(16384)
-                if not data:
-                    break
-                with buf_cond:
-                    while buffered_bytes[0] >= _RADIO_MAX_RAM_BYTES_V242 and not stop_flag[0]:
-                        buf_cond.wait(timeout=0.25)
-                    if stop_flag[0]:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=65536
+            )
+            proc_holder[0] = proc
+            with _ACTIVE_RADIO_BUF_LOCK_V242:
+                _ACTIVE_RADIO_BUF_PROCS_V242.append(proc)
+        except Exception:
+            proc_holder[0] = None
+    else:
+        mime_type = "audio/mpeg"
+
+    def _enqueue_playback_chunk(data: bytes):
+        if not data:
+            return
+        with buf_cond:
+            while buffered_bytes[0] >= _RADIO_MAX_RAM_BYTES_V242 and not stop_flag[0]:
+                buf_cond.wait(timeout=0.25)
+            if stop_flag[0]:
+                return
+            chunk_q.put(data)
+            buffered_bytes[0] += len(data)
+            buf_cond.notify_all()
+
+    if proc_holder[0] is not None:
+        def _ffmpeg_stdout_to_ram():
+            p = proc_holder[0]
+            try:
+                while not stop_flag[0]:
+                    out_d = p.stdout.read(16384)
+                    if not out_d:
                         break
-                    chunk_q.put(data)
-                    buffered_bytes[0] += len(data)
+                    _enqueue_playback_chunk(out_d)
+            except Exception:
+                pass
+            finally:
+                with buf_cond:
+                    eof_flag[0] = True
                     buf_cond.notify_all()
+
+        threading.Thread(target=_ffmpeg_stdout_to_ram, name="JennyRadioFlacOutV376", daemon=True).start()
+
+    def _upstream_urllib_reader():
+        p = proc_holder[0]
+        try:
+            with _radio_open_urllib_stream_v376(raw_url, timeout_sec=15.0) as resp:
+                while not stop_flag[0]:
+                    net_chunk = resp.read(16384)
+                    if not net_chunk:
+                        break
+                    _radio_tee_publish_chunk_v376(raw_url, net_chunk)
+                    if p is not None and p.stdin:
+                        try:
+                            p.stdin.write(net_chunk)
+                            p.stdin.flush()
+                        except Exception:
+                            break
+                    else:
+                        _enqueue_playback_chunk(net_chunk)
         except Exception:
             pass
         finally:
-            with buf_cond:
-                eof_flag[0] = True
-                buf_cond.notify_all()
+            with _RADIO_LIVE_TEE_LOCK_V376:
+                if _RADIO_LIVE_TEE_STATE_V376.get("url") == raw_url:
+                    _RADIO_LIVE_TEE_STATE_V376["active"] = False
+            if p is not None and p.stdin:
+                try:
+                    p.stdin.close()
+                except Exception:
+                    pass
+            else:
+                with buf_cond:
+                    eof_flag[0] = True
+                    buf_cond.notify_all()
 
-    t_reader = threading.Thread(target=_upstream_ram_reader, name="JennyRadioRamBufV242", daemon=True)
+    t_reader = threading.Thread(target=_upstream_urllib_reader, name="JennyRadioRamBufV242", daemon=True)
     t_reader.start()
 
-    # Wait briefly (up to 1.8s) for initial pre-roll cushion so playback starts rock-solid without stutter
-    preroll_deadline = time.time() + 1.8
+    # Wait briefly (up to 1.5s) for initial pre-roll cushion so playback starts rock-solid without stutter
+    preroll_deadline = time.time() + 1.5
     with buf_cond:
         while buffered_bytes[0] < _RADIO_PREROLL_BYTES_V242 and not eof_flag[0]:
             rem = preroll_deadline - time.time()
@@ -12687,7 +12954,7 @@ def api_radio_buffered_stream_v242():
         "Content-Type": mime_type,
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
         "Accept-Ranges": "none",
-        "X-Jenny-Radio-Buffer": "4MB-RAM-V242",
+        "X-Jenny-Radio-Buffer": "4MB-RAM-V376",
     }
 
     def _stream_from_ram_v242():
@@ -12706,10 +12973,11 @@ def api_radio_buffered_stream_v242():
             stop_flag[0] = True
             with buf_cond:
                 buf_cond.notify_all()
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            if proc_holder[0] is not None:
+                try:
+                    proc_holder[0].kill()
+                except Exception:
+                    pass
 
     return bottle.HTTPResponse(body=_stream_from_ram_v242(), status=200, headers=hdrs)
 
