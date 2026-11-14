@@ -9147,6 +9147,9 @@ def api_video_reverse_remux_v219():
         cmd.extend(['-seekable', '1', '-reconnect', '1', '-reconnect_streamed', '1', '-probesize', '524288', '-analyzeduration', '500000'])
 
     cmd.extend([
+        '-probesize', '262144',
+        '-analyzeduration', '200000',
+        '-noaccurate_seek',
         '-ss', f"{seg_start:.3f}",
         '-t', f"{seg_dur:.3f}",
         '-i', src_input,
@@ -9529,7 +9532,7 @@ def api_video_reverse_remux_v223():
 _override_bottle_route_v212('/api/video/reverse_remux', 'GET', api_video_reverse_remux_v223)
 
 
-_VIDEO_PCM_SEMAPHORE_V358 = threading.BoundedSemaphore(2)
+_VIDEO_PCM_SEMAPHORE_V358 = threading.BoundedSemaphore(4)
 _VIDEO_REV_RENDER_SEMAPHORE_V358 = threading.BoundedSemaphore(2)
 
 
@@ -9546,7 +9549,7 @@ def api_video_pcm_chunk_v220():
     proc = None
     try:
         st_sec = max(0.0, float(request.query.get('start', 0.0)))
-        dur_sec = max(0.5, min(60.0, float(request.query.get('dur', 30.0))))
+        dur_sec = max(0.5, min(240.0, float(request.query.get('dur', 45.0))))
         sr = int(request.query.get('sr', 44100))
         if sr < 8000 or sr > 48000:
             sr = 44100
@@ -9555,18 +9558,20 @@ def api_video_pcm_chunk_v220():
         except Exception:
             aidx = 0
         cmd = [
-            find_ffmpeg_binary(), '-v', 'error',
-            '-threads', '1',
+            find_ffmpeg_binary(), '-hide_banner', '-v', 'error',
+            '-probesize', '262144', '-analyzeduration', '200000',
+            '-noaccurate_seek',
             '-ss', f"{st_sec:.3f}", '-t', f"{dur_sec:.3f}",
             '-i', src_input,
+            '-vn', '-sn', '-dn',
             '-map', f'0:a:{aidx}?',
-            '-vn', '-ac', '2', '-ar', str(sr),
+            '-threads', '4',
+            '-ac', '2', '-ar', str(sr),
             '-f', 'f32le', '-acodec', 'pcm_f32le', '-'
         ]
         with _VIDEO_PCM_SEMAPHORE_V358:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            _register_video_ffmpeg_proc_v212(proc)
-            raw_interleaved, _ = proc.communicate(timeout=15)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
+            raw_interleaved, _ = proc.communicate(timeout=25)
         raw_interleaved = raw_interleaved or b""
         frames = (len(raw_interleaved) // 4) // 2
         if frames <= 0:
@@ -12756,7 +12761,7 @@ def api_multiport_ping_v238():
         },
         "sandboxes": {
             "deck_a": "http://127.0.0.1:8081/deck_a_sandbox.html?v=365",
-            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=365",
+            "deck_b": "http://127.0.0.1:8082/deck_b_sandbox.html?v=369",
             "torrents": "http://127.0.0.1:8083/torrents_sandbox.html?v=365"
         },
         "roles": {
@@ -12779,7 +12784,9 @@ def _create_waitress_instance_v238(wsgi_callable, port_num, num_threads):
             port=int(port_num),
             threads=int(num_threads),
             connection_limit=256,
-            channel_timeout=120,
+            channel_timeout=3600,
+            outbuf_overflow=67108864,
+            outbuf_high_watermark=4194304,
             asyncore_use_poll=True,
             expose_tracebacks=False,
         )

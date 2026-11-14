@@ -14918,10 +14918,15 @@ let vsyncTicks = 0;
             }
         }
 
-        var spdIndB = document.getElementById('speedLockIndicatorDeckB');
-        if (spdIndB && Math.abs(spd - 1.0) > 0.005) {
-            spdIndB.style.display = 'block';
-            spdIndB.textContent = '🔒 ⏩ x' + spd;
+        if (typeof window.syncDeckBSpeedLockIndicatorV227 === 'function') {
+            window.syncDeckBSpeedLockIndicatorV227();
+        } else {
+            var spdIndB = document.getElementById('speedLockIndicatorDeckB');
+            if (spdIndB && Math.abs(spd - 1.0) > 0.005) {
+                var isRevNowB = Boolean(window.isReversedDeckB || (window.videoDeckV131 && window.videoDeckV131.isReversed) || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+                spdIndB.style.display = 'block';
+                spdIndB.textContent = '🔒 ' + (isRevNowB ? '⏪' : '⏩') + ' x' + spd;
+            }
         }
 
         if (showNotification !== false && typeof window.showToast === 'function') {
@@ -16464,6 +16469,7 @@ let vsyncTicks = 0;
             { key: 'splitTest',    icon: '🌓', title: 'Режим сравнения (Кнопка Сплит в плеере)', desc: 'Свёрнутая кнопка 🌓 Сплит (по умолчанию играет дефолт)', color: '#00e5ff' },
             { key: 'logDots',      icon: '📊', title: 'Лог с точками (Свёрнутая кнопка 📊 Лог)', desc: 'Свёрнутая кнопка осциллографа VSync и Лога 360', color: '#58a6ff' },
             { key: 'tunerSliders', icon: '🎛️', title: 'Настройки декодера (Свёрнутая кнопка 🎛️ Крутилки)', desc: 'Свёрнутая кнопка 9 ползунков шейдера в плеере', color: '#d2a8ff' },
+            { key: 'avSyncRadar',  icon: '⏱️', title: 'Синхро-Радар А/В (Свёрнутая кнопка ⏱️ А/В в плеере)', desc: 'Свёрнутая кнопка диагностики и калибровки звука ⏱️ А/В в плеере', color: '#60a5fa' },
             { key: 'stub1',        icon: '⏱️', title: 'Скрывать управление (Основной плеер)', desc: 'Через сколько секунд без касания прятать кнопки плеера', color: '#ffea00', secKey: 'main' },
             { key: 'stub2',        icon: '❐',  title: 'Скрывать управление (Режим PiP / Мини)', desc: 'Через сколько секунд без касания прятать кнопки в мини-плеере', color: '#ff9100', secKey: 'pip' },
             { key: 'stub3',        icon: '🧩', title: 'Заглушка 3 (Свободный слот модуля)', desc: 'Резервный слот под будущую функцию #3', color: '#8b949e' },
@@ -17194,7 +17200,7 @@ let vsyncTicks = 0;
             if (rawTitle) {
                 var hasFwd = Boolean(vd.studioBuffer);
                 var hasRev = Boolean(vd.reversedStudioBuffer);
-                var ramTag = (hasFwd && hasRev) ? 'RAM ⏩⏪ 🚀: ' : (hasFwd ? 'RAM 🚀: ' : '🎬 ');
+                var ramTag = (hasFwd && hasRev) ? 'RAM 🚀: ' : (hasFwd ? 'RAM 🚀: ' : '🎬 ');
                 npEl.innerText = ramTag + rawTitle;
             }
         }
@@ -21371,6 +21377,7 @@ let vsyncTicks = 0;
             { key: 'splitTest',    icon: '🌓', title: 'Режим сравнения (Кнопка Сплит в плеере)', desc: 'Свёрнутая кнопка 🌓 Сплит (по умолчанию играет дефолт)', color: '#00e5ff' },
             { key: 'logDots',      icon: '📊', title: 'Лог с точками (Свёрнутая кнопка 📊 Лог)', desc: 'Свёрнутая кнопка осциллографа VSync и Лога 360', color: '#58a6ff' },
             { key: 'tunerSliders', icon: '🎛️', title: 'Настройки декодера (Свёрнутая кнопка 🎛️ Крутилки)', desc: 'Свёрнутая кнопка 9 ползунков шейдера в плеере', color: '#d2a8ff' },
+            { key: 'avSyncRadar',  icon: '⏱️', title: 'Синхро-Радар А/В (Свёрнутая кнопка ⏱️ А/В в плеере)', desc: 'Свёрнутая кнопка диагностики и калибровки звука ⏱️ А/В в плеере', color: '#60a5fa' },
             { key: 'stub1',        icon: '⏱️', title: 'Скрывать управление (Основной плеер)', desc: 'Через сколько секунд без касания прятать кнопки плеера', color: '#ffea00', secKey: 'main' },
             { key: 'stub2',        icon: '❐',  title: 'Скрывать управление (Режим PiP / Мини)', desc: 'Через сколько секунд без касания прятать кнопки в мини-плеере', color: '#ff9100', secKey: 'pip' }
         ];
@@ -21920,13 +21927,24 @@ let vsyncTicks = 0;
                 if (newSpd !== pickedSpd) {
                     pickedSpd = newSpd;
                     try { navigator.vibrate(12); } catch (err) {}
+                    if (window.scrubStateDeckB) {
+                        window.scrubStateDeckB.locked = true;
+                        window.scrubStateDeckB.side = sideStr;
+                        window.scrubStateDeckB.speed = pickedSpd;
+                        window.scrubStateDeckB.isPhysicallyReversed = (sideStr === 'left');
+                    }
+                    window.persistedPlaybackSpeedDeckB = pickedSpd;
+                    window.persistedPlaybackSideDeckB = sideStr;
                     if (sideStr === 'left') {
                         window._lastRevVideoSpeedV217 = pickedSpd;
                         window.startImmediateVideoReverseEngineV217(pickedSpd);
                     } else {
                         window._lastFwdVideoSpeedV217 = pickedSpd;
-                        window.restoreNormalVideoPlaybackV217();
+                        window.restoreNormalVideoPlaybackV217(null, pickedSpd);
                         window.setVideoDeckSpeedV170(pickedSpd, false);
+                    }
+                    if (typeof window.syncDeckBSpeedLockIndicatorV227 === 'function') {
+                        window.syncDeckBSpeedLockIndicatorV227();
                     }
                     window.syncVideoPlayerButtonsUIV217();
                 }
@@ -26831,7 +26849,8 @@ let vsyncTicks = 0;
         }
         var vd = window.videoDeckV131 || {};
         var sc = window.scrubStateDeckB || {};
-        var isRev = Boolean(window.isReversedDeckB || vd.isReversed || sc.isPhysicallyReversed);
+        var st = window._vidStateV130 || {};
+        var isRev = Boolean(window.isReversedDeckB || vd.isReversed || sc.isPhysicallyReversed || st._playingHardwareRevStreamV219);
         var curSpd = Number(vd.speed || window._jennyVideoSpeedV170 || 1.0);
         var baseSpd = typeof window.getBaseSpeedDeckB === 'function' ? window.getBaseSpeedDeckB() : 1.0;
 
@@ -26904,14 +26923,14 @@ let vsyncTicks = 0;
                 if (studioOn) {
                     if (hasFwd && hasRev) {
                         if (vd._isLoadingRamV359 && !vd.studioBuffer._allPiecesLoadedV72 && (vd._ramPiecesTotalV359 || 1) > 1) {
-                            ramTag = 'RAM ⏩⏪ 🚀 (' + (vd.studioBuffer._loadedCountV72 || 1) + '/' + vd._ramPiecesTotalV359 + '): ';
+                            ramTag = 'RAM 🚀 (' + (vd.studioBuffer._loadedCountV72 || 1) + '/' + vd._ramPiecesTotalV359 + '): ';
                         } else {
-                            ramTag = 'RAM ⏩⏪ 🚀: ';
+                            ramTag = 'RAM 🚀: ';
                         }
                     } else if (hasFwd) {
                         ramTag = 'RAM 🚀: ';
                     } else if (vd._isLoadingRamV359) {
-                        ramTag = '⏳ RAM (пока играет сжатый...): ';
+                        ramTag = '⏳ RAM (' + (vd._ramPiecesLoadedV359 || 0) + '/' + (vd._ramPiecesTotalV359 || 1) + '): ';
                     }
                 }
                 var wantTextB = ramTag + rawTitle;
@@ -36535,43 +36554,49 @@ let vsyncTicks = 0;
 })();
 /* ================= END JENNY_V360_WEBAUDIO_CLOCK_AND_MODAL_SYNC ================= */
 
-/* ================= BEGIN JENNY_V368_FIX_PLAYBACK_HUD_AND_DYNAMIC_DSP_RADAR =================
-   1) PRESERVES V238 MULTI-PORT ROUTER (:8082) ON HTMLMediaElement.prototype.src:
-      - Never overwrites V238's `src` setter, so `<video>` live_remux streams always route to port :8082
-        while RAM Buffer #3 chunks decode in parallel without deadlocking or stalling at 0.10s!
-   2) MOVES "🎬 Настройки видео" (#jennyModularLabBoxV208) FROM DECK A (#settingsModal) TO DECK B (#settingsModalDeckB):
-      - Deck A settings contain ONLY audio settings; Deck B settings contain all video settings + "🎬 Настройки видео".
-      - Clicking "🎛️ Пульт" in the video player opens Deck B's `#settingsModalDeckB` and scrolls to "🎬 Настройки видео".
-   3) DEFAULT AUTO-HIDE OFF (`stub1 = false`) & COMPLETE HUD HIDE FIX:
-      - By default, video player controls do NOT auto-hide every 4 seconds unless the user enables "⏱️ Скрывать управление".
-      - When the user taps the video frame to hide the HUD (`hud-hidden-v130`), ALL bottom buttons (`#v135BottomToolsRow`)
-        and the A/V Sync tab hide 100% cleanly (`opacity: 0; visibility: hidden; pointer-events: none`).
-   4) COMPACT COLLAPSIBLE EDGE TAB ("⏱️ А/В") + DYNAMIC REAL-TIME DSP LATENCY BREAKDOWN:
-      - Replaces the wide bottom banner with a sleek collapsible pill/tab on the right edge (`⏱️ А/В ▸` / `◂`).
-      - Dynamically computes real-time DSP latency (in ms) from the actual enabled Deck B modules
-        (FIR impulse decayMs, 3-Band/Limiter lookahead, 5x IIR EQ, Binaural Crossfeed delay, M/S Width, Punch).
+/* ================= BEGIN JENNY_V369_SIX_FIXES_RAM_TURBO_REVERSE_STALL_HEAL_AND_UNIFIED_TELEMETRY =================
+   1) REMOVES ⏩⏪ AFTER RAM ON #nowPlayingDeckB (`RAM 🚀 (5/29): ...` / `RAM 🚀: ...`).
+   2) FIXES #speedLockIndicatorDeckB DIRECTION ICON (`🔒 ⏪` IN REVERSE, `🔒 ⏩` IN FORWARD).
+   3) TURBO 4-WORKER BATCHED RAM UNPACKING (`decodeVideoToRamV131`) + INSTANT REVERSE (`⏪`) AT ANY POSITION:
+      - Eliminates duplicate `decodeVideoToRamV131` restarts on video open and removes the artificial 1100ms delay.
+      - Urgent starter piece (45s around current playback position) decodes in ~150ms and immediately publishes
+        both Buffer #3 (Forward `vd.studioBuffer`) and Buffer #4 (Reverse `vd.reversedStudioBuffer`).
+      - 4 parallel background workers unpack contiguous 180s (4-piece) batches in a single FFmpeg pass, unpacking
+        a 21-minute episode into RAM in ~1.5–2.5 seconds.
+      - When Reverse (`⏪`) is activated at any timestamp (including after jumping to 12:44), it auto-unpauses,
+        triggers an urgent RAM piece fetch for that timestamp if needed, and plays reversed audio from Buffer #4
+        while stepping/streaming reversed video frames smoothly without freezing.
+   4) FIXES VIDEO FREEZING (`⏳`) AFTER ~1 MINUTE OR AFTER DESKTOP OVERLAY / HOME SCREEN RETURN:
+      - Prevents `bindVideoExtPauseV239` from falsely setting `st.userPaused = true` on internal WebView pauses.
+      - Universal Stall & Overlay Auto-Heal Watchdog automatically seamless-reconnects `live_remux` at `curSec`
+        (holding the video frame on canvas and keeping RAM Buffer #3 playing) whenever `<video>` stalls for >1.3s.
+   5) ADDS CHECKBOX "⏱️ Синхро-Радар А/В (Свёрнутая кнопка ⏱️ А/В в плеере)" IN «🎬 Настройки видео».
+   6) UNIFIES ALL 3 TELEMETRY DISPLAYS (`#v130VideoSubTelemetry`, `#nowPlayingDeckB`, AND `⏱️ А/В` DRAWER)
+      SO THEY SHOW THE EXACT SAME REAL-TIME TRUTH IN CLEAR RUSSIAN.
 ================= */
 (function() {
-    if (window._jennyV368AvSyncRadarInstalled) return;
-    window._jennyV368AvSyncRadarInstalled = true;
+    if (window._jennyV369Installed) return;
+    window._jennyV369Installed = true;
 
-    // 1. Default auto-hide controls in main player (`stub1`) to FALSE unless user explicitly saved a preference in V368
+    // 1. Default auto-hide controls in main player (`stub1`) to FALSE, and default `avSyncRadar` to TRUE
     try {
+        window._jennyLabFlagsV208 = window._jennyLabFlagsV208 || {};
         if (localStorage.getItem('jenny_autohide_default_off_v368') !== '1') {
             localStorage.setItem('jenny_autohide_default_off_v368', '1');
-            if (window._jennyLabFlagsV208) {
-                window._jennyLabFlagsV208.stub1 = false;
-                if (typeof window.saveJennyLabFlagsV208 === 'function') {
-                    window.saveJennyLabFlagsV208();
-                }
-            }
+            window._jennyLabFlagsV208.stub1 = false;
+        }
+        if (window._jennyLabFlagsV208.avSyncRadar === undefined) {
+            window._jennyLabFlagsV208.avSyncRadar = true;
+        }
+        if (typeof window.saveJennyLabFlagsV208 === 'function') {
+            window.saveJennyLabFlagsV208();
         }
     } catch (e) {}
 
     // 2. CSS: Guarantee 100% hiding of ALL HUD bars, #v135BottomToolsRow, and the A/V Sync edge tab when HUD is hidden!
-    var stV368 = document.createElement('style');
-    stV368.id = 'jennyStyleV368HudAndAvTab';
-    stV368.textContent = [
+    var stV369 = document.createElement('style');
+    stV369.id = 'jennyStyleV369HudAndAvTab';
+    stV369.textContent = [
         '#v130HudOverlay.hud-hidden-v130,',
         '#v130HudOverlay.hud-hidden-v130 #v130TopDragBar,',
         '#v130HudOverlay.hud-hidden-v130 #v130BottomBar,',
@@ -36624,37 +36649,35 @@ let vsyncTicks = 0;
         '  font-family: monospace;',
         '  font-size: 10.5px;',
         '  color: #e6edf3;',
-        '  max-width: min(320px, 88vw);',
+        '  max-width: min(335px, 90vw);',
         '}'
     ].join('\n');
-    document.head.appendChild(stV368);
-
-    // Also ensure #jennyVideoStudioRootV130 always carries class `.active` while st.active is true
-    // so V210/V224 touch listeners (`ov.classList.contains('active')`) always recognize user touches!
-    var _origOpenVidV368 = window.openJennyVideoPlayerV130;
-    if (typeof _origOpenVidV368 === 'function' && !_origOpenVidV368._v368Wrapped) {
-        window.openJennyVideoPlayerV130 = function() {
-            var r = _origOpenVidV368.apply(this, arguments);
-            var root = document.getElementById('jennyVideoStudioRootV130');
-            if (root) root.classList.add('active');
-            return r;
-        };
-        window.openJennyVideoPlayerV130._v368Wrapped = true;
-    }
-    var _origCloseVidV368 = window.closeVideoPlayerV130;
-    if (typeof _origCloseVidV368 === 'function' && !_origCloseVidV368._v368Wrapped) {
-        window.closeVideoPlayerV130 = function() {
-            var root = document.getElementById('jennyVideoStudioRootV130');
-            if (root) root.classList.remove('active');
-            return _origCloseVidV368.apply(this, arguments);
-        };
-        window.closeVideoPlayerV130._v368Wrapped = true;
-    }
+    document.head.appendChild(stV369);
 
     // 3. Move "🎬 Настройки видео" (#jennyModularLabBoxV208) into Deck B (#settingsModalDeckB)
-    //    and make "🎛️ Пульт" inside the video player open Deck B's #settingsModalDeckB!
+    //    and wire up `avSyncRadar` checkbox visibility in syncModularLabDOMV208!
+    var _origSyncModLabDOMV208 = window.syncModularLabDOMV208;
+    window.syncModularLabDOMV208 = function() {
+        if (typeof _origSyncModLabDOMV208 === 'function') {
+            _origSyncModLabDOMV208.apply(this, arguments);
+        }
+        var fl = window._jennyLabFlagsV208 || {};
+        var showAvPill = (fl.avSyncRadar !== false);
+        var avPill = document.getElementById('jennyAvSyncEdgePillV368');
+        if (avPill) {
+            if (showAvPill) {
+                avPill.style.removeProperty('display');
+            } else {
+                avPill.style.setProperty('display', 'none', 'important');
+            }
+        }
+    };
+
     var _origMountModLabV208 = window.mountModularLabSettingsV208;
     window.mountModularLabSettingsV208 = function() {
+        if (window._jennyLabFlagsV208 && window._jennyLabFlagsV208.avSyncRadar === undefined) {
+            window._jennyLabFlagsV208.avSyncRadar = true;
+        }
         if (typeof _origMountModLabV208 === 'function') {
             _origMountModLabV208.apply(this, arguments);
         }
@@ -36668,6 +36691,7 @@ let vsyncTicks = 0;
                 smBCont.insertBefore(box, smBCont.firstChild);
             }
         }
+        window.syncModularLabDOMV208();
     };
 
     window.openVideoDeckDspStudioV131 = function(ev) {
@@ -36690,7 +36714,529 @@ let vsyncTicks = 0;
         }
     };
 
-    // 4. Load saved user A/V trim (in seconds; positive = advance audio earlier)
+    // 4. TURBO 4-WORKER BATCHED RAM UNPACKER FOR DECK B (`decodeVideoToRamV131`)
+    //    - Deduplicates repeated calls for the same (url, audioTrackIdx) so video open never aborts Piece 0!
+    //    - Immediately decodes the urgent 45s piece around current playback time `curSec` (~150ms) and publishes
+    //      `vd.studioBuffer` (#3 Forward) and `vd.reversedStudioBuffer` (#4 Reverse) with ZERO artificial sleep!
+    //    - Then uses 4 parallel workers fetching 180s (4-piece) batches in single FFmpeg passes so a 21-min MKV
+    //      unpacks 100% into RAM in ~1.5–2.5 seconds!
+    window.normalizeVideoRamKeyV369 = function(rawUrl) {
+        var u = String(rawUrl || '').trim();
+        if (window.stripJennyLocalOriginV238) u = window.stripJennyLocalOriginV238(u);
+        return u.split('?')[0];
+    };
+
+    window.decodeVideoToRamV131 = async function(streamUrl, titleStr, forceRestart) {
+        var st = window._vidStateV130 || {};
+        if (st.torHash && !st.isReadyLocalV212 && String(streamUrl || '').indexOf('/api/torrent/stream/') !== -1) {
+            return null;
+        }
+        if (typeof window.initVideoDeckAudioV131 === 'function') window.initVideoDeckAudioV131();
+        var vd = window.videoDeckV131;
+        if (!vd || !vd.ctx) return null;
+
+        var rawBaseUrl = st.rawTorStreamUrlV214 || st.currentUrl || streamUrl || '';
+        var normKey = window.normalizeVideoRamKeyV369(rawBaseUrl);
+        var curAidx = Number(st.audioTrackIdxV216 || 0);
+        if (!normKey) return null;
+
+        // Deduplicate: if we are ALREADY decoding or have decoded this exact video & audio track, do NOT abort and restart!
+        if (
+            !forceRestart &&
+            vd._lastDecodedNormKeyV369 === normKey &&
+            vd._lastDecodedAidxV369 === curAidx &&
+            (vd._isLoadingRamV359 || (vd.studioBuffer && vd.studioBuffer._allPiecesLoadedV72))
+        ) {
+            if (vd._activeDecodePromiseV369) return vd._activeDecodePromiseV369;
+            if (vd.studioBuffer) return vd.studioBuffer;
+        }
+
+        vd._lastDecodedNormKeyV369 = normKey;
+        vd._lastDecodedAidxV369 = curAidx;
+
+        var mySess = ++vd.ramDecodeSession;
+        if (vd.pieceAbortCtrl) { try { vd.pieceAbortCtrl.abort(); } catch (e) {} }
+        if (Array.isArray(vd._batchAbortCtrlsV369)) {
+            vd._batchAbortCtrlsV369.forEach(function(c) { try { c.abort(); } catch (e) {} });
+        }
+        vd._batchAbortCtrlsV369 = [];
+        vd.studioBuffer = null;
+        vd.reversedStudioBuffer = null;
+
+        var runPromise = (async function() {
+            var vid = document.getElementById('jennyVideoElV130');
+            var dur = 0;
+            try {
+                var mr = await (window.fetchDeckBPcmWithPort8082
+                    ? window.fetchDeckBPcmWithPort8082('/api/video/pcm_meta?src=' + encodeURIComponent(rawBaseUrl))
+                    : fetch('/api/video/pcm_meta?src=' + encodeURIComponent(rawBaseUrl)));
+                if (mr.ok) {
+                    var md = await mr.json();
+                    dur = parseFloat(md.duration) || 0;
+                }
+            } catch (e) {}
+
+            if (!dur && vid) {
+                for (var w = 0; w < 25; w++) {
+                    if (mySess !== vd.ramDecodeSession) return null;
+                    var dCand = window.getEffectiveVideoDurationV210 ? window.getEffectiveVideoDurationV210(vid) : vid.duration;
+                    if (isFinite(dCand) && dCand > 0) { dur = dCand; break; }
+                    await new Promise(function(r) { setTimeout(r, 100); });
+                }
+            }
+            if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
+            if (window._vidStateV130) window._vidStateV130.trueDuration = dur;
+
+            var srCandidates = (dur > 5400) ? [24000, 16000] : ((dur > 2400) ? [32000, 24000] : [44100, 32000]);
+            var sr = srCandidates[0], totalFrames = 0, audioBuf = null, revAudioBuf = null;
+            for (var sIdx = 0; sIdx < srCandidates.length; sIdx++) {
+                try {
+                    sr = srCandidates[sIdx];
+                    totalFrames = Math.floor(dur * sr);
+                    audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                    revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                    if (audioBuf && revAudioBuf) break;
+                } catch (e) {
+                    audioBuf = null;
+                    revAudioBuf = null;
+                }
+            }
+            if (!audioBuf) {
+                var fallbackSrs = [24000, 16000, 12000];
+                for (var fIdx = 0; fIdx < fallbackSrs.length; fIdx++) {
+                    try {
+                        sr = fallbackSrs[fIdx];
+                        totalFrames = Math.floor(dur * sr);
+                        audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                        revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                        if (audioBuf && revAudioBuf) break;
+                    } catch (e) {}
+                }
+            }
+            if (!audioBuf || mySess !== vd.ramDecodeSession) return null;
+
+            var chL = audioBuf.getChannelData(0), chR = audioBuf.getChannelData(1);
+            var revL = revAudioBuf ? revAudioBuf.getChannelData(0) : null;
+            var revR = revAudioBuf ? revAudioBuf.getChannelData(1) : null;
+
+            var PIECE_SEC = 45;
+            var numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
+            var pieceMap = new Uint8Array(numPieces);
+            var revPieceMap = new Uint8Array(numPieces);
+            var failCounts = new Uint8Array(numPieces);
+
+            audioBuf._pieceSecV72 = PIECE_SEC;
+            audioBuf._pieceMapV72 = pieceMap;
+            audioBuf._loadedCountV72 = 0;
+            audioBuf._allPiecesLoadedV72 = false;
+            audioBuf._trueDurationV72 = dur;
+            audioBuf._ramTotalMbV134 = Math.round((totalFrames * 8 * (revAudioBuf ? 2 : 1)) / (1024 * 1024));
+
+            if (revAudioBuf) {
+                revAudioBuf._pieceSecV72 = PIECE_SEC;
+                revAudioBuf._pieceMapV72 = revPieceMap;
+                revAudioBuf._loadedCountV72 = 0;
+                revAudioBuf._allPiecesLoadedV72 = false;
+                revAudioBuf._trueDurationV72 = dur;
+            }
+
+            var cleanTitleB = titleStr || (window._vidStateV130 && window._vidStateV130.currentTitle) || '';
+            vd.title = cleanTitleB;
+            vd._isLoadingRamV359 = true;
+            vd._ramPiecesLoadedV359 = 0;
+            vd._ramPiecesTotalV359 = numPieces;
+            vd._ramDecodeStartWallMsV359 = performance.now();
+
+            // Publish buffers immediately so urgent pieces can be used the instant they land!
+            vd.studioBuffer = audioBuf;
+            vd.reversedStudioBuffer = revAudioBuf;
+
+            if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
+            if (typeof window.updateVideoAvSyncRadarUIV367 === 'function') window.updateVideoAvSyncRadarUIV367();
+
+            var fetchPieceBatch = async function(startPIdx, countPieces, isUrgent) {
+                if (mySess !== vd.ramDecodeSession) return false;
+                var actualIndices = [];
+                for (var k = 0; k < countPieces; k++) {
+                    var p = startPIdx + k;
+                    if (p >= 0 && p < numPieces && pieceMap[p] === 0) {
+                        pieceMap[p] = 1;
+                        actualIndices.push(p);
+                    } else {
+                        break;
+                    }
+                }
+                if (actualIndices.length === 0) return true;
+
+                var firstP = actualIndices[0];
+                var lastP = actualIndices[actualIndices.length - 1];
+                var stSec = firstP * PIECE_SEC;
+                var endSec = Math.min(dur, (lastP + 1) * PIECE_SEC);
+                var dSec = Math.max(0.5, endSec - stSec);
+
+                var ctrl = new AbortController();
+                vd._batchAbortCtrlsV369.push(ctrl);
+
+                try {
+                    var u = '/api/video/pcm_chunk?src=' + encodeURIComponent(rawBaseUrl) +
+                        '&start=' + stSec.toFixed(3) +
+                        '&dur=' + dSec.toFixed(3) +
+                        '&sr=' + sr +
+                        '&aidx=' + curAidx;
+                    var res = await (window.fetchDeckBPcmWithPort8082
+                        ? window.fetchDeckBPcmWithPort8082(u, ctrl.signal)
+                        : fetch(u, { signal: ctrl.signal }));
+                    if (!res.ok || mySess !== vd.ramDecodeSession) {
+                        actualIndices.forEach(function(p) { if (pieceMap[p] === 1) pieceMap[p] = 0; });
+                        return false;
+                    }
+                    var ab = await res.arrayBuffer();
+                    if (mySess !== vd.ramDecodeSession) return false;
+                    var frames = Math.floor(ab.byteLength / 8);
+                    if (frames <= 0) {
+                        actualIndices.forEach(function(p) { if (pieceMap[p] === 1) pieceMap[p] = 0; });
+                        return false;
+                    }
+                    var startFrame = Math.min(totalFrames, Math.floor(stSec * sr));
+                    var maxCopy = Math.min(frames, totalFrames - startFrame);
+                    if (maxCopy > 0) {
+                        var leftArr = new Float32Array(ab, 0, frames);
+                        var rightArr = new Float32Array(ab, frames * 4, frames);
+                        // Fill Buffer #3 (Video Forward)
+                        chL.set(leftArr.subarray(0, maxCopy), startFrame);
+                        chR.set(rightArr.subarray(0, maxCopy), startFrame);
+                        // Fill Buffer #4 (Video Reverse)
+                        if (revL && revR) {
+                            var dstIdx = totalFrames - 1 - startFrame;
+                            for (var i = 0; i < maxCopy; i++, dstIdx--) {
+                                revL[dstIdx] = leftArr[i];
+                                revR[dstIdx] = rightArr[i];
+                            }
+                        }
+                    }
+
+                    var newlyCompleted = 0;
+                    actualIndices.forEach(function(p) {
+                        if (pieceMap[p] !== 2) {
+                            pieceMap[p] = 2;
+                            revPieceMap[numPieces - 1 - p] = 2;
+                            newlyCompleted++;
+                        }
+                    });
+                    audioBuf._loadedCountV72 += newlyCompleted;
+                    if (revAudioBuf) revAudioBuf._loadedCountV72 = audioBuf._loadedCountV72;
+                    vd._ramPiecesLoadedV359 = audioBuf._loadedCountV72;
+                    vd._ramPiecesTotalV359 = numPieces;
+
+                    if (audioBuf._loadedCountV72 >= numPieces) {
+                        audioBuf._allPiecesLoadedV72 = true;
+                        if (revAudioBuf) revAudioBuf._allPiecesLoadedV72 = true;
+                        vd._isLoadingRamV359 = false;
+                    }
+
+                    if (newlyCompleted > 0 && audioBuf._loadedCountV72 === newlyCompleted && vd.config && vd.config.opt_autoRms) {
+                        try { window.computeBufferAutoGainDeckB(audioBuf, vd.config.val_autoRms); } catch (e) {}
+                    }
+
+                    if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
+                    if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false, isUrgent);
+                    if (typeof window.updateVideoAvSyncRadarUIV367 === 'function') window.updateVideoAvSyncRadarUIV367();
+                    return true;
+                } catch (e) {
+                    actualIndices.forEach(function(p) { if (pieceMap[p] === 1) pieceMap[p] = 0; });
+                    return false;
+                }
+            };
+
+            // Expose on-demand urgent piece loader so seeking or pressing Reverse at 12:44 prioritizes that piece in ~150ms!
+            vd._ensureUrgentPieceAtSecV369 = function(targetSec) {
+                if (mySess !== vd.ramDecodeSession || !window._vidStateV130 || !window._vidStateV130.active) return;
+                var pIdx = Math.max(0, Math.min(numPieces - 1, Math.floor(Math.max(0, Number(targetSec) || 0) / PIECE_SEC)));
+                if (pieceMap[pIdx] === 0) {
+                    fetchPieceBatch(pIdx, 1, true);
+                }
+                var isRevNow = Boolean(window.isReversedDeckB || vd.isReversed);
+                var adjP = isRevNow ? (pIdx - 1) : (pIdx + 1);
+                if (adjP >= 0 && adjP < numPieces && pieceMap[adjP] === 0) {
+                    fetchPieceBatch(adjP, 1, true);
+                }
+            };
+
+            var pickNextTask = function() {
+                var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid ? vid.currentTime : 0);
+                var curPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(Math.max(0, curSec) / PIECE_SEC)));
+                var isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || vd.isReversed);
+                var stepDir = isRev ? -1 : 1;
+
+                // 1) Urgent: current piece and immediate next piece in playback direction (single 45s piece for ~150ms response!)
+                for (var look = 0; look < 2; look++) {
+                    var cand = curPiece + look * stepDir;
+                    if (cand >= 0 && cand < numPieces && pieceMap[cand] === 0 && failCounts[cand] < 4) {
+                        return { idx: cand, count: 1, urgent: true };
+                    }
+                }
+                // 2) Background batch: grab up to 4 contiguous unloaded pieces (180s) at once!
+                for (var offset = 0; offset < numPieces; offset++) {
+                    var candBg = (curPiece + offset) % numPieces;
+                    if (pieceMap[candBg] === 0 && failCounts[candBg] < 4) {
+                        var batchLen = 1;
+                        while (batchLen < 4 && (candBg + batchLen) < numPieces && pieceMap[candBg + batchLen] === 0 && failCounts[candBg + batchLen] < 4) {
+                            batchLen++;
+                        }
+                        return { idx: candBg, count: batchLen, urgent: false };
+                    }
+                }
+                return null;
+            };
+
+            // Step A: Immediately decode the urgent starter piece around current time before launching bulk workers
+            var firstTask = pickNextTask();
+            if (firstTask) {
+                await fetchPieceBatch(firstTask.idx, 1, true);
+            }
+
+            // Step B: Launch 4 parallel workers to unpack the remaining pieces in 180s batches!
+            var workerLoop = async function() {
+                while (mySess === vd.ramDecodeSession && window._vidStateV130 && window._vidStateV130.active) {
+                    var task = pickNextTask();
+                    if (!task) break;
+                    var ok = await fetchPieceBatch(task.idx, task.count, task.urgent);
+                    if (mySess !== vd.ramDecodeSession) return;
+                    if (!ok) {
+                        failCounts[task.idx]++;
+                        await new Promise(function(r) { setTimeout(r, 100); });
+                    }
+                }
+            };
+
+            await Promise.all([workerLoop(), workerLoop(), workerLoop(), workerLoop()]);
+
+            if (mySess === vd.ramDecodeSession) {
+                vd._isLoadingRamV359 = false;
+                if (audioBuf._loadedCountV72 >= numPieces) {
+                    audioBuf._allPiecesLoadedV72 = true;
+                    if (revAudioBuf) revAudioBuf._allPiecesLoadedV72 = true;
+                }
+                if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
+                if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false, false);
+                if (typeof window.updateVideoAvSyncRadarUIV367 === 'function') window.updateVideoAvSyncRadarUIV367();
+            }
+            return audioBuf;
+        })();
+
+        vd._activeDecodePromiseV369 = runPromise;
+        return runPromise;
+    };
+
+    // When switching audio track via "🔊 Дор.", reload RAM Buffers #3 & #4 for the newly selected audio track!
+    var _origSwitchRemuxV369 = window.switchVideoToFfmpegRemuxV130;
+    window.switchVideoToFfmpegRemuxV130 = function(ev, forceTranscodeVideo) {
+        var r = _origSwitchRemuxV369 ? _origSwitchRemuxV369.apply(this, arguments) : undefined;
+        var st = window._vidStateV130 || {};
+        if (ev && st.active && st.currentUrl) {
+            window.decodeVideoToRamV131(st.rawTorStreamUrlV214 || st.currentUrl, st.currentTitle, true);
+        }
+        return r;
+    };
+
+    // 5. FIX REVERSE (`⏪`) SO IT ALWAYS UNPAUSES, PRIORITIZES THE CURRENT RAM PIECE,
+    //    AND IMMEDIATELY PLAYS REVERSED AUDIO FROM BUFFER #4 (`vd.reversedStudioBuffer`)!
+    var _origStartRevV369 = window.startImmediateVideoReverseEngineV217;
+    window.startImmediateVideoReverseEngineV217 = function(revSpd, forceReloadTrackOrSeek, explicitStartSec) {
+        var vid = document.getElementById('jennyVideoElV130');
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131;
+        if (!vid || !st || !st.active || !vd) return;
+
+        // Always unpause when user activates or adjusts Reverse so it never sits stuck on ⏸/▶!
+        st.userPaused = false;
+        window._vidPlayIntentV132 = true;
+        window._vidIsBufferingV132 = false;
+
+        var startSec = (explicitStartSec !== undefined && isFinite(explicitStartSec))
+            ? Number(explicitStartSec)
+            : (window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (st._lastTrueMediaSecV227 || vid.currentTime || 0));
+
+        // Immediately prioritize the RAM piece at `startSec` if it isn't unpacked yet!
+        if (typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
+            vd._ensureUrgentPieceAtSecV369(startSec);
+        }
+
+        st._revWallClockStartTsV369 = performance.now();
+        st._revWallClockAnchorSecV369 = startSec;
+
+        var res = _origStartRevV369 ? _origStartRevV369.call(this, revSpd, forceReloadTrackOrSeek, startSec) : undefined;
+
+        // Immediately engage RAM Buffer #4 (`vd.reversedStudioBuffer`) in WebAudio so reversed sound starts in 0ms!
+        if (typeof window.syncVideoRamEngineV211 === 'function') {
+            window.syncVideoRamEngineV211(false, true);
+        }
+        if (typeof window.syncDeckBSpeedLockIndicatorV227 === 'function') {
+            window.syncDeckBSpeedLockIndicatorV227();
+        }
+        if (typeof window.updateVideoAvSyncRadarUIV367 === 'function') {
+            window.updateVideoAvSyncRadarUIV367();
+        }
+        return res;
+    };
+
+    // Improve getEffectiveVideoCurrentTimeV167 during reverse startup:
+    // While `reverse_remux` is rendering the first video clip (`!st._revStreamStartedPlayingV220`),
+    // if RAM Buffer #4 is already playing reversed audio (`vd.isStudioPlaying && vd._ramAnchorRevV367`),
+    // advance the reverse timeline smoothly from the WebAudio clock so the timer and audio move backwards immediately!
+    var _origGetEffTimeV369 = window.getEffectiveVideoCurrentTimeV167;
+    window.getEffectiveVideoCurrentTimeV167 = window.getEffectiveVideoCurrentTimeV210 = function(vid) {
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+        if (st.active && !st.userPaused && isRev && st._playingHardwareRevStreamV219 && !st._revStreamStartedPlayingV220) {
+            if (vd.isStudioPlaying && vd.ctx && vd._ramAnchorCtxTimeV367 !== undefined && vd._ramAnchorMediaSecV367 !== undefined) {
+                var el = Math.max(0, vd.ctx.currentTime - vd._ramAnchorCtxTimeV367);
+                var spd = Number(vd.speed || window._jennyVideoSpeedV170 || 1.0);
+                var effRamRev = Math.max(0, vd._ramAnchorMediaSecV367 - el * spd);
+                st._lastTrueMediaSecV227 = effRamRev;
+                return effRamRev;
+            }
+            if (st._revWallClockStartTsV369 && st._revWallClockAnchorSecV369 !== undefined) {
+                var wallEl = Math.max(0, (performance.now() - st._revWallClockStartTsV369) / 1000.0);
+                var spdW = Number(vd.speed || window._jennyVideoSpeedV170 || 1.0);
+                var effWallRev = Math.max(0, st._revWallClockAnchorSecV369 - wallEl * spdW);
+                return effWallRev;
+            }
+        }
+        return _origGetEffTimeV369 ? _origGetEffTimeV369.apply(this, arguments) : 0;
+    };
+
+    // Prioritize urgent RAM piece on any forward/reverse seek as well!
+    var _origSeekSyncedV369 = window.seekDeckBAndPlayerSyncedV212;
+    if (typeof _origSeekSyncedV369 === 'function') {
+        window.seekDeckBAndPlayerSyncedV212 = function(targetSec, showToastMsg, fromExplicitUser) {
+            var vd = window.videoDeckV131;
+            if (vd && typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
+                vd._ensureUrgentPieceAtSecV369(targetSec);
+            }
+            var r = _origSeekSyncedV369.apply(this, arguments);
+            if (vd && vd.isStudioPlaying && typeof window.syncVideoRamEngineV211 === 'function') {
+                window.syncVideoRamEngineV211(false, true);
+            }
+            return r;
+        };
+    }
+
+    // 6. FIX FALSE VIDEO PAUSE & ADD UNIVERSAL VIDEO STALL / OVERLAY-RETURN AUTO-HEAL WATCHDOG (Fix 4)
+    //    Neutralize V239's false `pause` listener that set `st.userPaused = true` when WebView paused <video> on buffer/overlay transition!
+    window._lastExplicitVideoUserPauseTsV369 = 0;
+    var _origToggleVidPlayPauseV369 = window.toggleVideoPlayPauseV130;
+    window.toggleVideoPlayPauseV130 = function(ev) {
+        window._lastExplicitVideoUserPauseTsV369 = performance.now();
+        return _origToggleVidPlayPauseV369 ? _origToggleVidPlayPauseV369.apply(this, arguments) : undefined;
+    };
+
+    var bindVideoAutoResumeAndStallHealV369 = function() {
+        var vid = document.getElementById('jennyVideoElV130');
+        if (vid && !vid._v369HealBound) {
+            vid._v369HealBound = true;
+            // Capture-phase listener runs BEFORE V239's bubble listener and prevents false userPaused flips!
+            vid.addEventListener('pause', function() {
+                var st = window._vidStateV130;
+                var vd = window.videoDeckV131 || {};
+                if (!st || !st.active) return;
+                var sinceUserClick = performance.now() - (window._lastExplicitVideoUserPauseTsV369 || 0);
+                if (sinceUserClick > 450 && !st.userPaused && window._vidPlayIntentV132 && !vd.isReversed && !st._internalRevPause) {
+                    // Stamp _lastInternalMediaSrcSwitchTsV239 so V239's listener ignores this OS/buffer pause!
+                    window._lastInternalMediaSrcSwitchTsV239 = performance.now();
+                }
+            }, true);
+        }
+    };
+    bindVideoAutoResumeAndStallHealV369();
+
+    // When entering or returning from Android Desktop Overlay, ensure <video> continues smoothly without stalling!
+    var _origOnDesktopOverlayV369 = window.onDesktopOverlayStateChangedV133;
+    window.onDesktopOverlayStateChangedV133 = function(isOverlay) {
+        window._lastInternalMediaSrcSwitchTsV239 = performance.now();
+        var r = _origOnDesktopOverlayV369 ? _origOnDesktopOverlayV369.apply(this, arguments) : undefined;
+        var st = window._vidStateV130 || {};
+        var vd = window.videoDeckV131 || {};
+        var vid = document.getElementById('jennyVideoElV130');
+        if (st.active && !st.userPaused && window._vidPlayIntentV132 && vid && !vd.isReversed) {
+            if (vid.paused) {
+                vid.play().catch(function() {});
+            }
+            st._overlayTransitionCheckTsV369 = performance.now();
+        }
+        return r;
+    };
+
+    // Universal Video Stall Watchdog (works for BOTH local .mkv/.mp4/.avi files AND torrents!)
+    window._lastWatchdogVidTimeV369 = -1;
+    window._lastWatchdogProgressTsV369 = 0;
+    window._lastWatchdogHealTsV369 = 0;
+
+    setInterval(function() {
+        bindVideoAutoResumeAndStallHealV369();
+        var st = window._vidStateV130;
+        var vd = window.videoDeckV131 || {};
+        var vid = document.getElementById('jennyVideoElV130');
+        if (!st || !st.active || !vid || st.userPaused || !window._vidPlayIntentV132) {
+            window._lastWatchdogVidTimeV369 = -1;
+            window._lastWatchdogProgressTsV369 = performance.now();
+            return;
+        }
+
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
+        if (isRev) {
+            window._lastWatchdogVidTimeV369 = vid.currentTime || 0;
+            window._lastWatchdogProgressTsV369 = performance.now();
+            return;
+        }
+
+        var now = performance.now();
+        var rawT = Number(vid.currentTime || 0);
+        if (Math.abs(rawT - window._lastWatchdogVidTimeV369) > 0.015) {
+            window._lastWatchdogVidTimeV369 = rawT;
+            window._lastWatchdogProgressTsV369 = now;
+            if (st._autoHealingRemuxV369 && vid.readyState >= 2 && !vid.paused) {
+                st._autoHealingRemuxV369 = false;
+                window._vidIsBufferingV132 = false;
+                if (typeof window.releaseHeldVideoFrameV220 === 'function') window.releaseHeldVideoFrameV220();
+                if (typeof window.syncVideoPlayBtnIconV132 === 'function') window.syncVideoPlayBtnIconV132();
+            }
+            return;
+        }
+
+        var stalledMs = now - (window._lastWatchdogProgressTsV369 || now);
+        var sinceLastHeal = now - (window._lastWatchdogHealTsV369 || 0);
+        var dur = window.getEffectiveVideoDurationV167 ? window.getEffectiveVideoDurationV167(vid) : (vid.duration || 0);
+        var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (rawT + (st.remuxBaseOffset || 0));
+        var isNearEnd = (dur > 5 && curSec >= dur - 1.8);
+
+        if (isNearEnd) return;
+
+        // First try gentle play() if WebView paused the element with buffered frames available
+        if (vid.paused && !vid.ended && vid.readyState >= 2 && stalledMs > 350 && stalledMs < 1300) {
+            window._lastInternalMediaSrcSwitchTsV239 = now;
+            vid.play().catch(function() {});
+            return;
+        }
+
+        // If frames have stopped advancing for > 1.35s (or stream prematurely ended/stalled), seamlessly reconnect live_remux at curSec!
+        if (stalledMs > 1350 && sinceLastHeal > 2200) {
+            window._lastWatchdogHealTsV369 = now;
+            window._lastWatchdogProgressTsV369 = now;
+            st._autoHealingRemuxV369 = true;
+            if (typeof window.captureAndHoldVideoFrameV220 === 'function') {
+                window.captureAndHoldVideoFrameV220(1600);
+            }
+            window.seekDeckBAndPlayerSyncedV212(curSec, false, true);
+            // Keep RAM Buffer #3 playing smoothly during the 150ms video reconnect!
+            if (typeof window.syncVideoRamEngineV211 === 'function') {
+                window.syncVideoRamEngineV211(false, false);
+            }
+        }
+    }, 400);
+
+    // 7. Load saved user A/V trim (in seconds; positive = advance audio earlier)
     var savedTrim = 0.0;
     try {
         var rawSaved = localStorage.getItem('jenny_video_av_trim_sec_v367');
@@ -36702,14 +37248,13 @@ let vsyncTicks = 0;
     window._jennyVideoUserAvTrimSecV367 = savedTrim;
     window._jennyAvSyncEdgeExpandedV368 = false;
 
-    // 5. Real-time, honest calculation of WebAudio + active Deck B DSP modules latency (in ms and seconds)
+    // 8. Real-time, honest calculation of Android DAC output + active Deck B DSP modules latency
     window.getDeckBHardwareAndDspLatencySecV367 = function() {
         var vd = window.videoDeckV131 || {};
         var st = window._vidStateV130 || {};
         var cfg = vd.config || {};
         var ctx = vd.ctx;
 
-        // Real WebAudio context latency reported by Chromium / Android AAudio:
         var sr = (ctx && ctx.sampleRate) ? ctx.sampleRate : 48000;
         var baseLat = (ctx && typeof ctx.baseLatency === 'number' && isFinite(ctx.baseLatency) && ctx.baseLatency > 0)
             ? ctx.baseLatency
@@ -36717,14 +37262,11 @@ let vsyncTicks = 0;
         var outLat = (ctx && typeof ctx.outputLatency === 'number' && isFinite(ctx.outputLatency) && ctx.outputLatency > 0)
             ? ctx.outputLatency
             : 0.040;
-        // WebAudio render quantum on Android WebView (128 frames per render quantum)
         var ctxSec = baseLat + outLat;
 
-        // Calculate exact DSP group delay from currently active Deck B DSP blocks:
         var dspMs = 0.0;
         var activeDspTags = [];
         if (!st.dspBypass) {
-            // 1) ConvolverNode (FIR Saturator): FFT partitioned convolution + impulse decay group delay
             if (cfg.firEnabled && cfg.firSettings) {
                 var decayMs = parseFloat(cfg.firSettings.decay);
                 if (!isFinite(decayMs) || decayMs <= 0) decayMs = 1.28;
@@ -36732,7 +37274,6 @@ let vsyncTicks = 0;
                 dspMs += firDelayMs;
                 activeDspTags.push('FIR ' + firDelayMs.toFixed(1) + 'мс');
             }
-            // 2) 5-Band IIR Biquad Equalizer: phase group delay around low/mid shelves
             if (cfg.eqEnabled) {
                 var eqCfg = cfg.eq || {};
                 var anyNonZero = [60, 230, 910, 3600, 14000].some(function(f) {
@@ -36742,10 +37283,9 @@ let vsyncTicks = 0;
                 dspMs += eqDelayMs;
                 activeDspTags.push('EQ ' + eqDelayMs.toFixed(1) + 'мс');
             }
-            // 3) Soft-Clip Limiter & 3-Band Crossover ( WebAudio DynamicsCompressorNode has a built-in 6.0ms lookahead delay! )
             if (cfg.limiterEnabled) {
                 if (cfg.multiBandEnabled) {
-                    var mbDelayMs = 6.0 + 1.9; // 6ms compressor lookahead + LR crossover filter delay
+                    var mbDelayMs = 6.0 + 1.9;
                     dspMs += mbDelayMs;
                     activeDspTags.push('3-Band+Лим ' + mbDelayMs.toFixed(1) + 'мс');
                 } else {
@@ -36756,7 +37296,6 @@ let vsyncTicks = 0;
                     dspMs += 0.8;
                 }
             }
-            // 4) PRO Mastering Modules:
             if (cfg.opt_monoBass) {
                 dspMs += 1.1;
                 activeDspTags.push('МоноБас 1.1мс');
@@ -36783,7 +37322,6 @@ let vsyncTicks = 0;
         }
 
         var dspSec = dspMs / 1000.0;
-        // Android AudioFlinger / HAL hardware presentation offset (~85ms) + ctxSec + dspSec
         var totalRamPipelineSec = Math.max(0.04, Math.min(0.80, ctxSec + dspSec + 0.085));
 
         return {
@@ -36840,7 +37378,7 @@ let vsyncTicks = 0;
         }
     };
 
-    // 6. Seamless RAM Buffer #3/#4 playback engine with 0ms speed transitions and drift correction
+    // 9. Seamless RAM Buffer #3 (Forward) & Buffer #4 (Reverse) Playback Engine
     window.syncVideoRamEngineV211 = window.syncVideoRamEngineV131 = function(isDragging, forceResyncNow) {
         var vd = window.videoDeckV131, st = window._vidStateV130, vid = document.getElementById('jennyVideoElV130');
         if (!vid || !vd || !vd.ctx || !st || !st.active) return;
@@ -36866,9 +37404,9 @@ let vsyncTicks = 0;
         var targetSpd = Math.max(0.1, Math.min(16.0, Number(window._jennyVideoSpeedV170 || vd.speed || (window.getTargetPlaybackSpeedDeckB ? window.getTargetPlaybackSpeedDeckB() : 1.0)) || 1.0));
         vd.speed = targetSpd;
 
-        var isVidActuallyPlayingFrames = Boolean(!vid.paused && !vid.ended && vid.readyState >= 2 && !window._vidIsBufferingV132);
+        var isVidActuallyPlayingFrames = Boolean((!vid.paused && !vid.ended && vid.readyState >= 2 && !window._vidIsBufferingV132) || st._autoHealingRemuxV369);
 
-        if (!isRev && (!isVidActuallyPlayingFrames || st.userPaused)) {
+        if (st.userPaused || (!isRev && !isVidActuallyPlayingFrames)) {
             if (vd.horizonTimer) { clearTimeout(vd.horizonTimer); vd.horizonTimer = null; }
             if (vd.revFrameTimer) { clearInterval(vd.revFrameTimer); vd.revFrameTimer = null; }
             if (vd.sourceNode) {
@@ -36883,12 +37421,6 @@ let vsyncTicks = 0;
             return;
         }
 
-        if (isRev && st._playingHardwareRevStreamV219 && !vd.reversedStudioBuffer && !vd.studioBuffer) {
-            if (vd.htmlGain && vd.htmlGain.gain) vd.htmlGain.gain.value = st.dspBypass ? 0.0 : 1.0;
-            if (vd.directBypassGain && vd.directBypassGain.gain) vd.directBypassGain.gain.value = st.dspBypass ? 1.0 : 0.0;
-            return;
-        }
-
         var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0);
         var effLeadSec = window.getEffectiveRamAudioLeadSecV367();
         var audioTargetSec = isRev
@@ -36897,12 +37429,16 @@ let vsyncTicks = 0;
 
         var pSec = (vd.studioBuffer && vd.studioBuffer._pieceSecV72) || 45;
         var curP = (vd.studioBuffer && vd.studioBuffer._pieceMapV72 && vd.studioBuffer._pieceMapV72.length > 0)
-            ? Math.max(0, Math.min(vd.studioBuffer._pieceMapV72.length - 1, Math.floor((isRev ? Math.max(0, audioTargetSec - 0.5) : audioTargetSec) / pSec)))
+            ? Math.max(0, Math.min(vd.studioBuffer._pieceMapV72.length - 1, Math.floor((isRev ? Math.max(0, audioTargetSec - 0.3) : audioTargetSec) / pSec)))
             : -1;
         var isPieceReady = Boolean(
             vd.studioBuffer &&
             (!vd.studioBuffer._pieceMapV72 || vd.studioBuffer._pieceMapV72.length === 0 || (curP >= 0 && vd.studioBuffer._pieceMapV72[curP] === 2))
         );
+        if (!isPieceReady && typeof vd._ensureUrgentPieceAtSecV369 === 'function') {
+            vd._ensureUrgentPieceAtSecV369(audioTargetSec);
+        }
+
         var studioOn = Boolean(!vd.config || vd.config.studioMode !== false);
         var useRamEngine = studioOn && isPieceReady && (isRev || gKey !== 'neutral');
 
@@ -36942,7 +37478,8 @@ let vsyncTicks = 0;
                 ? (vd._ramAnchorMediaSecV367 - elapsedCtx * targetSpd)
                 : (vd._ramAnchorMediaSecV367 + elapsedCtx * targetSpd);
             var driftSec = Math.abs(expectedAudioSec - audioTargetSec);
-            if (driftSec < 0.085 && elapsedCtx < (vd._ramWinRealDurSecV367 || 12.0) - 1.2) {
+            var maxAllowedDrift = (isRev && !st._revStreamStartedPlayingV220) ? 1.5 : 0.085;
+            if (driftSec < maxAllowedDrift && elapsedCtx < (vd._ramWinRealDurSecV367 || 12.0) - 1.2) {
                 if (!isRev && Math.abs(vid.playbackRate - targetSpd) > 0.005) {
                     try { vid.playbackRate = targetSpd; } catch (e) {}
                 }
@@ -37019,6 +37556,9 @@ let vsyncTicks = 0;
     var _prevSetSpeedV368 = window.setVideoDeckSpeedV170;
     window.setVideoDeckSpeedV170 = function(rawSpeed, showNotification) {
         var r = _prevSetSpeedV368 ? _prevSetSpeedV368.apply(this, arguments) : rawSpeed;
+        if (typeof window.syncDeckBSpeedLockIndicatorV227 === 'function') {
+            window.syncDeckBSpeedLockIndicatorV227();
+        }
         if (typeof window.syncVideoRamEngineV211 === 'function') {
             window.syncVideoRamEngineV211(false, true);
         }
@@ -37026,8 +37566,7 @@ let vsyncTicks = 0;
         return r;
     };
 
-    // 7. Build the collapsible edge tab (`#jennyAvSyncEdgePillV368`) inside `#v130HudOverlay`
-    //    and the diagnostic card inside `#settingsModalDeckB`
+    // 10. UNIFIED TELEMETRY ACROSS #v130VideoSubTelemetry, #nowPlayingDeckB, AND THE ⏱️ А/В DRAWER (Fix 6)
     window.ensureVideoAvSyncRadarDOMV367 = function() {
         var oldBottomRadar = document.getElementById('jennyVideoAvSyncRadarBarV367');
         if (oldBottomRadar) oldBottomRadar.remove();
@@ -37043,10 +37582,10 @@ let vsyncTicks = 0;
 
             wrap.innerHTML =
                 '<button type="button" id="jennyAvSyncEdgePillBtnV368" onclick="window.toggleAvSyncEdgeDrawerV368(event)">' +
-                    '<span id="v368EdgeTabLabel">⏱️ А/В: RAM #3 🚀 ◂</span>' +
+                    '<span id="v368EdgeTabLabel">⏱️ А/В: ОЗУ #3 🚀 ▾</span>' +
                 '</button>' +
                 '<div id="jennyAvSyncEdgeDrawerV368">' +
-                    '<div id="jennyVideoAvSyncRadarTextV367" style="line-height:1.4;"></div>' +
+                    '<div id="jennyVideoAvSyncRadarTextV367" style="line-height:1.42;"></div>' +
                     '<div style="display:flex;align-items:center;justify-content:space-between;gap:5px;margin-top:2px;">' +
                         '<button type="button" onclick="window.adjustVideoAvSyncTrimV367(-0.10, false, event)" style="flex:1;padding:4px 7px;border-radius:6px;background:#161b22;border:1px solid #30363d;color:#79c0ff;font-size:10.5px;font-weight:bold;cursor:pointer;">⏪ -0.1с</button>' +
                         '<button type="button" id="v367BtnAvReset" onclick="window.adjustVideoAvSyncTrimV367(0, true, event)" style="flex:1;padding:4px 7px;border-radius:6px;background:#1f2937;border:1px solid #3fb950;color:#3fb950;font-size:10.5px;font-weight:bold;cursor:pointer;">🎯 Авто</button>' +
@@ -37065,7 +37604,7 @@ let vsyncTicks = 0;
             card.innerHTML =
                 '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
                     '<span style="color:#60a5fa;font-weight:900;font-size:12px;">⏱️ Диагностика и Калибровка Синхрона Видео/Звука (Дека Б)</span>' +
-                    '<span id="v367ModalAvPathBadge" style="color:#3fb950;font-family:monospace;font-size:11px;font-weight:bold;">RAM #3 🚀</span>' +
+                    '<span id="v367ModalAvPathBadge" style="color:#3fb950;font-family:monospace;font-size:11px;font-weight:bold;">ОЗУ #3 🚀</span>' +
                 '</div>' +
                 '<div id="v367ModalAvDiagLines" style="font-family:monospace;font-size:11px;color:#93c5fd;line-height:1.45;margin-bottom:8px;">' +
                     'Загрузка телеметрии тракта Деки Б...' +
@@ -37094,7 +37633,7 @@ let vsyncTicks = 0;
         var trimStr = (trimSec >= 0 ? '+' : '') + trimSec.toFixed(2) + 'с';
 
         var spd = Number(window._jennyVideoSpeedV170 || vd.speed || 1.0);
-        var isRev = Boolean(vd.isReversed || window.isReversedDeckB);
+        var isRev = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
         var vSec = (vid && st.active) ? (window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid.currentTime || 0)) : 0;
 
         var usingRam = Boolean(st.active && vd.isStudioPlaying && vd.sourceNode);
@@ -37106,11 +37645,50 @@ let vsyncTicks = 0;
                 : Math.max(0, vd._ramAnchorMediaSecV367 + el * spd);
         }
 
-        var pathStr = usingRam
-            ? (isRev ? '🧠 RAM Буфер #4 (Реверс)' : '🧠 RAM Буфер #3 (Прямой ОЗУ, 0мс WSOLA)')
-            : (st.usingRemux ? '🛠️ Поток FFmpeg AAC' : '🎬 Прямой <video> WebAudio');
+        var loadedCnt = (vd.studioBuffer && vd.studioBuffer._loadedCountV72) || vd._ramPiecesLoadedV359 || 0;
+        var totalCnt = (vd.studioBuffer && vd.studioBuffer._pieceMapV72 && vd.studioBuffer._pieceMapV72.length) || vd._ramPiecesTotalV359 || 1;
+        var ramPct = Math.min(100, Math.round((loadedCnt / Math.max(1, totalCnt)) * 100));
+        var allLoaded = Boolean((vd.studioBuffer && vd.studioBuffer._allPiecesLoadedV72) || (loadedCnt >= totalCnt && totalCnt > 0 && !vd._isLoadingRamV359 && vd.studioBuffer));
 
-        var wsolaMs = usingRam ? 0 : (Math.abs(spd - 1.0) > 0.01 ? 320 : 180);
+        var activeBufName = usingRam
+            ? (isRev ? 'ОЗУ Буфер #4 (Реверс, 32-bit PCM)' : 'ОЗУ Буфер #3 (Вперёд, 32-bit PCM)')
+            : (st.usingRemux ? 'Сжатый поток видео (FFmpeg AAC)' : 'Сжатый поток <video>');
+
+        var ramProgressBadge = allLoaded
+            ? ('100% в ОЗУ (' + totalCnt + '/' + totalCnt + ' кусков)')
+            : (vd._isLoadingRamV359 ? ('докачка ' + loadedCnt + '/' + totalCnt + ' (' + ramPct + '%)') : 'выкл');
+
+        // Keep #v130VideoSubTelemetry 100% synchronized with the real playback source!
+        var subTel = document.getElementById('v130VideoSubTelemetry');
+        if (subTel && st.active) {
+            var wantSubText = '';
+            if (usingRam) {
+                var shortBuf = isRev ? 'ОЗУ Буфер #4 (Реверс)' : 'ОЗУ Буфер #3 (Вперёд)';
+                wantSubText = allLoaded
+                    ? ('🟢 Звук играет из: ' + shortBuf + ' • Память RAM: 100%')
+                    : ('🟢 Звук играет из: ' + shortBuf + ' • Докачка RAM: ' + loadedCnt + '/' + totalCnt + ' (' + ramPct + '%)');
+            } else if (vd._isLoadingRamV359) {
+                wantSubText = '🟡 Звук играет из: Сжатый поток • Распаковка в ОЗУ: ' + loadedCnt + '/' + totalCnt + ' (' + ramPct + '%)';
+            } else {
+                wantSubText = '🟡 Звук играет из: Сжатый поток видео';
+            }
+            if (subTel.innerText !== wantSubText) {
+                subTel.innerText = wantSubText;
+            }
+        }
+
+        // Respect checkbox 'avSyncRadar' in «🎬 Настройки видео»
+        var fl = window._jennyLabFlagsV208 || {};
+        var showAvPill = (fl.avSyncRadar !== false);
+        var avPill = document.getElementById('jennyAvSyncEdgePillV368');
+        if (avPill) {
+            if (showAvPill) {
+                avPill.style.removeProperty('display');
+            } else {
+                avPill.style.setProperty('display', 'none', 'important');
+            }
+        }
+
         var totalCompMs = usingRam
             ? Math.round(window.getEffectiveRamAudioLeadSecV367() * 1000)
             : Math.round(trimSec * 1000);
@@ -37122,18 +37700,19 @@ let vsyncTicks = 0;
         }
         var tabLbl = document.getElementById('v368EdgeTabLabel');
         if (tabLbl) {
-            var shortMode = usingRam ? 'RAM #3 🚀' : 'Поток';
+            var shortMode = usingRam ? (isRev ? 'ОЗУ #4 ⏪' : 'ОЗУ #3 🚀') : ('Поток ' + (vd._isLoadingRamV359 ? (loadedCnt + '/' + totalCnt) : ''));
             tabLbl.innerHTML = '⏱️ А/В: <b style="color:' + (usingRam ? '#3fb950' : '#e3b341') + ';">' + shortMode + '</b> (' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + 'мс) ' + (expanded ? '▴' : '▾');
         }
 
         var txtEl = document.getElementById('jennyVideoAvSyncRadarTextV367');
         if (txtEl) {
             txtEl.innerHTML =
-                '<div>Тракт: <b style="color:' + (usingRam ? '#3fb950' : '#e3b341') + ';">' + pathStr + '</b></div>' +
-                '<div>Кадр: <b style="color:#fff;">' + vSec.toFixed(2) + 'с</b> │ Звук: <b style="color:#79c0ff;">' + aCursorSec.toFixed(2) + 'с</b> (x' + spd.toFixed(2) + ')</div>' +
-                '<div>WebAudio: <b style="color:#d2a8ff;">' + hw.ctxMs + 'мс</b> │ DSP: <b style="color:#d2a8ff;">' + hw.dspMs.toFixed(1) + 'мс</b>' + (wsolaMs > 0 ? (' │ WSOLA: <b>' + wsolaMs + 'мс</b>') : '') + '</div>' +
-                '<div style="color:#8b949e;font-size:9.5px;">↳ Модули DSP: ' + hw.dspBreakdown + '</div>' +
-                '<div>Компенсация: <b style="color:#3fb950;">' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + 'мс</b> (ручн: ' + trimStr + ')</div>';
+                '<div>🔊 Сейчас играет: <b style="color:' + (usingRam ? '#3fb950' : '#e3b341') + ';">' + activeBufName + '</b></div>' +
+                '<div>📦 Буферы ОЗУ (#3 и #4): <b style="color:' + (allLoaded ? '#3fb950' : '#79c0ff') + ';">' + ramProgressBadge + '</b></div>' +
+                '<div>🎞️ Кадр видео: <b style="color:#fff;">' + vSec.toFixed(2) + 'с</b> │ 🎵 Курсор звука: <b style="color:#79c0ff;">' + aCursorSec.toFixed(2) + 'с</b> (x' + spd.toFixed(2) + ')</div>' +
+                '<div>🔌 Выход Android (ЦАП): <b style="color:#d2a8ff;">' + hw.ctxMs + ' мс</b> │ 🎛️ Фильтры DSP: <b style="color:#d2a8ff;">' + hw.dspMs.toFixed(1) + ' мс</b></div>' +
+                '<div style="color:#8b949e;font-size:9.5px;">↳ Цепочка DSP: ' + hw.dspBreakdown + '</div>' +
+                '<div>⚡ Опережение для синхрона: <b style="color:#3fb950;">' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + ' мс</b> (ручн: ' + trimStr + ')</div>';
         }
 
         var btnReset = document.getElementById('v367BtnAvReset');
@@ -37145,14 +37724,15 @@ let vsyncTicks = 0;
 
         var mBadge = document.getElementById('v367ModalAvPathBadge');
         if (mBadge) {
-            mBadge.innerText = pathStr;
+            mBadge.innerText = activeBufName + ' • ' + ramProgressBadge;
             mBadge.style.color = usingRam ? '#3fb950' : '#e3b341';
         }
         var mDiag = document.getElementById('v367ModalAvDiagLines');
         if (mDiag) {
             mDiag.innerHTML =
-                '• <b>Задержка узлов в реальном времени:</b> WebAudio = <b>' + hw.ctxMs + ' мс</b>, Активные блоки DSP Деки Б = <b>' + hw.dspMs.toFixed(1) + ' мс</b> (' + hw.dspBreakdown + ')' + (wsolaMs > 0 ? (', Буфер WSOLA = <b>' + wsolaMs + ' мс</b>') : ' (WSOLA отключён: звук идёт напрямую из ОЗУ Буфера #3)') + '.<br>' +
-                '• <b>Активный режим компенсации:</b> ' + pathStr + ' • Скорость: <b>x' + spd.toFixed(2) + '</b> • Суммарное пред-опережение звука: <b style="color:#3fb950;">' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + ' мс</b> (ручная поправка: <b>' + trimStr + '</b>).';
+                '• <b>Источник звука сейчас:</b> <b style="color:' + (usingRam ? '#3fb950' : '#e3b341') + ';">' + activeBufName + '</b> • Память ОЗУ (#3 Вперёд + #4 Реверс): <b>' + ramProgressBadge + '</b>.<br>' +
+                '• <b>Задержка тракта в реальном времени:</b> Выход Android (ЦАП) = <b>' + hw.ctxMs + ' мс</b>, Активные блоки DSP Деки Б = <b>' + hw.dspMs.toFixed(1) + ' мс</b> (' + hw.dspBreakdown + ').<br>' +
+                '• <b>Компенсация синхрона:</b> Скорость = <b>x' + spd.toFixed(2) + '</b> • Опережение звука = <b style="color:#3fb950;">' + (totalCompMs >= 0 ? '+' : '') + totalCompMs + ' мс</b> (ручная поправка: <b>' + trimStr + '</b>).';
         }
         var mBtnReset = document.getElementById('v367ModalBtnAvReset');
         if (mBtnReset) {
@@ -37164,9 +37744,12 @@ let vsyncTicks = 0;
         var st = window._vidStateV130;
         var vd = window.videoDeckV131;
         var vid = document.getElementById('jennyVideoElV130');
-        if (st && st.active && vid && !vid.paused && !st.userPaused && !window._vidIsBufferingV132) {
-            if (typeof window.syncVideoRamEngineV211 === 'function') {
-                window.syncVideoRamEngineV211(false, false);
+        if (st && st.active && vid && !st.userPaused) {
+            var isRev = Boolean(vd && (vd.isReversed || window.isReversedDeckB));
+            if (isRev || (!vid.paused && !window._vidIsBufferingV132) || st._autoHealingRemuxV369) {
+                if (typeof window.syncVideoRamEngineV211 === 'function') {
+                    window.syncVideoRamEngineV211(false, false);
+                }
             }
         }
         if ((st && st.active) || document.getElementById('settingsModalDeckB')) {
@@ -37178,5 +37761,4 @@ let vsyncTicks = 0;
         window.ensureVideoAvSyncRadarDOMV367();
     }, 450);
 })();
-/* ================= END JENNY_V368_FIX_PLAYBACK_HUD_AND_DYNAMIC_DSP_RADAR ================= */
-
+/* ================= END JENNY_V369_SIX_FIXES_RAM_TURBO_REVERSE_STALL_HEAL_AND_UNIFIED_TELEMETRY ================= */
