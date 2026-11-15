@@ -220,6 +220,8 @@ window.setupSeekZone = function() {
             arcItems.push(el);
         });
 
+        // [FIX-ARC-ABOVE-DECK] последний в DOM всегда поверх при равном z-index
+        document.body.appendChild(arcContainer);
         arcContainer.style.display = 'block';
         setTimeout(() => { arcContainer.style.opacity = '1'; }, 10);
 
@@ -315,8 +317,9 @@ window.setupSeekZone = function() {
 
             if (!isPullingDown) {
                 isPullingDown = true;
-                overlay.style.display = 'block'; 
-                generateArc(); 
+                document.body.appendChild(overlay);
+                overlay.style.display = 'block';
+                generateArc();
                 let defSpeed = parseFloat(window.appConfig.defaultScrubSpeed) || 2.0;
                 if (typeof window.startScrub === 'function') window.startScrub(scrubSide, defSpeed);
             }
