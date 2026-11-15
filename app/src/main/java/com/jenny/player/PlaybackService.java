@@ -35,6 +35,7 @@ public class PlaybackService extends Service {
     public static final String ACTION_TOGGLE_ISLAND_EXPAND = "com.jenny.player.ACTION_TOGGLE_ISLAND_EXPAND";
 
     private static volatile PlaybackService sInstance;
+    private static volatile boolean sLastAppInForeground = false;
 
     private MediaSession mediaSession;
     private PowerManager.WakeLock wakeLock;
@@ -53,6 +54,14 @@ public class PlaybackService extends Service {
     private String downloadStatus = "Фоновый сервис активен";
     private int downloadProgressPct = -1;
     private boolean isNotifLocked = true;
+
+    public static void setAppInForegroundStatic(boolean inForeground) {
+        sLastAppInForeground = inForeground;
+        PlaybackService inst = sInstance;
+        if (inst != null && inst.islandOverlay != null) {
+            inst.islandOverlay.setAppInForeground(inForeground);
+        }
+    }
 
     public static void updateIslandExtraStatic(boolean isFav, String mode, String rawTrack) {
         PlaybackService inst = sInstance;
@@ -136,6 +145,7 @@ public class PlaybackService extends Service {
         acquireAllLocksV212();
 
         islandOverlay = new IslandOverlayController(this);
+        islandOverlay.setAppInForeground(sLastAppInForeground);
 
         mediaSession = new MediaSession(this, "JennyPlayerSession");
         mediaSession.setCallback(new MediaSession.Callback() {

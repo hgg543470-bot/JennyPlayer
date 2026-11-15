@@ -963,6 +963,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
+        PlaybackService.setAppInForegroundStatic(false);
         if (isOpeningSettingsV146 || waitingForPermScreenV148 || android.os.SystemClock.uptimeMillis() < permFlowLockUntilMsV152) {
             return;
         }
@@ -1694,18 +1695,32 @@ public class MainActivity extends AppCompatActivity {
         stopStorageGrantRadarV165();
         stopNotifGrantRadarV165();
         restoreWebViewToActivityV135(false);
+        PlaybackService.setAppInForegroundStatic(true);
         if (webView != null) {
             webView.postDelayed(() -> {
                 if (wasPermSettings) {
                     evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(" + granted + ");");
                 }
                 evalJs("if(window.syncOnboardingPermsV165) window.syncOnboardingPermsV165();");
+                evalJs("if(window.syncAndroidNotification) window.syncAndroidNotification(true);");
                 if (isVideoFullscreenV132 || isVideoLockedV132) {
                     applyVideoSystemUiLockV132();
                 }
             }, 180);
         }
         startPythonServer();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        PlaybackService.setAppInForegroundStatic(false);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        PlaybackService.setAppInForegroundStatic(false);
     }
 
     private void startPythonServer() {
