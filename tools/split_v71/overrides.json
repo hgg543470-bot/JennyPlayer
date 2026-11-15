@@ -1,0 +1,136 @@
+{
+ "names": {
+  "_activeBufferSourcesV71": "reverse",
+  "studioSourceNode": "reverse",
+  "VIDEO_EXTS_V130": "video",
+  "_musicConfigRefV131": "video",
+  "TORRENT_FORMAT_TAGS_V101": "torrent",
+  "saveServiceAuthToDiskV110": "sources",
+  "loadServiceAuthFromDiskV110": "sources",
+  "updateSearchCardsWithLiveMapBadgesV112": "torrent",
+  "applyHeaderIconBadgeV99": "sources",
+  "showMainPageEncodingBannerV98": "torrent",
+  "closeAllV71Modals": "playlist",
+  "getRealOrigFpsV208": "framegen",
+  "_v170SourceFrameInterval": "video",
+  "DEFAULT_THREAD_CONFIG_V216": "settings",
+  "upgradeLogoSvgWithV11UnderPlayerV218": "settings",
+  "matchesFileOrResultFormatTagV214": "torrent",
+  "openTrackMetadataEditorV71": "playlist",
+  "_globalGestureMonitorV74_5": "gestures",
+  "updateTopSearchOrMonitorBar": "playlist",
+  "openTrackInspector": "playlist",
+  "playTrack": "transport",
+  "togglePlay": "transport",
+  "syncAndroidNotification": "shade",
+  "toggleModal": "settings",
+  "fetchData": "playlist",
+  "startScrub": "reverse",
+  "stopScrub": "reverse",
+  "toggleReverseMode": "reverse",
+  "syncMasterPlaybackEngineV59": "reverse",
+  "syncExactRot90DimensionsV217": "video",
+  "openJennyVideoPlayerV130": "video",
+  "getEffectiveVideoCurrentTimeV210": "video",
+  "videoDeckV131": "video",
+  "isDeckAActuallyPlayingV232": "transport",
+  "syncHeaderHeightWithModalsV71": "settings",
+  "mountJennyStudioUI": "settings",
+  "EXPORT_OUT_SVG_V216": "export",
+  "saveLiveWorkspaceSnapshotV146": "video",
+  "checkPermStatusV165": "settings",
+  "decodeHugeTrackToRamV71": "reverse",
+  "fetch": "net"
+ },
+ "ranges": [
+  [
+   733,
+   774,
+   "reverse"
+  ],
+  [
+   9968,
+   9986,
+   "video"
+  ],
+  [
+   3114,
+   3237,
+   "gestures"
+  ],
+  [
+   22981,
+   23077,
+   "video"
+  ],
+  [
+   26554,
+   26570,
+   "video"
+  ],
+  [
+   30572,
+   30640,
+   "transport"
+  ],
+  [
+   29375,
+   29415,
+   "transport"
+  ],
+  [
+   32915,
+   32923,
+   "torrent"
+  ],
+  [
+   29520,
+   29536,
+   "net"
+  ],
+  [
+   35535,
+   35609,
+   "net"
+  ],
+  [
+   32566,
+   32572,
+   "net"
+  ],
+  [
+   32854,
+   32880,
+   "net"
+  ],
+  [
+   32904,
+   32909,
+   "net"
+  ],
+  [
+   35426,
+   35454,
+   "shade"
+  ]
+ ],
+ "units": {
+  "b533.28": "video"
+ },
+ "order": [
+  "styles",
+  "settings",
+  "gestures",
+  "playlist",
+  "transport",
+  "reverse",
+  "sources",
+  "torrent",
+  "video",
+  "video_reverse",
+  "framegen",
+  "export",
+  "shade",
+  "net"
+ ]
+}

@@ -1,0 +1,12 @@
+node_modules/
+orig/
+out/
+newtree/
+out2.json
+out2_new.json
+allwrites.json
+dups.json
+assign.json
+final.json
+bundle_new.js
+*.md.tmp

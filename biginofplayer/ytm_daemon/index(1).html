@@ -1,0 +1,454 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+    <title>🎧🅹🅴🅽🅽🆈́🆂 🅳🅴🅼🅾🅽🎧</title>
+    
+    <style>
+        :root {
+            --bg-main: #0d1117;
+            --bg-panel: #0d1117;
+            --bg-modal: rgba(13, 17, 23, 0.98);
+            --bg-setting-box: #161b22;
+        }
+        body[data-theme="amoled"] {
+            --bg-main: #000000;
+            --bg-panel: #000000;
+            --bg-modal: rgba(0, 0, 0, 0.98);
+            --bg-setting-box: #000000; 
+        }
+
+        body { background-color: var(--bg-main); color: #58a6ff; font-family: monospace; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; overflow: hidden; transition: background-color 0.3s; }
+        
+        .sticky-top { position: absolute; top: 0; left: 0; width: 100%; background: var(--bg-panel); z-index: 3500; padding: 15px 15px 10px 15px; box-shadow: 0 15px 20px -10px rgba(0,0,0,0.9); box-sizing: border-box; height: 235px; transition: background 0.3s; }
+        .fixed-logs-container { position: absolute; bottom: 0; left: 0; width: 100%; background: var(--bg-panel); border-top: 1px solid #30363d; box-shadow: 0 -10px 20px rgba(0,0,0,0.8); z-index: 1900; padding: 10px 15px; box-sizing: border-box; height: 190px; transition: background 0.3s; }
+        
+        .middle-list-container { position: absolute; top: 235px; bottom: 190px; left: 0; width: 100%; overflow-y: auto; padding: 10px 15px; box-sizing: border-box; }
+
+        .modal-overlay {
+            position: absolute; top: 235px; bottom: 190px; left: 0; width: 100%;
+            background: var(--bg-modal); backdrop-filter: blur(10px);
+            z-index: 2500; padding: 15px; box-sizing: border-box; overflow-y: auto;
+            border-top: 1px solid #30363d; border-bottom: 1px solid #30363d;
+            opacity: 0; pointer-events: none; transform: scale(0.98);
+            transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .modal-overlay.open { opacity: 1; pointer-events: auto; transform: scale(1); }
+
+        .capsule { background: #000; border-radius: 50px; display: flex; align-items: center; border: 1px solid #30363d; height: 48px; box-shadow: 0 4px 6px rgba(0,0,0,0.5); margin-bottom: 12px; box-sizing: border-box; width: 100%; position: relative; }
+        .container { max-width: 900px; margin: 0 auto; position: relative; height: 100%; }
+        
+        .log-box { background: #000; color: #e6edf3; height: 140px; overflow-y: auto; font-size: 11px; border: 1px solid #30363d; border-radius: 12px; padding: 5px; box-shadow: inset 0 2px 15px rgba(0,0,0,0.8); }
+        .log-row { padding: 4px 8px; cursor: pointer; border-left: 3px solid transparent; word-wrap: break-word; }
+        .log-row:hover { background: rgba(115, 65, 190, 0.15); }
+        .log-row.selected { background: #1a0b2e; border-left: 3px solid #7341be; color: #e6edf3; }
+        * { -webkit-tap-highlight-color: transparent; outline: none; }
+        button { background: #100029; color: #7341be; border: 1px solid rgba(115, 65, 190, 0.3); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; }
+        button.danger { background: #da3633; color: #fff; border:none; }
+        input[type="number"], input[type="text"] { background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 5px; border-radius: 4px; text-align: center; outline: none; }
+        .track-title { color: #e6edf3; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+        .play-pause-btn { background: linear-gradient(145deg, #03002b, #010014); color: #7341be; border: 1px solid #100029; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; margin: 0; box-shadow: 0px 4px 0px #000000, inset 0px 2px 2px rgba(115, 65, 190, 0.2), 0px 6px 10px rgba(0,0,0,0.8); transition: all 0.1s ease-in-out; }
+        .play-pause-btn:active, .play-pause-btn.toggled-on { transform: translateY(4px); background: #010014; color: #58a6ff; box-shadow: 0px 0px 0px #000000, inset 0px 3px 6px rgba(0,0,0,0.9), 0px 2px 3px rgba(88, 166, 255, 0.3); }
+        .time-display { color: #8b949e; font-family: monospace; font-size: 11px; }
+        
+        .vol-popup { position: absolute; top: 35px; right: -5px; background: #000; border: 1px solid #30363d; border-radius: 20px; padding: 15px 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; gap: 15px; z-index: 4000; }
+        .vol-popup.open { display: flex; }
+        input[type="range"].vt-slider { -webkit-appearance: slider-vertical; width: 12px; height: 300px; cursor: pointer; }
+        
+        .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px dashed #30363d; }
+        details.setting-group { background: #000; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 10px; padding: 8px 12px; }
+        details.setting-group summary { color: #58a6ff; font-weight: bold; cursor: pointer; padding: 5px 0; outline: none; font-size: 15px; }
+        .group-content { padding-top: 10px; border-top: 1px solid #30363d; margin-top: 5px; }
+        .copy-menu { position: absolute; right: 15px; bottom: 160px; background: #161b22; border: 1px solid #7341be; border-radius: 12px; padding: 15px; box-shadow: 0 -8px 25px rgba(0,0,0,0.9); z-index: 3000; display: none; flex-direction: column; gap: 12px; width: 300px; box-sizing: border-box; }
+        .copy-menu-item { padding: 10px; background: #0d1117; border-radius: 6px; cursor: pointer; color: #e6edf3; font-size: 15px; border: 1px solid #30363d; text-align: center; }
+        .custom-copy-bottom { display: flex; gap: 12px; margin-top: 5px; }
+        .inputs-col { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+        .big-ok-btn { flex: 1; background: #7341be; color: #fff; border: none; border-radius: 6px; font-weight: bold; }
+        .toggle-label { font-size: 13px; color: #8b949e; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+        .io-btn { padding:4px 6px; font-size:12px; background:transparent; border:1px solid #30363d; border-radius: 4px; color: #8b949e; }
+        .io-btn:active { background: #161b22; color: #fff; }
+        
+        .volumetric-triangle { width: 52px; height: 44px; flex-shrink: 0; background: #100029; border: none; outline: none; cursor: pointer; transition: all 0.1s ease-in-out; filter: drop-shadow(0px 6px 8px rgba(0,0,0,0.8)) drop-shadow(0px -1px 2px rgba(115, 65, 190, 0.3)); }
+        .volumetric-triangle:active { filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.9)); transform: translateY(4px) scale(0.95); background: #58a6ff; }
+        .prev-triangle { clip-path: polygon(100% 0, 100% 100%, 0 50%); }
+        .next-triangle { clip-path: polygon(0 0, 0 100%, 100% 50%); }
+
+        /* ИНТЕРАКТИВНАЯ ДУГА СКОРОСТЕЙ И ЩИТ */
+        #scrubOverlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 5999; display: none; touch-action: none; }
+        #speedArcContainer { position: fixed; z-index: 6000; pointer-events: none; transition: opacity 0.1s ease-out; opacity: 0; display: none; }
+        
+        /* 🚀 ИСПРАВЛЕННЫЙ ВИЗУАЛ: Кружки одного размера всегда */
+        .arc-item { position: absolute; color: #8b949e; font-size: 13px; font-weight: bold; font-family: monospace; display: flex; justify-content: center; align-items: center; width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,0.85); border: 2px solid #30363d; transition: all 0.15s ease; box-sizing: border-box; }
+        .arc-item.active { color: #fff; background: #7341be; box-shadow: 0 0 15px rgba(115, 65, 190, 1); z-index: 2; border-color: #58a6ff; transform: scale(1.05); }
+    </style>
+</head>
+<body>
+
+    <input type="file" id="systemFolderPicker" webkitdirectory directory multiple style="display: none;">
+
+    <!-- ГЛУХОЙ ОВЕРЛЭЙ (ЩИТ) И КОНТЕЙНЕР ДЛЯ ДУГИ -->
+    <div id="scrubOverlay"></div>
+    <div id="speedArcContainer"></div>
+
+    <div class="sticky-top">
+        <div class="container">
+            <div class="capsule">
+                <div style="width: 25%; display: flex; align-items: center; justify-content: flex-start; padding-left: 15px;">
+                    <span style="font-size: 14px; margin-right: 5px;">⏱️</span>
+                    <input type="number" id="timerInput" value="2" onchange="window.changeTimer()" style="width: 25px; background: transparent; border: none; color: #58a6ff; font-weight: bold; padding: 0;">
+                </div>
+                <div style="width: 50%; display: flex; justify-content: center; align-items: center;">
+                    <span style="color: #3fb950; font-weight: bold; font-size: 14px; letter-spacing: 1px;">🅹🅴🅽🅽🆈́🆂 🅳🅴🅼🅾🅽</span>
+                </div>
+                <div style="width: 25%; display: flex; justify-content: flex-end; align-items: center; padding-right: 15px; gap: 12px;">
+                    <span id="btn-eqModal" onclick="toggleModal('eqModal')" style="cursor: pointer; font-size: 16px;">🄠</span>
+                    <span id="btn-favModal" onclick="toggleModal('favModal')" style="cursor: pointer; font-size: 16px;">🐞</span>
+                    <span id="btn-settingsModal" onclick="toggleModal('settingsModal')" style="cursor: pointer; font-size: 16px;">⚙️</span>
+                </div>
+            </div>
+
+            <!-- РЯД 1: Капсула -->
+            <div style="display: flex; gap: 4px; height: 54px; margin-bottom: 12px; width: 100%;">
+                
+                <div id="leftTimeBlock" style="width: 15%; min-width: 55px; background: #000; border: 1px solid #30363d; border-radius: 50px 6px 6px 50px; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 6px rgba(0,0,0,0.5); cursor: pointer; touch-action: none;">
+                    <span id="currentTime" class="time-display" style="color: #58a6ff; font-size: 13px;">0:00</span>
+                </div>
+                
+                <div id="seekZone" style="flex-grow: 1; background: #000; border: 1px solid #30363d; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; position: relative; overflow: hidden; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.5);">
+                    <div id="progressFill" style="position: absolute; left: 0; top: 0; height: 100%; width: 0%; background: rgba(115, 65, 190, 0.4); pointer-events: none; transition: width 0.1s linear;"></div>
+                    <div style="position: relative; z-index: 2; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 15px;">
+                        <span id="durationTime" class="time-display" style="color: #8b949e; margin-bottom: 2px;">0:00</span>
+                        <div class="track-title" id="nowPlaying" style="font-weight: normal; color: #e6edf3; width: 100%;">Выбери трек</div>
+                        <div id="speedLockIndicator" style="display: none; color: #e3b341; font-size: 11px; font-weight: bold; margin-top: 2px;">🔒 ⏩ x2.0</div>
+                    </div>
+                </div>
+                
+                <div id="rightTimeBlock" style="width: 15%; min-width: 55px; background: #000; border: 1px solid #30363d; border-radius: 6px 50px 50px 6px; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 6px rgba(0,0,0,0.5); cursor: pointer; touch-action: none;">
+                    <span id="remainingTime" class="time-display" style="color: #e3b341; font-size: 13px;">-0:00</span>
+                </div>
+            </div>
+
+            <!-- РЯД 2: Папка + Центральный пульт + Громкость -->
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0 10px;">
+                <div style="display: flex; align-items: center; gap: 12px; width: 70px;">
+                    <span id="folderIconTrigger" style="cursor: pointer; font-size: 16px;">📁</span>
+                    <button id="showAllBtnToggle" class="play-pause-btn" style="width: 28px; height: 28px;" onclick="window.toggleShowAll()">
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                    </button>
+                </div>
+                <div style="display: flex; justify-content: center; align-items: center; gap: 25px; flex-grow: 1;">
+                    <button id="btnPrev" class="volumetric-triangle prev-triangle" onclick="if(window.playPreviousTrack) window.playPreviousTrack()"></button>
+                    <button id="playPauseBtn" class="play-pause-btn" onclick="togglePlay()" style="width: 44px; height: 44px;">
+                        <svg viewBox="0 0 24 24" width="40" height="36" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                    </button>
+                    <button id="btnNext" class="volumetric-triangle next-triangle" onclick="if(window.playNextTrack) window.playNextTrack()"></button>
+                </div>
+                
+                <!-- 🚀 НАША НОВАЯ КНОПКА ЭКСПОРТА -->
+                <div style="display: flex; justify-content: center; align-items: center; padding-right: 5px;">
+                    <button id="btnExport" onclick="window.exportCurrentTrack()" style="background: transparent; border: 1px solid #7341be; color: #58a6ff; font-size: 16px; width: 36px; height: 36px; border-radius: 50%; display: flex; justify-content: center; align-items: center; padding: 0;">💾</button>
+                </div>
+
+                <div style="position: relative; display: flex; justify-content: flex-end; align-items: center; width: 70px;">
+                    <span id="volIconTrigger" style="cursor:pointer; font-size:16px; padding: 5px;" onclick="window.toggleVolumePopup()">🔊</span>
+                    <div id="volumePopup" class="vol-popup">
+                        <span id="volIconText" style="color:#8b949e; font-size:10px; font-weight:bold;">100%</span>
+                        <input type="range" id="volumeBar" class="vt-slider" min="0" max="10" step="1" value="10" oninput="changeVolume()">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 🚀 СТРОКА ПОИСКА ПО ТРЕКАМ -->
+            <div style="padding-top: 15px;">
+                <input type="text" id="trackSearchInput" onkeyup="window.filterTracks(this.value)" 
+                       placeholder="🔍 Поиск по названию..." 
+                       style="width: 100%; background: var(--bg-setting-box); color: #c9d1d9; border: 1px solid #30363d; padding: 10px; border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box;">
+            </div>
+
+            <audio id="audioPlayer" crossorigin="anonymous"></audio>
+        </div>
+    </div>
+
+    <div class="middle-list-container">
+        <div class="container">
+            <div id="unifiedList" style="margin-bottom: 30px;">
+                <div style="padding:10px; color:#8b949e; text-align: center;">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="fixed-logs-container">
+        <div class="container">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <h3 style="color: #c9d1d9; font-size: 13px; font-weight: normal; margin: 0;">📜 Терминал</h3>
+                <span id="copyBtn" style="color: #8b949e; font-size: 12px; cursor: pointer; padding: 5px;">📋 Копировать</span>
+            </div>
+            <div class="log-box" id="logBox"></div>
+            <div id="copyMenu" class="copy-menu">
+                <div class="copy-menu-item" onclick="copyBulk('all')">📋 Скопировать весь текст</div>
+                <div class="copy-menu-item" onclick="copyBulk('last', 8)">📋 Последние 8 строк</div>
+                <div class="copy-menu-item" onclick="copyBulk('last', 16)">📋 Последние 16 строк</div>
+                <div class="custom-copy-bottom">
+                    <div class="inputs-col">
+                        <input type="number" id="inpLast" placeholder="Новые" oninput="document.getElementById('inpFirst').value = ''">
+                        <input type="number" id="inpFirst" placeholder="Старые" oninput="document.getElementById('inpLast').value = ''">
+                    </div>
+                    <button class="big-ok-btn" onclick="executeCustomCopy()">КОПИРОВАТЬ</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="favModal" class="modal-overlay">
+        <div class="container">
+            <div id="favList"></div>
+        </div>
+    </div>
+    
+    <div id="settingsModal" class="modal-overlay">
+        <div class="container">
+            <div style="display:flex; gap:10px; margin-bottom: 15px;">
+                <button onclick="window.loadConfigFromDisk()" style="flex:1; background:#1f6feb; color:#fff; font-weight:bold; border:none; padding:12px; border-radius: 8px;">📥 ЗАГРУЗИТЬ ВСЁ</button>
+                <button onclick="window.saveConfigToDisk()" style="flex:1; background:#3fb950; color:#000; font-weight:bold; border:none; padding:12px; border-radius: 8px;">💾 СОХРАНИТЬ ВСЁ</button>
+            </div>
+            
+            <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #3fb950;">
+                <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
+                    <input type="checkbox" id="cfg_studioMode" onchange="updateSettings()"> Студийный движок (RAM)
+                </label>
+            </div>
+
+            <details class="setting-group" open style="border-left: 3px solid #e3b341;">
+                <summary>⚡ Интеллектуальный Скраббинг</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e6edf3;">
+                            <input type="checkbox" id="cfg_autoSaveScrub" onchange="updateSettings()"> 
+                            Запоминать выбор из дуги
+                        </label>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e6edf3;">
+                            <input type="checkbox" id="cfg_leftHandedMode" onchange="updateSettings()"> 
+                            🖐️ Режим "Левша" (Зеркальная дуга)
+                        </label>
+                    </div>
+                    <!-- 🚀 НОВАЯ ГАЛОЧКА PITCH LOCK -->
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e3b341;">
+                            <input type="checkbox" id="cfg_pitchLock" onchange="updateSettings()"> 
+                            🎵 Сохранять темп (Pitch Lock)
+                        </label>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Дефолтная скорость:</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('main', 'defaultScrubSpeed', 'cfg_defaultScrubSpeed')">📥</button>
+                            <input type="number" id="cfg_defaultScrubSpeed" oninput="updateSettings()" step="0.1" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('main', 'defaultScrubSpeed', 'cfg_defaultScrubSpeed')">💾</button>
+                        </div>
+                    </div>
+
+                    <!-- 🚀 НОВЫЙ БЛОК НАСТРОЙКИ 6 ЗОН -->
+                    <div style="border-top: 1px solid #30363d; margin-top: 10px; padding-top: 10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+                            <span style="color:#8b949e; font-size:12px; font-weight:bold;">Кастомные радиальные зоны:</span>
+                            <button onclick="window.resetScrubZones()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z1_en" onchange="window.checkZones(1)">
+                                <input type="number" id="cfg_z1_val" oninput="window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z2_en" onchange="window.checkZones(2)">
+                                <input type="number" id="cfg_z2_val" oninput="window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z3_en" onchange="window.checkZones(3)">
+                                <input type="number" id="cfg_z3_val" oninput="window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z4_en" onchange="window.checkZones(4)">
+                                <input type="number" id="cfg_z4_val" oninput="window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z5_en" onchange="window.checkZones(5)">
+                                <input type="number" id="cfg_z5_val" oninput="window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                            <div style="display:flex; align-items:center; justify-content:space-between; background:#0d1117; padding:4px 8px; border-radius:4px; border:1px solid #30363d;">
+                                <input type="checkbox" id="cfg_z6_en" onchange="window.checkZones(6)">
+                                <input type="number" id="cfg_z6_val" oninput="window.saveZonesToConfig()" step="0.01" style="width:50px; font-size:12px; padding:2px; text-align:center; background:transparent; color:#58a6ff; border:none; outline:none;">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+
+            <div class="setting-row" style="border:none; padding-bottom:10px; background:var(--bg-setting-box); padding:10px; border-radius:6px; margin-bottom:15px; border-left:3px solid #e3b341;">
+                <label class="toggle-label" style="color:#e6edf3; font-weight:bold;">
+                    <input type="checkbox" id="cfg_amoledMode" onchange="updateSettings()"> 🖤 Режим AMOLED
+                </label>
+            </div>
+
+            <div class="setting-row" style="border:none; padding-bottom:0;">
+                <span style="color:#e6edf3;">Отображение лога</span>
+                <select id="cfg_logMode" onchange="updateSettings()" style="background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 5px; border-radius: 4px; outline: none;">
+                    <option value="session">Последняя сессия</option>
+                    <option value="lines64">Последние 64 строки</option>
+                    <option value="all">Весь лог</option>
+                </select>
+            </div>
+
+            <details class="setting-group" open>
+                <summary>✨ FIR-Сатуратор (Ламповый окрас)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_firEnabled" onchange="updateSettings()"> Включить FIR</label>
+                        <button onclick="window.resetFIR()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Усиление (Gain):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('firSettings', 'gain', 'cfg_fir_gain')">📥</button>
+                            <input type="number" id="cfg_fir_gain" oninput="updateSettings()" step="0.1" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('firSettings', 'gain', 'cfg_fir_gain')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Импульс (ms):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('firSettings', 'decay', 'cfg_fir_decay')">📥</button>
+                            <input type="number" id="cfg_fir_decay" oninput="updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('firSettings', 'decay', 'cfg_fir_decay')">💾</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>🎚️ Многополосный кроссовер (3-Band)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_multiBandEnabled" onchange="updateSettings()"> Разделение частот</label>
+                        <button onclick="window.resetMultiBand()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Отсечка Баса (Hz):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('multiBandSettings', 'low', 'cfg_mb_low')">📥</button>
+                            <input type="number" id="cfg_mb_low" oninput="updateSettings()" step="10" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('multiBandSettings', 'low', 'cfg_mb_low')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Отсечка Верх (Hz):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('multiBandSettings', 'high', 'cfg_mb_high')">📥</button>
+                            <input type="number" id="cfg_mb_high" oninput="updateSettings()" step="100" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('multiBandSettings', 'high', 'cfg_mb_high')">💾</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>🗜️ Лимитер (Soft Clipper)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0 10px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_limiterEnabled" onchange="updateSettings()"> Включить лимитер</label>
+                        <button onclick="window.resetLimiter()" style="font-size:11px; padding:3px 8px;">🔄 Сброс</button>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Порог (dB):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('limiterSettings', 'threshold', 'cfg_lim_threshold')">📥</button>
+                            <input type="number" id="cfg_lim_threshold" oninput="updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('limiterSettings', 'threshold', 'cfg_lim_threshold')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Смягчение (Knee):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('limiterSettings', 'knee', 'cfg_lim_knee')">📥</button>
+                            <input type="number" id="cfg_lim_knee" oninput="updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('limiterSettings', 'knee', 'cfg_lim_knee')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Сжатие (Ratio):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('limiterSettings', 'ratio', 'cfg_lim_ratio')">📥</button>
+                            <input type="number" id="cfg_lim_ratio" oninput="updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('limiterSettings', 'ratio', 'cfg_lim_ratio')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Атака (ms):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('limiterSettings', 'attack', 'cfg_lim_attack')">📥</button>
+                            <input type="number" id="cfg_lim_attack" oninput="updateSettings()" step="1" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('limiterSettings', 'attack', 'cfg_lim_attack')">💾</button>
+                        </div>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Спад (ms):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('limiterSettings', 'release', 'cfg_lim_release')">📥</button>
+                            <input type="number" id="cfg_lim_release" oninput="updateSettings()" step="10" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('limiterSettings', 'release', 'cfg_lim_release')">💾</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>🎛️ Эквалайзер (EQ IIR)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_eqEnabled" onchange="updateSettings()"> Активировать EQ</label>
+                    </div>
+                </div>
+            </details>
+
+            <details class="setting-group" open>
+                <summary>🚀 Усилитель (Овердрайв)</summary>
+                <div class="group-content">
+                    <div class="setting-row" style="border:none; padding: 5px 0;">
+                        <label class="toggle-label" style="color:#e6edf3; font-weight:bold;"><input type="checkbox" id="cfg_boosterEnabled" onchange="updateSettings()"> Активировать Овердрайв</label>
+                    </div>
+                    <div class="setting-row" style="border:none; padding: 4px 0;">
+                        <span style="color:#8b949e; font-size:13px;">Мощность (1-20):</span>
+                        <div style="display:flex; gap:4px; align-items: center;">
+                            <button class="io-btn" onclick="window.loadSingle('main', 'boosterPower', 'cfg_boosterPower')">📥</button>
+                            <input type="number" id="cfg_boosterPower" oninput="updateSettings()" min="1" max="20" style="width: 50px;">
+                            <button class="io-btn" onclick="window.saveSingle('main', 'boosterPower', 'cfg_boosterPower')">💾</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+        </div>
+    </div>
+    
+    <div id="eqModal" class="modal-overlay">
+        <div class="container">
+            <div class="setting-row" style="flex-direction: column; align-items: stretch; gap: 20px; border: none; padding-top:20px;">
+                <input type="range" class="hz-slider" id="eq_60" min="-12" max="12" step="1" value="0" oninput="changeEQ()">
+                <input type="range" class="hz-slider" id="eq_230" min="-12" max="12" step="1" value="0" oninput="changeEQ()">
+                <input type="range" class="hz-slider" id="eq_910" min="-12" max="12" step="1" value="0" oninput="changeEQ()">
+                <input type="range" class="hz-slider" id="eq_3600" min="-12" max="12" step="1" value="0" oninput="changeEQ()">
+                <input type="range" class="hz-slider" id="eq_14000" min="-12" max="12" step="1" value="0" oninput="changeEQ()">
+            </div>
+        </div>
+    </div>
+
+    <script src="/engine_logs.js"></script>
+    <script src="/engine_audio.js"></script>
+    <script src="/engine_heads.js"></script>
+    <script src="/engine_fav.js"></script>
+    <script src="/engine_ui.js"></script>
+
+</body>
+</html>

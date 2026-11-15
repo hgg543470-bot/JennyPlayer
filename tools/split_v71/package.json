@@ -1,0 +1,6 @@
+{
+  "name": "jenny-split-v71",
+  "private": true,
+  "description": "Инструменты разбиения ui_v71.js на тематические модули и проверки, что порядок патчей не изменился",
+  "dependencies": { "acorn": "^8.11.0", "acorn-walk": "^8.3.0" }
+}

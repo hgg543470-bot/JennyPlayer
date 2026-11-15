@@ -196,6 +196,49 @@ def serve_static(filename):
     return res
 
 
+# ================= [SPLIT] ui_v71.js РАЗБИТ НА ТЕМАТИЧЕСКИЕ МОДУЛИ =================
+# index.html по-прежнему просит один /ui_v71.js. Сервер склеивает модули в один ответ,
+# поэтому загрузка остаётся одним куском, как раньше. ПОРЯДОК СПИСКА МЕНЯТЬ НЕЛЬЗЯ:
+# поздние модули переопределяют и оборачивают функции ранних (см. REFACTOR_PLAN.md).
+JENNY_UI_V71_PARTS = [
+    'ui_styles.js',
+    'ui_settings.js',
+    'ui_gestures.js',
+    'ui_playlist.js',
+    'ui_transport.js',
+    'ui_reverse.js',
+    'ui_sources.js',
+    'ui_torrent.js',
+    'ui_video.js',
+    'ui_video_reverse.js',
+    'ui_framegen.js',
+    'ui_export_modal.js',
+    'ui_shade.js',
+    'ui_net.js',
+    'ui_video_decks.js',
+    'ui_layout.js',
+    'ui_shade_v243.js',
+    'ui_deck_a_guard.js',
+]
+
+
+@route('/ui_v71.js')
+def serve_ui_v71_bundle():
+    chunks = []
+    for part_name in JENNY_UI_V71_PARTS:
+        try:
+            with open(os.path.join(BASE_DIR, part_name), 'r', encoding='utf-8') as f_part:
+                chunks.append('/* >>> ' + part_name + ' */\n' + f_part.read())
+        except Exception:
+            # Не роняем остальные модули, но показываем пропажу в бортовом самописце
+            chunks.append('setTimeout(function(){ throw new Error("[split] не найден модуль ' + part_name + '"); }, 0);')
+    response.content_type = 'application/javascript; charset=utf-8'
+    response.set_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    response.set_header('Pragma', 'no-cache')
+    return '\n;\n'.join(chunks)
+# ================= END [SPLIT] =================
+
+
 
 
 def _jenny_crypt_stream_v78(data: bytes, password: str = "") -> bytes:
