@@ -2132,3 +2132,64 @@ window.addNewFormatSlotV85 = function(ev) {
         } catch (e) {}
     }
 })();
+
+/* ============================================================================
+ * [FIX-ONBOARDING-PIN] Стартовый гид: кнопки запроса разрешений закреплены.
+ * Раньше кнопка разрешения была последним блоком прокручиваемой области
+ * #onbPageBodyV165 и на маленьких экранах (низкий DPI) уезжала под прокрутку.
+ * Теперь после отрисовки страницы блоки, состоящие из одной кнопки разрешения,
+ * переносятся в неподвижную полосу над нижней панелью «Назад / Далее».
+ * Сами кнопки и их обработчики не меняются.
+ * ============================================================================ */
+;(function() {
+    var prevRenderOnb = window.renderOnboardingPageV165;
+    if (typeof prevRenderOnb !== 'function' || prevRenderOnb._permPinnedFix) return;
+
+    function getPinnedHolder() {
+        var foot = document.getElementById('onbFooterBarV165');
+        if (!foot || !foot.parentNode) return null;
+        var holder = document.getElementById('onbPinnedPermsHolder');
+        if (!holder) {
+            holder = document.createElement('div');
+            holder.id = 'onbPinnedPermsHolder';
+            holder.style.cssText = 'flex-shrink:0;display:none;flex-direction:column;gap:6px;';
+            foot.parentNode.insertBefore(holder, foot);
+        }
+        return holder;
+    }
+
+    function isPermissionOnlyBlock(el) {
+        if (!el || !el.children || el.children.length !== 1) return false;
+        var btn = el.children[0];
+        if (!btn || btn.tagName !== 'BUTTON') return false;
+        var oc = String((btn.getAttribute && btn.getAttribute('onclick')) || '');
+        return oc.indexOf('triggerOnboardingPermActionV165') !== -1 || btn.id === 'onbBgUnrestrictedBtnV214';
+    }
+
+    window.renderOnboardingPageV165 = function(pageIdx) {
+        var holder = getPinnedHolder();
+        // Чистим полосу ДО отрисовки: старый код проверяет наличие кнопки по id и иначе не добавит её заново.
+        if (holder) { holder.innerHTML = ''; holder.style.display = 'none'; }
+
+        var res = prevRenderOnb.apply(this, arguments);
+
+        try {
+            var body = document.getElementById('onbPageBodyV165');
+            holder = getPinnedHolder();
+            if (body && holder) {
+                var toPin = [];
+                for (var i = 0; i < body.children.length; i++) {
+                    if (isPermissionOnlyBlock(body.children[i])) toPin.push(body.children[i]);
+                }
+                toPin.forEach(function(block) {
+                    block.style.marginTop = '0';
+                    block.style.paddingTop = '0';
+                    holder.appendChild(block);
+                });
+                holder.style.display = toPin.length ? 'flex' : 'none';
+            }
+        } catch (ePin) {}
+        return res;
+    };
+    window.renderOnboardingPageV165._permPinnedFix = true;
+})();

@@ -13,6 +13,21 @@ window.executeTrackExportV69 = async function() {
         return;
     }
 
+    // [FIX-EXPORT-VS-RADIO-REC] Пока идёт запись радио, экспорт не запускаем: запись, начатая до
+    // экспорта, не сохранялась. Точная причина не установлена, поэтому вместо молчаливой потери
+    // показываем сообщение. Если сервер не ответил на запрос статуса, экспорт идёт как раньше.
+    try {
+        const recSt = await (await fetch('/api/radio/record_status')).json();
+        if (recSt && recSt.active) {
+            const recMsg = (typeof window.tr === 'function')
+                ? window.tr('⏺ Идёт запись радио. Сначала останови запись — она сохранится, — потом запусти экспорт.',
+                            '⏺ Radio recording is in progress. Stop it first (it will be saved), then start the export.')
+                : '⏺ Идёт запись радио. Сначала останови запись, потом запусти экспорт.';
+            if (typeof window.showToast === 'function') window.showToast(recMsg);
+            return;
+        }
+    } catch (eRecSt) {}
+
     const btn = document.getElementById('btnExport');
     const oldBtnHtml = btn ? btn.innerHTML : "";
     if (btn) btn.innerText = "⏳";
