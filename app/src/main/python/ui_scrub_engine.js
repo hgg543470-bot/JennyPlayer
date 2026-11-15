@@ -1,3 +1,11 @@
+/* [JENNY-FILE-INFO] ui_scrub_engine.js
+ * Что здесь: Смена скорости и направления: startScrub / stopScrub (базовые версии).
+ * Загрузка:  тег <script> №9 из 15 в index.html (порядок тегов менять нельзя).
+ * Внимание:  2 функц. отсюда позже переопределены или обёрнуты; итоговая версия лежит в другом файле:
+ *            startScrub → ui_reverse.js, stopScrub → ui_reverse.js.
+ *            Правка такой функции здесь может ничего не изменить — смотри REFACTOR_PLAN.md, приложение В.
+ * Карта всех файлов: FILES.md в корне репозитория.
+ */
 window.persistedPlaybackSpeed = null;
 window.persistedPlaybackSide = 'right';
 

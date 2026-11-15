@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_formats.js — Слоты форматов файлов (V85) и фильтр списка по формату
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 2 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   ensureFormatSlotDOMV85, getFormatSlotsConfig, syncFormatSlotsUI, addNewFormatSlotV85, isTrackAllowedByFormatSlots, applyFormatFilterToDOM, saveFormatSlotsToConfig, resetFormatSlots, installFormatAwareFetchData
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 189–322. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

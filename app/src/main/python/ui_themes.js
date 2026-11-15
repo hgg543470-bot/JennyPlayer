@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_themes.js — Редактор тем (V37–V43): пресеты, цвета групп, JSON, файлы тем
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 6 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   unifyAllSettingCardsV37, applyVisualThemeV37, resetVisualThemeV37, syncThemeStudioUIV37, openThemeStudioModalV37, closeThemeStudioToSettingsV37, ensureThemeStudioModalV37, mountThemeStudioButtonV37, mountJennyStudioUI, toggleModal … (всего функций: 46)
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 1051–1638, 1736–2757. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

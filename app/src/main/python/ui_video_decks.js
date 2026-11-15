@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_video_decks.js — Видео, поздняя часть (V211+): Дека Б, две деки, панели кнопок
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 15 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   openJennyVideoPlayerV130, closeVideoPlayerV130, isDeckBVideoControlActiveV210, getEffectiveVideoDurationV167, resolveReadyLocalVideoInfoV212, syncInternalVideoSliderUIV212, updateProgressUIDeckB, seekDeckBAndPlayerSyncedV212, seekVideoToExactSecondV167, seekDeckBVideoToSecV210 … (всего функций: 116)
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 17809…39277 (65 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

@@ -1,3 +1,11 @@
+/* [JENNY-FILE-INFO] ui_render.js
+ * Что здесь: Строки списка треков: HTML строки, раскрытие названия, окно сведений о треке, базовая fetchData.
+ * Загрузка:  тег <script> №7 из 15 в index.html (порядок тегов менять нельзя).
+ * Внимание:  5 функц. отсюда позже переопределены или обёрнуты; итоговая версия лежит в другом файле:
+ *            handleTrackPlayBtn → ui_transport.js, updateTrackListPlayIcons → ui_playlist.js, syncRowActionButtons → ui_playlist.js, ensureTrackInfoModal → ui_lang.js, fetchData → ui_playlist.js.
+ *            Правка такой функции здесь может ничего не изменить — смотри REFACTOR_PLAN.md, приложение В.
+ * Карта всех файлов: FILES.md в корне репозитория.
+ */
 window.expandedTracks = window.expandedTracks || new Set();
 
 const PLAY_SVG_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';

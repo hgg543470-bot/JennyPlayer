@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_spectrum.js — Анализатор спектра и осциллограф (V62)
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 10 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   ensureSpectrumAnalysersV62, ensureSpectrumModalDOMV62, toggleSpecSourceModeV62, resetSpecPeaksV62, toggleSpecFreezeV62, startSpectrumLoopV62, toggleModal, openSpectrumModalV62
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 4202–4532. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

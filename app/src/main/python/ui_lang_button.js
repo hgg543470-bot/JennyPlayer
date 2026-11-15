@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_lang_button.js — Кнопка RU/EN: побег, «гусеница», стыковка в настройках (V35, V39, V62)
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 5 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   renderDualLangHTML, updateDualLangButtons, applyVideoMasterPresetV35, loadConfigFromDisk, triggerLangBuzz, runAwayLangBadgeToSettings, crawlAwayLangBadgeToSettings, scheduleLangRunawayTimer, toggleLanguage, initV35Enhancements … (всего функций: 12)
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 748–1047, 1641–1733, 3928–3988. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

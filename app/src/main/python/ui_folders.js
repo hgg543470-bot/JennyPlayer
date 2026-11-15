@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_folders.js — Менеджер папок (V62)
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 8 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   getSavedFoldersListV62, openFolderManagerModalV62, selectSavedFolderV62, addNewFolderFromInputV62, removeSavedFolderV62, triggerSystemFolderPickerV62, onNativeFolderPicked
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 3805–3925. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

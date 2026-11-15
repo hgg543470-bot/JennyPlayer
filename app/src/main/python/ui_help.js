@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_help.js — Справка: база подсказок RU/EN, окно справки, значки ❓, сборка интерфейса студии
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 4 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   getHelpDB, ensureHelpModal, showHelpTopic, showFullHelpGuide, makeHelpBadge, mountJennyStudioUI, syncGuideButtonPositionV165, onToggleHideHelpBadgesV62, injectHideHelpToggleV62
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 478–740, 4012–4089. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 window.JENNY_HELP_DB_RU = {

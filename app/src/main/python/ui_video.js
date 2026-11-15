@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_video.js — Видео, база (V130–V211): плеер, HUD, PiP/оверлей, RAM-декод, вкладка «Видео»
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 9 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   isVideoFileNameV130, decorateVideoIconsInListV130, createDefaultVideoConfigV131, saveVideoConfigV131, initVideoDeckAudioV131, buildVideoAudioGraphV131, renderDeckSwitchBannersV131, syncAllControlsToActiveDeckV131, switchActiveUiDeckV131, copyMusicDspToVideoV131 … (всего функций: 86)
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 9054…17795 (38 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

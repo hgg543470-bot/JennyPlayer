@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_lang.js — Язык: определение языка, tr(), перевод статичных надписей
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 1 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   detectInitialLang, getLang, tr, toggleLanguage, localizeCeilingBreakdown, showToast, ensureTrackInfoModal, applyStaticDOMTranslations, translateDynamicListPlaceholders
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 1–187. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 window.detectInitialLang = function() {
     window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');

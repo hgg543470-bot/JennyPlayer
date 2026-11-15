@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_revisor.js — Лаборатория: компенсация DSP и ревизор (V76), спектральный слепок и ресинтез (V78)
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 12 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   measureBufferStatsV76, captureExportDspDnaV76, buildFallbackDspDnaFromConfigV76, applyInverseDspCompensationV76, formatDnaCompensationReportV76, runRevisorComparisonV76, playRevisorSliceV76, onToggleAntiDspV76, captureSpectralBlueprintV78, runDeepSpectralResynthesisV78
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 5780–6400. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

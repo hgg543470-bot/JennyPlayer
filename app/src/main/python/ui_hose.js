@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_hose.js — Резак питч-лока («шланг», V44–V61): склейка волны, осциллограф амплитуды, RAM-буфер, сэмпл-резак
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 7 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   buildElasticHoseBufferV46, startHoseWaveScopeV49, toggleHoseScopeFreezeV49, setHoseScopeZoomV49, applyElasticHoseBufferLiveV46, installHosePlayerHooksV46, onHoseTensionInputV44, injectElasticHoseControlsV44, dumpHoseDebugV52, ensureStudioBufferLoadedV61 … (всего функций: 17)
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 2772–3800. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

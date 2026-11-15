@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_sources.js — Источники: меню, OST/архив, радио, SoundCloud, YouTube, мини-плееры, рубильник
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 7 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   getKhPreviewVolumeV90, pauseMainPlayerForOstV90, stopKhPreviewV88, minimizeKhinsiderModalV88, stopKhProgressPollV89, startKhProgressPollV89, selectKhFormatV88, fmtKhSecV90, toggleKhMiniPlayPauseV90, seekKhPreviewV90 … (всего функций: 105)
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 3857…35754 (34 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

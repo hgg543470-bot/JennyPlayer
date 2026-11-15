@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_framegen.js — 120 Гц: генерация кадров, тюнер, лаборатория, vcore
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 11 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   computeExactVideoSplitUvV208, getRealOrigFpsV208, setInterpFramesV200, cycleVideo120HzModeV166, fetchVCoreStatusV166, jv166BindSo, jv166SetMode, openJennyVideoPlayerV130, getExactInterpAlphaV170, saveJennyLabFlagsV208 … (всего функций: 20)
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 2…37325 (22 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 /* ================= JENNY V172: CLEAN VIEWPORT & ORIG SPLIT FIX (GATED BY V205 SWITCH) ================= */
 window._jennyExp120HzEnabledV205 = (localStorage.getItem('jenny_exp_120hz_v205') === '1');

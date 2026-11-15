@@ -23,7 +23,16 @@ const stats = { pieces: 0, dups: 0, flat: 0 };
 const manifest = [];
 let lastTopEnd = 0;
 LY.files.forEach(f => {
-  let out = '/* ============================================================================\n * ' + f.name + ' — ' + TITLE[f.name] + '\n * Вынесено из ' + F + ' без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.\n * ============================================================================ */\n';
+  const BUNDLE = P.OVR.bundle || 'bundle_2_player.js';
+  const fnNames = []; f.units.forEach(U => U.refs.forEach(r => { if (r.w && !r.loc && r.l && r.vt === 'fn' && !/^_|Installed|^orig/.test(r.n) && !fnNames.includes(r.n)) fnNames.push(r.n); }));
+  const runsL = []; f.units.forEach(U => { const r = runsL[runsL.length - 1]; if (r && U.k === r.lk + 1) { r.e = U.e; r.lk = U.k; } else runsL.push({ s: U.s, e: U.e, lk: U.k }); });
+  const origin = runsL.length <= 6 ? runsL.map(r => r.s + '–' + r.e).join(', ') : runsL[0].s + '…' + runsL[runsL.length - 1].e + ' (' + runsL.length + ' фрагментов, вперемешку с другими темами)';
+  let out = '/* ============================================================================\n * ' + f.name + ' — ' + TITLE[f.name] + '\n *\n'
+    + ' * Склейка:  /' + BUNDLE + ', модуль ' + (LY.files.indexOf(f) + 1) + ' из ' + LY.files.length + '. Порядок модулей задан в player.py и менять его нельзя:\n *           поздние модули переопределяют и оборачивают функции ранних.\n'
+    + (fnNames.length ? ' * Внутри:   ' + fnNames.slice(0, 10).join(', ') + (fnNames.length > 10 ? ' … (всего функций: ' + fnNames.length + ')' : '') + '\n' : '')
+    + ' * Откуда:   ' + F + ' (коммит 9ae6639), строки ' + origin + '. Код блоков перенесён без правок.\n'
+    + ' * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).\n'
+    + ' * ============================================================================ */\n';
   // group consecutive units of the same split IIFE into one piece (all units of that IIFE in this file)
   const done = new Set();
   f.units.forEach(U => {

@@ -1,3 +1,12 @@
+/* [JENNY-FILE-INFO] ui_playback.js
+ * Что здесь: Базовое воспроизведение Деки А: playTrack, play/pause, след./пред. Кроме того — декодирование длинных треков в RAM, приоритет кусков торрента под курсором, уведомление в шторке.
+ * Заметка:   Содержит больше, чем обещает название.
+ * Загрузка:  тег <script> №8 из 15 в index.html (порядок тегов менять нельзя).
+ * Внимание:  8 функц. отсюда позже переопределены или обёрнуты; итоговая версия лежит в другом файле:
+ *            prioritizeRamPieceAtCursorV72 → ui_torrent.js, decodeHugeTrackToRamV71 → ui_reverse.js, updateCenterCurrentTime → ui_reverse.js, playNextTrack → ui_transport.js, playPreviousTrack → ui_transport.js, playTrack → ui_transport.js, togglePlay → ui_transport.js, syncAndroidNotification → ui_shade_v243.js.
+ *            Правка такой функции здесь может ничего не изменить — смотри REFACTOR_PLAN.md, приложение В.
+ * Карта всех файлов: FILES.md в корне репозитория.
+ */
 window._hugeRamCacheV71 = { name: null, buf: null, complete: false };
 window._pieceAbortCtrlV72 = null;
 

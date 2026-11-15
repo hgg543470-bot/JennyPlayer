@@ -196,46 +196,48 @@ def serve_static(filename):
     return res
 
 
-# ================= [SPLIT] ui_help.js И ui_v71.js РАЗБИТЫ НА ТЕМАТИЧЕСКИЕ МОДУЛИ =================
-# index.html по-прежнему просит /ui_help.js и /ui_v71.js. Сервер склеивает модули в один ответ,
-# поэтому каждая загрузка остаётся одним куском, как раньше. ПОРЯДОК СПИСКОВ МЕНЯТЬ НЕЛЬЗЯ:
-# поздние модули переопределяют и оборачивают функции ранних (см. REFACTOR_PLAN.md).
-# Внимание: файл ui_help.js на диске — это только модуль справки; по адресу /ui_help.js
-# отдаётся вся склейка JENNY_UI_HELP_PARTS.
-JENNY_UI_HELP_PARTS = [
-    'ui_lang.js',
-    'ui_formats.js',
-    'ui_dsp_panel.js',
-    'ui_help.js',
-    'ui_lang_button.js',
-    'ui_themes.js',
-    'ui_hose.js',
-    'ui_folders.js',
-    'ui_gearbox.js',
-    'ui_spectrum.js',
-    'ui_seams.js',
-    'ui_revisor.js',
+# ================= [SPLIT] ДВЕ СКЛЕЙКИ ТЕМАТИЧЕСКИХ МОДУЛЕЙ ИНТЕРФЕЙСА =================
+# Бывшие ui_help.js (6 400 строк) и ui_v71.js (39 000 строк) разрезаны на модули ui_*.js.
+# index.html просит два адреса, сервер склеивает модули в один ответ на каждый:
+#   /bundle_1_studio.js  — «студия»: язык, справка, темы, панель DSP, резак, коробка передач, спектр
+#   /bundle_2_player.js  — «плеер»: плейлист, Дека А, реверс, источники, торрент, видео, шторка
+# Каждая склейка выполняется одним куском, как раньше выполнялся большой файл.
+# ПОРЯДОК В СПИСКАХ МЕНЯТЬ НЕЛЬЗЯ: поздние модули переопределяют и оборачивают функции ранних.
+# Новый модуль можно добавить только в КОНЕЦ списка. Карта всех файлов — FILES.md в корне репозитория.
+JENNY_BUNDLE_STUDIO = [
+    'ui_lang.js',             # Язык: определение языка, tr(), перевод статичных надписей
+    'ui_formats.js',          # Слоты форматов файлов (V85) и фильтр списка по формату
+    'ui_dsp_panel.js',        # Панель модулей DSP в настройках: галочки, сохранение и сброс строк, верхняя строка поиска/монитора
+    'ui_help.js',             # Справка: база подсказок RU/EN, окно справки, значки ❓, сборка интерфейса студии
+    'ui_lang_button.js',      # Кнопка RU/EN: побег, «гусеница», стыковка в настройках (V35, V39, V62)
+    'ui_themes.js',           # Редактор тем (V37–V43): пресеты, цвета групп, JSON, файлы тем
+    'ui_hose.js',             # Резак питч-лока («шланг», V44–V61): склейка волны, осциллограф амплитуды, RAM-буфер, сэмпл-резак
+    'ui_folders.js',          # Менеджер папок (V62)
+    'ui_gearbox.js',          # Коробка передач: тумблер движка (V62), 5-ступенчатая КПП (V66), честная РКПП и реверс (V70), перемотка по RAM (V70.4)
+    'ui_spectrum.js',         # Анализатор спектра и осциллограф (V62)
+    'ui_seams.js',            # Карта швов и обратная сборка чистой волны для обратимого экспорта (V67)
+    'ui_revisor.js',          # Лаборатория: компенсация DSP и ревизор (V76), спектральный слепок и ресинтез (V78)
 ]
 
-JENNY_UI_V71_PARTS = [
-    'ui_styles.js',
-    'ui_settings.js',
-    'ui_gestures.js',
-    'ui_playlist.js',
-    'ui_transport.js',
-    'ui_reverse.js',
-    'ui_sources.js',
-    'ui_torrent.js',
-    'ui_video.js',
-    'ui_video_reverse.js',
-    'ui_framegen.js',
-    'ui_export_modal.js',
-    'ui_shade.js',
-    'ui_net.js',
-    'ui_video_decks.js',
-    'ui_layout.js',
-    'ui_shade_v243.js',
-    'ui_deck_a_guard.js',
+JENNY_BUNDLE_PLAYER = [
+    'ui_styles.js',           # CSS-вставки всех патчей (порядок как в исходнике)
+    'ui_settings.js',         # Настройки: слоты форматов, потоки, EQ/громкость, язык, стартовый гид, toggleModal
+    'ui_gestures.js',         # Жесты: зажатие 180 мс, монитор касаний
+    'ui_playlist.js',         # Плейлист: вкладки, сортировка, теги, поиск, очередь, папки, строки треков, fetchData
+    'ui_transport.js',        # Дека А: playTrack, play/pause, след./пред., кнопка в строке
+    'ui_reverse.js',          # Реверс и RAM-движок аудио: горизонт, передачи, часы WebAudio, DNA, скраб, дуга скорости
+    'ui_sources.js',          # Источники: меню, OST/архив, радио, SoundCloud, YouTube, мини-плееры, рубильник
+    'ui_torrent.js',          # Торрент-студия: поиск, magnet/.torrent, очередь, трекеры, карта кусков, P2P
+    'ui_video.js',            # Видео, база (V130–V211): плеер, HUD, PiP/оверлей, RAM-декод, вкладка «Видео»
+    'ui_video_reverse.js',    # Реверс видео: очередь сегментов в RAM, реверс Деки Б
+    'ui_framegen.js',         # 120 Гц: генерация кадров, тюнер, лаборатория, vcore
+    'ui_export_modal.js',     # Окно экспорта (V234)
+    'ui_shade.js',            # Шторка: уведомление Android, MediaSession, фоновый режим
+    'ui_net.js',              # Сеть: маршрутизатор портов, перехваты fetch/XHR/src/play()
+    'ui_video_decks.js',      # Видео, поздняя часть (V211+): Дека Б, две деки, панели кнопок
+    'ui_layout.js',           # Раскладка экрана: поздние правки шапки и модалок (V242, V360)
+    'ui_shade_v243.js',       # Шторка, поздняя часть (V243–V244): итоговое уведомление, отметка касаний, безопасные отступы
+    'ui_deck_a_guard.js',     # Дека А: защита паузы (V370)
 ]
 
 
@@ -254,14 +256,14 @@ def _jenny_serve_js_bundle(part_names):
     return '\n;\n'.join(chunks)
 
 
-@route('/ui_help.js')
-def serve_ui_help_bundle():
-    return _jenny_serve_js_bundle(JENNY_UI_HELP_PARTS)
+@route('/bundle_1_studio.js')
+def serve_bundle_studio():
+    return _jenny_serve_js_bundle(JENNY_BUNDLE_STUDIO)
 
 
-@route('/ui_v71.js')
-def serve_ui_v71_bundle():
-    return _jenny_serve_js_bundle(JENNY_UI_V71_PARTS)
+@route('/bundle_2_player.js')
+def serve_bundle_player():
+    return _jenny_serve_js_bundle(JENNY_BUNDLE_PLAYER)
 # ================= END [SPLIT] =================
 
 

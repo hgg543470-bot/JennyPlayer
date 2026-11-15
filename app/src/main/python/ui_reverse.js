@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_reverse.js — Реверс и RAM-движок аудио: горизонт, передачи, часы WebAudio, DNA, скраб, дуга скорости
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 6 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   engageDirectRamPitchShiftV70, extractWindowBufferV71, engageInstantHorizonJbufLockV71, syncMasterPlaybackEngineV59, ensureStudioBufferLoadedV61, engageHorizonRamEngineV71_5, toggleReverseMode, setExactPlaybackPositionV75, getTruePlaybackTimeV74_2, seekAudio … (всего функций: 33)
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 733…38811 (32 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

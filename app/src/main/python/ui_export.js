@@ -1,3 +1,12 @@
+/* [JENNY-FILE-INFO] ui_export.js
+ * Что здесь: Экспорт трека: офлайн-рендер с эффектами, WAV, окно экспорта V69, битрейт/частота/разрядность.
+ * Заметка:   Поздние правки окна экспорта лежат в ui_export_modal.js (склейка «плеер»).
+ * Загрузка:  тег <script> №12 из 15 в index.html (порядок тегов менять нельзя).
+ * Внимание:  3 функц. отсюда позже переопределены или обёрнуты; итоговая версия лежит в другом файле:
+ *            ensureExportModalV69 → ui_export_modal.js, exportCurrentTrack → ui_export_modal.js, selectExportSampleRateV86 → ui_export_modal.js.
+ *            Правка такой функции здесь может ничего не изменить — смотри REFACTOR_PLAN.md, приложение В.
+ * Карта всех файлов: FILES.md в корне репозитория.
+ */
 window.executeTrackExportV69 = async function() {
     if (!window.currentPlayingTrack) {
         if (typeof window.showToast === 'function') window.showToast("⚠️ Сначала выбери трек!");

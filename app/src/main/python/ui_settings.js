@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_settings.js — Настройки: слоты форматов, потоки, EQ/громкость, язык, стартовый гид, toggleModal
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 2 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   syncHeaderHeightWithModalsV71, toggleModal, openInlineAddFormatBoxV138, prompt, onReturnedFromPermissionScreenV146, isAudioTrackAllowedByFormatSlotsV150, isTrackAllowedByFormatSlots, syncFormatSlotsUI, saveFormatSlotsToConfig, resetFormatSlots … (всего функций: 42)
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 1066…33918 (26 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

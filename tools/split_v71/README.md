@@ -12,7 +12,7 @@
 
 Результат появляется в `out_ui_v71/` и `out_ui_help/`. Если проверки чистые, файлы копируются в
 `app/src/main/python/`, а списки из `_manifest.json` должны совпадать со списками
-`JENNY_UI_V71_PARTS` и `JENNY_UI_HELP_PARTS` в `player.py`.
+`JENNY_BUNDLE_PLAYER` и `JENNY_BUNDLE_STUDIO` в `player.py`.
 
 Раскладка `ui_v71.js` считается автоматически (`themes.js`, `overrides.json`).
 Раскладка `ui_help.js` задана вручную по номерам блоков в `overrides.ui_help.json`.

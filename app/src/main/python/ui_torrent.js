@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_torrent.js — Торрент-студия: поиск, magnet/.torrent, очередь, трекеры, карта кусков, P2P
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 8 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   openTorrentHubPreviewModalV91, runTorrentActionV96, openMagnetInGoEngineV96, renderTorrentFilesListV96, startSelectedTorrentDownloadV96, backToTorrentSearchListV97, previewTorrentFileStreamV97, downloadSingleTorrentTrackV98, showMainPageEncodingBannerV98, toggleTorrentFilterPillV99 … (всего функций: 83)
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 4745…38058 (39 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

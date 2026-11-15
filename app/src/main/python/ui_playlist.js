@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_playlist.js — Плейлист: вкладки, сортировка, теги, поиск, очередь, папки, строки треков, fetchData
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 4 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   ensurePlaylistStateV71, savePlaylistStateQuietlyV71, closeAllV71Modals, getTrackMetaV71, mountPlaylistStripDOMV71, getAllPlaylistTabsV71, getTrackCountForTabV71, renderPlaylistStripChipsV71, selectPlaylistTabV71, sortTrackArrayForTabV71 … (всего функций: 66)
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 31…36583 (41 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 /* ================= END JENNY V172 CLEAN FIX ================= */

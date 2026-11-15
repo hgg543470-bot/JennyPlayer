@@ -32,4 +32,4 @@ for T in $TARGETS; do
   echo "--- прогон в Node с заглушкой браузера (элементы есть)"; node dyn.js stub | tail -9
 done
 echo
-echo "Готово. Чтобы применить: cp out_*/ui_*.js \"$REPO/$PYDIR/\" и сверить списки в player.py с out_*/_manifest.json"
+echo "Готово. Чтобы применить: cp out_*/ui_*.js \"$REPO/$PYDIR/\" и сверить списки JENNY_BUNDLE_STUDIO / JENNY_BUNDLE_PLAYER в player.py с out_*/_manifest.json"

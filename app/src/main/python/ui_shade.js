@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_shade.js — Шторка: уведомление Android, MediaSession, фоновый режим
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 13 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   syncPermanentForegroundNotificationV212, checkBackgroundUnrestrictedStatusV212, requestBackgroundUnrestrictedV212, onBatteryOptUpdatedV212, updateBgShieldButtonsUIV212, onAndroidNotifLockChangedV237, toggleAndroidNotifLockFromUIV237, explicitMediaSessionPauseV240, explicitMediaSessionPlayV240, syncAndroidSafeInsetsV243
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 17934…35451 (9 фрагментов, вперемешку с другими темами). Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_export_modal.js — Окно экспорта (V234)
- * Вынесено из ui_v71.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_2_player.js, модуль 12 из 18. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   ensureExportDefaultsV234, applyExportSectionsCollapseUIV234, toggleExportSectionCollapseV234, getSampleRateLabelV234, ensureExportModalV69, selectExportSampleRateV86, exportCurrentTrack
+ * Откуда:   ui_v71.js (коммит 9ae6639), строки 19879–19879, 29561–29586, 29639–29825. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 

@@ -1,6 +1,11 @@
 /* ============================================================================
  * ui_gearbox.js — Коробка передач: тумблер движка (V62), 5-ступенчатая КПП (V66), честная РКПП и реверс (V70), перемотка по RAM (V70.4)
- * Вынесено из ui_help.js без изменения кода (см. REFACTOR_PLAN.md). Порядок блоков — исходный.
+ *
+ * Склейка:  /bundle_1_studio.js, модуль 9 из 12. Порядок модулей задан в player.py и менять его нельзя:
+ *           поздние модули переопределяют и оборачивают функции ранних.
+ * Внутри:   initDefaultEngineModeJbufV62, setAudioEngineModeV62, syncEngineTumblerUIV62, upgradeToThreeWayTumblerV62_OBSOLETE, mountJennyStudioUI, setGearboxStateV66, engageDirectRamPitchShiftV70, getActiveTargetSpeedV59, syncMasterPlaybackEngineV59, upgradeToThreeWayTumblerV62 … (всего функций: 17)
+ * Откуда:   ui_help.js (коммит 9ae6639), строки 3993–4010, 4091–4197, 4537–5063, 5418–5776. Код блоков перенесён без правок.
+ * Подробно: FILES.md (карта файлов), REFACTOR_PLAN.md (как резалось и что перекрыто).
  * ============================================================================ */
 
 
