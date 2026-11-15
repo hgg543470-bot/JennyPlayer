@@ -16,6 +16,7 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.widget.RemoteViews;
 
 public class PlaybackService extends Service {
     public static final String CHANNEL_ID = "jenny_media_channel";
@@ -407,6 +408,15 @@ public class PlaybackService extends Service {
                 .setMediaSession(mediaSession.getSessionToken())
                 .setShowActionsInCompactView(0, 1, 2);
 
+        // [FIX-NOTIF-FULLWIDTH] кастомный layout чтобы убрать боковые поля MIUI
+        RemoteViews bigView = new RemoteViews(getPackageName(), R.layout.notification_player);
+        bigView.setTextViewText(R.id.notif_title, currentTitle != null ? currentTitle : "Jenny Player");
+        bigView.setTextViewText(R.id.notif_subtitle, currentSubtitle != null ? currentSubtitle : (isPlaying ? "Играет" : "На паузе"));
+        bigView.setImageViewResource(R.id.notif_play_pause, playPauseIcon);
+        bigView.setOnClickPendingIntent(R.id.notif_prev, prevPending);
+        bigView.setOnClickPendingIntent(R.id.notif_play_pause, playPausePending);
+        bigView.setOnClickPendingIntent(R.id.notif_next, nextPending);
+
         builder.setSmallIcon(isDownloadActive ? android.R.drawable.stat_sys_download : android.R.drawable.ic_lock_silent_mode_off)
                 .setContentTitle(currentTitle)
                 .setContentText(currentSubtitle)
@@ -417,6 +427,7 @@ public class PlaybackService extends Service {
                 .setOngoing(isNotifLocked || isPlaying || isDownloadActive)
                 .setAutoCancel(false)
                 .setOnlyAlertOnce(true)
+                .setCustomBigContentView(bigView)
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_previous, "Prev", prevPending).build())
                 .addAction(new Notification.Action.Builder(playPauseIcon, playPauseLabel, playPausePending).build())
                 .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_next, "Next", nextPending).build())
