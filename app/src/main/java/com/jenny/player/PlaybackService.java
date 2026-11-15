@@ -404,16 +404,9 @@ public class PlaybackService extends Service {
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
 
-        // [FIX-NOTIF-FULLWIDTH] кастомный layout чтобы убрать боковые поля MIUI.
-        // Важно: НЕ передаём MediaStyle в builder.setStyle(...), иначе HyperOS/MIUI
-        // игнорирует RemoteViews и рисует свой системный плеер в чёрной рамке.
-        RemoteViews customView = new RemoteViews(getPackageName(), R.layout.notification_player);
-        customView.setTextViewText(R.id.notif_title, currentTitle != null ? currentTitle : "Jenny Player");
-        customView.setTextViewText(R.id.notif_subtitle, currentSubtitle != null ? currentSubtitle : (isPlaying ? "Играет" : "На паузе"));
-        customView.setImageViewResource(R.id.notif_play_pause, playPauseIcon);
-        customView.setOnClickPendingIntent(R.id.notif_prev, prevPending);
-        customView.setOnClickPendingIntent(R.id.notif_play_pause, playPausePending);
-        customView.setOnClickPendingIntent(R.id.notif_next, nextPending);
+        Notification.MediaStyle style = new Notification.MediaStyle()
+                .setMediaSession(mediaSession.getSessionToken())
+                .setShowActionsInCompactView(0, 1, 2);
 
         builder.setSmallIcon(isDownloadActive ? android.R.drawable.stat_sys_download : android.R.drawable.ic_lock_silent_mode_off)
                 .setContentTitle(currentTitle)
@@ -425,8 +418,11 @@ public class PlaybackService extends Service {
                 .setOngoing(isNotifLocked || isPlaying || isDownloadActive)
                 .setAutoCancel(false)
                 .setOnlyAlertOnce(true)
-                .setCustomContentView(customView)
-                .setCustomBigContentView(customView);
+                .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_previous, "Prev", prevPending).build())
+                .addAction(new Notification.Action.Builder(playPauseIcon, playPauseLabel, playPausePending).build())
+                .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_next, "Next", nextPending).build())
+                .addAction(new Notification.Action.Builder(lockIcon, lockLabel, lockPending).build())
+                .setStyle(style);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
