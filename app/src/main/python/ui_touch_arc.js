@@ -139,6 +139,9 @@ window.setupSeekZone = function() {
         let isLeftHanded = Boolean(window.appConfig && window.appConfig.leftHandedMode);
         const W = window.innerWidth;
         const H = window.innerHeight;
+        // [FIX-ARC-ABOVE-DECK] не давать шарикам уходить под деку
+        const deckEl = document.getElementById('bottomPlayerDock') || document.querySelector('.sticky-bottom');
+        const deckH = deckEl ? deckEl.getBoundingClientRect().height : 160;
 
         const eqBtn = document.getElementById('btn-eqModal');
         if (eqBtn) {
@@ -170,7 +173,7 @@ window.setupSeekZone = function() {
             const y = currentAnchor.y + dy;
             return {
                 x: Math.max(30, Math.min(W - 30, x)),
-                y: Math.max(150, Math.min(H - 32, y))
+                y: Math.max(150, Math.min(H - deckH - 32, y))
             };
         }
 
