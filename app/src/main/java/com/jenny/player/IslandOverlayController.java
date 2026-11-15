@@ -508,14 +508,14 @@ public class IslandOverlayController {
         modeBtnSoundCloud = createModeTabButton("☁️ SoundCloud", "soundcloud");
         modeBtnYoutube = createModeTabButton("▶️ YouTube", "youtube");
 
-        LinearLayout.LayoutParams tabLp1 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.05f);
-        tabLp1.rightMargin = U(3.5f);
-        LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.95f);
-        tabLp2.rightMargin = U(3.5f);
-        LinearLayout.LayoutParams tabLp3 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.25f);
-        tabLp3.rightMargin = U(3.5f);
-        LinearLayout.LayoutParams tabLp4 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.05f);
-        tabLp4.rightMargin = U(4.5f);
+        LinearLayout.LayoutParams tabLp1 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.00f);
+        tabLp1.rightMargin = U(3.0f);
+        LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.90f);
+        tabLp2.rightMargin = U(3.0f);
+        LinearLayout.LayoutParams tabLp3 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.42f);
+        tabLp3.rightMargin = U(3.0f);
+        LinearLayout.LayoutParams tabLp4 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.08f);
+        tabLp4.rightMargin = U(4.0f);
 
         rowModes.addView(modeBtnMusic, tabLp1);
         rowModes.addView(modeBtnRadio, tabLp2);
@@ -715,7 +715,7 @@ public class IslandOverlayController {
                 }
             }
         });
-        LinearLayout.LayoutParams sbLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        LinearLayout.LayoutParams sbLp = new LinearLayout.LayoutParams(0, U(22), 1.0f);
         rowSeek.addView(islandSeekBar, sbLp);
 
         totalTimeView = new TextView(context);
@@ -807,8 +807,8 @@ public class IslandOverlayController {
         tv.setSingleLine(true);
         tv.setEllipsize(TextUtils.TruncateAt.END);
         tv.setTypeface(Typeface.DEFAULT_BOLD);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, U(10.5f));
-        tv.setPadding(U(4), U(2), U(4), U(2));
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, U(9.6f));
+        tv.setPadding(U(2), U(1), U(2), U(1));
         tv.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -845,26 +845,34 @@ public class IslandOverlayController {
     }
 
     private void styleNeonSeekBar(SeekBar sb) {
+        int barH = U(6.5f);
         GradientDrawable bgTrack = new GradientDrawable();
-        bgTrack.setColor(0xFF182032);
-        bgTrack.setCornerRadius(U(5));
-        bgTrack.setStroke(U(0.8f), 0xFF2B354D);
+        bgTrack.setColor(0xFF1C263B);
+        bgTrack.setCornerRadius(U(4));
+        bgTrack.setStroke(U(1.0f), 0xFF344568);
+        bgTrack.setSize(-1, barH);
 
         GradientDrawable progGrad = new GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
                 new int[]{0xFF7C4DFF, 0xFF58A6FF, 0xFF3FB950}
         );
-        progGrad.setCornerRadius(U(5));
+        progGrad.setCornerRadius(U(4));
+        progGrad.setSize(-1, barH);
         ClipDrawable progClip = new ClipDrawable(progGrad, Gravity.START, ClipDrawable.HORIZONTAL);
 
         LayerDrawable layers = new LayerDrawable(new Drawable[]{bgTrack, progClip});
         layers.setId(0, android.R.id.background);
         layers.setId(1, android.R.id.progress);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            int padV = U(8);
+            int padV = U(6.5f);
             layers.setLayerInset(0, 0, padV, 0, padV);
             layers.setLayerInset(1, 0, padV, 0, padV);
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            sb.setMinHeight(barH);
+            sb.setMaxHeight(barH);
+        }
+        sb.setSplitTrack(false);
         sb.setProgressDrawable(layers);
 
         GradientDrawable thumb = new GradientDrawable(
@@ -872,7 +880,7 @@ public class IslandOverlayController {
                 new int[]{0xFF79C0FF, 0xFFD2A8FF}
         );
         thumb.setShape(GradientDrawable.OVAL);
-        thumb.setSize(U(16), U(16));
+        thumb.setSize(U(15), U(15));
         thumb.setStroke(U(2.0f), 0xFFFFFFFF);
         sb.setThumb(thumb);
         sb.setThumbOffset(0);
