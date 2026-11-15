@@ -1,6 +1,6 @@
 process.env.NOTIMER='1';
 const fs=require('fs');const P=require('./partition.js');
-const SRC=fs.readFileSync('orig/ui_v71.js','utf8'),NEW=fs.readFileSync('bundle_new.js','utf8');
+const SRC=fs.readFileSync('orig/'+(process.env.TARGET||'ui_v71.js'),'utf8'),NEW=fs.readFileSync('bundle_new.js','utf8');
 const cnt=(hay,n)=>{let c=0,i=0;while((i=hay.indexOf(n,i))!==-1){c++;i+=n.length}return c};
 let lost=0,more=0,hdr=0,moreList=[];const seen=new Map();
 P.units.forEach(U=>{const t=SRC.slice(U.so,U.eo);if(U.theme==='HEADER'){hdr++;return}

@@ -2,13 +2,13 @@
 const fs = require('fs'), path = require('path');
 const dir = __dirname + '/orig';
 const o = require('./out2.json');
-const F = 'ui_v71.js';
+const F = process.env.TARGET || 'ui_v71.js';
 const L = fs.readFileSync(path.join(dir, F), 'utf8').split('\n');
 const B = o.files[F].blocks;
 const BUILTIN = new Set(['document','localStorage','console','navigator','Math','JSON','Object','Array','Date','String','Number','Boolean','Promise','Error','RegExp','parseInt','parseFloat','isNaN','isFinite','setTimeout','setInterval','clearTimeout','clearInterval','requestAnimationFrame','cancelAnimationFrame','fetch','URL','Blob','AudioContext','webkitAudioContext','HTMLMediaElement','HTMLElement','Element','Node','Event','CustomEvent','MutationObserver','ResizeObserver','IntersectionObserver','performance','location','history','screen','alert','confirm','encodeURIComponent','decodeURIComponent','encodeURI','decodeURI','Float32Array','Uint8Array','Int16Array','Uint32Array','Int32Array','Float64Array','Uint8ClampedArray','ArrayBuffer','DataView','Map','Set','WeakMap','WeakSet','Symbol','NaN','Infinity','AbortController','FileReader','Image','Audio','XMLHttpRequest','WebSocket','Worker','TextDecoder','TextEncoder','crypto','atob','btoa','getComputedStyle','innerWidth','innerHeight','devicePixelRatio','WebGL2RenderingContext','WebGLRenderingContext','OfflineAudioContext','MediaSource','ImageData','VideoFrame','OffscreenCanvas','createImageBitmap','matchMedia','visualViewport','URLSearchParams','Headers','Request','Response','FormData','File','Intl','Reflect','Proxy','BigInt','queueMicrotask','structuredClone','MediaMetadata','HTMLVideoElement','HTMLAudioElement','HTMLCanvasElement','HTMLInputElement','CSS','DOMParser','Range','Selection','TypeError','RangeError','SyntaxError','eval','isSecureContext','origin','top','parent','frames','name','status','event','length','open','close','stop','focus','blur','scrollTo','scrollY','scrollX','pageYOffset','pageXOffset','addEventListener','removeEventListener','dispatchEvent','AndroidBridge']);
 const units = [];
 for (const b of B) {
-  const split = b.iife && b.inner && ((b.i >= 522 && b.inner.length >= 3 && (b.e - b.s) >= 40) || b.i === 146 || b.i === 559);
+  const split = F === 'ui_v71.js' && b.iife && b.inner && ((b.i >= 522 && b.inner.length >= 3 && (b.e - b.s) >= 40) || b.i === 146 || b.i === 559);
   if (!split) {
     units.push({ id: 'b' + b.i, b: b.i, u: -1, so: b.so, eo: b.eo, gapS: b.prevEnd, s: b.s, e: b.e, lead: b.lead, refs: b.refs, side: b.side, iife: b.iife });
   } else {
@@ -40,7 +40,7 @@ units.forEach((U, k) => {
 });
 // dynamic wrappers window[fnName] = ... (names come from array literals, invisible to static name analysis)
 {
-  const DYN = [[15378, 15392, ['setPlaybackSpeed', 'applyPlaybackSpeed', 'setSpeed', 'changeSpeed'], 'hookSpeedAndDeckBControlsV210'], [19380, 19396, ['stopCurrentOpenTorrentV143', 'deleteCurrentOpenTorrentV143', 'nukeAllTorrentsV142', 'cleanupActiveTorrentStreamV143', 'resetOpenTorrentScreenUI_V143'], null], [26566, 26572, ['openJennyVideoPlayerV130', 'toggleVideoLockModeV132', 'toggleVideoPipModeV130', 'exitDesktopOverlayModeV132'], null]];
+  const DYN = F !== 'ui_v71.js' ? [] : [[15378, 15392, ['setPlaybackSpeed', 'applyPlaybackSpeed', 'setSpeed', 'changeSpeed'], 'hookSpeedAndDeckBControlsV210'], [19380, 19396, ['stopCurrentOpenTorrentV143', 'deleteCurrentOpenTorrentV143', 'nukeAllTorrentsV142', 'cleanupActiveTorrentStreamV143', 'resetOpenTorrentScreenUI_V143'], null], [26566, 26572, ['openJennyVideoPlayerV130', 'toggleVideoLockModeV132', 'toggleVideoPipModeV130', 'exitDesktopOverlayModeV132'], null]];
   DYN.forEach(([a, b, names, viaFn]) => units.forEach(U => { const holds = U.s <= a && U.e >= a; const calls = viaFn && U.parent && units.find(X => X.s <= a && X.e >= a).b === U.b && new RegExp('\\b' + viaFn + '\\s*\\(').test(U.text); if (holds || calls) names.forEach(n => { U.W.add(n); U.R.add(n); U.dyn = 1; }); }));
 }
 // transitive effect of load-time calls to global functions (2 levels): the caller also "reads" everything the callee body references
@@ -57,7 +57,7 @@ units.forEach((U, k) => {
     }
   });
 }
-module.exports = { units, B, L, BUILTIN, o };
+module.exports = { units, B, L, BUILTIN, o, F };
 if (require.main === module) {
   console.log('units', units.length, 'lines covered', units.reduce((a, u) => a + u.e - u.s + 1, 0));
   // union-find of names co-written at load in the same unit

@@ -5,8 +5,10 @@ const fs = require('fs'), vm = require('vm'), crypto = require('crypto');
 const MODE = process.argv[2] || 'null';
 const h = s => crypto.createHash('md5').update(String(s)).digest('hex').slice(0, 10);
 const BASE = ['engine_audio.js', 'engine_video_deck_b.js', 'engine_heads.js', 'engine_fav.js', 'ui_init.js', 'ui_config.js', 'ui_render.js', 'ui_playback.js', 'ui_scrub_engine.js', 'ui_touch_arc.js', 'ui_controls.js', 'ui_export.js', 'ui_help.js'];
-const OLD = BASE.map(f => ['orig/' + f, f]).concat([['orig/ui_v71.js', 'ui_v71.js'], ['orig/jenny_deck_b_modals.js', 'jenny_deck_b_modals.js']]);
-const NEW = BASE.map(f => ['orig/' + f, f]).concat([[process.env.BUNDLE || 'bundle_new.js', 'ui_v71.js'], ['orig/jenny_deck_b_modals.js', 'jenny_deck_b_modals.js']]);
+const TARGET = process.env.TARGET || 'ui_v71.js';
+const ALL = BASE.concat(['ui_v71.js', 'jenny_deck_b_modals.js']);
+const OLD = ALL.map(f => ['orig/' + f, f]);
+const NEW = ALL.map(f => [f === TARGET ? (process.env.BUNDLE || 'bundle_new.js') : 'orig/' + f, f]);
 
 function run(list, extraGlobals) {
   const rec = { timers: [], listeners: {}, errors: [], styles: [] };

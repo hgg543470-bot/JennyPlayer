@@ -1,8 +1,9 @@
 const fs = require('fs');
-const { units, B, L, BUILTIN, o } = require('./units.js');
+const { units, B, L, BUILTIN, o, F } = require('./units.js');
 const { RULES, themeOfName } = require('./themes.js');
 const allw = require('./allwrites.json');
-let OVR = {}; try { OVR = require('./overrides.json'); } catch (e) {}
+let OVR = {}; try { OVR = require(F === 'ui_v71.js' ? './overrides.json' : './overrides.' + F.replace(/\.js$/, '') + '.json'); } catch (e) { if (F !== 'ui_v71.js') throw e; }
+const BLOCK_OVR = OVR.blocks || [];
 const NAME_OVR = OVR.names || {}, UNIT_OVR = OVR.units || {}, RANGE_OVR = OVR.ranges || [];
 // ---------- text theme scoring
 const TXT = {
@@ -59,6 +60,7 @@ units.forEach(U => {
   if (U.parent && U.u <= 2 && (/^\s*if\s*\(\s*window\.[\w$]+\s*\)\s*return/.test(U.text) || /^\s*window\.(_jenny[\w$]*(Installed|Fixed)|[\w$]*Installed[\w$]*)\s*=\s*true/.test(U.text) || /^\s*['"]use strict['"]/.test(U.text))) U.theme = 'HEADER';
   for (const [a, b, th] of RANGE_OVR) if (U.s >= a && U.e <= b) U.theme = th;
   if (UNIT_OVR[U.id]) U.theme = UNIT_OVR[U.id];
+  for (const [a, b, th] of BLOCK_OVR) if (U.b >= a && U.b <= b) { U.theme = th; U.fixed = 1; }
 });
 // ---------- closure co-location: guard units & shared state locals
 // For each split IIFE: locals -> units referencing. state local (non-fn or fn touching state) shared across themes => conflict
@@ -113,7 +115,7 @@ for (const bi in iifeInfo) {
   styleFns.forEach(n => I.units.forEach(U => { if (new RegExp('^\\s*' + n.replace(/\$/g, '\\$') + '\\(\\s*\\);?\\s*$').test(U.text) && !U.compSize) { U.theme = 'styles'; U.styleCall = n; } }));
 }
 // standalone load-time style units outside components
-units.forEach(U => { if (!U.compSize && U.W.size === 0 && U.side.some(x => x.k === 'style' && x.l) && !UNIT_OVR[U.id]) U.theme = 'styles'; });
+units.forEach(U => { if (!U.fixed && !U.compSize && U.W.size === 0 && U.side.some(x => x.k === 'style' && x.l) && !UNIT_OVR[U.id]) U.theme = 'styles'; });
 // sticky misc: take theme of previous unit (same block for IIFE units)
 for (let k = 0; k < units.length; k++) { const U = units[k]; if (U.theme !== 'misc') continue; let j = k - 1; while (j >= 0 && (units[j].theme === 'misc' || units[j].theme === 'HEADER' || units[j].theme === 'styles')) j--; if (j >= 0 && (units[j].b === U.b || !U.parent)) { U.theme = units[j].theme; U.sticky = 1; } else { j = k + 1; while (j < units.length && (units[j].theme === 'misc' || units[j].theme === 'HEADER' || units[j].theme === 'styles')) j++; if (j < units.length) { U.theme = units[j].theme; U.sticky = 1; } } }
 // re-propagate inside components after sticky
@@ -156,7 +158,7 @@ function layer(order) {
   });
   return { files: files.filter(f => f.units.length), why };
 }
-module.exports = { units, nameOwner, iifeInfo, fileOrderCheck, themeOfText, layer, OVR, B, L, o };
+module.exports = { units, nameOwner, iifeInfo, fileOrderCheck, themeOfText, layer, OVR, B, L, o, F };
 if (require.main === module) {
   const cnt = {}, lines = {};
   units.forEach(U => { cnt[U.theme] = (cnt[U.theme] || 0) + 1; lines[U.theme] = (lines[U.theme] || 0) + U.e - U.s + 1; });

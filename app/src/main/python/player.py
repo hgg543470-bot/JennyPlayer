@@ -196,10 +196,27 @@ def serve_static(filename):
     return res
 
 
-# ================= [SPLIT] ui_v71.js РАЗБИТ НА ТЕМАТИЧЕСКИЕ МОДУЛИ =================
-# index.html по-прежнему просит один /ui_v71.js. Сервер склеивает модули в один ответ,
-# поэтому загрузка остаётся одним куском, как раньше. ПОРЯДОК СПИСКА МЕНЯТЬ НЕЛЬЗЯ:
+# ================= [SPLIT] ui_help.js И ui_v71.js РАЗБИТЫ НА ТЕМАТИЧЕСКИЕ МОДУЛИ =================
+# index.html по-прежнему просит /ui_help.js и /ui_v71.js. Сервер склеивает модули в один ответ,
+# поэтому каждая загрузка остаётся одним куском, как раньше. ПОРЯДОК СПИСКОВ МЕНЯТЬ НЕЛЬЗЯ:
 # поздние модули переопределяют и оборачивают функции ранних (см. REFACTOR_PLAN.md).
+# Внимание: файл ui_help.js на диске — это только модуль справки; по адресу /ui_help.js
+# отдаётся вся склейка JENNY_UI_HELP_PARTS.
+JENNY_UI_HELP_PARTS = [
+    'ui_lang.js',
+    'ui_formats.js',
+    'ui_dsp_panel.js',
+    'ui_help.js',
+    'ui_lang_button.js',
+    'ui_themes.js',
+    'ui_hose.js',
+    'ui_folders.js',
+    'ui_gearbox.js',
+    'ui_spectrum.js',
+    'ui_seams.js',
+    'ui_revisor.js',
+]
+
 JENNY_UI_V71_PARTS = [
     'ui_styles.js',
     'ui_settings.js',
@@ -222,10 +239,9 @@ JENNY_UI_V71_PARTS = [
 ]
 
 
-@route('/ui_v71.js')
-def serve_ui_v71_bundle():
+def _jenny_serve_js_bundle(part_names):
     chunks = []
-    for part_name in JENNY_UI_V71_PARTS:
+    for part_name in part_names:
         try:
             with open(os.path.join(BASE_DIR, part_name), 'r', encoding='utf-8') as f_part:
                 chunks.append('/* >>> ' + part_name + ' */\n' + f_part.read())
@@ -236,6 +252,16 @@ def serve_ui_v71_bundle():
     response.set_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
     response.set_header('Pragma', 'no-cache')
     return '\n;\n'.join(chunks)
+
+
+@route('/ui_help.js')
+def serve_ui_help_bundle():
+    return _jenny_serve_js_bundle(JENNY_UI_HELP_PARTS)
+
+
+@route('/ui_v71.js')
+def serve_ui_v71_bundle():
+    return _jenny_serve_js_bundle(JENNY_UI_V71_PARTS)
 # ================= END [SPLIT] =================
 
 

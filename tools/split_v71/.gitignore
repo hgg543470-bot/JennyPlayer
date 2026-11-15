@@ -1,6 +1,7 @@
 node_modules/
 orig/
 out/
+out_*/
 newtree/
 out2.json
 out2_new.json
@@ -9,4 +10,3 @@ dups.json
 assign.json
 final.json
 bundle_new.js
-*.md.tmp
