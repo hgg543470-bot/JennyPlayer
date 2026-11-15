@@ -1040,6 +1040,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // [FIX-WEBVIEW-DEBUG] Включает отладку WebView через chrome://inspect
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+            android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+        }
         // V166_120HZ_UNLOCK: Разблокировка 120 Гц для видеодеки
         try {
             if (android.os.Build.VERSION.SDK_INT >= 23) {
