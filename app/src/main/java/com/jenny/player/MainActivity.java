@@ -1478,6 +1478,18 @@ public class MainActivity extends AppCompatActivity {
         }
         // === JENNY_V237_DATASYNC_BRIDGE_END ===
 
+        private volatile boolean lastIslandFavV245 = false;
+        private volatile String lastIslandModeV245 = "music";
+        private volatile String lastIslandRawTrackV245 = "";
+
+        @JavascriptInterface
+        public void updateIslandExtraState(boolean isFav, String mode, String rawTrack) {
+            this.lastIslandFavV245 = isFav;
+            this.lastIslandModeV245 = (mode != null && !mode.isEmpty()) ? mode : "music";
+            this.lastIslandRawTrackV245 = (rawTrack != null) ? rawTrack : "";
+            PlaybackService.updateIslandExtraStatic(this.lastIslandFavV245, this.lastIslandModeV245, this.lastIslandRawTrackV245);
+        }
+
         @JavascriptInterface
         public void updateMediaStateFull(String title, String subtitle, boolean isPlaying, double posSec, double durSec, double speed) {
             Intent svc = new Intent(MainActivity.this, PlaybackService.class);
@@ -1488,6 +1500,9 @@ public class MainActivity extends AppCompatActivity {
             svc.putExtra("pos", (long) (posSec * 1000));
             svc.putExtra("dur", (long) (durSec * 1000));
             svc.putExtra("speed", (float) speed);
+            svc.putExtra("fav", lastIslandFavV245);
+            svc.putExtra("mode", lastIslandModeV245);
+            svc.putExtra("rawTrack", lastIslandRawTrackV245);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(svc);
             } else {
