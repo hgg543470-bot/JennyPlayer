@@ -50,7 +50,7 @@
                 return clean;
             }
         }
-        return stripLeadingEmojisV247(window._lastExternalTitleV243 || 'SoundCloud Поток');
+        return stripLeadingEmojisV247(window._lastExternalTitleV243 || 'SoundCloud');
     }
 
     // -------------------------------------------------------------------------
@@ -367,7 +367,7 @@
                 var trk = list[nextPos];
                 if (trk) {
                     window._lastScTrackIdxV245 = trk.index;
-                    window._lastExternalTitleV243 = trk.title || 'SoundCloud Поток';
+                    window._lastExternalTitleV243 = trk.title || 'SoundCloud';
                     var bodyEl = document.getElementById('scDedicatedBodyV93');
                     var btnEl = bodyEl ? bodyEl.querySelector('button[onclick*="previewScTrackV96(' + trk.index + ',"]') : null;
                     if (stepDelta === 0 && aud && aud._pagePath === trk.page_path) {
@@ -579,7 +579,7 @@
             return '';
         }
         if (m === 'music') {
-            var trkName = window.currentPlayingTrack || '';
+            var trkName = window.currentPlayingTrack || ((Array.isArray(window.allTracks) && window.allTracks.length > 0) ? window.allTracks[0] : '');
             if (trkName) {
                 return 'http://127.0.0.1:8080/api/island/track_cover?track=' + encodeURIComponent(trkName);
             }
@@ -813,7 +813,7 @@
                 '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#e6edf3;font-size:12px;font-weight:600;">' +
                     '<input type="checkbox" id="chkIslandShowTrackArtV250" ' + (showTrackArt ? 'checked ' : '') +
                         'onchange="window.onIslandArtSettingChangedV250()" style="width:16px;height:16px;accent-color:#a371f7;">' +
-                    '<span>Отображать превью трека (из тега / потока на фоне)</span>' +
+                    '<span>Отображать превью трека</span>' +
                 '</label>' +
                 '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#e6edf3;font-size:12px;font-weight:600;">' +
                     '<input type="checkbox" id="chkIslandUseCustomArtV250" ' + (useCustomArt ? 'checked ' : '') +
@@ -907,7 +907,7 @@
             subParts.push((window._radioStateV91 && window._radioStateV91.isRecording) ? 'Запись эфира • Прямой поток' : 'Прямой радиоэфир');
         } else if (snap.extPlaying) {
             titleParts.push(resolveCurrentScTitleV245());
-            subParts.push('SoundCloud • Поток');
+            if (!window._islandExportStatusV247) subParts.push('SoundCloud');
             durSec = (typeof window.getEffectiveScTotalDurSecV250 === 'function')
                 ? window.getEffectiveScTotalDurSecV250(snap.extAud)
                 : (isFinite(snap.extAud.duration) ? snap.extAud.duration : 0);

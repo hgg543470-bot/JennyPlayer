@@ -376,6 +376,14 @@ def _get_xflac_lib_v84():
 
 
 def _strip_jrev_trailer_from_bytes_v88(xfc_bytes: bytes) -> bytes:
+    if len(xfc_bytes) >= 25 and xfc_bytes[:4] == b"XFC3":
+        try:
+            _, _, _, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", xfc_bytes[4:25])
+            exact_xfc_end = 25 + int(cm_sz) + int(rl_sz) + int(rr_sz)
+            if 25 < exact_xfc_end <= len(xfc_bytes):
+                return xfc_bytes[:exact_xfc_end]
+        except Exception:
+            pass
     if len(xfc_bytes) > JENNY_REV_FOOTER_SIZE + 25:
         try:
             footer = xfc_bytes[-JENNY_REV_FOOTER_SIZE:]
@@ -1754,6 +1762,11 @@ def export_track():
             encoded_ok = (r2.returncode == 0 and os.path.exists(final_opus) and os.path.getsize(final_opus) > 100)
 
         if encoded_ok:
+            if "_inherit_cover_on_export_v251" in globals():
+                try:
+                    _inherit_cover_on_export_v251(orig_path, final_opus)
+                except Exception:
+                    pass
             rev_badge = ""
             seam_map_str = request.forms.get('seam_map_json', '').strip()
             pocket_upload = request.files.get('pocket_audio')
@@ -2275,6 +2288,13 @@ def api_khinsider_download_track_v88():
                 pct = min(90, int((read_b * 90) // tot_b)) if tot_b > 0 else 50
                 _OST_PROGRESS_V89.update({"downloaded_mb": cur_mb, "percent": pct, "message": f"⬇️ Загрузка {src_ext.upper()}: {cur_mb:.1f} / {tot_mb:.1f} MB ({pct}%)" if tot_mb > 0 else f"⬇️ Загрузка: {cur_mb:.1f} MB..."})
 
+        src_cov_b, src_cov_m = (None, None)
+        if "_extract_raw_file_cover_v251" in globals() and tmp_dl and os.path.isfile(tmp_dl):
+            try:
+                src_cov_b, src_cov_m = _extract_raw_file_cover_v251(tmp_dl)
+            except Exception:
+                pass
+
         xflac_map = {'xflac_lossless': (0, '_bitperfect.xflac'), 'xflac_psycho': (25, '_psycho.xflac'), 'xflac_ultra': (15, '_ultra.xflac'), 'xflac_hifi': (45, '_hifi.xflac')}
         if fmt_mode in xflac_map and src_ext in ('.flac', '.wav'):
             xf_mode, xf_suf = xflac_map[fmt_mode]
@@ -2295,6 +2315,12 @@ def api_khinsider_download_track_v88():
             final_path = os.path.join(MUSIC_DIR, final_name)
             shutil.move(tmp_dl, final_path)
             tmp_dl = None
+
+        if "_attach_cover_for_downloaded_ost_v251" in globals():
+            try:
+                _attach_cover_for_downloaded_ost_v251(final_path, page_path, album_title, track_title, src_cov_b, src_cov_m)
+            except Exception:
+                pass
 
         db = load_custom_tags_db_v74()
         db[final_name] = {"TITLE": track_title, "ARTIST": safe_alb, "ALBUM": album_title, "GENRE": "Game OST"}
@@ -14177,32 +14203,87 @@ _override_bottle_route_v212('/api/soundcloud/live_stream_v246', 'GET', api_sound
 
 
 # ==============================================================================
-# [FIX-ISLAND-ARTWORK-V250] ОБЛОЖКА ИЗ ТЕГА ТРЕКА / SOUNDCLOUD + СТИЛЬНЫЙ ВЫБОР КАРТИНКИ
+# ==============================================================================
+# [FIX-ISLAND-ARTWORK-V251] ВШИВАНИЕ И ЧТЕНИЕ ОБЛОЖКИ ДЛЯ ВСЕХ ИСТОЧНИКОВ
+# (SoundCloud, Game OST, Archive.org, Торрент P2P, Экспорт .xFLAC) + ФМ КАРТИНОК
 # ==============================================================================
 _ISLAND_COVER_CACHE_V250 = {}
 _ISLAND_COVER_LOCK_V250 = threading.Lock()
 
 
-def _extract_embedded_cover_bytes_v250(full_path: str):
+def _get_jenny_covers_dir_v251() -> str:
+    base_d = MUSIC_DIR if "MUSIC_DIR" in globals() and MUSIC_DIR else "/storage/emulated/0/Music"
+    cov_d = os.path.join(base_d, ".jenny_covers")
+    try:
+        os.makedirs(cov_d, exist_ok=True)
+        nm_p = os.path.join(cov_d, ".nomedia")
+        if not os.path.exists(nm_p):
+            open(nm_p, "wb").close()
+    except Exception:
+        pass
+    return cov_d
+
+
+def _clean_cover_stem_v251(file_or_name: str) -> str:
+    base_fn = os.path.basename(str(file_or_name or "").strip())
+    stem = os.path.splitext(base_fn)[0]
+    if "_strip_exported_track_suffixes_v234" in globals():
+        try:
+            stem = _strip_exported_track_suffixes_v234(stem)
+        except Exception:
+            pass
+    stem = re.sub(r'[\\/:*?"<>|]+', "_", stem).strip()
+    return stem or "track"
+
+
+def _extract_jcov_from_xflac_v251(full_path: str):
+    try:
+        with open(full_path, "rb") as f:
+            hdr = f.read(25)
+            if len(hdr) < 25 or hdr[:4] != b"XFC3":
+                return None, None
+            _, _, _, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", hdr[4:25])
+            xfc_end = 25 + int(cm_sz) + int(rl_sz) + int(rr_sz)
+            f.seek(0, os.SEEK_END)
+            f_len = f.tell()
+            if xfc_end + 8 >= f_len:
+                return None, None
+            f.seek(xfc_end)
+            magic = f.read(4)
+            if magic != b"JCOV":
+                return None, None
+            cov_len = struct.unpack("<I", f.read(4))[0]
+            if 128 < cov_len <= 12 * 1024 * 1024 and xfc_end + 8 + cov_len <= f_len:
+                img_b = f.read(cov_len)
+                mime = "image/png" if img_b.startswith(b"\x89PNG\r\n\x1a\n") else "image/jpeg"
+                return img_b, mime
+    except Exception:
+        pass
+    return None, None
+
+
+def _extract_raw_file_cover_v251(full_path: str):
     if not full_path or not os.path.isfile(full_path):
         return None, None
-    with _ISLAND_COVER_LOCK_V250:
-        if full_path in _ISLAND_COVER_CACHE_V250:
-            return _ISLAND_COVER_CACHE_V250[full_path]
-
     img_bytes = None
     mime = "image/jpeg"
+    ext = os.path.splitext(full_path)[1].lower()
 
-    # 1) Быстрое чтение ID3v2 APIC (MP3) или FLAC METADATA_BLOCK_PICTURE напрямую на Python
+    # 1) Если это .xflac — проверяем вшитую капсулу JCOV
+    if ext == ".xflac":
+        img_bytes, mime = _extract_jcov_from_xflac_v251(full_path)
+        if img_bytes:
+            return img_bytes, mime
+
+    # 2) Быстрое чтение ID3v2 APIC (MP3) или FLAC METADATA_BLOCK_PICTURE напрямую на Python
     try:
-        ext = os.path.splitext(full_path)[1].lower()
         if ext == ".mp3":
             with open(full_path, "rb") as f:
                 hdr = f.read(10)
                 if len(hdr) == 10 and hdr[:3] == b"ID3":
                     ver = hdr[3]
                     tag_sz = ((hdr[6] & 0x7F) << 21) | ((hdr[7] & 0x7F) << 14) | ((hdr[8] & 0x7F) << 7) | (hdr[9] & 0x7F)
-                    tag_data = f.read(min(tag_sz, 4 * 1024 * 1024))
+                    tag_data = f.read(min(tag_sz, 6 * 1024 * 1024))
                     pos = 0
                     while pos + 10 < len(tag_data):
                         fid = tag_data[pos:pos + 4]
@@ -14250,8 +14331,8 @@ def _extract_embedded_cover_bytes_v250(full_path: str):
     except Exception:
         pass
 
-    # 2) Универсальный фоллбэк через FFmpeg (для .m4a, .mp4, .ogg, .opus, .flac, .mp3)
-    if not img_bytes:
+    # 3) Универсальный фоллбэк через FFmpeg (для .m4a, .mp4, .ogg, .opus, .flac, .mp3)
+    if not img_bytes and ext != ".xflac":
         try:
             ff_bin = find_ffmpeg_binary()
             if ff_bin:
@@ -14267,24 +14348,530 @@ def _extract_embedded_cover_bytes_v250(full_path: str):
         except Exception:
             pass
 
-    # 3) Если обложки внутри тега нет — ищем cover.jpg / folder.jpg в той же папке
+    return img_bytes, mime
+
+
+def _inject_id3v23_apic_pure_python_v251(mp3_path: str, img_bytes: bytes, mime: str = "image/jpeg"):
+    try:
+        with open(mp3_path, "rb") as f:
+            raw = f.read()
+        if not raw:
+            return
+        # Если уже есть ID3v2 с APIC — не дублируем
+        if len(raw) > 10 and raw[:3] == b"ID3":
+            old_sz = ((raw[6] & 0x7F) << 21) | ((raw[7] & 0x7F) << 14) | ((raw[8] & 0x7F) << 7) | (raw[9] & 0x7F)
+            if b"APIC" in raw[10:10 + min(old_sz, 2 * 1024 * 1024)]:
+                return
+            audio_body = raw[10 + old_sz:]
+        else:
+            audio_body = raw
+
+        mime_b = (mime or "image/jpeg").encode("ascii", errors="ignore") + b"\x00"
+        apic_payload = b"\x00" + mime_b + b"\x03\x00" + img_bytes
+        apic_frame = b"APIC" + len(apic_payload).to_bytes(4, "big") + b"\x00\x00" + apic_payload
+        total_sz = len(apic_frame)
+        syncsafe = bytes([
+            (total_sz >> 21) & 0x7F,
+            (total_sz >> 14) & 0x7F,
+            (total_sz >> 7) & 0x7F,
+            total_sz & 0x7F,
+        ])
+        id3_hdr = b"ID3\x03\x00\x00" + syncsafe
+        tmp_p = mp3_path + f".apic_{os.getpid()}.tmp"
+        with open(tmp_p, "wb") as out_f:
+            out_f.write(id3_hdr + apic_frame + audio_body)
+        os.replace(tmp_p, mp3_path)
+    except Exception:
+        pass
+
+
+def _inject_flac_picture_pure_python_v251(flac_path: str, img_bytes: bytes, mime: str = "image/jpeg"):
+    try:
+        with open(flac_path, "rb") as f:
+            raw = f.read()
+        if len(raw) < 42 or raw[:4] != b"fLaC":
+            return
+        # Собираем METADATA_BLOCK_PICTURE (type 6)
+        mime_b = (mime or "image/jpeg").encode("ascii", errors="ignore")
+        desc_b = b""
+        pic_data = (
+            struct.pack(">II", 3, len(mime_b))
+            + mime_b
+            + struct.pack(">I", len(desc_b))
+            + desc_b
+            + struct.pack(">IIIII", 0, 0, 24, 0, len(img_bytes))
+            + img_bytes
+        )
+        if len(pic_data) >= 16 * 1024 * 1024:
+            return
+        # Вставляем блок сразу после первого блока STREAMINFO (38 байт после 'fLaC')
+        first_hdr = raw[4:8]
+        first_is_last = (first_hdr[0] & 0x80) != 0
+        first_len = int.from_bytes(first_hdr[1:4], "big")
+        split_pos = 8 + first_len
+        if split_pos > len(raw):
+            return
+        new_first_hdr = bytes([first_hdr[0] & 0x7F]) + first_hdr[1:4]
+        pic_hdr_byte = (0x80 if first_is_last else 0x00) | 6
+        pic_block = bytes([pic_hdr_byte]) + len(pic_data).to_bytes(3, "big") + pic_data
+        tmp_p = flac_path + f".pic_{os.getpid()}.tmp"
+        with open(tmp_p, "wb") as out_f:
+            out_f.write(b"fLaC" + new_first_hdr + raw[8:split_pos] + pic_block + raw[split_pos:])
+        os.replace(tmp_p, flac_path)
+    except Exception:
+        pass
+
+
+def _embed_jcov_into_xflac_v251(xflac_path: str, img_bytes: bytes):
+    try:
+        with open(xflac_path, "rb") as f:
+            raw = f.read()
+        if len(raw) < 25 or raw[:4] != b"XFC3":
+            return
+        _, _, _, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", raw[4:25])
+        xfc_end = 25 + int(cm_sz) + int(rl_sz) + int(rr_sz)
+        if xfc_end > len(raw):
+            return
+        # Сохраняем JREV хвост (если он уже был дописан в конец файла)
+        tail_after_xfc = raw[xfc_end:]
+        if tail_after_xfc.startswith(b"JCOV") and len(tail_after_xfc) >= 8:
+            old_cov_len = struct.unpack("<I", tail_after_xfc[4:8])[0]
+            end_old_jcov = 8 + old_cov_len + (16 if tail_after_xfc[8 + old_cov_len:8 + old_cov_len + 4] == b"JCOV" else 0)
+            tail_after_xfc = tail_after_xfc[end_old_jcov:]
+        jcov_capsule = (
+            b"JCOV"
+            + struct.pack("<I", len(img_bytes))
+            + img_bytes
+            + struct.pack("<4sI8s", b"JCOV", len(img_bytes), b"JENNYCOV")
+        )
+        tmp_p = xflac_path + f".jcov_{os.getpid()}.tmp"
+        with open(tmp_p, "wb") as out_f:
+            out_f.write(raw[:xfc_end] + jcov_capsule + tail_after_xfc)
+        os.replace(tmp_p, xflac_path)
+    except Exception:
+        pass
+
+
+def _save_and_embed_track_cover_v251(track_path: str, img_bytes: bytes, mime: str = "image/jpeg"):
+    if not track_path or not img_bytes or len(img_bytes) < 256:
+        return False
+    if img_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime = "image/png"
+    elif img_bytes.startswith(b"\xff\xd8\xff"):
+        mime = "image/jpeg"
+
+    # 1) Сохраняем в скрытый кэш обложек .jenny_covers (по имени файла и по чистому стему)
+    try:
+        cov_dir = _get_jenny_covers_dir_v251()
+        base_fn = os.path.basename(track_path)
+        clean_stem = _clean_cover_stem_v251(base_fn)
+        for key_name in {base_fn, clean_stem}:
+            if key_name:
+                cp = os.path.join(cov_dir, f"{key_name}.jpg")
+                with open(cp, "wb") as cf:
+                    cf.write(img_bytes)
+    except Exception:
+        pass
+
+    # 2) Вшиваем обложку прямо внутрь самого аудиофайла (.xflac, .mp3, .m4a, .flac)
+    if os.path.isfile(track_path):
+        ext = os.path.splitext(track_path)[1].lower()
+        if ext == ".xflac":
+            _embed_jcov_into_xflac_v251(track_path, img_bytes)
+        elif ext == ".flac":
+            _inject_flac_picture_pure_python_v251(track_path, img_bytes, mime)
+        elif ext in (".mp3", ".m4a", ".mp4"):
+            ff_bin = find_ffmpeg_binary()
+            embedded_via_ff = False
+            if ff_bin:
+                tmp_cov = track_path + f".cov_{os.getpid()}.jpg"
+                tmp_out = track_path + f".mux_{os.getpid()}{ext}"
+                try:
+                    with open(tmp_cov, "wb") as cf:
+                        cf.write(img_bytes)
+                    if ext == ".mp3":
+                        cmd = [
+                            ff_bin, "-y", "-hide_banner", "-loglevel", "error",
+                            "-i", track_path, "-i", tmp_cov,
+                            "-map", "0:a:0", "-map", "1:v:0",
+                            "-c:a", "copy", "-c:v", "mjpeg",
+                            "-id3v2_version", "3",
+                            "-metadata:s:v", "title=Album cover",
+                            "-metadata:s:v", "comment=Cover (front)",
+                            tmp_out,
+                        ]
+                    else:
+                        cmd = [
+                            ff_bin, "-y", "-hide_banner", "-loglevel", "error",
+                            "-i", track_path, "-i", tmp_cov,
+                            "-map", "0:a:0", "-map", "1:v:0",
+                            "-c:a", "copy", "-c:v", "mjpeg",
+                            "-disposition:v:0", "attached_pic",
+                            "-movflags", "+faststart",
+                            tmp_out,
+                        ]
+                    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+                    if os.path.isfile(tmp_out) and os.path.getsize(tmp_out) > 16384:
+                        os.replace(tmp_out, track_path)
+                        embedded_via_ff = True
+                except Exception:
+                    pass
+                finally:
+                    for p_tmp in (tmp_cov, tmp_out):
+                        if os.path.exists(p_tmp):
+                            try:
+                                os.remove(p_tmp)
+                            except Exception:
+                                pass
+            if ext == ".mp3" and not embedded_via_ff:
+                _inject_id3v23_apic_pure_python_v251(track_path, img_bytes, mime)
+
+        with _ISLAND_COVER_LOCK_V250:
+            _ISLAND_COVER_CACHE_V250[track_path] = (img_bytes, mime)
+    return True
+
+
+def _fetch_url_image_bytes_v251(url: str, timeout_sec: float = 8.0):
+    if not url or not url.startswith(("http://", "https://")):
+        return None, None
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        })
+        with urllib.request.urlopen(req, timeout=timeout_sec) as r:
+            b = r.read(10 * 1024 * 1024)
+            ct = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip().lower()
+            if b and len(b) > 256 and (b.startswith(b"\xff\xd8\xff") or b.startswith(b"\x89PNG") or "image" in ct):
+                return b, ("image/png" if b.startswith(b"\x89PNG") else "image/jpeg")
+    except Exception:
+        pass
+    return None, None
+
+
+def _fetch_online_cover_by_query_v251(query_str: str):
+    q = str(query_str or "").strip()
+    q = re.sub(r"^(SoundCloud|Game OST|Archive\.org|Radio|Torrent P2P)\s*[-—:]\s*", "", q, flags=re.I)
+    q = re.sub(r"^\d+[\.\s_-]+", "", q).strip()
+    q = re.sub(r"[_\[\]\(\)]+", " ", q).strip()
+    if len(q) < 2:
+        return None, None
+    try:
+        api_u = f"https://itunes.apple.com/search?term={urllib.parse.quote(q[:90])}&media=music&limit=1"
+        req = urllib.request.Request(api_u, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=4.5) as r:
+            data = json.loads(r.read().decode("utf-8", errors="ignore"))
+        results = data.get("results") or []
+        if results:
+            art_u = (results[0].get("artworkUrl100") or "").strip()
+            if art_u:
+                art_u = re.sub(r"\d+x\d+bb", "600x600bb", art_u)
+                return _fetch_url_image_bytes_v251(art_u, timeout_sec=6.0)
+    except Exception:
+        pass
+    return None, None
+
+
+def _fetch_sc_cover_bytes_v251(page_path: str, track_title: str = ""):
+    art_u = ""
+    track_id = None
+    if page_path and page_path.startswith("sc:"):
+        try:
+            raw_dec = base64.urlsafe_b64decode(page_path[3:].encode("ascii")).decode("utf-8")
+            if raw_dec.startswith("{"):
+                info = json.loads(raw_dec)
+                art_u = (info.get("artwork") or "").strip()
+                track_id = info.get("id")
+        except Exception:
+            pass
+    if not art_u and track_id:
+        try:
+            cid = _sc_get_client_id_v92(False)
+            with _sc_urlopen_v95(f"https://api-v2.soundcloud.com/tracks/{track_id}?client_id={cid}", timeout=6) as r:
+                tr_obj = json.loads(r.read().decode("utf-8", errors="ignore"))
+                art_u = (tr_obj.get("artwork_url") or ((tr_obj.get("user") or {}).get("avatar_url")) or "").strip()
+        except Exception:
+            pass
+    if art_u:
+        if "-large." in art_u:
+            art_u = art_u.replace("-large.", "-t500x500.")
+        try:
+            with _sc_urlopen_v95(art_u, timeout=8) as r:
+                b = r.read(10 * 1024 * 1024)
+                if b and len(b) > 256:
+                    return b, ("image/png" if b.startswith(b"\x89PNG") else "image/jpeg")
+        except Exception:
+            pass
+    if track_title:
+        return _fetch_online_cover_by_query_v251(track_title)
+    return None, None
+
+
+def _attach_cover_for_downloaded_ost_v251(final_path: str, page_path: str, album_title: str, track_title: str, src_cov_b=None, src_cov_m=None):
+    cov_b, cov_m = src_cov_b, (src_cov_m or "image/jpeg")
+    if not cov_b and page_path:
+        try:
+            if page_path.startswith("sc:"):
+                cov_b, cov_m = _fetch_sc_cover_bytes_v251(page_path, track_title)
+            else:
+                raw_j = base64.urlsafe_b64decode(page_path[4:].encode("ascii")).decode("utf-8") if page_path.startswith("b64:") else page_path
+                info = json.loads(raw_j) if raw_j.startswith("{") else {}
+                ident = (info.get("ident") or "").strip()
+                if ident:
+                    cov_b, cov_m = _fetch_url_image_bytes_v251(f"https://archive.org/services/img/{urllib.parse.quote(ident)}", timeout_sec=7.0)
+        except Exception:
+            pass
+    if not cov_b:
+        cov_b, cov_m = _fetch_online_cover_by_query_v251(f"{album_title} {track_title}")
+    if cov_b:
+        _save_and_embed_track_cover_v251(final_path, cov_b, cov_m or "image/jpeg")
+
+
+def _find_best_folder_image_v251(folder_path: str):
+    if not folder_path or not os.path.isdir(folder_path):
+        return None, None
+    # Не берём случайную картинку из общей папки /storage/emulated/0/Music или Download
+    norm_f = os.path.normpath(folder_path)
+    if norm_f in ("/storage/emulated/0", "/storage/emulated/0/Music", "/storage/emulated/0/Download", "/storage/emulated/0/Pictures", "/storage/emulated/0/DCIM"):
+        for strict_n in ("cover.jpg", "cover.png", "folder.jpg", "folder.png", "front.jpg"):
+            cp = os.path.join(folder_path, strict_n)
+            if os.path.isfile(cp) and os.path.getsize(cp) > 256:
+                try:
+                    return open(cp, "rb").read(), ("image/png" if strict_n.endswith(".png") else "image/jpeg")
+                except Exception:
+                    pass
+        return None, None
+
+    best_p = None
+    best_score = -1
+    img_exts = (".jpg", ".jpeg", ".png", ".webp")
+    try:
+        for fn in os.listdir(folder_path):
+            low = fn.lower()
+            if not low.endswith(img_exts) or fn.startswith("."):
+                continue
+            fp = os.path.join(folder_path, fn)
+            if not os.path.isfile(fp):
+                continue
+            sz = os.path.getsize(fp)
+            if sz <= 512 or sz > 15 * 1024 * 1024:
+                continue
+            score = sz
+            if any(k in low for k in ("cover", "folder", "front", "album", "art", "thumb")):
+                score += 50 * 1024 * 1024
+            if score > best_score:
+                best_score = score
+                best_p = fp
+    except Exception:
+        pass
+    if best_p:
+        try:
+            b = open(best_p, "rb").read()
+            return b, ("image/png" if best_p.lower().endswith(".png") else "image/jpeg")
+        except Exception:
+            pass
+    return None, None
+
+
+def _attach_cover_for_imported_torrent_v251(src_path: str, dst_path: str, tor_name: str = "", track_title: str = ""):
+    if not dst_path or not os.path.isfile(dst_path):
+        return
+    cov_b, cov_m = (None, None)
+    if src_path and os.path.isfile(src_path):
+        cov_b, cov_m = _extract_raw_file_cover_v251(src_path)
+        if not cov_b:
+            src_dir = os.path.dirname(src_path)
+            cov_b, cov_m = _find_best_folder_image_v251(src_dir)
+            if not cov_b:
+                cov_b, cov_m = _find_best_folder_image_v251(os.path.dirname(src_dir))
+    if not cov_b and dst_path != src_path:
+        cov_b, cov_m = _extract_raw_file_cover_v251(dst_path)
+    if not cov_b:
+        q_str = track_title or os.path.splitext(os.path.basename(dst_path))[0]
+        if tor_name and tor_name.lower() not in ("torrent", "torrent p2p"):
+            q_str = f"{tor_name} {q_str}"
+        cov_b, cov_m = _fetch_online_cover_by_query_v251(q_str)
+    if cov_b:
+        _save_and_embed_track_cover_v251(dst_path, cov_b, cov_m or "image/jpeg")
+
+
+def _inherit_cover_on_export_v251(orig_path: str, exported_path: str):
+    if not orig_path or not exported_path or not os.path.isfile(exported_path):
+        return
+    cov_b, cov_m = _extract_embedded_cover_bytes_v250(orig_path)
+    if cov_b:
+        _save_and_embed_track_cover_v251(exported_path, cov_b, cov_m or "image/jpeg")
+
+
+# Перехватываем скачивание SoundCloud, чтобы сразу вшивать обложку в локальный трек!
+_orig_sc_dl_v251 = api_soundcloud_download_track_v242
+def api_soundcloud_download_track_v251():
+    raw_b = request.body.read()
+    try:
+        req_p = json.loads(raw_b.decode("utf-8") or "{}")
+    except Exception:
+        req_p = {}
+    import io as _io_v251
+    request.environ["wsgi.input"] = _io_v251.BytesIO(raw_b)
+    request.environ["CONTENT_LENGTH"] = str(len(raw_b))
+    res_raw = _orig_sc_dl_v251()
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else {}
+        if d.get("status") == "ok" and d.get("filename"):
+            fn = d["filename"]
+            fp = os.path.join(MUSIC_DIR, fn)
+            cov_b, cov_m = _fetch_sc_cover_bytes_v251(
+                str(req_p.get("page_path") or ""),
+                str(req_p.get("track_title") or fn),
+            )
+            if cov_b and os.path.isfile(fp):
+                _save_and_embed_track_cover_v251(fp, cov_b, cov_m or "image/jpeg")
+    except Exception:
+        pass
+    return res_raw
+
+_override_bottle_route_v212("/api/soundcloud/download_track", "POST", api_soundcloud_download_track_v251)
+
+
+# Перехватываем быстрый импорт и конвертацию треков из P2P Торрентов, чтобы вшивать обложку в каждый трек!
+_orig_instant_tor_import_v251 = _instant_import_completed_file_v212
+def _instant_import_completed_file_v251(h_low: str, f_idx: int, full_p: str, rel_path: str = "", tor_name: str = "Torrent") -> str:
+    res_fn = _orig_instant_tor_import_v251(h_low, f_idx, full_p, rel_path, tor_name)
+    if res_fn:
+        ext = os.path.splitext(res_fn)[1].lower()
+        if ext not in _VIDEO_EXTS_V134:
+            dst_p = os.path.join(MUSIC_DIR, res_fn)
+            if os.path.isfile(dst_p):
+                cov_dir = _get_jenny_covers_dir_v251()
+                if not os.path.isfile(os.path.join(cov_dir, f"{res_fn}.jpg")):
+                    def _bg_tor_cov(sp, dp, tn, rf):
+                        try:
+                            _attach_cover_for_imported_torrent_v251(sp, dp, tn, os.path.splitext(rf)[0])
+                        except Exception:
+                            pass
+                    threading.Thread(target=_bg_tor_cov, args=(full_p, dst_p, tor_name, res_fn), daemon=True).start()
+    return res_fn
+
+_instant_import_completed_file_v212 = _instant_import_completed_file_v251
+
+
+def api_torrent_import_track_v251():
+    response.content_type = "application/json"
+    raw_b = request.body.read()
+    try:
+        req = json.loads(raw_b.decode("utf-8") or "{}")
+    except Exception:
+        req = {}
+    h_low = (req.get("hash") or "").strip().lower()
+    f_idx = int(req.get("file_index") if req.get("file_index") is not None else (req.get("index") or 0))
+    full_p = (req.get("full_path") or "").strip()
+    tor_name = (req.get("torrent_name") or "Torrent").strip()
+    ext = os.path.splitext(full_p)[1].lower()
+
+    if ext in _VIDEO_EXTS_V134 or ext in (".mp3", ".m4a", ".ogg", ".opus", ".aac"):
+        fast_res = _instant_import_completed_file_v251(h_low, f_idx, full_p, full_p, tor_name)
+        if fast_res:
+            return json.dumps({
+                "status": "ok",
+                "filename": fast_res,
+                "xflac_file": fast_res,
+                "is_video": ext in _VIDEO_EXTS_V134,
+            }, ensure_ascii=False)
+
+    # Для .flac / .wav вызываем api_torrent_import_track_v105 с перемотанным телом запроса и вшиваем обложку в полученный .xflac!
+    import io as _io_v251
+    request.environ["wsgi.input"] = _io_v251.BytesIO(raw_b)
+    request.environ["CONTENT_LENGTH"] = str(len(raw_b))
+    res_raw = api_torrent_import_track_v105()
+    try:
+        d = json.loads(res_raw) if isinstance(res_raw, str) else {}
+        out_fn = d.get("filename") or d.get("xflac_file") or ""
+        if out_fn:
+            dst_p = os.path.join(MUSIC_DIR, out_fn)
+            if os.path.isfile(dst_p):
+                _attach_cover_for_imported_torrent_v251(full_p, dst_p, tor_name, os.path.splitext(out_fn)[0])
+    except Exception:
+        pass
+    return res_raw
+
+_override_bottle_route_v212("/api/torrent/import_track", "POST", api_torrent_import_track_v251)
+
+
+def _extract_embedded_cover_bytes_v250(full_path: str):
+    if not full_path or not os.path.isfile(full_path):
+        return None, None
+    with _ISLAND_COVER_LOCK_V250:
+        if full_path in _ISLAND_COVER_CACHE_V250:
+            return _ISLAND_COVER_CACHE_V250[full_path]
+
+    base_fn = os.path.basename(full_path)
+    clean_stem = _clean_cover_stem_v251(base_fn)
+    cov_dir = _get_jenny_covers_dir_v251()
+
+    # 1) Проверяем сохранённую обложку в .jenny_covers (по полному имени или по базовому стему)
+    for cand_key in (base_fn, clean_stem):
+        if cand_key:
+            cp = os.path.join(cov_dir, f"{cand_key}.jpg")
+            if os.path.isfile(cp) and os.path.getsize(cp) > 256:
+                try:
+                    b = open(cp, "rb").read()
+                    m = "image/png" if b.startswith(b"\x89PNG") else "image/jpeg"
+                    with _ISLAND_COVER_LOCK_V250:
+                        _ISLAND_COVER_CACHE_V250[full_path] = (b, m)
+                    return b, m
+                except Exception:
+                    pass
+
+    # 2) Читаем вшитую обложку напрямую из файла (.xflac JCOV, .mp3 APIC, .flac PICTURE, .m4a/.ogg/.opus FFmpeg)
+    img_bytes, mime = _extract_raw_file_cover_v251(full_path)
+
+    # 3) Если не нашли внутри — проверяем обложку в папке трека или в исходной папке торрента
+    if not img_bytes:
+        img_bytes, mime = _find_best_folder_image_v251(os.path.dirname(full_path))
+
     if not img_bytes:
         try:
-            parent_d = os.path.dirname(full_path)
-            for cand_n in ("cover.jpg", "cover.png", "folder.jpg", "folder.png", "front.jpg"):
-                cp = os.path.join(parent_d, cand_n)
-                if os.path.isfile(cp) and os.path.getsize(cp) > 256:
-                    img_bytes = open(cp, "rb").read()
-                    mime = "image/png" if cand_n.endswith(".png") else "image/jpeg"
-                    break
+            tor_data_d = _resolve_persistent_tor_data_dir_v243()
+            if os.path.isdir(tor_data_d):
+                for root_w, _, files_w in os.walk(tor_data_d):
+                    for fn_w in files_w:
+                        stem_w = os.path.splitext(fn_w)[0]
+                        if stem_w.lower() == clean_stem.lower():
+                            cand_src = os.path.join(root_w, fn_w)
+                            img_bytes, mime = _extract_raw_file_cover_v251(cand_src)
+                            if not img_bytes:
+                                img_bytes, mime = _find_best_folder_image_v251(root_w)
+                            if img_bytes:
+                                break
+                    if img_bytes:
+                        break
+        except Exception:
+            pass
+
+    # 4) Фоллбэк для ранее скачанных треков без обложки: автопоиск по тегам/названию и вшивание в трек!
+    if not img_bytes:
+        try:
+            db = load_custom_tags_db_v74()
+            t_meta = db.get(base_fn) or {}
+            q_parts = []
+            if t_meta.get("ARTIST") and t_meta.get("ARTIST") not in ("SoundCloud", "Game OST", "Torrent P2P", "Radio Stream"):
+                q_parts.append(str(t_meta["ARTIST"]))
+            if t_meta.get("TITLE"):
+                q_parts.append(str(t_meta["TITLE"]))
+            q_lookup = " ".join(q_parts).strip() or clean_stem
+            img_bytes, mime = _fetch_online_cover_by_query_v251(q_lookup)
         except Exception:
             pass
 
     if img_bytes:
+        try:
+            _save_and_embed_track_cover_v251(full_path, img_bytes, mime or "image/jpeg")
+        except Exception:
+            pass
         with _ISLAND_COVER_LOCK_V250:
-            if len(_ISLAND_COVER_CACHE_V250) > 24:
+            if len(_ISLAND_COVER_CACHE_V250) > 32:
                 _ISLAND_COVER_CACHE_V250.clear()
-            _ISLAND_COVER_CACHE_V250[full_path] = (img_bytes, mime)
+            _ISLAND_COVER_CACHE_V250[full_path] = (img_bytes, mime or "image/jpeg")
     return img_bytes, mime
 
 
@@ -14331,7 +14918,7 @@ def api_island_sc_artwork_v250():
             c_type = r.headers.get("Content-Type") or "image/jpeg"
         if raw_img and len(raw_img) > 128:
             with _ISLAND_COVER_LOCK_V250:
-                if len(_ISLAND_COVER_CACHE_V250) > 24:
+                if len(_ISLAND_COVER_CACHE_V250) > 32:
                     _ISLAND_COVER_CACHE_V250.clear()
                 _ISLAND_COVER_CACHE_V250[u] = (raw_img, c_type)
             response.content_type = c_type
@@ -14365,14 +14952,14 @@ def api_island_browse_images_v250():
         req = json.loads(request.body.read().decode("utf-8") or "{}")
     except Exception:
         req = {}
-    req_dir = (req.get("dir") or "/storage/emulated/0/Download").strip()
+    req_dir = (req.get("path") or req.get("dir") or "/storage/emulated/0").strip()
     if not os.path.isdir(req_dir):
-        for fb in ("/storage/emulated/0/Download", "/storage/emulated/0/Pictures", "/storage/emulated/0/DCIM", "/storage/emulated/0"):
+        for fb in ("/storage/emulated/0", "/storage/emulated/0/Download", "/storage/emulated/0/Pictures", "/storage/emulated/0/DCIM"):
             if os.path.isdir(fb):
                 req_dir = fb
                 break
     req_dir = os.path.abspath(req_dir)
-    parent_dir = os.path.dirname(req_dir) if req_dir != "/" else "/"
+    parent_dir = os.path.dirname(req_dir) if req_dir not in ("/", "/storage/emulated/0") else ("/storage/emulated/0" if req_dir != "/storage/emulated/0" else "")
 
     img_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
     dirs_out = []
@@ -14402,6 +14989,7 @@ def api_island_browse_images_v250():
                     imgs_out.append({
                         "name": entry,
                         "path": fp,
+                        "size": sz_b,
                         "size_str": sz_str,
                         "mtime": mtime,
                     })
@@ -14412,7 +15000,9 @@ def api_island_browse_images_v250():
     imgs_out.sort(key=lambda x: (x["mtime"], x["name"].lower()), reverse=True)
     return json.dumps({
         "status": "ok",
+        "current": req_dir,
         "current_dir": req_dir,
+        "parent": parent_dir,
         "parent_dir": parent_dir,
         "dirs": dirs_out,
         "images": imgs_out,

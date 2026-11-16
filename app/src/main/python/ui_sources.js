@@ -1220,7 +1220,7 @@ window.runScDedicatedSearchV93 = async function() {
         body.innerHTML = tracks.map(t => `<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0b0f16;border:1px solid ${t.downloaded ? 'rgba(63,185,80,0.6)' : '#21262d'};border-radius:8px;">
             <div style="flex:1;min-width:0;">
                 <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;">${t.index}. ${t.title}</div>
-                <div style="color:#8b949e;font-size:10px;margin-top:2px;">⏱ ${t.duration} • Полный MP3 поток ${t.downloaded ? '• ✅ В плеере' : ''}</div>
+                <div style="color:#8b949e;font-size:10px;margin-top:2px;">⏱ ${t.duration}${t.downloaded ? ' • ✅ В плеере' : ''}</div>
             </div>
             <button type="button" class="kh-prev-btn-v88" onclick="window.previewScTrackV96(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">▶</button>
             <button type="button" onclick="window.downloadScTrackV96(${t.index}, this, event)" style="padding:4px 8px;font-size:11px;background:rgba(255,140,66,0.18);color:#ff8c42;border:1px solid #ff8c42;">${t.downloaded ? '✅' : '⬇️'}</button>
@@ -4559,7 +4559,7 @@ window.stopAllExternalStreamsV97 = function() {
             var totSec = window.getEffectiveScTotalDurSecV250(aud);
             var curSec = window.getEffectiveScCurrentTimeSecV250(aud);
             var curStr = (typeof window.fmtKhSecV90 === 'function') ? window.fmtKhSecV90(curSec) : '0:00';
-            var durStr = (totSec > 0 && typeof window.fmtKhSecV90 === 'function') ? window.fmtKhSecV90(totSec) : 'Поток';
+            var durStr = (totSec > 0 && typeof window.fmtKhSecV90 === 'function') ? window.fmtKhSecV90(totSec) : '0:00';
             var pct = (totSec > 0) ? Math.min(1000, Math.max(0, Math.round((curSec / totSec) * 1000))) : 0;
             if (cEl) cEl.innerText = curStr;
             if (dEl) dEl.innerText = durStr;
@@ -4621,7 +4621,7 @@ window.stopAllExternalStreamsV97 = function() {
             aud.volume = window.getKhPreviewVolumeV90();
             window._khStateV88.previewAudio = aud;
             window._lastExternalAudioElV243 = aud;
-            window._lastExternalTitleV243 = t.title || 'SoundCloud Поток';
+            window._lastExternalTitleV243 = t.title || 'SoundCloud';
             window._lastScTrackIdxV245 = t.index;
 
             window.bindAudioToSingleModalMiniPlayerV241(aud, t.index + '. ' + t.title, 'jennySoundCloudModalV93');
