@@ -4671,3 +4671,441 @@ window.stopAllExternalStreamsV97 = function() {
     };
 })();
 /* ================= END [FIX-SC-SEEK-V250] SOUNDCLOUD MINI-PLAYER & ISLAND DURATION + SEEK ================= */
+
+/* ================= [FIX-YOUTUBE-COMPLETE-V252] YOUTUBE STUDIO + YOUTUBE MUSIC + 1-CLICK ENGINE UPDATER ================= */
+(function() {
+    window._ytStudioStateV252 = window._ytStudioStateV252 || {
+        mode: 'music', // 'music' | 'video'
+        results: [],
+        currentIdx: -1,
+        selectedHeight: 720,
+        engineInfo: null
+    };
+
+    window.getEffectiveYtTotalDurSecV252 = function(aud) {
+        if (!aud) return 0;
+        var d = Number(aud._ytKnownDurationSecV252 || 0);
+        if (d > 0) return d;
+        if (isFinite(aud.duration) && aud.duration > 0 && aud.duration < 86400) return aud.duration;
+        return 180;
+    };
+
+    window.getEffectiveYtCurrentSecV252 = function(aud) {
+        if (!aud) return 0;
+        return Math.max(0, Number(aud._ytSeekBaseSecV252 || 0) + Number(aud.currentTime || 0));
+    };
+
+    window.seekYoutubeStreamToSecV252 = function(aud, targetSec) {
+        if (!aud) return;
+        var vid = aud._ytVideoIdV252 || '';
+        var tot = window.getEffectiveYtTotalDurSecV252(aud);
+        var clamped = Math.max(0, Math.min(tot > 0 ? tot - 0.5 : targetSec, Number(targetSec) || 0));
+        // If playing a direct m4a/mp3 file with native Range support and _ytSeekBaseSecV252 == 0, try native currentTime first
+        if (!aud._ytSeekBaseSecV252 && isFinite(aud.duration) && aud.duration > 1 && aud.seekable && aud.seekable.length > 0) {
+            try {
+                if (aud.seekable.end(0) >= clamped) {
+                    aud.currentTime = clamped;
+                    if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                        window.syncPermanentForegroundNotificationV212(true);
+                    }
+                    return;
+                }
+            } catch (e) {}
+        }
+        if (!vid) return;
+        var wasPlaying = !aud.paused;
+        aud._ytSeekBaseSecV252 = clamped;
+        aud.src = '/api/youtube/live_stream?v=' + encodeURIComponent(vid) + '&seek=' + clamped.toFixed(1) + '&_t=' + Date.now();
+        if (wasPlaying) {
+            aud.play().catch(function() {});
+        }
+        if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+            window.syncPermanentForegroundNotificationV212(true);
+        }
+    };
+
+    var _origSeekKhMiniV252 = window.seekKhMiniPlayerV90;
+    window.seekKhMiniPlayerV90 = function(val1000) {
+        var aud = window._khStateV88 && window._khStateV88.previewAudio;
+        if (aud && (aud._previewOwnerModalV241 === 'jennyYoutubeStudioModalV230' || String(aud._pagePath || '').indexOf('yt:') === 0)) {
+            var tot = window.getEffectiveYtTotalDurSecV252(aud);
+            if (tot > 0) {
+                var targetSec = (Math.max(0, Math.min(1000, Number(val1000) || 0)) / 1000.0) * tot;
+                window.seekYoutubeStreamToSecV252(aud, targetSec);
+                return;
+            }
+        }
+        if (typeof _origSeekKhMiniV252 === 'function') {
+            return _origSeekKhMiniV252.apply(this, arguments);
+        }
+    };
+
+    window.refreshYtEngineStatusBadgeV252 = async function() {
+        var badgeEl = document.getElementById('ytEngineStatusBadgeV252');
+        try {
+            var r = await fetch('/api/youtube/engine_status');
+            var j = await r.json();
+            if (j && j.state) {
+                window._ytStudioStateV252.engineInfo = j.state;
+                if (badgeEl) {
+                    badgeEl.innerText = 'Ядро: yt-dlp ' + (j.state.yt_dlp_version || '—') +
+                        ' • EJS ' + (j.state.ejs_version || '—') +
+                        ' • ' + (j.state.abi || 'ARM');
+                }
+            }
+        } catch (e) {}
+    };
+
+    window.triggerOneClickYtEngineUpdateV252 = async function(btnEl) {
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.innerText = '⏳ Компиляция и обновление...';
+        }
+        var badgeEl = document.getElementById('ytEngineStatusBadgeV252');
+        if (badgeEl) badgeEl.innerText = 'Скачивание свежих патчей yt-dlp и yt-dlp-ejs с официального GitHub...';
+        try {
+            var r = await fetch('/api/youtube/update_engine', { method: 'POST' });
+            var j = await r.json();
+            if (j && j.state) {
+                window._ytStudioStateV252.engineInfo = j.state;
+                if (badgeEl) {
+                    badgeEl.innerText = '✅ ' + (j.state.message || ('yt-dlp ' + j.state.yt_dlp_version));
+                }
+                if (typeof window.showToast === 'function') {
+                    window.showToast('✅ Ядро YouTube успешно обновлено и скомпилировано!');
+                }
+            }
+        } catch (e) {
+            if (badgeEl) badgeEl.innerText = '❌ Ошибка обновления: ' + (e.message || e);
+            if (typeof window.showToast === 'function') window.showToast('❌ Ошибка обновления: ' + (e.message || e));
+        } finally {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerText = '🔄 Обновить ядро (1 клик)';
+            }
+        }
+    };
+
+    window.switchYtStudioModeV252 = function(newMode) {
+        var st = window._ytStudioStateV252;
+        st.mode = (newMode === 'video') ? 'video' : 'music';
+        var btnM = document.getElementById('ytModeBtnMusicV252');
+        var btnV = document.getElementById('ytModeBtnVideoV252');
+        if (btnM) {
+            btnM.style.background = (st.mode === 'music') ? 'linear-gradient(135deg,#ff3b3b,#b91c1c)' : 'rgba(255,255,255,0.06)';
+            btnM.style.color = (st.mode === 'music') ? '#fff' : '#aaa';
+            btnM.style.borderColor = (st.mode === 'music') ? '#ff6b6b' : 'rgba(255,255,255,0.14)';
+        }
+        if (btnV) {
+            btnV.style.background = (st.mode === 'video') ? 'linear-gradient(135deg,#ff3b3b,#b91c1c)' : 'rgba(255,255,255,0.06)';
+            btnV.style.color = (st.mode === 'video') ? '#fff' : '#aaa';
+            btnV.style.borderColor = (st.mode === 'video') ? '#ff6b6b' : 'rgba(255,255,255,0.14)';
+        }
+        window.renderYtSearchResultsV252();
+    };
+
+    window.runYtStudioSearchV252 = async function() {
+        var inp = document.getElementById('ytSearchInputV252');
+        var listEl = document.getElementById('ytResultsListV252');
+        if (!inp || !listEl) return;
+        var q = (inp.value || '').trim();
+        if (!q) {
+            if (typeof window.showToast === 'function') window.showToast('Введите название трека, клипа или ссылку YouTube');
+            return;
+        }
+        listEl.innerHTML = '<div style="padding:28px;text-align:center;color:#ff8888;font-weight:700;">🔎 Поиск в YouTube (' +
+            (window._ytStudioStateV252.mode === 'music' ? 'YouTube Music' : 'YouTube Видео') + ')...</div>';
+        try {
+            var r = await fetch('/api/youtube/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: q, mode: window._ytStudioStateV252.mode })
+            });
+            var j = await r.json();
+            if (j.status !== 'ok') {
+                listEl.innerHTML = '<div style="padding:20px;color:#ff6b6b;text-align:center;">❌ ' + (j.error || 'Ошибка поиска') + '</div>';
+                return;
+            }
+            window._ytStudioStateV252.results = j.results || [];
+            window.renderYtSearchResultsV252();
+        } catch (e) {
+            listEl.innerHTML = '<div style="padding:20px;color:#ff6b6b;text-align:center;">❌ Ошибка сети: ' + (e.message || e) + '</div>';
+        }
+    };
+
+    window.renderYtSearchResultsV252 = function() {
+        var listEl = document.getElementById('ytResultsListV252');
+        if (!listEl) return;
+        var st = window._ytStudioStateV252;
+        var items = st.results || [];
+        if (!items.length) {
+            listEl.innerHTML = '<div style="padding:26px;text-align:center;color:#8b949e;font-size:13px;">Введите запрос выше (например: <b>50 Cent Just A Lil Bit</b> или <b>Eminem</b>) и нажмите <b>Найти</b></div>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            var safeTitle = String(it.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            var safeChan = String(it.channel || 'YouTube').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            var isCur = (st.currentIdx === i);
+            html += '<div style="display:flex;flex-direction:column;gap:8px;padding:10px;margin-bottom:8px;border-radius:12px;background:' +
+                (isCur ? 'rgba(255,65,65,0.16)' : 'rgba(255,255,255,0.04)') + ';border:1px solid ' +
+                (isCur ? '#ff5555' : 'rgba(255,255,255,0.09)') + ';">' +
+                '<div style="display:flex;gap:10px;align-items:center;">' +
+                '<img src="' + (it.thumbnail || '') + '" style="width:68px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;background:#111;" onerror="this.style.display=\'none\'">' +
+                '<div style="flex:1;min-width:0;">' +
+                '<div style="font-size:13px;font-weight:700;color:#f0f6fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (i + 1) + '. ' + safeTitle + '</div>' +
+                '<div style="font-size:11px;color:#ff9999;margin-top:2px;">' + safeChan + ' • <span style="color:#ffd2d2;font-family:monospace;">' + (it.duration_str || '—') + '</span></div>' +
+                '</div>' +
+                '</div>' +
+                '<div style="display:flex;flex-wrap:wrap;gap:6px;">' +
+                '<button id="ytPlayBtnV252_' + i + '" onclick="window.playYtStudioItemByIndexV252(' + i + ', this)" style="flex:1;min-width:95px;padding:7px 10px;border-radius:8px;border:1px solid #ff5555;background:linear-gradient(135deg,#ff3b3b,#b91c1c);color:#fff;font-weight:700;font-size:12px;cursor:pointer;">▶ Слушать</button>' +
+                '<button onclick="window.saveYtItemAsXflacV252(' + i + ', this)" style="flex:1;min-width:110px;padding:7px 10px;border-radius:8px;border:1px solid rgba(163,113,247,0.55);background:rgba(110,56,197,0.28);color:#e2c5ff;font-weight:700;font-size:12px;cursor:pointer;">💾 В .xFLAC</button>' +
+                '<button onclick="window.openYtItemInDeckBV252(' + i + ', this)" style="flex:1;min-width:105px;padding:7px 10px;border-radius:8px;border:1px solid rgba(88,166,255,0.55);background:rgba(31,111,235,0.28);color:#9ecbff;font-weight:700;font-size:12px;cursor:pointer;">🎬 В Деку Б</button>' +
+                '<button onclick="window.downloadYtItemMp4V252(' + i + ', this)" style="flex:1;min-width:95px;padding:7px 10px;border-radius:8px;border:1px solid rgba(46,160,67,0.55);background:rgba(35,134,54,0.28);color:#7ee787;font-weight:700;font-size:12px;cursor:pointer;">📹 MP4</button>' +
+                '</div>' +
+                '</div>';
+        }
+        listEl.innerHTML = html;
+    };
+
+    window.playYtStudioItemByIndexV252 = async function(idx, btnEl) {
+        var st = window._ytStudioStateV252;
+        var items = st.results || [];
+        if (idx < 0 || idx >= items.length) return;
+        var item = items[idx];
+
+        // If already playing this exact item, toggle pause
+        var curAud = window._khStateV88 && window._khStateV88.previewAudio;
+        if (curAud && curAud._ytVideoIdV252 === item.id && !curAud.paused) {
+            curAud.pause();
+            if (btnEl) btnEl.innerText = '▶ Слушать';
+            if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                window.syncPermanentForegroundNotificationV212(true);
+            }
+            return;
+        }
+
+        if (typeof window.stopAllExternalPreviewsAndMainDecksV241 === 'function') {
+            window.stopAllExternalPreviewsAndMainDecksV241();
+        }
+
+        st.currentIdx = idx;
+        window._lastYtTrackIdxV252 = idx;
+        window._lastYtVideoIdV252 = item.id;
+        window._lastYtTrackMetaV252 = item;
+        window._forcedIslandModeV245 = 'youtube';
+        window._lastActiveMediaSourceV243 = 'youtube';
+
+        if (btnEl) btnEl.innerText = '⏳ Загрузка...';
+        if (typeof window.showToast === 'function') {
+            window.showToast('⏳ Подготовка потока YouTube: ' + (item.title || item.id));
+        }
+
+        var myReqId = (window._previewReqIdV97 = (window._previewReqIdV97 || 0) + 1);
+        try {
+            // Warm up info & stream cache
+            var infoRes = await fetch('/api/youtube/info', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: item.id })
+            });
+            var infoJson = await infoRes.json();
+            if (myReqId !== window._previewReqIdV97) return;
+            if (infoJson.status === 'ok' && infoJson.duration > 0) {
+                item.duration = infoJson.duration;
+            }
+
+            var aud = new Audio('/api/youtube/live_stream?v=' + encodeURIComponent(item.id) + '&seek=0&_t=' + Date.now());
+            aud._pagePath = 'yt:' + item.id;
+            aud._ytVideoIdV252 = item.id;
+            aud._ytTitleV252 = item.title || 'YouTube';
+            aud._ytChannelV252 = item.channel || 'YouTube';
+            aud._ytSeekBaseSecV252 = 0;
+            aud._ytKnownDurationSecV252 = Number(item.duration || 0) > 0 ? Number(item.duration) : 0;
+            aud._previewOwnerModalV241 = 'jennyYoutubeStudioModalV230';
+            aud.volume = (typeof window.getKhPreviewVolumeV90 === 'function') ? window.getKhPreviewVolumeV90() : 1.0;
+
+            window._khStateV88 = window._khStateV88 || {};
+            window._khStateV88.previewAudio = aud;
+            window._lastExternalAudioElV243 = aud;
+            window._lastExternalTitleV243 = item.title || 'YouTube';
+            window._ytAudioElV252 = aud;
+
+            if (typeof window.bindAudioToSingleModalMiniPlayerV241 === 'function') {
+                window.bindAudioToSingleModalMiniPlayerV241(aud, (idx + 1) + '. ' + (item.title || 'YouTube'), 'jennyYoutubeStudioModalV230');
+            }
+
+            aud.addEventListener('timeupdate', function() {
+                var modal = document.getElementById('jennyYoutubeStudioModalV230');
+                if (!modal) return;
+                var curS = window.getEffectiveYtCurrentSecV252(aud);
+                var totS = window.getEffectiveYtTotalDurSecV252(aud);
+                var seekEl = modal.querySelector('.jenny-univ-mini-player-v98 .ump-seek');
+                var timeEl = modal.querySelector('.jenny-univ-mini-player-v98 .ump-time');
+                if (seekEl && totS > 0 && document.activeElement !== seekEl) {
+                    seekEl.value = Math.min(1000, Math.round((curS / totS) * 1000));
+                }
+                if (timeEl) {
+                    var fmt = function(s) {
+                        s = Math.max(0, Math.floor(s || 0));
+                        return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+                    };
+                    timeEl.innerText = fmt(curS) + ' / ' + fmt(totS);
+                }
+            });
+
+            aud.onended = function() {
+                if (btnEl) btnEl.innerText = '▶ Слушать';
+                // Auto-advance to next track in YouTube list
+                if (idx + 1 < (window._ytStudioStateV252.results || []).length) {
+                    window.playYtStudioItemByIndexV252(idx + 1, null);
+                } else if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                    window.syncPermanentForegroundNotificationV212(true);
+                }
+            };
+
+            await aud.play();
+            if (myReqId !== window._previewReqIdV97) {
+                aud.pause();
+                return;
+            }
+            window.renderYtSearchResultsV252();
+            var newBtn = document.getElementById('ytPlayBtnV252_' + idx);
+            if (newBtn) newBtn.innerText = '⏸ Пауза';
+            if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                window.syncPermanentForegroundNotificationV212(true);
+            }
+        } catch (e) {
+            if (btnEl) btnEl.innerText = '▶ Слушать';
+            if (typeof window.showToast === 'function') window.showToast('❌ Ошибка YouTube: ' + (e.message || e));
+        }
+    };
+
+    window.saveYtItemAsXflacV252 = async function(idx, btnEl) {
+        var st = window._ytStudioStateV252;
+        var item = (st.results || [])[idx] || window._lastYtTrackMetaV252;
+        if (!item || !item.id) {
+            if (typeof window.showToast === 'function') window.showToast('Сначала выберите трек YouTube');
+            return;
+        }
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.innerText = '⏳ В .xFLAC...';
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast('⏳ Скачивание и упаковка в .xFLAC с обложкой: ' + (item.title || item.id));
+        }
+        try {
+            var r = await fetch('/api/youtube/save_xflac', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: item.id, title: item.title, channel: item.channel })
+            });
+            var j = await r.json();
+            if (j.status === 'ok') {
+                if (typeof window.showToast === 'function') {
+                    window.showToast('✅ Сохранено в плеер: ' + (j.filename || j.path));
+                }
+                if (typeof window.loadTracks === 'function') {
+                    window.loadTracks();
+                }
+            } else {
+                if (typeof window.showToast === 'function') window.showToast('❌ Ошибка .xFLAC: ' + (j.error || 'неизвестно'));
+            }
+        } catch (e) {
+            if (typeof window.showToast === 'function') window.showToast('❌ Ошибка: ' + (e.message || e));
+        } finally {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerText = '💾 В .xFLAC';
+            }
+        }
+    };
+
+    window.openYtItemInDeckBV252 = async function(idx, btnEl) {
+        var st = window._ytStudioStateV252;
+        var item = (st.results || [])[idx];
+        if (!item || !item.id) return;
+        var qSel = document.getElementById('ytQualitySelectV252');
+        var prefH = qSel ? (parseInt(qSel.value, 10) || 720) : (st.selectedHeight || 720);
+        if (typeof window.playYoutubeVideoInDeckBV230 === 'function') {
+            await window.playYoutubeVideoInDeckBV230(item.id, item.title, prefH, btnEl);
+        }
+    };
+
+    window.downloadYtItemMp4V252 = async function(idx, btnEl) {
+        var st = window._ytStudioStateV252;
+        var item = (st.results || [])[idx];
+        if (!item || !item.id) return;
+        var qSel = document.getElementById('ytQualitySelectV252');
+        var prefH = qSel ? (parseInt(qSel.value, 10) || 720) : (st.selectedHeight || 720);
+        if (typeof window.downloadYoutubeVideoV230 === 'function') {
+            await window.downloadYoutubeVideoV230(item.id, item.title, prefH, btnEl);
+        }
+    };
+
+    window.openYoutubeStudioModalV230 = function(initialMode) {
+        var existing = document.getElementById('jennyYoutubeStudioModalV230');
+        if (existing) existing.remove();
+
+        var st = window._ytStudioStateV252;
+        if (initialMode === 'video' || initialMode === 'music') {
+            st.mode = initialMode;
+        }
+
+        var modal = document.createElement('div');
+        modal.id = 'jennyYoutubeStudioModalV230';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(8,10,16,0.92);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:10px;';
+
+        modal.innerHTML =
+            '<div style="width:100%;max-width:560px;max-height:92vh;background:linear-gradient(180deg,#180c12 0%,#0d1117 100%);border:1.5px solid #ff5555;border-radius:18px;box-shadow:0 0 32px rgba(255,60,60,0.28);display:flex;flex-direction:column;overflow:hidden;color:#f0f6fc;">' +
+                // Header
+                '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,85,85,0.25);background:rgba(255,50,50,0.08);">' +
+                    '<div style="display:flex;align-items:center;gap:8px;">' +
+                        '<span style="font-size:18px;">▶</span>' +
+                        '<div>' +
+                            '<div style="font-size:15px;font-weight:800;color:#fff;letter-spacing:0.3px;">YouTube Studio &amp; Music</div>' +
+                            '<div id="ytEngineStatusBadgeV252" style="font-size:10.5px;color:#ff9999;">Проверка встроенного JS-ядра...</div>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:6px;">' +
+                        '<button onclick="window.triggerOneClickYtEngineUpdateV252(this)" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,136,136,0.5);background:rgba(255,60,60,0.2);color:#ffd2d2;font-size:11px;font-weight:700;cursor:pointer;">🔄 Обновить ядро (1 клик)</button>' +
+                        '<button onclick="document.getElementById(\'jennyYoutubeStudioModalV230\').remove()" style="width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#fff;font-size:16px;cursor:pointer;">✕</button>' +
+                    '</div>' +
+                '</div>' +
+                // Mode tabs + Quality selector
+                '<div style="display:flex;gap:8px;padding:10px 14px 6px 14px;align-items:center;">' +
+                    '<button id="ytModeBtnMusicV252" onclick="window.switchYtStudioModeV252(\'music\')" style="flex:1;padding:8px 10px;border-radius:10px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#b91c1c);color:#fff;font-weight:700;font-size:12px;cursor:pointer;">🎵 YouTube Music</button>' +
+                    '<button id="ytModeBtnVideoV252" onclick="window.switchYtStudioModeV252(\'video\')" style="flex:1;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:#aaa;font-weight:700;font-size:12px;cursor:pointer;">🎬 YouTube Видео</button>' +
+                    '<select id="ytQualitySelectV252" onchange="window._ytStudioStateV252.selectedHeight=parseInt(this.value,10)||720" style="padding:7px 8px;border-radius:10px;border:1px solid rgba(255,120,120,0.4);background:#161b22;color:#ffd2d2;font-size:11.5px;font-weight:700;">' +
+                        '<option value="1080">1080p</option>' +
+                        '<option value="720" selected>720p</option>' +
+                        '<option value="480">480p</option>' +
+                        '<option value="360">360p</option>' +
+                    '</select>' +
+                '</div>' +
+                // Search bar
+                '<div style="display:flex;gap:8px;padding:6px 14px 10px 14px;">' +
+                    '<input id="ytSearchInputV252" type="text" placeholder="Поиск трека, клипа или ссылка YouTube..." style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,100,100,0.35);background:#0d1117;color:#fff;font-size:13px;outline:none;" onkeydown="if(event.key===\'Enter\') window.runYtStudioSearchV252()">' +
+                    '<button onclick="window.runYtStudioSearchV252()" style="padding:10px 16px;border-radius:10px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#c91c1c);color:#fff;font-weight:800;font-size:13px;cursor:pointer;">Найти</button>' +
+                '</div>' +
+                // Results list
+                '<div id="ytResultsListV252" style="flex:1;overflow-y:auto;padding:4px 14px 12px 14px;min-height:180px;"></div>' +
+                // Mini-player container
+                '<div id="ytMiniPlayerHostV252" style="padding:0 12px 10px 12px;"></div>' +
+            '</div>';
+
+        document.body.appendChild(modal);
+
+        if (typeof window.ensureUniversalMiniPlayerInModalV241 === 'function') {
+            window.ensureUniversalMiniPlayerInModalV241('jennyYoutubeStudioModalV230');
+        }
+        window.switchYtStudioModeV252(st.mode);
+        window.refreshYtEngineStatusBadgeV252();
+    };
+
+    window.openYoutubeModalV185 = window.openYoutubeStudioModalV230;
+})();
+/* ================= END [FIX-YOUTUBE-COMPLETE-V252] ================= */
+

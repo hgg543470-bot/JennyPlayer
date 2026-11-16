@@ -1,3 +1,11 @@
+import sys
+import io
+import zipfile
+import tempfile
+import compileall
+import importlib
+import platform
+import concurrent.futures
 import threading
 import ctypes
 import lzma
@@ -15013,3 +15021,1251 @@ _override_bottle_route_v212('/api/island/track_cover', 'GET', api_island_track_c
 _override_bottle_route_v212('/api/island/sc_artwork', 'GET', api_island_sc_artwork_v250)
 _override_bottle_route_v212('/api/island/custom_image', 'GET', api_island_custom_image_v250)
 _override_bottle_route_v212('/api/island/browse_images', 'POST', api_island_browse_images_v250)
+
+
+# ==============================================================================
+# [FIX-YOUTUBE-COMPLETE-V252] NATIVE JS ENGINE (ARM64/ARM32), OFFICIAL UPSTREAM
+# AUTO/1-CLICK UPDATER + ON-DEVICE BYTECODE COMPILER, UNTHROTTLED AUDIO & DECK B
+# ==============================================================================
+
+_YT_V252_LOCK = threading.Lock()
+_YT_V252_UPDATER_LOCK = threading.Lock()
+_YT_V252_META_CACHE = {}
+_YT_V252_QJS_CDLL = None
+_YT_V252_NODE_BIN_PATH = None
+_YT_V252_POPEN_HOOKED = False
+_YT_V252_UPDATE_STATE = {
+    "updating": False,
+    "last_check_ts": 0.0,
+    "last_update_ts": 0.0,
+    "yt_dlp_version": "unknown",
+    "ejs_version": "unknown",
+    "js_runtime": "initializing",
+    "abi": "unknown",
+    "source_repo": "bundled",
+    "message": "Готов к работе",
+}
+
+
+def _detect_android_abi_v252() -> str:
+    try:
+        m = (platform.machine() or "").lower()
+        if not m and hasattr(os, "uname"):
+            m = (os.uname().machine or "").lower()
+    except Exception:
+        m = ""
+    if any(k in m for k in ("aarch64", "arm64")):
+        return "arm64-v8a"
+    if any(k in m for k in ("armv7", "armv8l", "arm", "eabihf")):
+        return "armeabi-v7a"
+    if "x86_64" in m or "amd64" in m:
+        return "x86_64"
+    try:
+        out = subprocess.check_output(["getprop", "ro.product.cpu.abi"], timeout=2, text=True).strip().lower()
+        if "arm64" in out:
+            return "arm64-v8a"
+        if "armeabi" in out or "armv7" in out:
+            return "armeabi-v7a"
+    except Exception:
+        pass
+    return "arm64-v8a" if (struct.calcsize("P") * 8 >= 64) else "armeabi-v7a"
+
+
+def _normalize_yt_video_id_v252(raw_val: str) -> str:
+    s = str(raw_val or "").strip()
+    if not s:
+        return ""
+    if s.startswith("yt://"):
+        s = s[5:].strip()
+    if s.startswith("yt:"):
+        s = s[3:].strip()
+    m = re.search(r"(?:v=|youtu\.be/|/embed/|/shorts/|/live/)([A-Za-z0-9_-]{11})", s)
+    if m:
+        return m.group(1)
+    m2 = re.match(r"^([A-Za-z0-9_-]{11})(?:[?&].*)?$", s)
+    if m2:
+        return m2.group(1)
+    return ""
+
+
+def _get_yt_engine_dir_v252() -> str:
+    candidates = [
+        "/data/data/com.jenny.player/files/yt_engine_v252",
+        os.path.join(get_jenny_hub_root_v242(), "yt_engine_v252"),
+        "/tmp/jenny_yt_engine_v252",
+        os.path.join(BASE_DIR, "_yt_engine_v252"),
+    ]
+    for d in candidates:
+        try:
+            os.makedirs(os.path.join(d, "site_pkgs"), exist_ok=True)
+            os.makedirs(os.path.join(d, "ydlp_cache"), exist_ok=True)
+            os.makedirs(os.path.join(d, "bin"), exist_ok=True)
+            test_f = os.path.join(d, ".wtest")
+            with open(test_f, "w", encoding="utf-8") as f:
+                f.write("ok")
+            os.remove(test_f)
+            return d
+        except Exception:
+            continue
+    return "/tmp/jenny_yt_engine_v252"
+
+
+def _get_yt_stream_cache_dir_v252() -> str:
+    for d in ("/tmp/jenny_yt_stream_cache_v252", os.path.join(_get_yt_engine_dir_v252(), "stream_cache")):
+        try:
+            os.makedirs(d, exist_ok=True)
+            return d
+        except Exception:
+            continue
+    return "/tmp"
+
+
+def _find_native_lib_dir_v252() -> str:
+    abi = _detect_android_abi_v252()
+    _YT_V252_UPDATE_STATE["abi"] = abi
+    app_root = os.path.dirname(os.path.dirname(BASE_DIR))
+    candidates = []
+    for sub in ("arm64", "arm", "arm64-v8a", "armeabi-v7a", "x86_64"):
+        candidates.append(os.path.join(app_root, "lib", sub))
+    try:
+        with open("/proc/self/maps", "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if ".so" in line and "/lib/" in line:
+                    idx = line.find("/")
+                    if idx >= 0:
+                        p = line[idx:].strip().split()[0]
+                        d = os.path.dirname(p)
+                        if os.path.isdir(d) and d not in candidates:
+                            candidates.insert(0, d)
+    except Exception:
+        pass
+    candidates.extend([
+        os.path.join(BASE_DIR, "..", "jniLibs", abi),
+        "/tmp/jenny_yt_live_test",
+        BASE_DIR,
+    ])
+    for c in candidates:
+        if os.path.isdir(c):
+            for fn in ("libjenny_qjs.so", "libnode.so", "libffmpeg.so"):
+                if os.path.isfile(os.path.join(c, fn)):
+                    return c
+    return candidates[0] if candidates else BASE_DIR
+
+
+def _eval_js_via_cdll_v252(js_code: str) -> tuple:
+    global _YT_V252_QJS_CDLL
+    if _YT_V252_QJS_CDLL is None:
+        return (-1, "")
+    try:
+        data = (js_code or "").encode("utf-8")
+        out_cap = 16 * 1024 * 1024
+        out_buf = ctypes.create_string_buffer(out_cap)
+        rc = _YT_V252_QJS_CDLL.jenny_qjs_eval(data, out_buf, out_cap)
+        res = out_buf.value.decode("utf-8", errors="replace")
+        return (rc, res)
+    except Exception as e:
+        return (-1, f"ERROR: {e}")
+
+
+_ORIG_SUBPROCESS_POPEN_V252 = subprocess.Popen
+_ORIG_SHUTIL_WHICH_V252 = shutil.which
+
+
+class _JennyHookedPopenV252(_ORIG_SUBPROCESS_POPEN_V252):
+    def __init__(self, args, *a, **kw):
+        cmd0 = ""
+        if isinstance(args, (list, tuple)) and len(args) > 0:
+            cmd0 = os.path.basename(str(args[0])).lower()
+        elif isinstance(args, str):
+            cmd0 = os.path.basename(args.split()[0]).lower() if args.strip() else ""
+        if cmd0 in ("libnode.so", "libqjs.so", "libjenny_qjs.so", "node", "nodejs", "qjs", "quickjs") and _YT_V252_QJS_CDLL is not None:
+            self._is_jenny_js = True
+            self._js_args = list(args) if isinstance(args, (list, tuple)) else [str(args)]
+            self._js_text = bool(kw.get("text") or kw.get("universal_newlines") or kw.get("encoding") or kw.get("errors"))
+            self._Popen__text_mode = self._js_text
+            self.returncode = 0
+            self.pid = 99999
+            self.stdin = None
+            self.stdout = None
+            self.stderr = None
+            return
+        self._is_jenny_js = False
+        super().__init__(args, *a, **kw)
+
+    def communicate(self, input=None, timeout=None):
+        if getattr(self, "_is_jenny_js", False):
+            code = ""
+            if input is not None:
+                code = input.decode("utf-8", errors="replace") if isinstance(input, (bytes, bytearray)) else str(input)
+            for i, arg in enumerate(self._js_args):
+                if arg in ("--version", "-v", "-V"):
+                    out = "v22.14.0\n"
+                    return (out if self._js_text else out.encode("utf-8"), "" if self._js_text else b"")
+                if arg in ("--help", "-h"):
+                    out = "QuickJS version 2025-04-26\nv22.14.0\n"
+                    return (out if self._js_text else out.encode("utf-8"), "" if self._js_text else b"")
+                if arg in ("-e", "--eval", "-p") and i + 1 < len(self._js_args):
+                    code = str(self._js_args[i + 1])
+                if arg == "--script" and i + 1 < len(self._js_args):
+                    try:
+                        with open(self._js_args[i + 1], "r", encoding="utf-8", errors="replace") as f:
+                            code = f.read()
+                    except Exception:
+                        pass
+            if not code:
+                for arg in self._js_args[1:]:
+                    if not str(arg).startswith("-") and os.path.isfile(str(arg)):
+                        try:
+                            with open(str(arg), "r", encoding="utf-8", errors="replace") as f:
+                                code = f.read()
+                            break
+                        except Exception:
+                            pass
+            rc, out_str = _eval_js_via_cdll_v252(code)
+            self.returncode = 0 if rc >= 0 else 1
+            err_str = "" if rc >= 0 else out_str
+            if self._js_text:
+                return (out_str, err_str)
+            return (out_str.encode("utf-8"), err_str.encode("utf-8"))
+        return super().communicate(input=input, timeout=timeout)
+
+    def communicate_or_kill(self, input=None, timeout=None):
+        if getattr(self, "_is_jenny_js", False):
+            return self.communicate(input=input, timeout=timeout)
+        if hasattr(super(), "communicate_or_kill"):
+            return super().communicate_or_kill(input=input, timeout=timeout)
+        return super().communicate(input=input, timeout=timeout)
+
+    def poll(self):
+        if getattr(self, "_is_jenny_js", False):
+            return self.returncode
+        return super().poll()
+
+    def wait(self, timeout=None):
+        if getattr(self, "_is_jenny_js", False):
+            return self.returncode
+        return super().wait(timeout=timeout)
+
+    def kill(self, *a, **kw):
+        if getattr(self, "_is_jenny_js", False):
+            return
+        return super().kill()
+
+    def terminate(self, *a, **kw):
+        if getattr(self, "_is_jenny_js", False):
+            return
+        return super().terminate()
+
+    def __enter__(self):
+        if getattr(self, "_is_jenny_js", False):
+            return self
+        return super().__enter__()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if getattr(self, "_is_jenny_js", False):
+            return False
+        return super().__exit__(exc_type, exc_val, exc_tb)
+
+
+def _jenny_which_v252(cmd, *a, **kw):
+    c = str(cmd or "").strip().lower()
+    if c in ("node", "nodejs", "qjs", "quickjs") and _YT_V252_NODE_BIN_PATH:
+        return _YT_V252_NODE_BIN_PATH
+    return _ORIG_SHUTIL_WHICH_V252(cmd, *a, **kw)
+
+
+def _patch_yt_dlp_internals_v252():
+    try:
+        import yt_dlp
+        _YT_V252_UPDATE_STATE["yt_dlp_version"] = getattr(yt_dlp.version, "__version__", "loaded")
+        try:
+            import yt_dlp_ejs
+            _YT_V252_UPDATE_STATE["ejs_version"] = getattr(yt_dlp_ejs, "__version__", "loaded")
+        except Exception:
+            pass
+        try:
+            import yt_dlp.utils._utils as _u
+            if hasattr(_u, "Popen") and isinstance(_u.Popen, type) and not getattr(_u.Popen, "_is_jenny_patched_v252", False):
+                _base_u_popen = _u.Popen
+                class _JennyYtDlpPopen(_base_u_popen):
+                    _is_jenny_patched_v252 = True
+                    def __init__(self, args, *a, **kw):
+                        cmd0 = os.path.basename(str(args[0])).lower() if isinstance(args, (list, tuple)) and args else ""
+                        if cmd0 in ("libnode.so", "libqjs.so", "libjenny_qjs.so", "node", "nodejs", "qjs", "quickjs") and _YT_V252_QJS_CDLL is not None:
+                            self._is_jenny_js = True
+                            self._js_args = list(args)
+                            self._js_text = bool(kw.get("text") or kw.get("universal_newlines") or kw.get("encoding") or kw.get("errors"))
+                            self._Popen__text_mode = self._js_text
+                            setattr(self, f"_{_base_u_popen.__name__}__text_mode", self._js_text)
+                            self.returncode = 0
+                            self.pid = 99999
+                            self.stdin = None
+                            self.stdout = None
+                            self.stderr = None
+                            return
+                        self._is_jenny_js = False
+                        super().__init__(args, *a, **kw)
+
+                    def communicate(self, input=None, timeout=None):
+                        if getattr(self, "_is_jenny_js", False):
+                            return _JennyHookedPopenV252.communicate(self, input=input, timeout=timeout)
+                        return super().communicate(input=input, timeout=timeout)
+
+                    def communicate_or_kill(self, input=None, timeout=None):
+                        if getattr(self, "_is_jenny_js", False):
+                            return _JennyHookedPopenV252.communicate(self, input=input, timeout=timeout)
+                        return super().communicate_or_kill(input=input, timeout=timeout)
+
+                    def poll(self):
+                        if getattr(self, "_is_jenny_js", False):
+                            return self.returncode
+                        return super().poll()
+
+                    def wait(self, timeout=None):
+                        if getattr(self, "_is_jenny_js", False):
+                            return self.returncode
+                        return super().wait(timeout=timeout)
+
+                    def kill(self, *a, **kw):
+                        if getattr(self, "_is_jenny_js", False):
+                            return
+                        return super().kill(*a, **kw)
+
+                    def terminate(self, *a, **kw):
+                        if getattr(self, "_is_jenny_js", False):
+                            return
+                        return super().terminate(*a, **kw)
+
+                    def __enter__(self):
+                        if getattr(self, "_is_jenny_js", False):
+                            return self
+                        return super().__enter__()
+
+                    def __exit__(self, exc_type, exc_val, exc_tb):
+                        if getattr(self, "_is_jenny_js", False):
+                            return False
+                        return super().__exit__(exc_type, exc_val, exc_tb)
+
+                _u.Popen = _JennyYtDlpPopen
+                import yt_dlp.utils
+                yt_dlp.utils.Popen = _JennyYtDlpPopen
+                try:
+                    import yt_dlp.extractor.youtube.jsc._builtin.node as _nmod
+                    _nmod.Popen = _JennyYtDlpPopen
+                except Exception:
+                    pass
+                try:
+                    import yt_dlp.extractor.youtube.jsc._builtin.quickjs as _qmod
+                    _qmod.Popen = _JennyYtDlpPopen
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            from yt_dlp.extractor.youtube.jsc._builtin.ejs import EJSBaseJCP
+            EJSBaseJCP._ENABLE_PREPROCESSED_PLAYER_CACHE = True
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _init_qjs_runtime_v252():
+    global _YT_V252_QJS_CDLL, _YT_V252_NODE_BIN_PATH, _YT_V252_POPEN_HOOKED
+    eng_dir = _get_yt_engine_dir_v252()
+    site_pkgs = os.path.join(eng_dir, "site_pkgs")
+    if os.path.isdir(site_pkgs) and site_pkgs not in sys.path:
+        sys.path.insert(0, site_pkgs)
+
+    lib_dir = _find_native_lib_dir_v252()
+    qjs_candidates = [
+        os.path.join(lib_dir, "libjenny_qjs.so"),
+        os.path.join(lib_dir, "libnode.so"),
+        os.path.join(lib_dir, "libqjs.so"),
+        "/tmp/jenny_yt_live_test/libjenny_qjs.so",
+    ]
+    for cand in qjs_candidates:
+        if os.path.isfile(cand) and _YT_V252_QJS_CDLL is None:
+            try:
+                cdll = ctypes.CDLL(cand)
+                cdll.jenny_qjs_eval.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+                cdll.jenny_qjs_eval.restype = ctypes.c_int
+                _YT_V252_QJS_CDLL = cdll
+                break
+            except Exception:
+                continue
+
+    node_candidates = [
+        os.path.join(lib_dir, "libnode.so"),
+        os.path.join(lib_dir, "libjenny_qjs.so"),
+        "/tmp/jenny_yt_live_test/libnode.so",
+    ]
+    for nc in node_candidates:
+        if os.path.isfile(nc):
+            _YT_V252_NODE_BIN_PATH = nc
+            break
+
+    if not _YT_V252_NODE_BIN_PATH:
+        # Create a placeholder file in eng_dir/bin/node so yt-dlp's os.path.exists(path) check succeeds
+        fake_node = os.path.join(eng_dir, "bin", "node")
+        try:
+            if not os.path.isfile(fake_node):
+                with open(fake_node, "wb") as f:
+                    f.write(b"#!/bin/sh\n")
+                os.chmod(fake_node, 0o755)
+            _YT_V252_NODE_BIN_PATH = fake_node
+        except Exception:
+            pass
+
+    if not _YT_V252_POPEN_HOOKED:
+        subprocess.Popen = _JennyHookedPopenV252
+        shutil.which = _jenny_which_v252
+        _YT_V252_POPEN_HOOKED = True
+
+    _patch_yt_dlp_internals_v252()
+    if _YT_V252_QJS_CDLL is not None:
+        _YT_V252_UPDATE_STATE["js_runtime"] = f"QuickJS/Node v22.14.0 (CDLL {_YT_V252_UPDATE_STATE['abi']})"
+    else:
+        _YT_V252_UPDATE_STATE["js_runtime"] = f"Fallback ({_YT_V252_UPDATE_STATE['abi']})"
+
+
+def _extract_pkg_from_zip_bytes_v252(zip_bytes: bytes, pkg_name: str, dest_site_pkgs: str) -> bool:
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+        names = zf.namelist()
+        prefix_slash = pkg_name + "/"
+        has_pkg = any(n.startswith(prefix_slash) or ("/" + prefix_slash) in n for n in names)
+        if not has_pkg:
+            return False
+        tmp_extract = os.path.join(dest_site_pkgs, f"_tmp_{pkg_name}_{int(time.time() * 1000)}")
+        os.makedirs(tmp_extract, exist_ok=True)
+        for member in names:
+            if member.endswith("/"):
+                continue
+            rel = None
+            if member.startswith(prefix_slash):
+                rel = member
+            else:
+                idx = member.find("/" + prefix_slash)
+                if idx >= 0:
+                    rel = member[idx + 1:]
+            if not rel or ".." in rel:
+                continue
+            out_p = os.path.join(tmp_extract, rel)
+            os.makedirs(os.path.dirname(out_p), exist_ok=True)
+            with zf.open(member) as src, open(out_p, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        extracted_pkg_dir = os.path.join(tmp_extract, pkg_name)
+        if not os.path.isdir(extracted_pkg_dir):
+            shutil.rmtree(tmp_extract, ignore_errors=True)
+            return False
+        # Compile Python source files on-device into native .pyc bytecode
+        try:
+            compileall.compile_dir(extracted_pkg_dir, quiet=1, force=True)
+        except Exception:
+            pass
+        final_pkg_dir = os.path.join(dest_site_pkgs, pkg_name)
+        old_pkg_dir = os.path.join(dest_site_pkgs, f"_old_{pkg_name}")
+        shutil.rmtree(old_pkg_dir, ignore_errors=True)
+        if os.path.isdir(final_pkg_dir):
+            try:
+                os.rename(final_pkg_dir, old_pkg_dir)
+            except Exception:
+                shutil.rmtree(final_pkg_dir, ignore_errors=True)
+        os.rename(extracted_pkg_dir, final_pkg_dir)
+        shutil.rmtree(tmp_extract, ignore_errors=True)
+        shutil.rmtree(old_pkg_dir, ignore_errors=True)
+        return True
+    except Exception:
+        return False
+
+
+def _http_get_bytes_v252(url: str, timeout: int = 20) -> bytes:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Linux; Android 14) JennyPlayer/252",
+            "Accept": "application/vnd.github+json, application/json, */*",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
+
+
+def update_youtube_engine_from_official_repos_v252(force: bool = False) -> dict:
+    with _YT_V252_UPDATER_LOCK:
+        _YT_V252_UPDATE_STATE["updating"] = True
+        _YT_V252_UPDATE_STATE["message"] = "Проверка официальных репозиториев yt-dlp и yt-dlp-ejs..."
+        try:
+            eng_dir = _get_yt_engine_dir_v252()
+            site_pkgs = os.path.join(eng_dir, "site_pkgs")
+            os.makedirs(site_pkgs, exist_ok=True)
+
+            updated_ytdlp = False
+            updated_ejs = False
+            chosen_source = ""
+            new_ytdlp_ver = ""
+
+            # 1. Official yt-dlp upstream repositories (Master Builds -> Nightly Builds -> Stable -> PyPI)
+            official_ytdlp_apis = [
+                ("yt-dlp/yt-dlp-master-builds", "https://api.github.com/repos/yt-dlp/yt-dlp-master-builds/releases/latest"),
+                ("yt-dlp/yt-dlp-nightly-builds", "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest"),
+                ("yt-dlp/yt-dlp", "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"),
+            ]
+            for repo_label, api_url in official_ytdlp_apis:
+                try:
+                    rel = json.loads(_http_get_bytes_v252(api_url, timeout=15).decode("utf-8"))
+                    tag_name = str(rel.get("tag_name") or "").strip()
+                    assets = rel.get("assets") or []
+                    dl_url = ""
+                    for a in assets:
+                        aname = str(a.get("name") or "")
+                        if aname.endswith("py3-none-any.whl") or aname == "yt-dlp":
+                            dl_url = str(a.get("browser_download_url") or "")
+                            if aname.endswith(".whl"):
+                                break
+                    if dl_url:
+                        raw_zip = _http_get_bytes_v252(dl_url, timeout=35)
+                        if _extract_pkg_from_zip_bytes_v252(raw_zip, "yt_dlp", site_pkgs):
+                            updated_ytdlp = True
+                            chosen_source = repo_label
+                            new_ytdlp_ver = tag_name
+                            break
+                except Exception:
+                    continue
+
+            if not updated_ytdlp:
+                try:
+                    pypi = json.loads(_http_get_bytes_v252("https://pypi.org/pypi/yt-dlp/json", timeout=15).decode("utf-8"))
+                    new_ytdlp_ver = str((pypi.get("info") or {}).get("version") or "")
+                    for u in (pypi.get("urls") or []):
+                        if str(u.get("filename") or "").endswith(".whl"):
+                            raw_zip = _http_get_bytes_v252(u["url"], timeout=35)
+                            if _extract_pkg_from_zip_bytes_v252(raw_zip, "yt_dlp", site_pkgs):
+                                updated_ytdlp = True
+                                chosen_source = "PyPI (yt-dlp)"
+                                break
+                except Exception:
+                    pass
+
+            # 2. Official yt-dlp/ejs upstream repository (GitHub Releases + PyPI)
+            try:
+                ejs_rel = json.loads(_http_get_bytes_v252("https://api.github.com/repos/yt-dlp/ejs/releases/latest", timeout=15).decode("utf-8"))
+                for a in (ejs_rel.get("assets") or []):
+                    aname = str(a.get("name") or "")
+                    if aname.endswith(".whl"):
+                        raw_ejs = _http_get_bytes_v252(str(a.get("browser_download_url") or ""), timeout=25)
+                        if _extract_pkg_from_zip_bytes_v252(raw_ejs, "yt_dlp_ejs", site_pkgs):
+                            updated_ejs = True
+                            break
+            except Exception:
+                pass
+
+            if not updated_ejs:
+                try:
+                    pypi_ejs = json.loads(_http_get_bytes_v252("https://pypi.org/pypi/yt-dlp-ejs/json", timeout=15).decode("utf-8"))
+                    for u in (pypi_ejs.get("urls") or []):
+                        if str(u.get("filename") or "").endswith(".whl"):
+                            raw_ejs = _http_get_bytes_v252(u["url"], timeout=25)
+                            if _extract_pkg_from_zip_bytes_v252(raw_ejs, "yt_dlp_ejs", site_pkgs):
+                                updated_ejs = True
+                                break
+                except Exception:
+                    pass
+
+            # 3. Hot-reload in memory without restarting the app
+            if updated_ytdlp or updated_ejs:
+                with _YT_V252_LOCK:
+                    if site_pkgs not in sys.path:
+                        sys.path.insert(0, site_pkgs)
+                    for mod_name in list(sys.modules.keys()):
+                        if mod_name == "yt_dlp" or mod_name.startswith("yt_dlp.") or mod_name == "yt_dlp_ejs" or mod_name.startswith("yt_dlp_ejs."):
+                            sys.modules.pop(mod_name, None)
+                    importlib.invalidate_caches()
+                    import yt_dlp
+                    _patch_yt_dlp_internals_v252()
+                    _YT_V252_META_CACHE.clear()
+                _YT_V252_UPDATE_STATE["last_update_ts"] = time.time()
+                _YT_V252_UPDATE_STATE["source_repo"] = chosen_source or "official"
+                _YT_V252_UPDATE_STATE["message"] = f"Обновлено и скомпилировано ({_YT_V252_UPDATE_STATE['yt_dlp_version']}, EJS {_YT_V252_UPDATE_STATE['ejs_version']}) из {chosen_source}"
+            else:
+                _YT_V252_UPDATE_STATE["message"] = f"Актуальная версия ({_YT_V252_UPDATE_STATE['yt_dlp_version']})"
+
+            _YT_V252_UPDATE_STATE["last_check_ts"] = time.time()
+            try:
+                st_file = os.path.join(eng_dir, "engine_state.json")
+                with open(st_file, "w", encoding="utf-8") as f:
+                    json.dump(_YT_V252_UPDATE_STATE, f, ensure_ascii=False)
+            except Exception:
+                pass
+            return {"status": "ok", "updated": bool(updated_ytdlp or updated_ejs), "state": _YT_V252_UPDATE_STATE}
+        except Exception as e:
+            _YT_V252_UPDATE_STATE["message"] = f"Ошибка обновления: {e}"
+            return {"status": "error", "error": str(e), "state": _YT_V252_UPDATE_STATE}
+        finally:
+            _YT_V252_UPDATE_STATE["updating"] = False
+
+
+def _extract_yt_full_v252(video_id: str, force_refresh: bool = False) -> dict:
+    vid = _normalize_yt_video_id_v252(video_id)
+    if not vid:
+        raise ValueError("Некорректный ID видео YouTube")
+
+    now = time.time()
+    if not force_refresh:
+        with _YT_V252_LOCK:
+            cached = _YT_V252_META_CACHE.get(vid)
+            if cached and (now - cached.get("ts", 0)) < 1200:
+                return cached["data"]
+
+    _init_qjs_runtime_v252()
+    import yt_dlp
+    _patch_yt_dlp_internals_v252()
+
+    eng_dir = _get_yt_engine_dir_v252()
+    cache_dir = os.path.join(eng_dir, "ydlp_cache")
+    url = f"https://www.youtube.com/watch?v={vid}"
+
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "cachedir": cache_dir,
+        "socket_timeout": 15,
+        "nocheckcertificate": True,
+        "remote_components": ["ejs:github", "ejs:npm"],
+    }
+    if _YT_V252_NODE_BIN_PATH:
+        ydl_opts["js_runtimes"] = {"node": {"path": _YT_V252_NODE_BIN_PATH}}
+
+    info = None
+    last_err = None
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as e:
+        last_err = e
+        # Fallback with tv/ios/android_vr clients if default encountered an issue
+        try:
+            ydl_opts_fb = dict(ydl_opts)
+            ydl_opts_fb["extractor_args"] = {"youtube": {"player_client": ["tv", "ios", "web"]}}
+            with yt_dlp.YoutubeDL(ydl_opts_fb) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as e2:
+            last_err = e2
+
+    if not info:
+        raise RuntimeError(f"Не удалось извлечь поток YouTube: {last_err}")
+
+    formats = info.get("formats") or []
+    default_hdrs = info.get("http_headers") or {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+
+    audio_only = []
+    combined_mp4 = []
+    video_by_h = {}
+
+    for f in formats:
+        furl = str(f.get("url") or "")
+        if not furl or furl.startswith("mhtml:") or "manifest.googlevideo.com" in furl or ".m3u8" in furl:
+            continue
+        proto = str(f.get("protocol") or "")
+        if "m3u8" in proto or "dash" in proto or "mhtml" in proto:
+            continue
+        vcodec = str(f.get("vcodec") or "none")
+        acodec = str(f.get("acodec") or "none")
+        ext = str(f.get("ext") or "")
+        fid = str(f.get("format_id") or "")
+        fsz = int(f.get("filesize") or f.get("filesize_approx") or 0)
+        fhdrs = f.get("http_headers") or default_hdrs
+        abr = float(f.get("abr") or f.get("tbr") or 0)
+        vbr = float(f.get("vbr") or f.get("tbr") or 0)
+        h = int(f.get("height") or 0)
+
+        entry = {
+            "format_id": fid,
+            "url": furl,
+            "ext": ext,
+            "vcodec": vcodec,
+            "acodec": acodec,
+            "filesize": fsz,
+            "headers": fhdrs,
+            "abr": abr,
+            "vbr": vbr,
+            "height": h,
+        }
+
+        if vcodec == "none" and acodec != "none":
+            audio_only.append(entry)
+        elif vcodec != "none" and acodec != "none":
+            if ext == "mp4" or "avc1" in vcodec:
+                combined_mp4.append(entry)
+        elif vcodec != "none" and h >= 144:
+            # Prefer avc1 (H.264) for hardware decoding compatibility on Android
+            is_h264 = ("avc1" in vcodec) or (ext == "mp4" and "av01" not in vcodec)
+            prev = video_by_h.get(h)
+            if not prev or (is_h264 and not prev.get("is_h264")) or (is_h264 == prev.get("is_h264") and vbr > prev.get("vbr", 0)):
+                entry["is_h264"] = is_h264
+                video_by_h[h] = entry
+
+    # Sort audio: prefer itag 140 (m4a AAC 128k) first for instant compatibility, then highest abr
+    audio_only.sort(key=lambda x: (1 if x["format_id"] == "140" else (0.9 if x["ext"] == "m4a" else 0.5), x["abr"]), reverse=True)
+    combined_mp4.sort(key=lambda x: (x["height"], x["vbr"]), reverse=True)
+
+    best_audio = audio_only[0] if audio_only else (combined_mp4[0] if combined_mp4 else None)
+    best_combined = combined_mp4[0] if combined_mp4 else None
+
+    # Build clean quality options (1080p, 720p, 480p, 360p)
+    qualities = []
+    for target_h in (1080, 720, 480, 360, 240):
+        vf = video_by_h.get(target_h)
+        if vf:
+            qualities.append({
+                "height": target_h,
+                "label": f"{target_h}p MP4",
+                "video": vf,
+                "audio": best_audio,
+                "combined": False,
+            })
+        else:
+            for cm in combined_mp4:
+                if cm["height"] == target_h:
+                    qualities.append({
+                        "height": target_h,
+                        "label": f"{target_h}p MP4",
+                        "video": cm,
+                        "audio": None,
+                        "combined": True,
+                    })
+                    break
+
+    if not qualities and best_combined:
+        qualities.append({
+            "height": best_combined["height"] or 360,
+            "label": f"{best_combined['height'] or 360}p MP4",
+            "video": best_combined,
+            "audio": None,
+            "combined": True,
+        })
+
+    thumb = str(info.get("thumbnail") or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")
+    data = {
+        "id": vid,
+        "title": str(info.get("title") or f"YouTube {vid}"),
+        "channel": str(info.get("uploader") or info.get("channel") or "YouTube"),
+        "duration": int(float(info.get("duration") or 0)),
+        "thumbnail": thumb,
+        "best_audio": best_audio,
+        "best_combined": best_combined,
+        "qualities": qualities,
+    }
+    with _YT_V252_LOCK:
+        _YT_V252_META_CACHE[vid] = {"ts": now, "data": data}
+    return data
+
+
+def _download_yt_url_fast_v252(stream_info: dict, dest_path: str, max_workers: int = 4) -> str:
+    url = str(stream_info.get("url") or "")
+    if not url:
+        raise ValueError("Пустой URL потока")
+    hdrs = dict(stream_info.get("headers") or {"User-Agent": "Mozilla/5.0"})
+    total_size = int(stream_info.get("filesize") or 0)
+
+    # Probe exact Content-Length via range=0-1 if filesize wasn't reported
+    if total_size <= 0:
+        try:
+            sep = "&" if "?" in url else "?"
+            probe_req = urllib.request.Request(f"{url}{sep}range=0-1", headers=hdrs)
+            with urllib.request.urlopen(probe_req, timeout=10) as resp:
+                cr = str(resp.headers.get("Content-Range") or "")
+                if "/" in cr:
+                    total_size = int(cr.split("/")[-1].strip())
+        except Exception:
+            total_size = 0
+
+    tmp_path = f"{dest_path}.part_{int(time.time() * 1000)}"
+    if total_size > 0 and ("googlevideo.com" in url):
+        chunk_sz = 1536 * 1024  # 1.5 MB chunks bypass YouTube DASH throttling completely
+        ranges = []
+        pos = 0
+        while pos < total_size:
+            end = min(pos + chunk_sz - 1, total_size - 1)
+            ranges.append((pos, end))
+            pos = end + 1
+
+        def _fetch_one_range(rng):
+            s, e = rng
+            sep = "&" if "?" in url else "?"
+            r_url = f"{url}{sep}range={s}-{e}"
+            for attempt in range(3):
+                try:
+                    req = urllib.request.Request(r_url, headers=hdrs)
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        return resp.read()
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.25 * (attempt + 1))
+            return b""
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+            parts = list(ex.map(_fetch_one_range, ranges))
+        with open(tmp_path, "wb") as f:
+            for p in parts:
+                f.write(p)
+    else:
+        req = urllib.request.Request(url, headers=hdrs)
+        with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as f:
+            shutil.copyfileobj(resp, f, length=256 * 1024)
+
+    if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
+        os.replace(tmp_path, dest_path)
+        return dest_path
+    raise RuntimeError("Скачанный файл потока пуст")
+
+
+def _ensure_yt_audio_cached_v252(vid: str) -> tuple:
+    meta = _extract_yt_full_v252(vid)
+    ba = meta.get("best_audio") or meta.get("best_combined")
+    if not ba:
+        raise RuntimeError("Аудиопоток не найден")
+    ext = ba.get("ext") or "m4a"
+    cache_dir = _get_yt_stream_cache_dir_v252()
+    local_raw = os.path.join(cache_dir, f"yt_aud_{vid}.{ext}")
+    if not (os.path.isfile(local_raw) and os.path.getsize(local_raw) > 32768):
+        _download_yt_url_fast_v252(ba, local_raw, max_workers=4)
+    return local_raw, meta
+
+
+def _ensure_yt_deckb_mp4_cached_v252(vid: str, preferred_height: int = 720) -> tuple:
+    meta = _extract_yt_full_v252(vid)
+    cache_dir = _get_yt_stream_cache_dir_v252()
+    quals = meta.get("qualities") or []
+    chosen = None
+    for q in quals:
+        if int(q.get("height") or 0) <= preferred_height:
+            chosen = q
+            break
+    if not chosen and quals:
+        chosen = quals[-1]
+
+    h_tag = int((chosen or {}).get("height") or 360)
+    out_mp4 = os.path.join(cache_dir, f"yt_deckb_{vid}_{h_tag}p.mp4")
+    if os.path.isfile(out_mp4) and os.path.getsize(out_mp4) > 65536:
+        return out_mp4, meta, h_tag
+
+    ff = find_ffmpeg_binary()
+    if chosen and chosen.get("combined"):
+        _download_yt_url_fast_v252(chosen["video"], out_mp4, max_workers=4)
+        return out_mp4, meta, h_tag
+
+    if chosen and chosen.get("video") and chosen.get("audio") and ff:
+        v_tmp = os.path.join(cache_dir, f"yt_vtmp_{vid}_{h_tag}.mp4")
+        a_tmp = os.path.join(cache_dir, f"yt_atmp_{vid}.m4a")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            fv = ex.submit(_download_yt_url_fast_v252, chosen["video"], v_tmp, 4)
+            fa = ex.submit(_download_yt_url_fast_v252, chosen["audio"], a_tmp, 4)
+            fv.result()
+            fa.result()
+        mux_tmp = f"{out_mp4}.muxing.mp4"
+        cmd = [
+            ff, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", v_tmp, "-i", a_tmp,
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            mux_tmp,
+        ]
+        subprocess.run(cmd, timeout=90, check=False)
+        try:
+            os.remove(v_tmp)
+        except Exception:
+            pass
+        if os.path.isfile(mux_tmp) and os.path.getsize(mux_tmp) > 65536:
+            os.replace(mux_tmp, out_mp4)
+            return out_mp4, meta, h_tag
+
+    if meta.get("best_combined"):
+        _download_yt_url_fast_v252(meta["best_combined"], out_mp4, max_workers=4)
+        return out_mp4, meta, int(meta["best_combined"].get("height") or 360)
+
+    raise RuntimeError("Не удалось подготовить MP4 для Видео Деки Б")
+
+
+# Hook _resolve_any_media_path_v218 so yt://<vid> resolves to the local cached .mp4 file for Deck B!
+_ORIG_RESOLVE_ANY_MEDIA_V252 = _resolve_any_media_path_v218
+
+
+def _resolve_any_media_path_v252(path_or_id: str) -> str:
+    s = (path_or_id or "").strip()
+    if s.startswith("yt://"):
+        vid = _normalize_yt_video_id_v252(s[5:].split("?")[0].split("&")[0])
+        if vid:
+            cache_dir = _get_yt_stream_cache_dir_v252()
+            for h in (720, 480, 360, 1080, 240):
+                cand = os.path.join(cache_dir, f"yt_deckb_{vid}_{h}p.mp4")
+                if os.path.isfile(cand) and os.path.getsize(cand) > 65536:
+                    return cand
+            try:
+                mp4_p, _, _ = _ensure_yt_deckb_mp4_cached_v252(vid, preferred_height=720)
+                return mp4_p
+            except Exception:
+                pass
+    return _ORIG_RESOLVE_ANY_MEDIA_V252(path_or_id)
+
+
+_resolve_any_media_path_v218 = _resolve_any_media_path_v252
+
+
+def api_youtube_engine_status_v252():
+    response.content_type = "application/json; charset=utf-8"
+    _init_qjs_runtime_v252()
+    return json.dumps({"status": "ok", "state": _YT_V252_UPDATE_STATE}, ensure_ascii=False)
+
+
+def api_youtube_update_engine_v252():
+    response.content_type = "application/json; charset=utf-8"
+    res = update_youtube_engine_from_official_repos_v252(force=True)
+    return json.dumps(res, ensure_ascii=False)
+
+
+def api_youtube_search_v252():
+    response.content_type = "application/json; charset=utf-8"
+    try:
+        body = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    q = str(body.get("query") or request.query.get("q") or "").strip()
+    mode = str(body.get("mode") or request.query.get("mode") or "music").strip().lower()
+    if not q:
+        return json.dumps({"status": "error", "error": "Введите поисковый запрос"}, ensure_ascii=False)
+
+    # Check if direct URL or video ID
+    direct_vid = _normalize_yt_video_id_v252(q) if ("youtube.com" in q or "youtu.be" in q or len(q) == 11) else ""
+    if direct_vid and (" " not in q):
+        try:
+            meta = _extract_yt_full_v252(direct_vid)
+            dur = meta["duration"]
+            dur_s = f"{dur // 60}:{dur % 60:02d}" if dur > 0 else "LIVE"
+            return json.dumps({
+                "status": "ok",
+                "results": [{
+                    "id": meta["id"],
+                    "title": meta["title"],
+                    "channel": meta["channel"],
+                    "duration": dur,
+                    "duration_str": dur_s,
+                    "thumbnail": meta["thumbnail"],
+                    "url": f"https://www.youtube.com/watch?v={meta['id']}",
+                }],
+            }, ensure_ascii=False)
+        except Exception:
+            pass
+
+    _init_qjs_runtime_v252()
+    import yt_dlp
+    search_q = f"{q} audio" if mode == "music" and "audio" not in q.lower() and "clip" not in q.lower() else q
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "skip_download": True,
+        "socket_timeout": 12,
+        "nocheckcertificate": True,
+    }
+    results = []
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch20:{search_q}", download=False)
+            for e in (info.get("entries") or []):
+                if not e:
+                    continue
+                vid = _normalize_yt_video_id_v252(str(e.get("id") or e.get("url") or ""))
+                if not vid:
+                    continue
+                dur = int(float(e.get("duration") or 0))
+                dur_s = f"{dur // 60}:{dur % 60:02d}" if dur > 0 else "—"
+                thumbs = e.get("thumbnails") or []
+                thumb = str(thumbs[-1].get("url")) if thumbs and isinstance(thumbs[-1], dict) else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                results.append({
+                    "id": vid,
+                    "title": str(e.get("title") or f"YouTube {vid}"),
+                    "channel": str(e.get("uploader") or e.get("channel") or "YouTube"),
+                    "duration": dur,
+                    "duration_str": dur_s,
+                    "thumbnail": thumb,
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                })
+    except Exception as err:
+        return json.dumps({"status": "error", "error": str(err)}, ensure_ascii=False)
+
+    return json.dumps({"status": "ok", "results": results}, ensure_ascii=False)
+
+
+def api_youtube_info_v252():
+    response.content_type = "application/json; charset=utf-8"
+    try:
+        body = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    raw_u = str(body.get("url") or body.get("id") or request.query.get("v") or "").strip()
+    vid = _normalize_yt_video_id_v252(raw_u)
+    if not vid:
+        return json.dumps({"status": "error", "error": "Некорректная ссылка или ID YouTube"}, ensure_ascii=False)
+    try:
+        meta = _extract_yt_full_v252(vid)
+        quals_out = [{"height": q["height"], "label": q["label"]} for q in (meta.get("qualities") or [])]
+        return json.dumps({
+            "status": "ok",
+            "id": meta["id"],
+            "title": meta["title"],
+            "channel": meta["channel"],
+            "duration": meta["duration"],
+            "thumbnail": meta["thumbnail"],
+            "qualities": quals_out,
+            "audio_stream_url": f"/api/youtube/live_stream?v={vid}",
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+def api_youtube_live_stream_v252():
+    vid = _normalize_yt_video_id_v252(request.query.get("v") or request.query.get("id") or "")
+    if not vid:
+        response.status = 400
+        return "Invalid video ID"
+    try:
+        seek_sec = max(0.0, float(request.query.get("seek") or 0.0))
+    except Exception:
+        seek_sec = 0.0
+
+    try:
+        local_raw, meta = _ensure_yt_audio_cached_v252(vid)
+        cache_dir = _get_yt_stream_cache_dir_v252()
+        ff = find_ffmpeg_binary()
+
+        # If seek_sec == 0 and file is already m4a/mp3, serve directly with full Range support!
+        if seek_sec <= 0.05 and local_raw.endswith((".m4a", ".mp3", ".aac")):
+            mime = "audio/mp4" if local_raw.endswith(".m4a") else "audio/mpeg"
+            return static_file(os.path.basename(local_raw), root=os.path.dirname(local_raw), mimetype=mime)
+
+        # If seek > 0 or opus/webm container, fast-slice via FFmpeg into m4a/mp3 and serve
+        if ff:
+            out_seek_name = f"yt_seek_{vid}_{int(seek_sec * 10)}.mp3"
+            out_seek_path = os.path.join(cache_dir, out_seek_name)
+            if not (os.path.isfile(out_seek_path) and os.path.getsize(out_seek_path) > 8192):
+                cmd = [ff, "-y", "-hide_banner", "-loglevel", "error"]
+                if seek_sec > 0.05:
+                    cmd += ["-ss", f"{seek_sec:.2f}"]
+                cmd += ["-i", local_raw, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", out_seek_path]
+                subprocess.run(cmd, timeout=45, check=False)
+            if os.path.isfile(out_seek_path) and os.path.getsize(out_seek_path) > 4096:
+                return static_file(out_seek_name, root=cache_dir, mimetype="audio/mpeg")
+
+        return static_file(os.path.basename(local_raw), root=os.path.dirname(local_raw), mimetype="audio/mp4")
+    except Exception as e:
+        response.status = 500
+        return str(e)
+
+
+def api_youtube_save_xflac_v252():
+    response.content_type = "application/json; charset=utf-8"
+    try:
+        body = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    vid = _normalize_yt_video_id_v252(str(body.get("id") or body.get("v") or body.get("url") or ""))
+    if not vid:
+        return json.dumps({"status": "error", "error": "Не указан ID трека YouTube"}, ensure_ascii=False)
+    try:
+        local_raw, meta = _ensure_yt_audio_cached_v252(vid)
+        title = str(body.get("title") or meta.get("title") or f"YouTube_{vid}").strip()
+        channel = str(body.get("channel") or meta.get("channel") or "YouTube").strip()
+        thumb_url = str(meta.get("thumbnail") or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")
+
+        safe_name = re.sub(r'[\\/*?:"<>|]', "_", f"{channel} - {title}" if channel and channel.lower() not in title.lower() else title).strip()
+        if not safe_name:
+            safe_name = f"YouTube_{vid}"
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        out_xflac = os.path.join(MUSIC_DIR, f"{safe_name}.xflac")
+
+        ff = find_ffmpeg_binary()
+        if not ff:
+            return json.dumps({"status": "error", "error": "FFmpeg не найден"}, ensure_ascii=False)
+
+        # Fetch cover art bytes
+        cover_bytes = b""
+        try:
+            cover_bytes = _http_get_bytes_v252(thumb_url, timeout=10)
+        except Exception:
+            pass
+
+        tmp_flac = os.path.join(_get_yt_stream_cache_dir_v252(), f"yt_tmp_{vid}.flac")
+        cmd = [
+            ff, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", local_raw,
+            "-vn", "-c:a", "flac", "-compression_level", "5",
+            "-metadata", f"title={title}",
+            "-metadata", f"artist={channel}",
+            "-metadata", "album=YouTube Studio",
+            tmp_flac,
+        ]
+        subprocess.run(cmd, timeout=90, check=False)
+        if not (os.path.isfile(tmp_flac) and os.path.getsize(tmp_flac) > 16384):
+            shutil.copyfile(local_raw, out_xflac)
+        else:
+            if cover_bytes and "_embed_cover_and_tags_into_audio_v250" in globals():
+                try:
+                    _embed_cover_and_tags_into_audio_v250(tmp_flac, cover_bytes, title=title, artist=channel, album="YouTube Studio")
+                except Exception:
+                    pass
+            os.replace(tmp_flac, out_xflac)
+
+        return json.dumps({
+            "status": "ok",
+            "path": out_xflac,
+            "filename": os.path.basename(out_xflac),
+            "title": title,
+            "channel": channel,
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+def api_youtube_resolve_deck_b_v252():
+    response.content_type = "application/json; charset=utf-8"
+    try:
+        body = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    raw_u = str(body.get("url") or body.get("id") or body.get("v") or "").strip()
+    vid = _normalize_yt_video_id_v252(raw_u)
+    if not vid:
+        return json.dumps({"status": "error", "error": "Некорректный ID видео YouTube"}, ensure_ascii=False)
+    pref_h = int(body.get("height") or body.get("quality") or 720)
+    try:
+        mp4_path, meta, actual_h = _ensure_yt_deckb_mp4_cached_v252(vid, preferred_height=pref_h)
+        q_path = urllib.parse.quote(mp4_path)
+        return json.dumps({
+            "status": "ok",
+            "id": vid,
+            "title": meta["title"],
+            "channel": meta["channel"],
+            "duration": meta["duration"],
+            "height": actual_h,
+            "local_path": mp4_path,
+            "virtual_path": mp4_path,
+            "stream_url": f"/api/video/stream?path={q_path}",
+            "direct_url": f"/api/video/stream?path={q_path}",
+            "mux_url": f"/api/video/stream?path={q_path}",
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+def api_youtube_download_mp4_v252():
+    response.content_type = "application/json; charset=utf-8"
+    try:
+        body = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    raw_u = str(body.get("url") or body.get("id") or body.get("v") or "").strip()
+    vid = _normalize_yt_video_id_v252(raw_u)
+    if not vid:
+        return json.dumps({"status": "error", "error": "Не указан ID видео YouTube"}, ensure_ascii=False)
+    pref_h = int(body.get("height") or body.get("quality") or 720)
+    try:
+        mp4_cached, meta, actual_h = _ensure_yt_deckb_mp4_cached_v252(vid, preferred_height=pref_h)
+        title = str(meta.get("title") or f"YouTube_{vid}").strip()
+        safe_title = re.sub(r'[\\/*?:"<>|]', "_", title).strip() or f"YouTube_{vid}"
+
+        out_dirs = [
+            "/storage/emulated/0/JennyVideo",
+            "/storage/emulated/0/Movies/JennyPlayer",
+            "/storage/emulated/0/Download",
+            os.path.join(MUSIC_DIR, "JennyVideo"),
+        ]
+        target_dir = out_dirs[-1]
+        for d in out_dirs:
+            try:
+                os.makedirs(d, exist_ok=True)
+                target_dir = d
+                break
+            except Exception:
+                continue
+
+        final_mp4 = os.path.join(target_dir, f"{safe_title} [{actual_h}p].mp4")
+        shutil.copyfile(mp4_cached, final_mp4)
+        sz_mb = round(os.path.getsize(final_mp4) / (1024.0 * 1024.0), 2)
+        return json.dumps({
+            "status": "ok",
+            "path": final_mp4,
+            "filename": os.path.basename(final_mp4),
+            "size_mb": sz_mb,
+            "height": actual_h,
+            "title": title,
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+def api_island_yt_artwork_v252():
+    vid = _normalize_yt_video_id_v252(request.query.get("v") or request.query.get("id") or "")
+    if not vid:
+        response.status = 404
+        return ""
+    cache_dir = _get_yt_stream_cache_dir_v252()
+    jpg_path = os.path.join(cache_dir, f"yt_art_{vid}.jpg")
+    if not (os.path.isfile(jpg_path) and os.path.getsize(jpg_path) > 1024):
+        for t_url in (f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg", f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"):
+            try:
+                raw = _http_get_bytes_v252(t_url, timeout=8)
+                if raw and len(raw) > 1024:
+                    with open(jpg_path, "wb") as f:
+                        f.write(raw)
+                    break
+            except Exception:
+                continue
+    if os.path.isfile(jpg_path) and os.path.getsize(jpg_path) > 1024:
+        return static_file(os.path.basename(jpg_path), root=cache_dir, mimetype="image/jpeg")
+    response.status = 404
+    return ""
+
+
+_override_bottle_route_v212('/api/youtube/engine_status', 'GET', api_youtube_engine_status_v252)
+_override_bottle_route_v212('/api/youtube/update_engine', 'POST', api_youtube_update_engine_v252)
+_override_bottle_route_v212('/api/youtube/search', 'POST', api_youtube_search_v252)
+_override_bottle_route_v212('/api/youtube/search', 'GET', api_youtube_search_v252)
+_override_bottle_route_v212('/api/youtube/info', 'POST', api_youtube_info_v252)
+_override_bottle_route_v212('/api/youtube/info', 'GET', api_youtube_info_v252)
+_override_bottle_route_v212('/api/youtube/live_stream', 'GET', api_youtube_live_stream_v252)
+_override_bottle_route_v212('/api/youtube/save_xflac', 'POST', api_youtube_save_xflac_v252)
+_override_bottle_route_v212('/api/youtube/resolve_deck_b', 'POST', api_youtube_resolve_deck_b_v252)
+_override_bottle_route_v212('/api/youtube/download', 'POST', api_youtube_download_mp4_v252)
+_override_bottle_route_v212('/api/island/yt_artwork', 'GET', api_island_yt_artwork_v252)
+
+
+def _startup_yt_engine_bg_v252():
+    try:
+        _init_qjs_runtime_v252()
+        time.sleep(8.0)
+        eng_dir = _get_yt_engine_dir_v252()
+        st_file = os.path.join(eng_dir, "engine_state.json")
+        last_chk = 0.0
+        if os.path.isfile(st_file):
+            try:
+                with open(st_file, "r", encoding="utf-8") as f:
+                    st = json.load(f)
+                    last_chk = float(st.get("last_check_ts") or 0.0)
+            except Exception:
+                last_chk = 0.0
+        # Auto-update in background if never updated or older than 12 hours
+        if (time.time() - last_chk) > 12 * 3600:
+            update_youtube_engine_from_official_repos_v252(force=False)
+    except Exception:
+        pass
+
+
+threading.Thread(target=_startup_yt_engine_bg_v252, daemon=True).start()
+# ================= END [FIX-YOUTUBE-COMPLETE-V252] =================
+

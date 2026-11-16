@@ -578,6 +578,14 @@
             }
             return '';
         }
+        if (m === 'youtube') {
+            var audYt = window._khStateV88 && window._khStateV88.previewAudio;
+            var vidYt = (audYt && audYt._ytVideoIdV252) || window._lastYtVideoIdV252 || '';
+            if (vidYt) {
+                return 'http://127.0.0.1:8080/api/island/yt_artwork?v=' + encodeURIComponent(vidYt);
+            }
+            return '';
+        }
         if (m === 'music') {
             var trkName = window.currentPlayingTrack || ((Array.isArray(window.allTracks) && window.allTracks.length > 0) ? window.allTracks[0] : '');
             if (trkName) {
@@ -872,6 +880,7 @@
         });
         var torPct = sumLenB > 0 ? Math.min(99, Math.floor((sumDoneB * 100) / sumLenB)) : 0;
 
+        var isYtExt = Boolean(snap.extAud && (snap.extAud._ytVideoIdV252 || snap.extAud._previewOwnerModalV241 === 'jennyYoutubeStudioModalV230' || String(snap.extAud._pagePath || '').indexOf('yt:') === 0));
         var activeMode = window._islandActiveModeV245 || 'music';
         var recentExplicitSwitch = (now - (window._islandExplicitModeTsV245 || 0) < 2500);
         if (!recentExplicitSwitch) {
@@ -879,6 +888,10 @@
                 activeMode = 'radio';
                 window._islandActiveModeV245 = 'radio';
                 window._lastActiveMediaSourceV243 = 'radio';
+            } else if (snap.extPlaying && isYtExt) {
+                activeMode = 'youtube';
+                window._islandActiveModeV245 = 'youtube';
+                window._lastActiveMediaSourceV243 = 'youtube';
             } else if (snap.extPlaying) {
                 activeMode = 'soundcloud';
                 window._islandActiveModeV245 = 'soundcloud';
@@ -905,6 +918,17 @@
             var rName = stripLeadingEmojisV247(window.resolveCurrentRadioTitleV243());
             titleParts.push(rName);
             subParts.push((window._radioStateV91 && window._radioStateV91.isRecording) ? 'Запись эфира • Прямой поток' : 'Прямой радиоэфир');
+        } else if (snap.extPlaying && isYtExt) {
+            var ytTitle = stripLeadingEmojisV247(snap.extAud._ytTitleV252 || window._lastExternalTitleV243 || 'YouTube');
+            var ytChan = stripLeadingEmojisV247(snap.extAud._ytChannelV252 || 'YouTube Music');
+            titleParts.push(ytTitle);
+            if (!window._islandExportStatusV247) subParts.push(ytChan);
+            durSec = (typeof window.getEffectiveYtTotalDurSecV252 === 'function')
+                ? window.getEffectiveYtTotalDurSecV252(snap.extAud)
+                : (isFinite(snap.extAud.duration) ? snap.extAud.duration : 0);
+            posSec = (typeof window.getEffectiveYtCurrentSecV252 === 'function')
+                ? window.getEffectiveYtCurrentSecV252(snap.extAud)
+                : (isFinite(snap.extAud.currentTime) ? snap.extAud.currentTime : 0);
         } else if (snap.extPlaying) {
             titleParts.push(resolveCurrentScTitleV245());
             if (!window._islandExportStatusV247) subParts.push('SoundCloud');
@@ -952,8 +976,18 @@
 
         if (!isActuallyPlaying) {
             if (activeMode === 'youtube') {
-                titleParts = ['YouTube Studio • Модуль в разработке'];
-                if (!window._islandExportStatusV247) subParts = ['Заглушка: скоро прямое воспроизведение YouTube'];
+                var pausedYtMeta = window._lastYtTrackMetaV252 || ((window._ytStudioStateV252 && Array.isArray(window._ytStudioStateV252.results) && window._ytStudioStateV252.results.length > 0) ? window._ytStudioStateV252.results[0] : null);
+                var pausedYtTitle = stripLeadingEmojisV247((snap.extAud && snap.extAud._ytTitleV252) || (pausedYtMeta && pausedYtMeta.title) || 'YouTube Studio & Music');
+                titleParts = [pausedYtTitle];
+                if (!window._islandExportStatusV247) {
+                    subParts = [pausedYtMeta ? ('YouTube на паузе • ' + (pausedYtMeta.channel || 'YouTube')) : 'Выберите трек или клип в YouTube Studio'];
+                }
+                if (snap.extAud && isYtExt) {
+                    durSec = (typeof window.getEffectiveYtTotalDurSecV252 === 'function') ? window.getEffectiveYtTotalDurSecV252(snap.extAud) : 0;
+                    posSec = (typeof window.getEffectiveYtCurrentSecV252 === 'function') ? window.getEffectiveYtCurrentSecV252(snap.extAud) : 0;
+                } else if (pausedYtMeta && Number(pausedYtMeta.duration) > 0) {
+                    durSec = Number(pausedYtMeta.duration);
+                }
             } else if (activeMode === 'radio') {
                 titleParts.push(stripLeadingEmojisV247(window.resolveCurrentRadioTitleV243()));
                 if (!window._islandExportStatusV247) subParts.push('Радиоэфир на паузе');
@@ -1092,6 +1126,28 @@
             return;
         }
 
+        // [FIX-YOUTUBE-COMPLETE-V252] Скачивание текущего трека YouTube в .xFLAC по нажатию кнопки Скачать на красной плашке
+        if (c === 'yt_download') {
+            if (curMode !== 'youtube') return;
+            var ytIdx = (typeof window._lastYtTrackIdxV252 === 'number' && window._lastYtTrackIdxV252 >= 0) ? window._lastYtTrackIdxV252 : 0;
+            window._islandExportStatusV247 = 'Сохранение в .xFLAC...';
+            window.syncPermanentForegroundNotificationV212(true);
+            try {
+                if (typeof window.saveYtItemAsXflacV252 === 'function') {
+                    await window.saveYtItemAsXflacV252(ytIdx, null);
+                    window._islandExportStatusV247 = 'Сохранено в плеер!';
+                }
+            } catch (e) {
+                window._islandExportStatusV247 = 'Ошибка сохранения';
+            }
+            window.syncPermanentForegroundNotificationV212(true);
+            setTimeout(function() {
+                window._islandExportStatusV247 = '';
+                window.syncPermanentForegroundNotificationV212(true);
+            }, 2800);
+            return;
+        }
+
         // [FIX-ISLAND-SC-V250] Скачивание текущего трека SoundCloud в плеер по нажатию кнопки Скачать на оранжевой плашке
         if (c === 'sc_download') {
             if (curMode !== 'soundcloud') return;
@@ -1168,10 +1224,17 @@
             return;
         }
 
-        // Перемотка ползунком (с учётом обратного воспроизведения isReversed и потока SoundCloud!)
+        // Перемотка ползунком (с учётом обратного воспроизведения isReversed и потоков YouTube / SoundCloud!)
         if (c === 'seek') {
             var targetSec = Math.max(0, parseFloat(a) || 0);
-            if ((curMode === 'soundcloud' || snap.extPlaying) && snap.extAud) {
+            var isYtSeek = Boolean(curMode === 'youtube' || (snap.extAud && (snap.extAud._ytVideoIdV252 || snap.extAud._previewOwnerModalV241 === 'jennyYoutubeStudioModalV230')));
+            if (isYtSeek && snap.extAud) {
+                if (typeof window.seekYoutubeStreamToSecV252 === 'function') {
+                    window.seekYoutubeStreamToSecV252(snap.extAud, targetSec);
+                } else {
+                    try { snap.extAud.currentTime = targetSec; } catch (e) {}
+                }
+            } else if ((curMode === 'soundcloud' || snap.extPlaying) && snap.extAud) {
                 if (typeof window.seekSoundCloudStreamToSecV250 === 'function') {
                     window.seekSoundCloudStreamToSecV250(snap.extAud, targetSec);
                 } else if (isFinite(snap.extAud.duration) && snap.extAud.duration > 0 && typeof window.seekKhMiniPlayerV90 === 'function') {
@@ -1264,6 +1327,34 @@
         }
 
         if (curMode === 'youtube') {
+            window._lastActiveMediaSourceV243 = 'youtube';
+            var ytList = (window._ytStudioStateV252 && window._ytStudioStateV252.results) || [];
+            var curYtIdx = (typeof window._lastYtTrackIdxV252 === 'number' && window._lastYtTrackIdxV252 >= 0) ? window._lastYtTrackIdxV252 : 0;
+            if (c === 'next' || c === 'prev') {
+                if (ytList.length > 0 && typeof window.playYtStudioItemByIndexV252 === 'function') {
+                    var nextYtIdx = (curYtIdx + (c === 'next' ? 1 : -1) + ytList.length) % ytList.length;
+                    window.playYtStudioItemByIndexV252(nextYtIdx, null);
+                }
+                return;
+            }
+            if (c === 'pause' || (c === 'toggle' && snap.extPlaying)) {
+                if (snap.extAud) {
+                    try { snap.extAud.pause(); } catch (e) {}
+                }
+                setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
+                return;
+            }
+            if (c === 'play' || (c === 'toggle' && !snap.extPlaying)) {
+                if (snap.extAud && snap.extAud._ytVideoIdV252) {
+                    snap.extAud.play().catch(function() {});
+                } else if (ytList.length > 0 && typeof window.playYtStudioItemByIndexV252 === 'function') {
+                    window.playYtStudioItemByIndexV252(curYtIdx, null);
+                } else if (typeof window.openYoutubeStudioModalV230 === 'function') {
+                    window.openYoutubeStudioModalV230('music');
+                }
+                setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 120);
+                return;
+            }
             window.syncPermanentForegroundNotificationV212(true);
             return;
         }

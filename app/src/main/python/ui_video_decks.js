@@ -8057,3 +8057,106 @@
         };
     }
 })();
+
+/* ================= [FIX-YOUTUBE-COMPLETE-V252] YOUTUBE VIDEO DECK B & MP4 DOWNLOAD ================= */
+(function() {
+    window.playYoutubeVideoInDeckBV230 = async function(videoId, title, preferredHeight, btnEl) {
+        var vid = String(videoId || '').trim();
+        if (!vid) return;
+        var prefH = parseInt(preferredHeight, 10) || 720;
+
+        if (typeof window.stopAllExternalPreviewsAndMainDecksV241 === 'function') {
+            window.stopAllExternalPreviewsAndMainDecksV241();
+        }
+        var oldTxt = btnEl ? btnEl.innerText : '';
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.innerText = '⏳ Подготовка Деки Б...';
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast('⏳ Подготовка видео (' + prefH + 'p) для Деки Б...');
+        }
+
+        try {
+            var r = await fetch('/api/youtube/resolve_deck_b', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: vid, height: prefH })
+            });
+            var rawTxt = await r.text();
+            var j = null;
+            try {
+                j = JSON.parse(rawTxt);
+            } catch (pe) {
+                throw new Error('Некорректный ответ сервера: ' + rawTxt.slice(0, 80));
+            }
+            if (!j || j.status !== 'ok' || !j.local_path) {
+                throw new Error((j && j.error) ? j.error : 'Не удалось подготовить видео для Деки Б');
+            }
+
+            var ytModal = document.getElementById('jennyYoutubeStudioModalV230');
+            if (ytModal) ytModal.style.setProperty('display', 'none', 'important');
+
+            var dispName = (j.title || title || ('YouTube_' + vid)) + ' [' + (j.height || prefH) + 'p].mp4';
+            if (typeof window.openJennyVideoPlayerV130 === 'function') {
+                await window.openJennyVideoPlayerV130(j.local_path, dispName, 0, false);
+            }
+        } catch (e) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('❌ Ошибка Деки Б: ' + (e.message || e));
+            }
+        } finally {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerText = oldTxt || '🎬 В Деку Б';
+            }
+        }
+    };
+
+    window.downloadYoutubeVideoV230 = async function(videoId, title, preferredHeight, btnEl) {
+        var vid = String(videoId || '').trim();
+        if (!vid) return;
+        var prefH = parseInt(preferredHeight, 10) || 720;
+
+        var oldTxt = btnEl ? btnEl.innerText : '';
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.innerText = '⏳ Скачивание MP4...';
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast('⏳ Скачивание видео MP4 (' + prefH + 'p): ' + (title || vid));
+        }
+
+        try {
+            var r = await fetch('/api/youtube/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: vid, height: prefH })
+            });
+            var rawTxt = await r.text();
+            var j = null;
+            try {
+                j = JSON.parse(rawTxt);
+            } catch (pe) {
+                throw new Error('Ошибка ответа сервера: ' + rawTxt.slice(0, 80));
+            }
+            if (!j || j.status !== 'ok') {
+                throw new Error((j && j.error) ? j.error : 'Ошибка сохранения MP4');
+            }
+            if (typeof window.showToast === 'function') {
+                window.showToast('✅ Видео сохранено (' + (j.size_mb || '?') + ' МБ): ' + (j.filename || j.path));
+            }
+        } catch (e) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('❌ Ошибка скачивания MP4: ' + (e.message || e));
+            }
+        } finally {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerText = oldTxt || '📹 MP4';
+            }
+        }
+    };
+})();
+/* ================= END [FIX-YOUTUBE-COMPLETE-V252] ================= */
+
