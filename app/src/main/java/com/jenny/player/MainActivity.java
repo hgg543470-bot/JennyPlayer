@@ -1497,6 +1497,11 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @JavascriptInterface
+        public void setIslandBgImage(String imageSpec) {
+            PlaybackService.setIslandBgImageStatic(imageSpec);
+        }
+
+        @JavascriptInterface
         public void updateMediaStateFull(String title, String subtitle, boolean isPlaying, double posSec, double durSec, double speed) {
             Intent svc = new Intent(MainActivity.this, PlaybackService.class);
             svc.setAction(PlaybackService.ACTION_UPDATE);

@@ -6,9 +6,12 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Insets;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
@@ -37,6 +40,11 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Locale;
 
 /**
@@ -53,6 +61,7 @@ import java.util.Locale;
 public class IslandOverlayController {
     private static final String PREFS_NAME = "jenny_island_prefs";
     private static final String KEY_BG_TRANSPARENCY = "bg_transparency_pct";
+    private static final String KEY_BG_IMAGE_SPEC = "bg_image_spec_v250";
 
     private final Context context;
     private final WindowManager windowManager;
@@ -71,6 +80,9 @@ public class IslandOverlayController {
 
     // Прозрачность фона плашки: 0 = полностью непрозрачная, 100 = полностью прозрачная
     private int bgTransparencyPct = 22;
+    private String bgImageSpec = "";
+    private Bitmap bgBitmap = null;
+    private String loadedBgBitmapSpec = "";
 
     // Состояние медиа и модулей
     private String currentTitle = "Jenny Player";
@@ -101,6 +113,7 @@ public class IslandOverlayController {
     private static final int ICON_CHEVRON_DOWN = 8;
     private static final int ICON_OPEN_PLAYER  = 9;
     private static final int ICON_REC          = 10;
+    private static final int ICON_DOWNLOAD     = 11;
 
     // Виджеты развёрнутой плашки
     private SourceIconView modeBtnMusic;
@@ -182,9 +195,12 @@ public class IslandOverlayController {
         private int baseBgColor = 0x090C15;
         private int tintBgColor = 0x160D28;
         private final Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         private final Paint glowBlurPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint featherPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF cardRect = new RectF();
+        private final Path clipRoundPath = new Path();
+        private final Matrix cropMatrix = new Matrix();
 
         GlowCardLayout(Context ctx, float cornerRadiusPx) {
             super(ctx);
@@ -218,9 +234,35 @@ public class IslandOverlayController {
             float inset = U(4.2f);
             cardRect.set(inset, inset, w - inset, h - inset);
 
-            // Прозрачность фона: 0% -> alpha=245 (почти непрозрачный), 100% -> alpha=0 (полностью прозрачный)
+            // [FIX-ISLAND-ART-V250] Фоновая картинка (из тегов трека или пользовательская) рисуется
+            // с масштабированием Center-Crop ровно по скруглённой рамке плашки ПОЗАДИ цветовой заливки bgPaint:
+            // При прозрачности заливки 0% (bgAlpha=255) картинка полностью скрыта заливкой,
+            // при 100% прозрачности заливки (bgAlpha=0) картинка остаётся чёткой под рамкой и кнопками!
+            if (this == expandedPlateCard && bgBitmap != null && !bgBitmap.isRecycled()) {
+                int bw = bgBitmap.getWidth();
+                int bh = bgBitmap.getHeight();
+                float cw = cardRect.width();
+                float ch = cardRect.height();
+                if (bw > 0 && bh > 0 && cw > 0 && ch > 0) {
+                    int saveCnt = canvas.save();
+                    clipRoundPath.reset();
+                    clipRoundPath.addRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, Path.Direction.CW);
+                    canvas.clipPath(clipRoundPath);
+
+                    float scale = Math.max(cw / (float) bw, ch / (float) bh);
+                    float dx = cardRect.left + (cw - bw * scale) * 0.5f;
+                    float dy = cardRect.top + (ch - bh * scale) * 0.5f;
+                    cropMatrix.reset();
+                    cropMatrix.postScale(scale, scale);
+                    cropMatrix.postTranslate(dx, dy);
+                    canvas.drawBitmap(bgBitmap, cropMatrix, bitmapPaint);
+                    canvas.restoreToCount(saveCnt);
+                }
+            }
+
+            // Прозрачность фона: 0% -> alpha=255 (полностью непрозрачный), 100% -> alpha=0 (полностью прозрачный)
             int clampedTrans = Math.max(0, Math.min(100, bgTransparencyPct));
-            int bgAlpha = Math.round(((100 - clampedTrans) * 245.0f) / 100.0f);
+            int bgAlpha = Math.round(((100 - clampedTrans) * 255.0f) / 100.0f);
             if (bgAlpha > 0) {
                 // Смешиваем тёмно-студийную базу с лёгким оттенком активного источника
                 int r = (((baseBgColor >> 16) & 0xFF) * 65 + ((tintBgColor >> 16) & 0xFF) * 35) / 100;
@@ -649,6 +691,26 @@ public class IslandOverlayController {
                     float textY = cy - (fm.ascent + fm.descent) * 0.5f;
                     canvas.drawText("REC", U(13.2f), textY, textPaint);
                 }
+            } else if (iconType == ICON_DOWNLOAD) {
+                // [FIX-ISLAND-SC-V250] Векторный значок Скачивания (лоток снизу как у ICON_EXPORT + стрелка ВНИЗ)
+                path.reset();
+                path.moveTo(ox + 3.2f * s, oy + 14.8f * s);
+                path.lineTo(ox + 3.2f * s, oy + 18.8f * s);
+                rectF.set(ox + 3.2f * s, oy + 16.8f * s, ox + 7.2f * s, oy + 20.8f * s);
+                path.arcTo(rectF, 180f, -90f, false);
+                path.lineTo(ox + 18.8f * s, oy + 20.8f * s);
+                rectF.set(ox + 16.8f * s, oy + 16.8f * s, ox + 20.8f * s, oy + 20.8f * s);
+                path.arcTo(rectF, 90f, -90f, false);
+                path.lineTo(ox + 20.8f * s, oy + 14.8f * s);
+                canvas.drawPath(path, strokePaint);
+
+                path.reset();
+                path.moveTo(ox + 7.0f * s, oy + 10.4f * s);
+                path.lineTo(ox + 12.0f * s, oy + 15.4f * s);
+                path.lineTo(ox + 17.0f * s, oy + 10.4f * s);
+                canvas.drawPath(path, strokePaint);
+
+                canvas.drawLine(ox + 12.0f * s, oy + 3.4f * s, ox + 12.0f * s, oy + 15.0f * s, strokePaint);
             }
         }
     }
@@ -658,6 +720,10 @@ public class IslandOverlayController {
         this.windowManager = (WindowManager) this.context.getSystemService(Context.WINDOW_SERVICE);
         this.prefs = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         this.bgTransparencyPct = Math.max(0, Math.min(100, this.prefs.getInt(KEY_BG_TRANSPARENCY, 22)));
+        String savedSpec = this.prefs.getString(KEY_BG_IMAGE_SPEC, "");
+        if (savedSpec != null && !savedSpec.isEmpty()) {
+            setBgImageSpec(savedSpec);
+        }
         registerNavigationReceiver();
     }
 
@@ -674,6 +740,106 @@ public class IslandOverlayController {
                 if (collapsedMiniPill != null) collapsedMiniPill.invalidate();
             }
         });
+    }
+
+    public void setBgImageSpec(final String imageSpec) {
+        final String cleanSpec = (imageSpec != null) ? imageSpec.trim() : "";
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                bgImageSpec = cleanSpec;
+                try {
+                    prefs.edit().putString(KEY_BG_IMAGE_SPEC, cleanSpec).apply();
+                } catch (Throwable ignored) {}
+                if (cleanSpec.isEmpty()) {
+                    loadedBgBitmapSpec = "";
+                    bgBitmap = null;
+                    if (expandedPlateCard != null) expandedPlateCard.invalidate();
+                    return;
+                }
+                if (cleanSpec.equals(loadedBgBitmapSpec) && bgBitmap != null && !bgBitmap.isRecycled()) {
+                    if (expandedPlateCard != null) expandedPlateCard.invalidate();
+                    return;
+                }
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        final Bitmap decoded = decodeIslandBgBitmapSync(cleanSpec);
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (!cleanSpec.equals(bgImageSpec)) return;
+                                bgBitmap = decoded;
+                                loadedBgBitmapSpec = (decoded != null) ? cleanSpec : "";
+                                if (expandedPlateCard != null) expandedPlateCard.invalidate();
+                            }
+                        });
+                    }
+                }).start();
+            }
+        });
+    }
+
+    private static int calcSampleSize(int rawW, int rawH, int maxDim) {
+        int inSampleSize = 1;
+        while ((rawW / inSampleSize) > maxDim || (rawH / inSampleSize) > maxDim) {
+            inSampleSize *= 2;
+        }
+        return Math.max(1, inSampleSize);
+    }
+
+    private Bitmap decodeIslandBgBitmapSync(String spec) {
+        if (spec == null || spec.isEmpty()) return null;
+        try {
+            if (spec.startsWith("http://") || spec.startsWith("https://")) {
+                HttpURLConnection conn = null;
+                InputStream is = null;
+                try {
+                    URL url = new URL(spec);
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(6000);
+                    conn.setReadTimeout(8000);
+                    conn.setDoInput(true);
+                    conn.connect();
+                    if (conn.getResponseCode() != 200) return null;
+                    is = conn.getInputStream();
+                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                    byte[] buf = new byte[16384];
+                    int n;
+                    int total = 0;
+                    while ((n = is.read(buf)) != -1) {
+                        bos.write(buf, 0, n);
+                        total += n;
+                        if (total > 12 * 1024 * 1024) break;
+                    }
+                    byte[] data = bos.toByteArray();
+                    if (data.length < 32) return null;
+                    BitmapFactory.Options bounds = new BitmapFactory.Options();
+                    bounds.inJustDecodeBounds = true;
+                    BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+                    BitmapFactory.Options opts = new BitmapFactory.Options();
+                    opts.inSampleSize = calcSampleSize(bounds.outWidth, bounds.outHeight, 1280);
+                    opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                    return BitmapFactory.decodeByteArray(data, 0, data.length, opts);
+                } finally {
+                    if (is != null) { try { is.close(); } catch (Throwable ignored) {} }
+                    if (conn != null) { try { conn.disconnect(); } catch (Throwable ignored) {} }
+                }
+            } else {
+                String path = spec.startsWith("file://") ? spec.substring(7) : spec;
+                File f = new File(path);
+                if (!f.exists() || !f.isFile()) return null;
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeFile(f.getAbsolutePath(), bounds);
+                BitmapFactory.Options opts = new BitmapFactory.Options();
+                opts.inSampleSize = calcSampleSize(bounds.outWidth, bounds.outHeight, 1280);
+                opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                return BitmapFactory.decodeFile(f.getAbsolutePath(), opts);
+            }
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private void registerNavigationReceiver() {
@@ -1234,6 +1400,8 @@ public class IslandOverlayController {
                     currentRawTrack = wasRec ? baseQ : (baseQ + "|REC");
                     refreshUi();
                     MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('radio_rec','');");
+                } else if ("soundcloud".equals(currentIslandMode)) {
+                    MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('sc_download','');");
                 }
             }
         });
@@ -1557,10 +1725,11 @@ public class IslandOverlayController {
             collapseBtn.setIconColor(bright);
         }
 
-        // 4. Кнопка Экспорта в .xFLAC (в "music") / кнопка записи REC с кружком (в "radio") слева на одних и тех же координатах,
+        // 4. Кнопка Экспорта в .xFLAC (в "music") / кнопка записи REC с кружком (в "radio") / кнопка Скачивания (в "soundcloud") слева на одних и тех же координатах,
         //    и кнопка Избранного справа (только в "music")
         boolean isLocalMusic = "music".equals(m);
         boolean isRadioMode = "radio".equals(m);
+        boolean isScMode = "soundcloud".equals(m);
         boolean isRadioRec = isRadioMode && currentRawTrack != null && currentRawTrack.toUpperCase(Locale.ROOT).contains("|REC");
         if (exportTrackBtn != null) {
             if (isLocalMusic) {
@@ -1572,6 +1741,11 @@ public class IslandOverlayController {
                 exportTrackBtn.setVisibility(View.VISIBLE);
                 exportTrackBtn.setIconType(ICON_REC);
                 exportTrackBtn.setFilledState(isRadioRec);
+                exportTrackBtn.setIconColor(bright);
+            } else if (isScMode) {
+                exportTrackBtn.setVisibility(View.VISIBLE);
+                exportTrackBtn.setIconType(ICON_DOWNLOAD);
+                exportTrackBtn.setFilledState(false);
                 exportTrackBtn.setIconColor(bright);
             } else {
                 exportTrackBtn.setVisibility(View.INVISIBLE);

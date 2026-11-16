@@ -4415,3 +4415,259 @@ window.stopAllExternalStreamsV97 = function() {
         } catch (e) {}
     }
 })();
+
+/* ================= BEGIN [FIX-SC-SEEK-V250] SOUNDCLOUD MINI-PLAYER & ISLAND DURATION + SEEK ================= */
+;(function() {
+    if (window._jennyV250ScSeekInstalled) return;
+    window._jennyV250ScSeekInstalled = true;
+
+    window.parseScDurationSecV250 = function(trk) {
+        if (!trk) return 0;
+        if (typeof trk.duration_sec === 'number' && isFinite(trk.duration_sec) && trk.duration_sec > 0) {
+            return trk.duration_sec;
+        }
+        var dStr = String(trk.duration || '').trim();
+        if (dStr.indexOf(':') !== -1) {
+            var parts = dStr.split(':').map(function(p) { return parseInt(p, 10) || 0; });
+            if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+            if (parts.length === 2) return parts[0] * 60 + parts[1];
+        }
+        return 0;
+    };
+
+    window.getEffectiveScTotalDurSecV250 = function(aud) {
+        if (aud && isFinite(aud.duration) && aud.duration > 0) {
+            return aud.duration;
+        }
+        if (aud && typeof aud._scTotalDurSecV250 === 'number' && aud._scTotalDurSecV250 > 0) {
+            return aud._scTotalDurSecV250;
+        }
+        var list = window._scDedicatedTracksV96 || [];
+        if (aud && aud._pagePath && Array.isArray(list)) {
+            var found = list.find(function(x) { return x.page_path === aud._pagePath; });
+            var parsed = window.parseScDurationSecV250(found);
+            if (parsed > 0) {
+                aud._scTotalDurSecV250 = parsed;
+                return parsed;
+            }
+        }
+        return 0;
+    };
+
+    window.getEffectiveScCurrentTimeSecV250 = function(aud) {
+        if (!aud) return 0;
+        var off = (typeof aud._scTimeOffsetSecV250 === 'number' && isFinite(aud._scTimeOffsetSecV250)) ? aud._scTimeOffsetSecV250 : 0;
+        var cur = (isFinite(aud.currentTime) && aud.currentTime > 0) ? aud.currentTime : 0;
+        var tot = window.getEffectiveScTotalDurSecV250(aud);
+        var sum = off + cur;
+        if (tot > 0 && sum > tot) sum = tot;
+        return Math.max(0, sum);
+    };
+
+    window.seekSoundCloudStreamToSecV250 = function(aud, targetSec) {
+        var liveAud = aud || (window._khStateV88 && window._khStateV88.previewAudio);
+        if (!liveAud) return;
+        var tot = window.getEffectiveScTotalDurSecV250(liveAud);
+        var clampedSec = Math.max(0, tot > 0 ? Math.min(Math.max(0, tot - 0.5), Number(targetSec) || 0) : (Number(targetSec) || 0));
+
+        // Update mini-player UI immediately for instant visual feedback
+        var scModal = document.getElementById('jennySoundCloudModalV93');
+        var bar = scModal ? scModal.querySelector('.jenny-univ-mini-player-v98') : null;
+        if (bar) {
+            var cEl = bar.querySelector('.ump-cur');
+            var dEl = bar.querySelector('.ump-dur');
+            var sEl = bar.querySelector('.ump-seek');
+            if (cEl && typeof window.fmtKhSecV90 === 'function') cEl.innerText = window.fmtKhSecV90(clampedSec);
+            if (dEl && tot > 0 && typeof window.fmtKhSecV90 === 'function') dEl.innerText = window.fmtKhSecV90(tot);
+            if (sEl && tot > 0) sEl.value = Math.round((clampedSec / tot) * 1000);
+        }
+
+        // If the browser knows native finite duration (progressive MP3 stream), try native seek first
+        if (isFinite(liveAud.duration) && liveAud.duration > 0 && String(liveAud.src || '').indexOf('/api/soundcloud/live_stream_v246') === -1) {
+            try {
+                liveAud._scTimeOffsetSecV250 = 0;
+                liveAud.currentTime = clampedSec;
+                if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                    window.syncPermanentForegroundNotificationV212(true);
+                }
+                return;
+            } catch (e) {}
+        }
+
+        // HLS chunked stream (/api/soundcloud/live_stream_v246): reconnect at ?seek=<clampedSec>
+        var wasPaused = Boolean(liveAud.paused);
+        var baseUrl = liveAud._baseStreamUrlV250 || liveAud.src || ('/api/soundcloud/live_stream_v246?page_path=' + encodeURIComponent(liveAud._pagePath || ''));
+        var cleanBase = String(baseUrl)
+            .replace(/([?&])seek=[^&]*/g, '')
+            .replace(/([?&])_ts=[^&]*/g, '')
+            .replace(/[?&]+$/, '');
+        var sep = (cleanBase.indexOf('?') === -1) ? '?' : '&';
+        var seekSecParam = (Math.round(clampedSec * 10) / 10).toFixed(1);
+        var nextUrl = cleanBase + sep + 'seek=' + encodeURIComponent(seekSecParam) + '&_ts=' + Date.now();
+
+        liveAud._scTimeOffsetSecV250 = clampedSec;
+        try {
+            liveAud.src = nextUrl;
+            liveAud.volume = (typeof window.getKhPreviewVolumeV90 === 'function') ? window.getKhPreviewVolumeV90() : 0.85;
+            if (!wasPaused) {
+                liveAud.play().catch(function() {});
+            }
+        } catch (e) {}
+
+        if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+            window.syncPermanentForegroundNotificationV212(true);
+        }
+    };
+
+    // Upgrade bindAudioToSingleModalMiniPlayerV241 so SoundCloud mini-player shows duration & live seek preview
+    var _origBindMiniV250 = window.bindAudioToSingleModalMiniPlayerV241;
+    window.bindAudioToSingleModalMiniPlayerV241 = function(aud, titleText, targetModalId) {
+        if (typeof _origBindMiniV250 === 'function') {
+            _origBindMiniV250.apply(this, arguments);
+        }
+        if (targetModalId !== 'jennySoundCloudModalV93' || !aud) return;
+
+        var m = document.getElementById('jennySoundCloudModalV93');
+        var bar = m ? m.querySelector('.jenny-univ-mini-player-v98') : null;
+        if (!bar) return;
+
+        var cEl = bar.querySelector('.ump-cur');
+        var dEl = bar.querySelector('.ump-dur');
+        var sEl = bar.querySelector('.ump-seek');
+        var initTot = window.getEffectiveScTotalDurSecV250(aud);
+        var initCur = window.getEffectiveScCurrentTimeSecV250(aud);
+
+        if (cEl && typeof window.fmtKhSecV90 === 'function') cEl.innerText = window.fmtKhSecV90(initCur);
+        if (dEl && typeof window.fmtKhSecV90 === 'function') dEl.innerText = (initTot > 0) ? window.fmtKhSecV90(initTot) : '0:00';
+        if (sEl) {
+            sEl.value = (initTot > 0) ? Math.round((initCur / initTot) * 1000) : 0;
+            if (!sEl._scInputPreviewHookedV250) {
+                sEl._scInputPreviewHookedV250 = true;
+                sEl.addEventListener('input', function() {
+                    var activeAud = window._khStateV88 && window._khStateV88.previewAudio;
+                    var tot = window.getEffectiveScTotalDurSecV250(activeAud);
+                    if (tot > 0 && cEl && typeof window.fmtKhSecV90 === 'function') {
+                        var previewSec = ((Number(sEl.value) || 0) / 1000.0) * tot;
+                        cEl.innerText = window.fmtKhSecV90(previewSec);
+                    }
+                });
+            }
+        }
+
+        aud.ontimeupdate = function() {
+            if (window._umpUserDraggingSeekV106) return;
+            var totSec = window.getEffectiveScTotalDurSecV250(aud);
+            var curSec = window.getEffectiveScCurrentTimeSecV250(aud);
+            var curStr = (typeof window.fmtKhSecV90 === 'function') ? window.fmtKhSecV90(curSec) : '0:00';
+            var durStr = (totSec > 0 && typeof window.fmtKhSecV90 === 'function') ? window.fmtKhSecV90(totSec) : 'Поток';
+            var pct = (totSec > 0) ? Math.min(1000, Math.max(0, Math.round((curSec / totSec) * 1000))) : 0;
+            if (cEl) cEl.innerText = curStr;
+            if (dEl) dEl.innerText = durStr;
+            if (sEl) sEl.value = pct;
+        };
+    };
+
+    // Upgrade previewScTrackV96 to attach duration_sec, artwork_url, and base stream URL to the Audio instance
+    window.previewScTrackV96 = async function(idx, btnEl, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var t = (window._scDedicatedTracksV96 || []).find(function(x) { return Number(x.index) === Number(idx); });
+        if (!t) return;
+
+        var curAud = window._khStateV88 && window._khStateV88.previewAudio;
+        if (curAud && curAud._pagePath === t.page_path) {
+            if (!curAud.paused) {
+                window.stopAllExternalStreamsV97();
+            } else {
+                if (typeof window.pauseMainPlayerForOstV90 === 'function') window.pauseMainPlayerForOstV90();
+                curAud.volume = window.getKhPreviewVolumeV90();
+                try {
+                    await curAud.play();
+                    if (btnEl) btnEl.innerText = '⏹';
+                    var scM = document.getElementById('jennySoundCloudModalV93');
+                    var pB = scM ? scM.querySelector('.jenny-univ-mini-player-v98 .ump-play-btn') : null;
+                    if (pB) pB.innerText = '⏸';
+                } catch (e) {}
+            }
+            if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                window.syncPermanentForegroundNotificationV212(true);
+            }
+            return;
+        }
+
+        window.stopAllExternalStreamsV97();
+        if (typeof window.pauseMainPlayerForOstV90 === 'function') window.pauseMainPlayerForOstV90();
+        var myReqId = ++window._previewReqIdV97;
+        if (btnEl) btnEl.innerText = '⏳';
+        window._khStateV88.previewBtn = btnEl;
+
+        try {
+            var res = await window.fetch('/api/khinsider/resolve_stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ page_path: t.page_path })
+            });
+            var data = await res.json();
+            if (myReqId !== window._previewReqIdV97) return;
+            if (!res.ok || !data || !data.stream_url) throw new Error((data && data.error) || 'Нет потока SoundCloud');
+
+            var aud = new Audio(data.stream_url);
+            aud._pagePath = t.page_path;
+            aud._baseStreamUrlV250 = data.stream_url;
+            aud._scTotalDurSecV250 = window.parseScDurationSecV250(t);
+            aud._scTimeOffsetSecV250 = 0;
+            aud._scTrackIndexV250 = t.index;
+            aud._scArtworkUrlV250 = t.artwork_url || '';
+            aud._previewOwnerModalV241 = 'jennySoundCloudModalV93';
+            aud.volume = window.getKhPreviewVolumeV90();
+            window._khStateV88.previewAudio = aud;
+            window._lastExternalAudioElV243 = aud;
+            window._lastExternalTitleV243 = t.title || 'SoundCloud Поток';
+            window._lastScTrackIdxV245 = t.index;
+
+            window.bindAudioToSingleModalMiniPlayerV241(aud, t.index + '. ' + t.title, 'jennySoundCloudModalV93');
+
+            aud.onended = function() {
+                if (btnEl) btnEl.innerText = '▶';
+                var scModal = document.getElementById('jennySoundCloudModalV93');
+                var pBtn = scModal ? scModal.querySelector('.jenny-univ-mini-player-v98 .ump-play-btn') : null;
+                if (pBtn) pBtn.innerText = '▶';
+                if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                    window.syncPermanentForegroundNotificationV212(true);
+                }
+            };
+
+            await aud.play();
+            if (myReqId !== window._previewReqIdV97) {
+                aud.pause();
+                return;
+            }
+            if (btnEl) btnEl.innerText = '⏹';
+            if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                window.syncPermanentForegroundNotificationV212(true);
+            }
+        } catch (e) {
+            if (myReqId === window._previewReqIdV97) {
+                if (btnEl) btnEl.innerText = '▶';
+                if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+            }
+        }
+    };
+
+    // Upgrade seekKhMiniPlayerV90 so dragging the mini-player slider seeks SoundCloud streams via ?seek=
+    var _origSeekKhMiniV250 = window.seekKhMiniPlayerV90;
+    window.seekKhMiniPlayerV90 = function(val1000) {
+        var aud = window._khStateV88 && window._khStateV88.previewAudio;
+        if (aud && (aud._previewOwnerModalV241 === 'jennySoundCloudModalV93' || String(aud._pagePath || '').indexOf('sc:') === 0)) {
+            var tot = window.getEffectiveScTotalDurSecV250(aud);
+            if (tot > 0) {
+                var targetSec = (Math.max(0, Math.min(1000, Number(val1000) || 0)) / 1000.0) * tot;
+                window.seekSoundCloudStreamToSecV250(aud, targetSec);
+                return;
+            }
+        }
+        if (typeof _origSeekKhMiniV250 === 'function') {
+            return _origSeekKhMiniV250.apply(this, arguments);
+        }
+    };
+})();
+/* ================= END [FIX-SC-SEEK-V250] SOUNDCLOUD MINI-PLAYER & ISLAND DURATION + SEEK ================= */

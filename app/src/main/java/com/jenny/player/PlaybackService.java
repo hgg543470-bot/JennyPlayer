@@ -77,6 +77,13 @@ public class PlaybackService extends Service {
         }
     }
 
+    public static void setIslandBgImageStatic(String imageSpec) {
+        PlaybackService inst = sInstance;
+        if (inst != null && inst.islandOverlay != null) {
+            inst.islandOverlay.setBgImageSpec(imageSpec);
+        }
+    }
+
     public static void ensureChannel(Context ctx) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = ctx.getSystemService(NotificationManager.class);

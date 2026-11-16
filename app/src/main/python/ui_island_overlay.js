@@ -493,7 +493,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 3. НАСТРОЙКА ПРОЗРАЧНОСТИ ФОНА ПЛАШКИ (0–100%) В ОКНЕ НАСТРОЕК ПЛЕЕРА
+    // 3. НАСТРОЙКА ПРОЗРАЧНОСТИ ФОНА ПЛАШКИ (0–100%), ПРЕВЬЮ ТРЕКА И СТИЛЬНОГО ФМ КАРТИНОК
     // -------------------------------------------------------------------------
     function getSavedIslandTransparencyPctV247() {
         try {
@@ -509,6 +509,259 @@
         } catch (e) {}
         return 22; // Лёгкая полупрозрачность по умолчанию
     }
+
+    function getIslandShowTrackArtV250() {
+        try {
+            if (window.appConfig && typeof window.appConfig.islandShowTrackArtV250 === 'boolean') {
+                return window.appConfig.islandShowTrackArtV250;
+            }
+            var raw = localStorage.getItem('jenny_island_show_track_art_v250');
+            if (raw !== null) return raw === '1' || raw === 'true';
+        } catch (e) {}
+        return true; // Включено по умолчанию
+    }
+
+    function getIslandUseCustomArtV250() {
+        try {
+            if (window.appConfig && typeof window.appConfig.islandUseCustomArtV250 === 'boolean') {
+                return window.appConfig.islandUseCustomArtV250;
+            }
+            var raw = localStorage.getItem('jenny_island_use_custom_art_v250');
+            if (raw !== null) return raw === '1' || raw === 'true';
+        } catch (e) {}
+        return false;
+    }
+
+    function getIslandCustomArtPathV250() {
+        try {
+            if (window.appConfig && typeof window.appConfig.islandCustomArtPathV250 === 'string' && window.appConfig.islandCustomArtPathV250) {
+                return window.appConfig.islandCustomArtPathV250;
+            }
+            var raw = localStorage.getItem('jenny_island_custom_art_path_v250');
+            if (raw) return raw;
+        } catch (e) {}
+        return '';
+    }
+
+    function resolveCurrentScTrackObjV250() {
+        var list = window._scDedicatedTracksV96 || [];
+        if (!Array.isArray(list) || list.length === 0) return null;
+        var aud = window._khStateV88 && window._khStateV88.previewAudio;
+        if (aud && aud._pagePath) {
+            var byPage = list.find(function(x) { return x.page_path === aud._pagePath; });
+            if (byPage) return byPage;
+        }
+        if (window._lastScTrackIdxV245) {
+            var byIdx = list.find(function(x) { return Number(x.index) === Number(window._lastScTrackIdxV245); });
+            if (byIdx) return byIdx;
+        }
+        return list[0] || null;
+    }
+
+    function resolveIslandBgImageSpecV250(activeMode) {
+        var useCustom = getIslandUseCustomArtV250();
+        var customPath = getIslandCustomArtPathV250();
+        if (useCustom && customPath) {
+            return customPath;
+        }
+        if (!getIslandShowTrackArtV250()) {
+            return '';
+        }
+        var m = String(activeMode || window._islandActiveModeV245 || 'music').toLowerCase();
+        if (m === 'soundcloud') {
+            var scTrk = resolveCurrentScTrackObjV250();
+            var aud = window._khStateV88 && window._khStateV88.previewAudio;
+            var artUrl = (scTrk && scTrk.artwork_url) || (aud && aud._scArtworkUrlV250) || '';
+            var pagePath = (scTrk && scTrk.page_path) || (aud && aud._pagePath) || '';
+            if (artUrl || pagePath) {
+                return 'http://127.0.0.1:8080/api/island/sc_artwork?url=' + encodeURIComponent(artUrl) + '&page_path=' + encodeURIComponent(pagePath);
+            }
+            return '';
+        }
+        if (m === 'music') {
+            var trkName = window.currentPlayingTrack || '';
+            if (trkName) {
+                return 'http://127.0.0.1:8080/api/island/track_cover?track=' + encodeURIComponent(trkName);
+            }
+            return '';
+        }
+        return '';
+    }
+
+    window.syncIslandBgImageV250 = function(force) {
+        if (!window.AndroidBridge || typeof window.AndroidBridge.setIslandBgImage !== 'function') return;
+        var spec = resolveIslandBgImageSpecV250(window._islandActiveModeV245 || 'music');
+        if (!force && spec === window._lastSentIslandBgSpecV250) return;
+        window._lastSentIslandBgSpecV250 = spec;
+        try {
+            window.AndroidBridge.setIslandBgImage(spec);
+        } catch (e) {}
+    };
+
+    window.onIslandArtSettingChangedV250 = function() {
+        var chkTrack = document.getElementById('chkIslandShowTrackArtV250');
+        var chkCustom = document.getElementById('chkIslandUseCustomArtV250');
+        var showTrack = chkTrack ? Boolean(chkTrack.checked) : getIslandShowTrackArtV250();
+        var useCustom = chkCustom ? Boolean(chkCustom.checked) : getIslandUseCustomArtV250();
+        var customPath = getIslandCustomArtPathV250();
+
+        window.appConfig = window.appConfig || {};
+        window.appConfig.islandShowTrackArtV250 = showTrack;
+        window.appConfig.islandUseCustomArtV250 = useCustom;
+        window.appConfig.islandCustomArtPathV250 = customPath;
+        try {
+            localStorage.setItem('jenny_island_show_track_art_v250', showTrack ? '1' : '0');
+            localStorage.setItem('jenny_island_use_custom_art_v250', useCustom ? '1' : '0');
+            if (customPath) localStorage.setItem('jenny_island_custom_art_path_v250', customPath);
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+        } catch (e) {}
+
+        var pathLbl = document.getElementById('lblIslandCustomArtPathV250');
+        if (pathLbl) {
+            pathLbl.textContent = customPath ? customPath : 'Картинка ещё не выбрана';
+            pathLbl.style.color = customPath ? '#79c0ff' : '#8b949e';
+        }
+        window.syncIslandBgImageV250(true);
+    };
+
+    window.selectIslandCustomImageFileV250 = function(fullPath) {
+        if (!fullPath) return;
+        window.appConfig = window.appConfig || {};
+        window.appConfig.islandCustomArtPathV250 = fullPath;
+        window.appConfig.islandUseCustomArtV250 = true;
+        try {
+            localStorage.setItem('jenny_island_custom_art_path_v250', fullPath);
+            localStorage.setItem('jenny_island_use_custom_art_v250', '1');
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+        } catch (e) {}
+
+        var chkCustom = document.getElementById('chkIslandUseCustomArtV250');
+        if (chkCustom) chkCustom.checked = true;
+        var pathLbl = document.getElementById('lblIslandCustomArtPathV250');
+        if (pathLbl) {
+            pathLbl.textContent = fullPath;
+            pathLbl.style.color = '#79c0ff';
+        }
+        var modal = document.getElementById('jennyIslandImagePickerModalV250');
+        if (modal) modal.style.display = 'none';
+        window.syncIslandBgImageV250(true);
+        if (typeof window.showToast === 'function') {
+            window.showToast('🖼️ Фоновая картинка плашки установлена!');
+        }
+    };
+
+    window.loadIslandImageBrowserDirV250 = async function(targetPath) {
+        var listEl = document.getElementById('islandImgPickerListV250');
+        var curPathEl = document.getElementById('islandImgPickerCurPathV250');
+        if (!listEl) return;
+        listEl.innerHTML = '<div style="color:#a371f7;text-align:center;padding:28px 10px;font-size:12px;">⏳ Сканирование папки...</div>';
+        try {
+            var res = await window.fetch('/api/island/browse_images', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: targetPath || '/storage/emulated/0' })
+            });
+            var data = await res.json();
+            if (!res.ok || !data || data.status !== 'ok') {
+                throw new Error((data && data.error) || 'Не удалось открыть папку');
+            }
+            window._islandImgBrowserCurDirV250 = data.current || '/storage/emulated/0';
+            window._islandImgBrowserParentDirV250 = data.parent || '';
+            if (curPathEl) curPathEl.textContent = window._islandImgBrowserCurDirV250;
+
+            var html = '';
+            if (data.parent) {
+                var safePar = String(data.parent).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                html +=
+                    '<div onclick="window.loadIslandImageBrowserDirV250(\'' + safePar + '\')" ' +
+                        'style="display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#111722;border:1px solid #30363d;border-radius:9px;cursor:pointer;">' +
+                        '<span style="color:#d2a8ff;font-weight:bold;font-size:12px;">⬆️ .. (На уровень выше)</span>' +
+                        '<span style="color:#8b949e;font-size:10.5px;">Назад</span>' +
+                    '</div>';
+            }
+
+            var dirs = data.dirs || [];
+            var images = data.images || [];
+            dirs.forEach(function(d) {
+                var safeP = String(d.path || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                var safeN = String(d.name || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                html +=
+                    '<div onclick="window.loadIslandImageBrowserDirV250(\'' + safeP + '\')" ' +
+                        'style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;background:#0d121b;border:1px solid #262c36;border-radius:9px;cursor:pointer;">' +
+                        '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">' +
+                            '<span style="font-size:15px;flex-shrink:0;">📁</span>' +
+                            '<span style="color:#e6edf3;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + safeN + '</span>' +
+                        '</div>' +
+                        '<span style="color:#58a6ff;font-size:10.5px;font-weight:bold;flex-shrink:0;">Открыть ➔</span>' +
+                    '</div>';
+            });
+
+            images.forEach(function(img) {
+                var safeP = String(img.path || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                var safeN = String(img.name || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                var thumbUrl = '/api/island/custom_image?path=' + encodeURIComponent(img.path || '');
+                var sizeKb = Math.max(1, Math.round((Number(img.size || 0)) / 1024));
+                var sizeTxt = sizeKb >= 1024 ? ((sizeKb / 1024).toFixed(1) + ' МБ') : (sizeKb + ' КБ');
+                html +=
+                    '<div onclick="window.selectIslandCustomImageFileV250(\'' + safeP + '\')" ' +
+                        'style="display:flex;align-items:center;justify-content:space-between;gap:9px;padding:7px 10px;background:rgba(163,113,247,0.08);border:1px solid rgba(163,113,247,0.38);border-radius:9px;cursor:pointer;">' +
+                        '<div style="display:flex;align-items:center;gap:9px;min-width:0;flex:1;">' +
+                            '<img src="' + thumbUrl + '" loading="lazy" style="width:40px;height:40px;object-fit:cover;border-radius:7px;border:1px solid #a371f7;flex-shrink:0;background:#080b10;">' +
+                            '<div style="min-width:0;flex:1;">' +
+                                '<div style="color:#f0f6fc;font-size:11.8px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + safeN + '</div>' +
+                                '<div style="color:#8b949e;font-size:10px;">Картинка • ' + sizeTxt + '</div>' +
+                            '</div>' +
+                        '</div>' +
+                        '<button type="button" style="padding:5px 10px;border-radius:7px;background:linear-gradient(135deg,#6e38c5,#a371f7);border:1px solid #d2a8ff;color:#fff;font-size:10.5px;font-weight:bold;flex-shrink:0;">✓ Выбрать</button>' +
+                    '</div>';
+            });
+
+            if (!dirs.length && !images.length) {
+                html += '<div style="color:#8b949e;text-align:center;padding:24px 10px;font-size:11.5px;">В этой папке нет подпапок или картинок (.jpg, .png, .webp)</div>';
+            }
+            listEl.innerHTML = html;
+        } catch (e) {
+            listEl.innerHTML = '<div style="color:#ff7b72;text-align:center;padding:20px 10px;font-size:11.5px;">❌ ' + (e.message || e) + '</div>';
+        }
+    };
+
+    window.openIslandImageBrowserModalV250 = function(startDir) {
+        var modal = document.getElementById('jennyIslandImagePickerModalV250');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'jennyIslandImagePickerModalV250';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(3,5,9,0.88);backdrop-filter:blur(8px);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:12px;';
+            modal.innerHTML =
+                '<div style="width:100%;max-width:460px;max-height:86vh;background:#090d14;border:1.5px solid #a371f7;border-radius:14px;box-shadow:0 0 28px rgba(163,113,247,0.35);display:flex;flex-direction:column;overflow:hidden;">' +
+                    '<div style="padding:11px 13px;background:linear-gradient(90deg,rgba(163,113,247,0.22),rgba(88,166,255,0.16));border-bottom:1px solid #262c36;display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+                        '<span style="color:#d2a8ff;font-weight:900;font-size:12.5px;letter-spacing:0.3px;">🖼️ ВЫБОР КАРТИНКИ ДЛЯ ОСТРОВКА</span>' +
+                        '<button type="button" onclick="document.getElementById(\'jennyIslandImagePickerModalV250\').style.display=\'none\'" style="padding:4px 9px;border-radius:7px;background:rgba(248,81,73,0.18);border:1px solid #f85149;color:#ff7b72;font-size:11px;font-weight:bold;">✖ Закрыть</button>' +
+                    '</div>' +
+                    '<div style="padding:8px 11px;background:#06090f;border-bottom:1px solid #1c222d;display:flex;flex-direction:column;gap:6px;">' +
+                        '<div style="display:flex;gap:5px;overflow-x:auto;padding-bottom:2px;">' +
+                            '<button type="button" onclick="window.loadIslandImageBrowserDirV250(\'/storage/emulated/0\')" style="padding:4px 8px;border-radius:7px;background:#121824;border:1px solid #30363d;color:#79c0ff;font-size:10.5px;font-weight:bold;white-space:nowrap;">📱 Память</button>' +
+                            '<button type="button" onclick="window.loadIslandImageBrowserDirV250(\'/storage/emulated/0/Pictures\')" style="padding:4px 8px;border-radius:7px;background:#121824;border:1px solid #30363d;color:#d2a8ff;font-size:10.5px;font-weight:bold;white-space:nowrap;">🖼️ Pictures</button>' +
+                            '<button type="button" onclick="window.loadIslandImageBrowserDirV250(\'/storage/emulated/0/DCIM\')" style="padding:4px 8px;border-radius:7px;background:#121824;border:1px solid #30363d;color:#ff8c42;font-size:10.5px;font-weight:bold;white-space:nowrap;">📸 DCIM</button>' +
+                            '<button type="button" onclick="window.loadIslandImageBrowserDirV250(\'/storage/emulated/0/Download\')" style="padding:4px 8px;border-radius:7px;background:#121824;border:1px solid #30363d;color:#3fb950;font-size:10.5px;font-weight:bold;white-space:nowrap;">📥 Download</button>' +
+                        '</div>' +
+                        '<div id="islandImgPickerCurPathV250" style="color:#8b949e;font-family:monospace;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">/storage/emulated/0</div>' +
+                    '</div>' +
+                    '<div id="islandImgPickerListV250" style="padding:10px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;flex:1;"></div>' +
+                '</div>';
+            document.body.appendChild(modal);
+        }
+        modal.style.display = 'flex';
+        var initial = startDir;
+        if (!initial) {
+            var saved = getIslandCustomArtPathV250();
+            if (saved && saved.lastIndexOf('/') > 0) {
+                initial = saved.substring(0, saved.lastIndexOf('/'));
+            } else {
+                initial = window._islandImgBrowserCurDirV250 || '/storage/emulated/0';
+            }
+        }
+        window.loadIslandImageBrowserDirV250(initial);
+    };
 
     window.onIslandBgTransparencyChangedV247 = function(val) {
         var clean = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
@@ -534,13 +787,18 @@
         if (!container || document.getElementById('jennyIslandSettingsBoxV247')) return;
 
         var curVal = getSavedIslandTransparencyPctV247();
+        var showTrackArt = getIslandShowTrackArtV250();
+        var useCustomArt = getIslandUseCustomArtV250();
+        var customArtPath = getIslandCustomArtPathV250();
+        var safePathTxt = customArtPath ? customArtPath.replace(/</g, '&lt;').replace(/>/g, '&gt;') : 'Картинка ещё не выбрана';
+
         var box = document.createElement('div');
         box.id = 'jennyIslandSettingsBoxV247';
         box.className = 'setting-row';
         box.style.cssText = 'border:none;background:var(--bg-setting-box, #101520);padding:12px;border-radius:10px;margin-bottom:14px;border-left:3px solid #a371f7;display:flex;flex-direction:column;gap:8px;';
         box.innerHTML =
             '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-                '<span style="color:#e6edf3;font-weight:bold;font-size:13px;">Настройка плашки (Прозрачность фона)</span>' +
+                '<span style="color:#e6edf3;font-weight:bold;font-size:13px;">Настройка плашки (Прозрачность заливки)</span>' +
                 '<span id="lblIslandTransValV247" style="color:#d2a8ff;font-family:monospace;font-weight:bold;font-size:12.5px;">' + curVal + '%</span>' +
             '</div>' +
             '<input type="range" id="rngIslandTransV247" min="0" max="100" step="1" value="' + curVal + '" ' +
@@ -548,8 +806,30 @@
                 'onchange="window.onIslandBgTransparencyChangedV247(this.value)" ' +
                 'style="width:100%;accent-color:#a371f7;height:6px;cursor:pointer;">' +
             '<div style="display:flex;justify-content:space-between;font-size:10.5px;color:#8b949e;">' +
-                '<span>0 — Непрозрачная</span>' +
-                '<span>100 — Полностью прозрачная</span>' +
+                '<span>0 — Непрозрачная заливка (фон скрыт)</span>' +
+                '<span>100 — Прозрачная заливка (фон чёткий)</span>' +
+            '</div>' +
+            '<div style="margin-top:4px;padding-top:8px;border-top:1px solid rgba(163,113,247,0.22);display:flex;flex-direction:column;gap:7px;">' +
+                '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#e6edf3;font-size:12px;font-weight:600;">' +
+                    '<input type="checkbox" id="chkIslandShowTrackArtV250" ' + (showTrackArt ? 'checked ' : '') +
+                        'onchange="window.onIslandArtSettingChangedV250()" style="width:16px;height:16px;accent-color:#a371f7;">' +
+                    '<span>Отображать превью трека (из тега / потока на фоне)</span>' +
+                '</label>' +
+                '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#e6edf3;font-size:12px;font-weight:600;">' +
+                    '<input type="checkbox" id="chkIslandUseCustomArtV250" ' + (useCustomArt ? 'checked ' : '') +
+                        'onchange="window.onIslandArtSettingChangedV250()" style="width:16px;height:16px;accent-color:#ff8c42;">' +
+                    '<span>Заменить на своё изображение (тест для всех режимов)</span>' +
+                '</label>' +
+                '<div style="display:flex;align-items:center;gap:7px;background:#090d14;border:1px solid #262c36;border-radius:8px;padding:6px 8px;">' +
+                    '<div id="lblIslandCustomArtPathV250" onclick="window.openIslandImageBrowserModalV250()" ' +
+                        'style="flex:1;min-width:0;font-family:monospace;font-size:10.5px;color:' + (customArtPath ? '#79c0ff' : '#8b949e') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;">' +
+                        safePathTxt +
+                    '</div>' +
+                    '<button type="button" onclick="window.openIslandImageBrowserModalV250()" ' +
+                        'style="padding:5px 9px;border-radius:7px;background:rgba(163,113,247,0.2);border:1px solid #a371f7;color:#d2a8ff;font-size:11px;font-weight:bold;flex-shrink:0;">' +
+                        '🖼️ Выбрать картинку' +
+                    '</button>' +
+                '</div>' +
             '</div>';
 
         var firstRow = container.querySelector('.setting-row');
@@ -565,6 +845,7 @@
         installBiDirectionalSourceHooksV245();
         ensureIslandSettingsBlockV247();
         window.onIslandBgTransparencyChangedV247(getSavedIslandTransparencyPctV247());
+        window.syncIslandBgImageV250(true);
     }, 350);
 
     // -------------------------------------------------------------------------
@@ -627,8 +908,12 @@
         } else if (snap.extPlaying) {
             titleParts.push(resolveCurrentScTitleV245());
             subParts.push('SoundCloud • Поток');
-            durSec = isFinite(snap.extAud.duration) ? snap.extAud.duration : 0;
-            posSec = isFinite(snap.extAud.currentTime) ? snap.extAud.currentTime : 0;
+            durSec = (typeof window.getEffectiveScTotalDurSecV250 === 'function')
+                ? window.getEffectiveScTotalDurSecV250(snap.extAud)
+                : (isFinite(snap.extAud.duration) ? snap.extAud.duration : 0);
+            posSec = (typeof window.getEffectiveScCurrentTimeSecV250 === 'function')
+                ? window.getEffectiveScCurrentTimeSecV250(snap.extAud)
+                : (isFinite(snap.extAud.currentTime) ? snap.extAud.currentTime : 0);
         } else if (snap.deckAPlaying || snap.deckBPlaying) {
             if (snap.deckAPlaying && window.currentPlayingTrack) {
                 var cleanA = stripLeadingEmojisV247(String(window.currentPlayingTrack).replace(/\.(opus|m4a|mp3|wav|flac|ogg|xflac)$/i, ''));
@@ -676,8 +961,17 @@
                 titleParts.push(resolveCurrentScTitleV245());
                 if (!window._islandExportStatusV247) subParts.push('SoundCloud на паузе');
                 if (snap.extAud) {
-                    durSec = isFinite(snap.extAud.duration) ? snap.extAud.duration : 0;
-                    posSec = isFinite(snap.extAud.currentTime) ? snap.extAud.currentTime : 0;
+                    durSec = (typeof window.getEffectiveScTotalDurSecV250 === 'function')
+                        ? window.getEffectiveScTotalDurSecV250(snap.extAud)
+                        : (isFinite(snap.extAud.duration) ? snap.extAud.duration : 0);
+                    posSec = (typeof window.getEffectiveScCurrentTimeSecV250 === 'function')
+                        ? window.getEffectiveScCurrentTimeSecV250(snap.extAud)
+                        : (isFinite(snap.extAud.currentTime) ? snap.extAud.currentTime : 0);
+                } else {
+                    var pausedScTrk = resolveCurrentScTrackObjV250();
+                    if (pausedScTrk && typeof window.parseScDurationSecV250 === 'function') {
+                        durSec = window.parseScDurationSecV250(pausedScTrk);
+                    }
                 }
             } else if (window._lastActiveMediaSourceV243 === 'deckB' && snap.stVid && snap.stVid.active && snap.stVid.currentTitle) {
                 titleParts.push(stripLeadingEmojisV247(String(snap.stVid.currentTitle).replace(/\.(mp4|mkv|webm|avi|mov)$/i, '')));
@@ -723,6 +1017,8 @@
         var finalTitle = titleParts.join(' │ ');
         var finalSub = subParts.join(' • ');
         var curSig = finalTitle + '|' + finalSub + '|' + (isActuallyPlaying ? '1' : '0') + '|' + (isFav ? 'F1' : 'F0') + '|' + activeMode + '|' + (isRevA ? 'R1' : 'R0') + '|' + extraRaw;
+
+        window.syncIslandBgImageV250(Boolean(force));
 
         if (!force && curSig === window._lastNotifSigV243 && (!isActuallyPlaying || (now - (window._lastPermNotifSyncTsV212 || 0) < 900))) {
             return;
@@ -796,6 +1092,34 @@
             return;
         }
 
+        // [FIX-ISLAND-SC-V250] Скачивание текущего трека SoundCloud в плеер по нажатию кнопки Скачать на оранжевой плашке
+        if (c === 'sc_download') {
+            if (curMode !== 'soundcloud') return;
+            var scTrk = resolveCurrentScTrackObjV250();
+            if (!scTrk) {
+                if (typeof window.showToast === 'function') window.showToast('Сначала запусти трек SoundCloud');
+                return;
+            }
+            var bodyEl = document.getElementById('scDedicatedBodyV93');
+            var btnEl = bodyEl ? bodyEl.querySelector('button[onclick*="downloadScTrackV96(' + scTrk.index + ',"]') : null;
+            window._islandExportStatusV247 = 'Скачивание в плеер...';
+            window.syncPermanentForegroundNotificationV212(true);
+            try {
+                if (typeof window.downloadScTrackV96 === 'function') {
+                    await window.downloadScTrackV96(scTrk.index, btnEl);
+                    window._islandExportStatusV247 = 'Скачано в плеер!';
+                }
+            } catch (e) {
+                window._islandExportStatusV247 = 'Ошибка скачивания';
+            }
+            window.syncPermanentForegroundNotificationV212(true);
+            setTimeout(function() {
+                window._islandExportStatusV247 = '';
+                window.syncPermanentForegroundNotificationV212(true);
+            }, 2800);
+            return;
+        }
+
         // Прямой экспорт локального трека со всеми активными эффектами в .xFLAC (с распаковкой в WAV -> запеканием DSP -> упаковкой в .xFLAC)
         if (c === 'export_xflac' || c === 'share' || c === 'export') {
             if (curMode !== 'music') return;
@@ -844,12 +1168,14 @@
             return;
         }
 
-        // Перемотка ползунком (с учётом обратного воспроизведения isReversed!)
+        // Перемотка ползунком (с учётом обратного воспроизведения isReversed и потока SoundCloud!)
         if (c === 'seek') {
             var targetSec = Math.max(0, parseFloat(a) || 0);
-            if ((curMode === 'soundcloud' || snap.extPlaying) && snap.extAud && isFinite(snap.extAud.duration) && snap.extAud.duration > 0) {
-                var val1000 = Math.round((targetSec / snap.extAud.duration) * 1000);
-                if (typeof window.seekKhMiniPlayerV90 === 'function') {
+            if ((curMode === 'soundcloud' || snap.extPlaying) && snap.extAud) {
+                if (typeof window.seekSoundCloudStreamToSecV250 === 'function') {
+                    window.seekSoundCloudStreamToSecV250(snap.extAud, targetSec);
+                } else if (isFinite(snap.extAud.duration) && snap.extAud.duration > 0 && typeof window.seekKhMiniPlayerV90 === 'function') {
+                    var val1000 = Math.round((targetSec / snap.extAud.duration) * 1000);
                     window.seekKhMiniPlayerV90(val1000);
                 } else {
                     try { snap.extAud.currentTime = targetSec; } catch (e) {}

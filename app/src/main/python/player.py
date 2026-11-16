@@ -2612,10 +2612,15 @@ def api_soundcloud_search_v105():
             art = (item.get("user") or {}).get("username") or "SoundCloud"
             title = item.get("title") or f"Track {idx}"
             full_t = f"{art} — {title}" if art.lower() not in title.lower() else title
+            raw_art_u = (item.get("artwork_url") or ((item.get("user") or {}).get("avatar_url")) or "").strip()
+            if raw_art_u and "-large." in raw_art_u:
+                raw_art_u = raw_art_u.replace("-large.", "-t500x500.")
             pack_str = json.dumps({
                 "id": item.get("id"),
                 "auth": item.get("track_authorization") or "",
                 "permalink": item.get("permalink_url") or "",
+                "dur_sec": dur_s,
+                "artwork": raw_art_u,
                 "urls": urls_list
             }, ensure_ascii=False)
             b64_p = "sc:" + base64.urlsafe_b64encode(pack_str.encode("utf-8")).decode("ascii")
@@ -2623,6 +2628,8 @@ def api_soundcloud_search_v105():
             tracks.append({
                 "index": idx, "title": full_t,
                 "duration": f"{dur_s // 60}:{dur_s % 60:02d}",
+                "duration_sec": dur_s,
+                "artwork_url": raw_art_u,
                 "mp3_size": "AAC 160k / MP3", "page_path": b64_p,
                 "downloaded": ex["exists"], "local_ext": ex["ext"], "local_size_mb": ex["size_mb"]
             })
@@ -14014,6 +14021,10 @@ def _kill_active_sc_live_procs_v246():
 
 def api_soundcloud_live_stream_v246():
     page_path = (request.query.get("page_path") or "").strip()
+    try:
+        seek_sec = max(0.0, float(request.query.get("seek") or 0.0))
+    except Exception:
+        seek_sec = 0.0
     if not page_path.startswith("sc:"):
         response.status = 400
         return "Invalid SoundCloud page_path"
@@ -14050,18 +14061,41 @@ def api_soundcloud_live_stream_v246():
                 m3u8_txt = (first_b + r.read()).decode("utf-8", errors="ignore")
 
             map_url = None
-            seg_urls = []
+            seg_items = []
+            pending_extinf = 0.0
             for ln in m3u8_txt.splitlines():
                 s_ln = ln.strip()
                 if s_ln.startswith("#EXT-X-MAP:"):
                     m_map = re.search(r'URI="([^"]+)"', s_ln)
                     if m_map and m_map.group(1).startswith("http"):
                         map_url = m_map.group(1)
+                elif s_ln.startswith("#EXTINF:"):
+                    try:
+                        val_s = s_ln.split(":", 1)[1].split(",", 1)[0].strip()
+                        pending_extinf = max(0.0, float(val_s))
+                    except Exception:
+                        pending_extinf = 0.0
                 elif s_ln.startswith("http"):
-                    seg_urls.append(s_ln)
+                    seg_items.append((pending_extinf if pending_extinf > 0 else 10.0, s_ln))
+                    pending_extinf = 0.0
 
-            if not seg_urls:
+            if not seg_items:
                 return
+
+            # [FIX-SC-SEEK-V250] Пропускаем сегменты до запрошенной секунды seek_sec
+            start_seg_idx = 0
+            if seek_sec > 0.0:
+                acc_s = 0.0
+                for idx_s, (d_seg, _) in enumerate(seg_items):
+                    if acc_s + d_seg > seek_sec:
+                        start_seg_idx = idx_s
+                        break
+                    acc_s += d_seg
+                    start_seg_idx = idx_s
+
+            seg_urls = [u for (_, u) in seg_items[start_seg_idx:]]
+            if not seg_urls:
+                seg_urls = [seg_items[-1][1]]
 
             # Если плейлист содержит #EXT-X-MAP (fMP4 AAC 160k), транскодируем на лету через FFmpeg в непрерывный поток MP3
             ff_bin = find_ffmpeg_binary()
@@ -14140,4 +14174,252 @@ def api_soundcloud_live_stream_v246():
     return _gen()
 
 _override_bottle_route_v212('/api/soundcloud/live_stream_v246', 'GET', api_soundcloud_live_stream_v246)
-# ================= END JENNY_V243_UNIFIED_FIXES =================
+
+
+# ==============================================================================
+# [FIX-ISLAND-ARTWORK-V250] ОБЛОЖКА ИЗ ТЕГА ТРЕКА / SOUNDCLOUD + СТИЛЬНЫЙ ВЫБОР КАРТИНКИ
+# ==============================================================================
+_ISLAND_COVER_CACHE_V250 = {}
+_ISLAND_COVER_LOCK_V250 = threading.Lock()
+
+
+def _extract_embedded_cover_bytes_v250(full_path: str):
+    if not full_path or not os.path.isfile(full_path):
+        return None, None
+    with _ISLAND_COVER_LOCK_V250:
+        if full_path in _ISLAND_COVER_CACHE_V250:
+            return _ISLAND_COVER_CACHE_V250[full_path]
+
+    img_bytes = None
+    mime = "image/jpeg"
+
+    # 1) Быстрое чтение ID3v2 APIC (MP3) или FLAC METADATA_BLOCK_PICTURE напрямую на Python
+    try:
+        ext = os.path.splitext(full_path)[1].lower()
+        if ext == ".mp3":
+            with open(full_path, "rb") as f:
+                hdr = f.read(10)
+                if len(hdr) == 10 and hdr[:3] == b"ID3":
+                    ver = hdr[3]
+                    tag_sz = ((hdr[6] & 0x7F) << 21) | ((hdr[7] & 0x7F) << 14) | ((hdr[8] & 0x7F) << 7) | (hdr[9] & 0x7F)
+                    tag_data = f.read(min(tag_sz, 4 * 1024 * 1024))
+                    pos = 0
+                    while pos + 10 < len(tag_data):
+                        fid = tag_data[pos:pos + 4]
+                        if fid == b"\x00\x00\x00\x00":
+                            break
+                        if ver == 4:
+                            fsz = ((tag_data[pos+4] & 0x7F) << 21) | ((tag_data[pos+5] & 0x7F) << 14) | ((tag_data[pos+6] & 0x7F) << 7) | (tag_data[pos+7] & 0x7F)
+                        else:
+                            fsz = int.from_bytes(tag_data[pos+4:pos+8], "big")
+                        if fsz <= 0 or pos + 10 + fsz > len(tag_data):
+                            break
+                        if fid == b"APIC":
+                            fdata = tag_data[pos + 10:pos + 10 + fsz]
+                            for sig, m_t in ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png")):
+                                idx_sig = fdata.find(sig)
+                                if 0 <= idx_sig < 128:
+                                    img_bytes = fdata[idx_sig:]
+                                    mime = m_t
+                                    break
+                            if img_bytes:
+                                break
+                        pos += 10 + fsz
+        elif ext == ".flac":
+            with open(full_path, "rb") as f:
+                if f.read(4) == b"fLaC":
+                    while True:
+                        bh = f.read(4)
+                        if len(bh) < 4:
+                            break
+                        is_last = (bh[0] & 0x80) != 0
+                        btype = bh[0] & 0x7F
+                        blen = int.from_bytes(bh[1:4], "big")
+                        bdata = f.read(blen)
+                        if btype == 6 and len(bdata) > 32:  # PICTURE
+                            for sig, m_t in ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png")):
+                                idx_sig = bdata.find(sig)
+                                if 0 <= idx_sig < 256:
+                                    img_bytes = bdata[idx_sig:]
+                                    mime = m_t
+                                    break
+                            if img_bytes:
+                                break
+                        if is_last:
+                            break
+    except Exception:
+        pass
+
+    # 2) Универсальный фоллбэк через FFmpeg (для .m4a, .mp4, .ogg, .opus, .flac, .mp3)
+    if not img_bytes:
+        try:
+            ff_bin = find_ffmpeg_binary()
+            if ff_bin:
+                p = subprocess.run(
+                    [ff_bin, "-hide_banner", "-loglevel", "error", "-i", full_path, "-an", "-vcodec", "mjpeg", "-vframes", "1", "-f", "image2pipe", "-"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=6,
+                )
+                if p.stdout and len(p.stdout) > 256:
+                    img_bytes = p.stdout
+                    mime = "image/jpeg"
+        except Exception:
+            pass
+
+    # 3) Если обложки внутри тега нет — ищем cover.jpg / folder.jpg в той же папке
+    if not img_bytes:
+        try:
+            parent_d = os.path.dirname(full_path)
+            for cand_n in ("cover.jpg", "cover.png", "folder.jpg", "folder.png", "front.jpg"):
+                cp = os.path.join(parent_d, cand_n)
+                if os.path.isfile(cp) and os.path.getsize(cp) > 256:
+                    img_bytes = open(cp, "rb").read()
+                    mime = "image/png" if cand_n.endswith(".png") else "image/jpeg"
+                    break
+        except Exception:
+            pass
+
+    if img_bytes:
+        with _ISLAND_COVER_LOCK_V250:
+            if len(_ISLAND_COVER_CACHE_V250) > 24:
+                _ISLAND_COVER_CACHE_V250.clear()
+            _ISLAND_COVER_CACHE_V250[full_path] = (img_bytes, mime)
+    return img_bytes, mime
+
+
+def api_island_track_cover_v250():
+    trk = (request.query.get("track") or "").strip()
+    if not trk:
+        response.status = 404
+        return ""
+    full_p = _resolve_any_media_path_v218(trk)
+    if not full_p or not os.path.isfile(full_p):
+        response.status = 404
+        return ""
+    img_b, mime = _extract_embedded_cover_bytes_v250(full_p)
+    if not img_b:
+        response.status = 404
+        return ""
+    response.content_type = mime or "image/jpeg"
+    response.set_header("Cache-Control", "max-age=300")
+    return img_b
+
+
+def api_island_sc_artwork_v250():
+    u = (request.query.get("url") or "").strip()
+    page_path = (request.query.get("page_path") or "").strip()
+    if not u and page_path.startswith("sc:"):
+        try:
+            raw_dec = base64.urlsafe_b64decode(page_path[3:].encode("ascii")).decode("utf-8")
+            if raw_dec.startswith("{"):
+                info = json.loads(raw_dec)
+                u = (info.get("artwork") or "").strip()
+        except Exception:
+            pass
+    if not u or not u.startswith(("http://", "https://")):
+        response.status = 404
+        return ""
+    with _ISLAND_COVER_LOCK_V250:
+        if u in _ISLAND_COVER_CACHE_V250:
+            b_cached, m_cached = _ISLAND_COVER_CACHE_V250[u]
+            response.content_type = m_cached
+            return b_cached
+    try:
+        with _sc_urlopen_v95(u, timeout=10) as r:
+            raw_img = r.read()
+            c_type = r.headers.get("Content-Type") or "image/jpeg"
+        if raw_img and len(raw_img) > 128:
+            with _ISLAND_COVER_LOCK_V250:
+                if len(_ISLAND_COVER_CACHE_V250) > 24:
+                    _ISLAND_COVER_CACHE_V250.clear()
+                _ISLAND_COVER_CACHE_V250[u] = (raw_img, c_type)
+            response.content_type = c_type
+            return raw_img
+    except Exception:
+        pass
+    response.status = 404
+    return ""
+
+
+def api_island_custom_image_v250():
+    p = (request.query.get("path") or "").strip()
+    if not p or not os.path.isfile(p):
+        response.status = 404
+        return ""
+    ext = os.path.splitext(p)[1].lower()
+    mime_map = {
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+    }
+    response.content_type = mime_map.get(ext, "image/jpeg")
+    response.set_header("Cache-Control", "no-cache")
+    return open(p, "rb").read()
+
+
+def api_island_browse_images_v250():
+    response.content_type = "application/json; charset=utf-8"
+    try:
+        req = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        req = {}
+    req_dir = (req.get("dir") or "/storage/emulated/0/Download").strip()
+    if not os.path.isdir(req_dir):
+        for fb in ("/storage/emulated/0/Download", "/storage/emulated/0/Pictures", "/storage/emulated/0/DCIM", "/storage/emulated/0"):
+            if os.path.isdir(fb):
+                req_dir = fb
+                break
+    req_dir = os.path.abspath(req_dir)
+    parent_dir = os.path.dirname(req_dir) if req_dir != "/" else "/"
+
+    img_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    dirs_out = []
+    imgs_out = []
+    try:
+        for entry in os.listdir(req_dir):
+            if entry.startswith("."):
+                continue
+            fp = os.path.join(req_dir, entry)
+            try:
+                st = os.stat(fp)
+                mtime = float(st.st_mtime)
+                sz_b = int(st.st_size)
+            except Exception:
+                mtime = 0.0
+                sz_b = 0
+            if os.path.isdir(fp):
+                dirs_out.append({
+                    "name": entry,
+                    "path": fp,
+                    "mtime": mtime,
+                })
+            elif os.path.isfile(fp):
+                ext = os.path.splitext(entry)[1].lower()
+                if ext in img_exts and sz_b > 128:
+                    sz_str = f"{round(sz_b / 1024.0, 1)} КБ" if sz_b < 1024 * 1024 else f"{round(sz_b / (1024.0 * 1024.0), 2)} МБ"
+                    imgs_out.append({
+                        "name": entry,
+                        "path": fp,
+                        "size_str": sz_str,
+                        "mtime": mtime,
+                    })
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+    dirs_out.sort(key=lambda x: x["name"].lower())
+    imgs_out.sort(key=lambda x: (x["mtime"], x["name"].lower()), reverse=True)
+    return json.dumps({
+        "status": "ok",
+        "current_dir": req_dir,
+        "parent_dir": parent_dir,
+        "dirs": dirs_out,
+        "images": imgs_out,
+    }, ensure_ascii=False)
+
+
+_override_bottle_route_v212('/api/island/track_cover', 'GET', api_island_track_cover_v250)
+_override_bottle_route_v212('/api/island/sc_artwork', 'GET', api_island_sc_artwork_v250)
+_override_bottle_route_v212('/api/island/custom_image', 'GET', api_island_custom_image_v250)
+_override_bottle_route_v212('/api/island/browse_images', 'POST', api_island_browse_images_v250)
