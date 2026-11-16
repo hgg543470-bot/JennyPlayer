@@ -4,15 +4,15 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.res.Resources;
+import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Insets;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.RectF;
-import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
@@ -40,24 +40,28 @@ import android.widget.TextView;
 import java.util.Locale;
 
 /**
- * [FIX-ISLAND-OVERLAY] Отдельный контроллер верхней плашки плеера (Dynamic Island Overlay V247).
+ * [FIX-ISLAND-OVERLAY] Контроллер верхней плашки плеера (Dynamic Island Overlay V248).
  * Реализует:
- * 1. Компактную мини-плашку прямо под строкой состояния (укороченную на ~1/3, без текста, с 5 широкими зонами нажатия во всю высоту планки и чистыми векторными значками без рамок/кружков: [Мелодия -> Плеер] [|◀ Пред] [▶/⏸ Плей] [▶| След] [▼ Разворот]).
- * 2. Полное скрытие плашки внутри самого Jenny Player и автоматическое появление мини-плашки при сворачивании.
- * 3. Автоматическое сворачивание большой плашки в мини-плашку по кнопкам «Домой», «Назад» или касанию вне плашки.
- * 4. Шапку большой плашки с 4 векторными значками источников, фирменным векторным логотипом JENNY PLAYER (без v1.1, сдвинутым влево к значкам источников и открывающим плеер по тапу) и кнопкой сворачивания ▲ справа.
- * 5. Второй ряд большой плашки: слева векторная кнопка «Поделиться / Экспорт» (точная копия кнопки справа от громкости внизу плеера), по центру плавная бегущая строка (Marquee) названия трека, справа векторная кнопка «Избранное» (сердечко из нижнего бара плеера).
- * 6. Нижний транспортный ряд из 3 чистых векторных кнопок (|◀ Пред, ▶/⏸ Плей/Пауза, ▶| След — точные копии нижнего бара плеера без текстовых подписей).
- * 7. Полную хамелеон-перекраску всего интерфейса плашки и мини-капсулы в цвет активного значка источника.
+ * 1. Полное отсутствие рамок/кружков/прямоугольников вокруг всех внутренних кнопок (остаются только чистые векторные значки и широкие зоны тапа).
+ * 2. Мягкое размытое свечение (Glow) у главной рамки окна плашки и лёгкое свечение вокруг полосы прогресса.
+ * 3. Регулируемую прозрачность фона плашки (0–100%) через ползунок «Настройка плашки» в настройках плеера.
+ * 4. В 1-м ряду: 4 значка источников слева, посередине широкая зона тапа с векторным значком стрелочки открытия плеера (вместо надписи «Музыка 32-бит»), справа кнопка сворачивания ▲.
+ * 5. Во 2-м ряду: слева (над временем) векторная кнопка Экспорта в .xFLAC (запекает все текущие эффекты плеера с распаковкой в WAV и упаковкой в .xFLAC), по центру бегущая строка названия, справа векторное сердечко Избранного (только для локальных файлов).
+ * 6. В 4-м ряду: -10с, Пред (|◀), Пуск/Пауза (▶/⏸), След (▶|), +10с — без жёлтых эмодзи и без рамок.
+ * 7. Поддержку обратного хода полосы прогресса при включённом Реверсе в плеере.
  */
 public class IslandOverlayController {
+    private static final String PREFS_NAME = "jenny_island_prefs";
+    private static final String KEY_BG_TRANSPARENCY = "bg_transparency_pct";
+
     private final Context context;
     private final WindowManager windowManager;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final SharedPreferences prefs;
 
     private FrameLayout islandRootContainer;
-    private LinearLayout expandedPlateCard;
-    private LinearLayout collapsedMiniPill;
+    private GlowCardLayout expandedPlateCard;
+    private GlowCardLayout collapsedMiniPill;
     private WindowManager.LayoutParams islandLayoutParams;
     private boolean isIslandAttached = false;
     private boolean isIslandExpanded = false;
@@ -65,9 +69,12 @@ public class IslandOverlayController {
     private boolean isUserSeekingIsland = false;
     private boolean receiverRegistered = false;
 
+    // Прозрачность фона плашки: 0 = полностью непрозрачная, 100 = полностью прозрачная
+    private int bgTransparencyPct = 22;
+
     // Состояние медиа и модулей
-    private String currentTitle = "Jenny Player • Студия активна";
-    private String currentSubtitle = "🛡️ Фоновый движок 24/7 (P2P + 32-bit DSP)";
+    private String currentTitle = "Jenny Player";
+    private String currentSubtitle = "Готов к воспроизведению";
     private boolean isPlaying = false;
     private long currentPosMs = 0L;
     private long currentDurMs = 0L;
@@ -77,55 +84,50 @@ public class IslandOverlayController {
     private String currentIslandMode = "music"; // "music" | "radio" | "soundcloud" | "youtube"
     private String currentRawTrack = "";
 
-    // Фирменные цвета значков источников (сами 4 значка переключения всегда остаются в своих цветах)
+    // Фирменные цвета значков источников
     private static final int COLOR_ICON_MUSIC      = 0xFFA371F7; // Фиолетовый неон
     private static final int COLOR_ICON_RADIO      = 0xFF58A6FF; // Голубой неон
     private static final int COLOR_ICON_SOUNDCLOUD = 0xFFFF8C42; // Оранжевое облачко SoundCloud
     private static final int COLOR_ICON_YOUTUBE    = 0xFFFF5555; // Красный неон YouTube
 
-    // Типы векторных иконок действий (точные копии SVG из нижнего бара Jenny Player)
+    // Типы векторных иконок действий
     private static final int ICON_PREV         = 1;
     private static final int ICON_PLAY         = 2;
     private static final int ICON_PAUSE        = 3;
     private static final int ICON_NEXT         = 4;
-    private static final int ICON_SHARE        = 5;
+    private static final int ICON_EXPORT       = 5;
     private static final int ICON_HEART        = 6;
     private static final int ICON_CHEVRON_UP   = 7;
     private static final int ICON_CHEVRON_DOWN = 8;
+    private static final int ICON_OPEN_PLAYER  = 9;
 
     // Виджеты развёрнутой плашки
-    private GradientDrawable plateCardBgDrawable;
     private SourceIconView modeBtnMusic;
     private SourceIconView modeBtnRadio;
     private SourceIconView modeBtnSoundCloud;
     private SourceIconView modeBtnYoutube;
-    private JennyBrandLogoView jennyBrandLogoView;
+    private ActionIconView openAppZoneBtn;
     private ActionIconView collapseBtn;
-    private GradientDrawable collapseBtnBg;
 
-    private ActionIconView shareTrackBtn;
-    private GradientDrawable shareTrackBtnBg;
+    private ActionIconView exportTrackBtn;
     private TextView islandTitleView;
     private TextView islandSubtitleView;
     private ActionIconView favHeartBtn;
-    private GradientDrawable favHeartBgDrawable;
 
     private TextView elapsedTimeView;
     private TextView totalTimeView;
-    private SeekBar islandSeekBar;
+    private GlowSeekBar islandSeekBar;
     private GradientDrawable seekBgTrackDrawable;
     private GradientDrawable seekProgGradDrawable;
     private GradientDrawable seekThumbDrawable;
 
+    private TextView btnRew10;
     private ActionIconView btnPrev;
-    private GradientDrawable btnPrevBg;
     private ActionIconView btnPlayPause;
-    private GradientDrawable btnPlayPauseBgDrawable;
     private ActionIconView btnNext;
-    private GradientDrawable btnNextBg;
+    private TextView btnFwd10;
 
     // Виджеты свёрнутой мини-капсулы (5 широких зон без рамок вокруг иконок)
-    private GradientDrawable miniPillBgDrawable;
     private SourceIconView miniPillIconView;
     private ActionIconView miniPillPrevBtn;
     private ActionIconView miniPillPlayBtn;
@@ -170,18 +172,165 @@ public class IslandOverlayController {
     };
 
     /**
-     * Кастомный векторный значок источника (рисует точные векторные иконки из шапки Jenny Player).
+     * Контейнер плашки/мини-капсулы с настраиваемой прозрачностью фона (0–100%)
+     * и мягкой, слегка размытой светящейся внешней рамкой (Glow) вместо резкой линии.
+     */
+    private final class GlowCardLayout extends LinearLayout {
+        private final float cornerRadiusPx;
+        private int glowColor = COLOR_ICON_MUSIC;
+        private int baseBgColor = 0x090C15;
+        private int tintBgColor = 0x160D28;
+        private final Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint glowBlurPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint featherPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF cardRect = new RectF();
+
+        GlowCardLayout(Context ctx, float cornerRadiusPx) {
+            super(ctx);
+            this.cornerRadiusPx = cornerRadiusPx;
+            setWillNotDraw(false);
+
+            bgPaint.setStyle(Paint.Style.FILL);
+            glowBlurPaint.setStyle(Paint.Style.STROKE);
+            try {
+                glowBlurPaint.setMaskFilter(new BlurMaskFilter(U(4.5f), BlurMaskFilter.Blur.NORMAL));
+            } catch (Throwable ignored) {}
+
+            featherPaint.setStyle(Paint.Style.STROKE);
+        }
+
+        void setColorsAndInvalidate(int glowCol, int tintCol) {
+            this.glowColor = glowCol;
+            this.tintBgColor = tintCol & 0x00FFFFFF;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            int w = getWidth();
+            int h = getHeight();
+            if (w <= 0 || h <= 0) {
+                super.onDraw(canvas);
+                return;
+            }
+
+            float inset = U(4.2f);
+            cardRect.set(inset, inset, w - inset, h - inset);
+
+            // Прозрачность фона: 0% -> alpha=245 (почти непрозрачный), 100% -> alpha=0 (полностью прозрачный)
+            int clampedTrans = Math.max(0, Math.min(100, bgTransparencyPct));
+            int bgAlpha = Math.round(((100 - clampedTrans) * 245.0f) / 100.0f);
+            if (bgAlpha > 0) {
+                // Смешиваем тёмно-студийную базу с лёгким оттенком активного источника
+                int r = (((baseBgColor >> 16) & 0xFF) * 65 + ((tintBgColor >> 16) & 0xFF) * 35) / 100;
+                int g = (((baseBgColor >> 8) & 0xFF) * 65 + ((tintBgColor >> 8) & 0xFF) * 35) / 100;
+                int b = ((baseBgColor & 0xFF) * 65 + (tintBgColor & 0xFF) * 35) / 100;
+                bgPaint.setColor((bgAlpha << 24) | (r << 16) | (g << 8) | b);
+                canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, bgPaint);
+            }
+
+            int rgb = glowColor & 0x00FFFFFF;
+
+            // Мягкий размытый ореол главной рамки (не резкая линия, а плавное свечение)
+            glowBlurPaint.setColor((0x44 << 24) | rgb);
+            glowBlurPaint.setStrokeWidth(U(5.5f));
+            canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, glowBlurPaint);
+
+            featherPaint.setColor((0x18 << 24) | rgb);
+            featherPaint.setStrokeWidth(U(6.8f));
+            canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, featherPaint);
+
+            featherPaint.setColor((0x2C << 24) | rgb);
+            featherPaint.setStrokeWidth(U(4.4f));
+            canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, featherPaint);
+
+            featherPaint.setColor((0x52 << 24) | rgb);
+            featherPaint.setStrokeWidth(U(2.5f));
+            canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, featherPaint);
+
+            featherPaint.setColor((0x98 << 24) | rgb);
+            featherPaint.setStrokeWidth(U(1.2f));
+            canvas.drawRoundRect(cardRect, cornerRadiusPx, cornerRadiusPx, featherPaint);
+
+            super.onDraw(canvas);
+        }
+    }
+
+    /**
+     * Полоса прогресса (SeekBar) со слабым мягким свечением на несколько пикселей вокруг самой полосы.
+     */
+    private final class GlowSeekBar extends SeekBar {
+        private int glowColor = COLOR_ICON_MUSIC;
+        private final Paint haloPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint activeHaloPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF trackRect = new RectF();
+        private final RectF fillRect = new RectF();
+
+        GlowSeekBar(Context ctx) {
+            super(ctx);
+            haloPaint.setStyle(Paint.Style.STROKE);
+            activeHaloPaint.setStyle(Paint.Style.FILL);
+            try {
+                haloPaint.setMaskFilter(new BlurMaskFilter(U(3.2f), BlurMaskFilter.Blur.NORMAL));
+                activeHaloPaint.setMaskFilter(new BlurMaskFilter(U(3.8f), BlurMaskFilter.Blur.NORMAL));
+            } catch (Throwable ignored) {}
+        }
+
+        void setGlowColor(int color) {
+            this.glowColor = color;
+            invalidate();
+        }
+
+        @Override
+        protected synchronized void onDraw(Canvas canvas) {
+            int w = getWidth();
+            int h = getHeight();
+            if (w > 0 && h > 0) {
+                float padL = getPaddingLeft();
+                float padR = getPaddingRight();
+                float barH = U(6.5f);
+                float top = (h - barH) * 0.5f;
+                float bot = top + barH;
+                float r = U(4.0f);
+                int rgb = glowColor & 0x00FFFFFF;
+
+                trackRect.set(padL, top, w - padR, bot);
+                // Лёгкое свечение на несколько пикселей вокруг всей полосы прогресса
+                haloPaint.setColor((0x30 << 24) | rgb);
+                haloPaint.setStrokeWidth(U(4.2f));
+                canvas.drawRoundRect(trackRect, r, r, haloPaint);
+
+                haloPaint.setColor((0x50 << 24) | rgb);
+                haloPaint.setStrokeWidth(U(2.0f));
+                canvas.drawRoundRect(trackRect, r, r, haloPaint);
+
+                int max = getMax();
+                int prog = getProgress();
+                if (max > 0 && prog > 0) {
+                    float fillW = (trackRect.width() * prog) / (float) max;
+                    fillRect.set(padL, top - U(1.2f), padL + fillW, bot + U(1.2f));
+                    activeHaloPaint.setColor((0x38 << 24) | rgb);
+                    canvas.drawRoundRect(fillRect, r, r, activeHaloPaint);
+                }
+            }
+            super.onDraw(canvas);
+        }
+    }
+
+    /**
+     * Кастомный векторный значок источника БЕЗ рамок вокруг кнопки (только чистая иконка и мягкий индикатор активности).
      */
     private final class SourceIconView extends View {
         private String sourceType;
         private int iconColor;
+        private boolean isSelectedTab = false;
         private final boolean isTabButton;
         private final float iconScaleRatio;
         private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint glowDotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path path = new Path();
         private final RectF rectF = new RectF();
-        private final GradientDrawable tabBg = new GradientDrawable();
 
         SourceIconView(Context ctx, String sourceType, int defaultColor, boolean isTabButton, float iconScaleRatio) {
             super(ctx);
@@ -195,12 +344,7 @@ public class IslandOverlayController {
             strokePaint.setStrokeJoin(Paint.Join.ROUND);
 
             fillPaint.setStyle(Paint.Style.FILL);
-
-            if (isTabButton) {
-                tabBg.setCornerRadius(U(9.5f));
-                setBackground(tabBg);
-                updateTabVisualState(false);
-            }
+            glowDotPaint.setStyle(Paint.Style.FILL);
         }
 
         void setSourceTypeAndColor(String newType, int newColor) {
@@ -213,12 +357,7 @@ public class IslandOverlayController {
         }
 
         void updateTabVisualState(boolean selected) {
-            if (isTabButton) {
-                int alphaFill = selected ? ((iconColor & 0x00FFFFFF) | 0x38000000) : 0xFF101624;
-                int borderCol = selected ? iconColor : 0xFF283246;
-                tabBg.setColor(alphaFill);
-                tabBg.setStroke(U(selected ? 1.5f : 1.0f), borderCol);
-            }
+            this.isSelectedTab = selected;
             invalidate();
         }
 
@@ -229,17 +368,29 @@ public class IslandOverlayController {
             int h = getHeight();
             if (w <= 0 || h <= 0) return;
 
-            float size = Math.min(w, h) * iconScaleRatio;
+            float scaleBoost = (isTabButton && isSelectedTab) ? 1.12f : 1.0f;
+            float size = Math.min(w, h) * iconScaleRatio * scaleBoost;
             float ox = (w - size) * 0.5f;
-            float oy = (h - size) * 0.5f;
+            float oy = (h - size) * 0.5f - (isTabButton ? U(1.2f) : 0f);
             float s = size / 24.0f;
 
-            strokePaint.setColor(iconColor);
-            strokePaint.setStrokeWidth(Math.max(2.0f, 2.05f * s));
-            fillPaint.setColor(iconColor);
+            int alpha = (!isTabButton || isSelectedTab) ? 0xFF : 0xB8;
+            int drawCol = (alpha << 24) | (iconColor & 0x00FFFFFF);
+
+            strokePaint.setColor(drawCol);
+            strokePaint.setStrokeWidth(Math.max(2.0f, (isSelectedTab ? 2.25f : 1.95f) * s));
+            fillPaint.setColor(drawCol);
+
+            if (isTabButton && isSelectedTab) {
+                // Мягкое подсвечивание снизу под активным значком (без рамок вокруг кнопки!)
+                glowDotPaint.setColor((0x30 << 24) | (iconColor & 0x00FFFFFF));
+                canvas.drawCircle(w * 0.5f, h * 0.5f, size * 0.62f, glowDotPaint);
+                glowDotPaint.setColor(iconColor);
+                rectF.set(w * 0.5f - U(6.0f), h - U(2.4f), w * 0.5f + U(6.0f), h - U(0.8f));
+                canvas.drawRoundRect(rectF, U(1.0f), U(1.0f), glowDotPaint);
+            }
 
             if ("soundcloud".equals(sourceType)) {
-                // Оранжевое облачко SoundCloud + 3 полоски эквалайзера слева (JENNY_NEON_SVGS_V92.soundcloud)
                 canvas.drawLine(ox + 2.2f * s, oy + 12.8f * s, ox + 2.2f * s, oy + 17.5f * s, strokePaint);
                 canvas.drawLine(ox + 5.0f * s, oy + 9.8f * s,  ox + 5.0f * s, oy + 17.8f * s, strokePaint);
                 canvas.drawLine(ox + 7.8f * s, oy + 11.2f * s, ox + 7.8f * s, oy + 17.8f * s, strokePaint);
@@ -256,7 +407,6 @@ public class IslandOverlayController {
                 path.close();
                 canvas.drawPath(path, strokePaint);
             } else if ("radio".equals(sourceType)) {
-                // Спутниковый локатор Радио с волнами (JENNY_NEON_SVGS_V92.radio)
                 rectF.set(ox + 3.2f * s, oy + 6.8f * s, ox + 17.2f * s, oy + 20.8f * s);
                 canvas.drawArc(rectF, 45f, 180f, true, strokePaint);
                 canvas.drawLine(ox + 9.2f * s, oy + 15.2f * s, ox + 14.2f * s, oy + 10.2f * s, strokePaint);
@@ -274,7 +424,6 @@ public class IslandOverlayController {
                 path.close();
                 canvas.drawPath(path, strokePaint);
             } else if ("youtube".equals(sourceType)) {
-                // Красный экран YouTube с треугольником Play (JENNY_NEON_SVGS_V92.youtube)
                 rectF.set(ox + 2.2f * s, oy + 4.8f * s, ox + 21.8f * s, oy + 19.2f * s);
                 canvas.drawRoundRect(rectF, 4.2f * s, 4.2f * s, strokePaint);
 
@@ -285,7 +434,6 @@ public class IslandOverlayController {
                 path.close();
                 canvas.drawPath(path, fillPaint);
             } else {
-                // Фиолетовая двойная нота Студийной Музыки ("music")
                 canvas.drawCircle(ox + 6.5f * s, oy + 17.5f * s, 2.5f * s, fillPaint);
                 canvas.drawCircle(ox + 16.5f * s, oy + 15.5f * s, 2.5f * s, fillPaint);
                 canvas.drawLine(ox + 8.8f * s, oy + 17.5f * s, ox + 8.8f * s, oy + 6.2f * s, strokePaint);
@@ -297,8 +445,9 @@ public class IslandOverlayController {
     }
 
     /**
-     * Точные векторные иконки кнопок управления из нижнего бара Jenny Player:
-     * Prev (|◀), Play (▶), Pause (⏸), Next (▶|), Share/Export (стрелка вверх из лотка), Heart (Избранное), Chevrons (▲/▼).
+     * Чистые векторные иконки действий БЕЗ рамок вокруг кнопок:
+     * Prev (|◀), Play (▶), Pause (⏸), Next (▶|), Export (стрелка вверх из лотка), Heart (Избранное),
+     * Open Player (стрелочка разворота в проигрыватель), Chevrons (▲/▼).
      */
     private final class ActionIconView extends View {
         private int iconType;
@@ -395,9 +544,8 @@ public class IslandOverlayController {
                 canvas.drawRoundRect(rectF, 1.1f * s, 1.1f * s, fillPaint);
                 rectF.set(ox + 13.8f * s, oy + 5.0f * s, ox + 18.0f * s, oy + 19.0f * s);
                 canvas.drawRoundRect(rectF, 1.1f * s, 1.1f * s, fillPaint);
-            } else if (iconType == ICON_SHARE) {
-                // Точная копия #btnExport (справа от кнопки громкости):
-                // <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            } else if (iconType == ICON_EXPORT) {
+                // Точная копия #btnExport: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
                 path.reset();
                 path.moveTo(ox + 3.2f * s, oy + 14.8f * s);
                 path.lineTo(ox + 3.2f * s, oy + 18.8f * s);
@@ -417,8 +565,7 @@ public class IslandOverlayController {
 
                 canvas.drawLine(ox + 12.0f * s, oy + 3.4f * s, ox + 12.0f * s, oy + 15.2f * s, strokePaint);
             } else if (iconType == ICON_HEART) {
-                // Точная копия #btn-favModal:
-                // <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                // Точная копия сердечка Избранного (#btn-favModal)
                 path.reset();
                 path.moveTo(ox + 12.0f * s, oy + 20.8f * s);
                 path.cubicTo(ox + 3.0f * s, oy + 14.2f * s, ox + 1.6f * s, oy + 8.2f * s, ox + 5.2f * s, oy + 5.0f * s);
@@ -429,6 +576,29 @@ public class IslandOverlayController {
                 if (isFilledState) {
                     canvas.drawPath(path, fillPaint);
                 }
+                canvas.drawPath(path, strokePaint);
+            } else if (iconType == ICON_OPEN_PLAYER) {
+                // Векторный значок со стрелочкой разворота в проигрыватель (посередине верхней строки)
+                path.reset();
+                path.moveTo(ox + 13.5f * s, oy + 5.0f * s);
+                path.lineTo(ox + 19.5f * s, oy + 5.0f * s);
+                path.lineTo(ox + 19.5f * s, oy + 11.0f * s);
+                canvas.drawPath(path, strokePaint);
+
+                canvas.drawLine(ox + 10.0f * s, oy + 14.5f * s, ox + 19.2f * s, oy + 5.3f * s, strokePaint);
+
+                path.reset();
+                path.moveTo(ox + 19.0f * s, oy + 14.2f * s);
+                path.lineTo(ox + 19.0f * s, oy + 17.5f * s);
+                rectF.set(ox + 15.0f * s, oy + 15.5f * s, ox + 19.0f * s, oy + 19.5f * s);
+                path.arcTo(rectF, 0f, 90f, false);
+                path.lineTo(ox + 6.5f * s, oy + 19.5f * s);
+                rectF.set(ox + 4.5f * s, oy + 15.5f * s, ox + 8.5f * s, oy + 19.5f * s);
+                path.arcTo(rectF, 90f, 90f, false);
+                path.lineTo(ox + 4.5f * s, oy + 7.5f * s);
+                rectF.set(ox + 4.5f * s, oy + 5.5f * s, ox + 8.5f * s, oy + 9.5f * s);
+                path.arcTo(rectF, 180f, 90f, false);
+                path.lineTo(ox + 10.2f * s, oy + 5.5f * s);
                 canvas.drawPath(path, strokePaint);
             } else if (iconType == ICON_CHEVRON_UP) {
                 path.reset();
@@ -446,118 +616,27 @@ public class IslandOverlayController {
         }
     }
 
-    /**
-     * Фирменный векторный логотип JENNY PLAYER из шапки плеера (#jennyLogoWrap в index.html, без плашки v1.1):
-     * Сине-фиолетовый значок с белой звуковой волной + двухстрочная надпись JENNY / PLAYER.
-     */
-    private final class JennyBrandLogoView extends View {
-        private int accentBorderColor = 0xFF58A6FF;
-        private int playerSubColor = 0xFFD2A8FF;
-        private final Paint boxFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint boxStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint wavePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint jennyTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint dividerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint playerTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path wavePath = new Path();
-        private final RectF boxRect = new RectF();
-        private int cachedW = -1;
-        private int cachedH = -1;
-
-        JennyBrandLogoView(Context ctx) {
-            super(ctx);
-            boxFillPaint.setStyle(Paint.Style.FILL);
-            boxStrokePaint.setStyle(Paint.Style.STROKE);
-
-            wavePaint.setStyle(Paint.Style.STROKE);
-            wavePaint.setColor(0xFFFFFFFF);
-            wavePaint.setStrokeCap(Paint.Cap.ROUND);
-            wavePaint.setStrokeJoin(Paint.Join.ROUND);
-
-            Typeface boldMono = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
-            jennyTextPaint.setTypeface(boldMono);
-            playerTextPaint.setTypeface(boldMono);
-            dividerPaint.setStyle(Paint.Style.STROKE);
-        }
-
-        void setThemeColors(int primaryColor, int brightColor) {
-            this.accentBorderColor = primaryColor;
-            this.playerSubColor = brightColor;
-            invalidate();
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            int w = getWidth();
-            int h = getHeight();
-            if (w <= 0 || h <= 0) return;
-
-            float boxSize = h * 0.84f;
-            float boxTop = (h - boxSize) * 0.5f;
-            float boxLeft = U(2.0f);
-            boxRect.set(boxLeft, boxTop, boxLeft + boxSize, boxTop + boxSize);
-
-            if (w != cachedW || h != cachedH) {
-                cachedW = w;
-                cachedH = h;
-                boxFillPaint.setShader(new LinearGradient(
-                        boxRect.left, boxRect.top, boxRect.right, boxRect.bottom,
-                        0xFF7341BE, 0xFF1F6FEB, Shader.TileMode.CLAMP
-                ));
-                float textStartX = boxRect.right + U(6.0f);
-                jennyTextPaint.setShader(new LinearGradient(
-                        textStartX, 0, textStartX + U(56.0f), 0,
-                        0xFF3FB950, 0xFF58A6FF, Shader.TileMode.CLAMP
-                ));
-            }
-
-            boxStrokePaint.setColor(accentBorderColor);
-            boxStrokePaint.setStrokeWidth(U(1.1f));
-            canvas.drawRoundRect(boxRect, U(6.5f), U(6.5f), boxFillPaint);
-            canvas.drawRoundRect(boxRect, U(6.5f), U(6.5f), boxStrokePaint);
-
-            // Белый импульс волны внутри значка: <path d="M6 17h3l2.5-7 4 14 3.5-10 2 3h3"/>
-            float bs = boxSize / 28.0f;
-            float bx = boxRect.left - 1.0f * bs;
-            float by = boxRect.top - 3.0f * bs;
-            wavePaint.setStrokeWidth(Math.max(2.0f, 2.0f * bs));
-            wavePath.reset();
-            wavePath.moveTo(bx + 6.0f * bs, by + 17.0f * bs);
-            wavePath.lineTo(bx + 9.0f * bs, by + 17.0f * bs);
-            wavePath.lineTo(bx + 11.5f * bs, by + 10.0f * bs);
-            wavePath.lineTo(bx + 15.5f * bs, by + 24.0f * bs);
-            wavePath.lineTo(bx + 19.0f * bs, by + 14.0f * bs);
-            wavePath.lineTo(bx + 21.0f * bs, by + 17.0f * bs);
-            wavePath.lineTo(bx + 24.0f * bs, by + 17.0f * bs);
-            canvas.drawPath(wavePath, wavePaint);
-
-            // Двухстрочная надпись JENNY / PLAYER (без v1.1)
-            float tx = boxRect.right + U(6.0f);
-            jennyTextPaint.setTextSize(U(12.2f));
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                jennyTextPaint.setLetterSpacing(0.14f);
-            }
-            canvas.drawText("JENNY", tx, boxTop + boxSize * 0.43f, jennyTextPaint);
-
-            float divY = boxTop + boxSize * 0.55f;
-            dividerPaint.setColor((accentBorderColor & 0x00FFFFFF) | 0x78000000);
-            dividerPaint.setStrokeWidth(Math.max(1.0f, U(0.9f)));
-            canvas.drawLine(tx, divY, Math.min(w - U(2.0f), tx + U(56.0f)), divY, dividerPaint);
-
-            playerTextPaint.setColor(playerSubColor);
-            playerTextPaint.setTextSize(U(9.4f));
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                playerTextPaint.setLetterSpacing(0.22f);
-            }
-            canvas.drawText("PLAYER", tx, boxTop + boxSize * 0.92f, playerTextPaint);
-        }
-    }
-
     public IslandOverlayController(Context context) {
         this.context = context.getApplicationContext();
         this.windowManager = (WindowManager) this.context.getSystemService(Context.WINDOW_SERVICE);
+        this.prefs = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        this.bgTransparencyPct = Math.max(0, Math.min(100, this.prefs.getInt(KEY_BG_TRANSPARENCY, 22)));
         registerNavigationReceiver();
+    }
+
+    public void setBgTransparencyPct(final int transparencyPct) {
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                int clean = Math.max(0, Math.min(100, transparencyPct));
+                bgTransparencyPct = clean;
+                try {
+                    prefs.edit().putInt(KEY_BG_TRANSPARENCY, clean).apply();
+                } catch (Throwable ignored) {}
+                if (expandedPlateCard != null) expandedPlateCard.invalidate();
+                if (collapsedMiniPill != null) collapsedMiniPill.invalidate();
+            }
+        });
     }
 
     private void registerNavigationReceiver() {
@@ -876,7 +955,6 @@ public class IslandOverlayController {
         expandedPlateH = targetPlateH;
         expandedPlateY = targetPlateY;
 
-        // Мини-плашка укорочена примерно на треть (142u вместо 212u -> ~424px), стоит прямо ПОД строкой состояния!
         collapsedPillW = Math.round(142.0f * u);
         collapsedPillH = Math.round(32.0f * u);
         collapsedPillY = statusBarH + Math.round(2.0f * u);
@@ -953,7 +1031,7 @@ public class IslandOverlayController {
             islandLayoutParams.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         }
-        islandLayoutParams.setTitle("JennyDynamicIslandOverlayV247");
+        islandLayoutParams.setTitle("JennyDynamicIslandOverlayV248");
 
         try {
             windowManager.addView(islandRootContainer, islandLayoutParams);
@@ -967,30 +1045,16 @@ public class IslandOverlayController {
     }
 
     /**
-     * Свёрнутая мини-плашка без текста, укороченная на треть, разделённая на 5 широких зон во всю высоту планки
-     * (только чистые векторные значки без кругов и прямоугольников вокруг них):
-     * 1) [Значок мелодии/источника] -> открывает сам Jenny Player
-     * 2) [|◀ Пред] -> предыдущий трек/станция
-     * 3) [▶/⏸ Плей/Пауза] -> пуск/пауза
-     * 4) [▶| След] -> следующий трек/станция
-     * 5) [▼ Разворот] -> разворачивает в большую плашку
+     * Свёрнутая мини-плашка: 5 широких зон нажатия во всю высоту планки, без внутренних рамок.
      */
-    private LinearLayout buildCollapsedMiniPillView() {
-        LinearLayout pill = new LinearLayout(context);
+    private GlowCardLayout buildCollapsedMiniPillView() {
+        GlowCardLayout pill = new GlowCardLayout(context, U(18));
         pill.setOrientation(LinearLayout.HORIZONTAL);
         pill.setGravity(Gravity.CENTER_VERTICAL);
-        pill.setPadding(U(4), 0, U(4), 0);
+        pill.setPadding(U(6), U(4), U(6), U(4));
 
-        miniPillBgDrawable = new GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{0xF4080B14, 0xF4121829, 0xF4180E2E}
-        );
-        miniPillBgDrawable.setCornerRadius(U(18));
-        miniPillBgDrawable.setStroke(U(1.5f), COLOR_ICON_MUSIC);
-        pill.setBackground(miniPillBgDrawable);
-
-        // Зона 1 (слева): значок мелодии/источника -> открывает сам плеер!
-        miniPillIconView = new SourceIconView(context, "music", COLOR_ICON_MUSIC, false, 0.56f);
+        // 1) Значок мелодии/источника -> открывает сам Jenny Player
+        miniPillIconView = new SourceIconView(context, "music", COLOR_ICON_MUSIC, false, 0.62f);
         miniPillIconView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -999,8 +1063,8 @@ public class IslandOverlayController {
         });
         pill.addView(miniPillIconView, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
 
-        // Зона 2: Предыдущий (|◀)
-        miniPillPrevBtn = new ActionIconView(context, ICON_PREV, 0xFFD2A8FF, 0.52f);
+        // 2) Предыдущий (|◀)
+        miniPillPrevBtn = new ActionIconView(context, ICON_PREV, 0xFFD2A8FF, 0.56f);
         miniPillPrevBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1009,8 +1073,8 @@ public class IslandOverlayController {
         });
         pill.addView(miniPillPrevBtn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
 
-        // Зона 3 (по центру): Плей / Пауза (▶ / ⏸)
-        miniPillPlayBtn = new ActionIconView(context, ICON_PLAY, 0xFFFFFFFF, 0.58f);
+        // 3) Плей / Пауза (▶ / ⏸)
+        miniPillPlayBtn = new ActionIconView(context, ICON_PLAY, 0xFFFFFFFF, 0.64f);
         miniPillPlayBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1022,8 +1086,8 @@ public class IslandOverlayController {
         });
         pill.addView(miniPillPlayBtn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
 
-        // Зона 4: Следующий (▶|)
-        miniPillNextBtn = new ActionIconView(context, ICON_NEXT, 0xFFD2A8FF, 0.52f);
+        // 4) Следующий (▶|)
+        miniPillNextBtn = new ActionIconView(context, ICON_NEXT, 0xFFD2A8FF, 0.56f);
         miniPillNextBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1032,8 +1096,8 @@ public class IslandOverlayController {
         });
         pill.addView(miniPillNextBtn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
 
-        // Зона 5 (справа): Разворот в большую плашку (▼)
-        miniPillExpandBtn = new ActionIconView(context, ICON_CHEVRON_DOWN, 0xFFD2A8FF, 0.48f);
+        // 5) Разворот в большую плашку (▼)
+        miniPillExpandBtn = new ActionIconView(context, ICON_CHEVRON_DOWN, 0xFFD2A8FF, 0.52f);
         miniPillExpandBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1045,21 +1109,10 @@ public class IslandOverlayController {
         return pill;
     }
 
-    private LinearLayout buildExpandedPlateView() {
-        LinearLayout card = new LinearLayout(context);
+    private GlowCardLayout buildExpandedPlateView() {
+        GlowCardLayout card = new GlowCardLayout(context, U(30));
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(U(11), U(8), U(11), U(8));
-
-        plateCardBgDrawable = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{0xFA070A12, 0xFA0C111E, 0xFA170D2B}
-        );
-        plateCardBgDrawable.setCornerRadius(U(32));
-        plateCardBgDrawable.setStroke(U(1.9f), COLOR_ICON_MUSIC);
-        card.setBackground(plateCardBgDrawable);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            card.setElevation(U(10));
-        }
+        card.setPadding(U(13), U(9), U(13), U(9));
 
         card.setOnTouchListener(new View.OnTouchListener() {
             private float downY = 0f;
@@ -1079,107 +1132,76 @@ public class IslandOverlayController {
         });
 
         // ---------------------------------------------------------------------
-        // РЯД 1: 4 ЗНАЧКА ИСТОЧНИКОВ + СДВИНУТЫЙ ВЛЕВО ЛОГОТИП JENNY PLAYER (БЕЗ v1.1) + КНОПКА СВОРАЧИВАНИЯ ▲ СПРАВА
+        // РЯД 1: 4 ЧИСТЫХ ЗНАЧКА ИСТОЧНИКОВ СЛЕВА + ШИРОКАЯ ЗОНА РАЗВОРОТА В ПЛЕЕР ПОСЕРЕДИНЕ + СВЕРНУТЬ ▲ СПРАВА
         // ---------------------------------------------------------------------
         LinearLayout rowModes = new LinearLayout(context);
         rowModes.setOrientation(LinearLayout.HORIZONTAL);
         rowModes.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams rowModesLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, U(31));
-        rowModesLp.bottomMargin = U(5);
+        rowModesLp.bottomMargin = U(4);
 
         modeBtnMusic = createSourceIconButton("music", COLOR_ICON_MUSIC);
         modeBtnRadio = createSourceIconButton("radio", COLOR_ICON_RADIO);
         modeBtnSoundCloud = createSourceIconButton("soundcloud", COLOR_ICON_SOUNDCLOUD);
         modeBtnYoutube = createSourceIconButton("youtube", COLOR_ICON_YOUTUBE);
 
-        LinearLayout.LayoutParams iconBtnLp1 = new LinearLayout.LayoutParams(U(38), LinearLayout.LayoutParams.MATCH_PARENT);
-        iconBtnLp1.rightMargin = U(4.5f);
-        LinearLayout.LayoutParams iconBtnLp2 = new LinearLayout.LayoutParams(U(38), LinearLayout.LayoutParams.MATCH_PARENT);
-        iconBtnLp2.rightMargin = U(4.5f);
-        LinearLayout.LayoutParams iconBtnLp3 = new LinearLayout.LayoutParams(U(38), LinearLayout.LayoutParams.MATCH_PARENT);
-        iconBtnLp3.rightMargin = U(4.5f);
-        LinearLayout.LayoutParams iconBtnLp4 = new LinearLayout.LayoutParams(U(38), LinearLayout.LayoutParams.MATCH_PARENT);
-        iconBtnLp4.rightMargin = U(7.0f);
+        rowModes.addView(modeBtnMusic, new LinearLayout.LayoutParams(U(40), LinearLayout.LayoutParams.MATCH_PARENT));
+        rowModes.addView(modeBtnRadio, new LinearLayout.LayoutParams(U(40), LinearLayout.LayoutParams.MATCH_PARENT));
+        rowModes.addView(modeBtnSoundCloud, new LinearLayout.LayoutParams(U(40), LinearLayout.LayoutParams.MATCH_PARENT));
+        rowModes.addView(modeBtnYoutube, new LinearLayout.LayoutParams(U(40), LinearLayout.LayoutParams.MATCH_PARENT));
 
-        rowModes.addView(modeBtnMusic, iconBtnLp1);
-        rowModes.addView(modeBtnRadio, iconBtnLp2);
-        rowModes.addView(modeBtnSoundCloud, iconBtnLp3);
-        rowModes.addView(modeBtnYoutube, iconBtnLp4);
-
-        // Фирменный логотип JENNY PLAYER (сдвинут влево к 4 значкам источников, при тапе открывает сам плеер!)
-        jennyBrandLogoView = new JennyBrandLogoView(context);
-        jennyBrandLogoView.setOnClickListener(new View.OnClickListener() {
+        // Посередине (вместо надписи «Музыка 32-бит»): векторный значок со стрелочкой открытия проигрывателя,
+        // а вся центральная пустая область является широкой зоной тапа для входа в приложение!
+        openAppZoneBtn = new ActionIconView(context, ICON_OPEN_PLAYER, 0xFFD2A8FF, 0.56f);
+        openAppZoneBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 openMainActivityFromIsland();
             }
         });
-        LinearLayout.LayoutParams brandLp = new LinearLayout.LayoutParams(U(94), LinearLayout.LayoutParams.MATCH_PARENT);
-        rowModes.addView(jennyBrandLogoView, brandLp);
+        rowModes.addView(openAppZoneBtn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
 
-        // Распорка, отодвигающая кнопку сворачивания ▲ в правый край
-        View headerSpacer = new View(context);
-        rowModes.addView(headerSpacer, new LinearLayout.LayoutParams(0, 1, 1.0f));
-
-        // Кнопка сворачивания плашки в мини-капсулу (▲)
-        collapseBtnBg = new GradientDrawable();
-        collapseBtnBg.setColor(0xFF161229);
-        collapseBtnBg.setCornerRadius(U(9.5f));
-        collapseBtnBg.setStroke(U(1.1f), 0xFF4B327A);
-        collapseBtn = new ActionIconView(context, ICON_CHEVRON_UP, 0xFFD2A8FF, 0.54f);
-        collapseBtn.setBackground(collapseBtnBg);
+        // Справа на своём месте: кнопка сворачивания в маленькую плашку (▲), без рамки
+        collapseBtn = new ActionIconView(context, ICON_CHEVRON_UP, 0xFFD2A8FF, 0.58f);
         collapseBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 setExpanded(false);
             }
         });
-        LinearLayout.LayoutParams colBtnLp = new LinearLayout.LayoutParams(U(34), LinearLayout.LayoutParams.MATCH_PARENT);
-        rowModes.addView(collapseBtn, colBtnLp);
+        rowModes.addView(collapseBtn, new LinearLayout.LayoutParams(U(38), LinearLayout.LayoutParams.MATCH_PARENT));
 
         card.addView(rowModes, rowModesLp);
 
         // ---------------------------------------------------------------------
-        // РЯД 2: КНОПКА «ПОДЕЛИТЬСЯ / ЭКСПОРТ» СЛЕВА + БЕГУЩАЯ СТРОКА НАЗВАНИЯ ТРЕКА + ВЕКТОРНОЕ СЕРДЕЧКО СПРАВА
+        // РЯД 2: КНОПКА ЭКСПОРТА В .XFLAC СЛЕВА (НАД ВРЕМЕНЕМ) + БЕГУЩАЯ СТРОКА НАЗВАНИЯ + ИЗБРАННОЕ СПРАВА
         // ---------------------------------------------------------------------
         LinearLayout rowTrack = new LinearLayout(context);
         rowTrack.setOrientation(LinearLayout.HORIZONTAL);
         rowTrack.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams rowTrackLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, U(45));
+                LinearLayout.LayoutParams.MATCH_PARENT, U(44));
         rowTrackLp.bottomMargin = U(4);
 
-        // Кнопка «Поделиться / Экспорт» (точная векторная копия кнопки #btnExport справа от громкости внизу плеера)
-        shareTrackBtnBg = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{0xFF1A1330, 0xFF120C24}
-        );
-        shareTrackBtnBg.setCornerRadius(U(13));
-        shareTrackBtnBg.setStroke(U(1.4f), COLOR_ICON_MUSIC);
-        shareTrackBtn = new ActionIconView(context, ICON_SHARE, 0xFFD2A8FF, 0.50f);
-        shareTrackBtn.setBackground(shareTrackBtnBg);
-        shareTrackBtn.setOnClickListener(new View.OnClickListener() {
+        // Слева (где было 32-BIT, прямо над левым таймером): чистая векторная кнопка Экспорта в .xFLAC (без рамки!)
+        exportTrackBtn = new ActionIconView(context, ICON_EXPORT, 0xFFD2A8FF, 0.54f);
+        exportTrackBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                openMainActivityFromIsland();
-                mainHandler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('share',''); else if(window.exportCurrentTrack) window.exportCurrentTrack();");
-                    }
-                }, 220L);
+                if (!"music".equals(currentIslandMode)) return;
+                MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('export_xflac','');");
             }
         });
-        LinearLayout.LayoutParams shareLp = new LinearLayout.LayoutParams(U(43), U(43));
-        shareLp.rightMargin = U(9);
-        rowTrack.addView(shareTrackBtn, shareLp);
+        LinearLayout.LayoutParams expBtnLp = new LinearLayout.LayoutParams(U(42), LinearLayout.LayoutParams.MATCH_PARENT);
+        expBtnLp.rightMargin = U(6);
+        rowTrack.addView(exportTrackBtn, expBtnLp);
 
         LinearLayout textCol = new LinearLayout(context);
         textCol.setOrientation(LinearLayout.VERTICAL);
         textCol.setGravity(Gravity.CENTER_VERTICAL);
 
-        // Бегущая строка (Marquee) с гарантированным авто-фокусом, чтобы длинные названия плавно бежали!
+        // Бегущая строка (Marquee) без обрезания троеточием и без жёлтых эмодзи
         islandTitleView = new TextView(context) {
             @Override
             public boolean isFocused() {
@@ -1217,40 +1239,34 @@ public class IslandOverlayController {
             }
         });
         LinearLayout.LayoutParams textColLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f);
-        textColLp.rightMargin = U(8);
+        textColLp.rightMargin = U(6);
         rowTrack.addView(textCol, textColLp);
 
-        // Векторная кнопка «Избранное» (точная копия сердечка из нижнего бара плеера)
-        favHeartBgDrawable = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{0xFF161C2C, 0xFF1F1632}
-        );
-        favHeartBgDrawable.setCornerRadius(U(13));
-        favHeartBgDrawable.setStroke(U(1.4f), 0xFF4B327A);
-        favHeartBtn = new ActionIconView(context, ICON_HEART, 0xFFD2A8FF, 0.50f);
-        favHeartBtn.setBackground(favHeartBgDrawable);
+        // Справа: чистая векторная кнопка Избранного (работает только на локальные файлы в фиолетовой плашке)
+        favHeartBtn = new ActionIconView(context, ICON_HEART, 0xFFD2A8FF, 0.54f);
         favHeartBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (!"music".equals(currentIslandMode)) return;
                 isCurrentTrackFav = !isCurrentTrackFav;
                 refreshUi();
                 MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('fav','');");
             }
         });
-        LinearLayout.LayoutParams favLp = new LinearLayout.LayoutParams(U(43), U(43));
+        LinearLayout.LayoutParams favLp = new LinearLayout.LayoutParams(U(42), LinearLayout.LayoutParams.MATCH_PARENT);
         rowTrack.addView(favHeartBtn, favLp);
 
         card.addView(rowTrack, rowTrackLp);
 
         // ---------------------------------------------------------------------
-        // РЯД 3: ШКАЛА ПРОГРЕССА С ПЕРЕМОТКОЙ (SEEK) И ТАЙМЕРАМИ
+        // РЯД 3: ШКАЛА ПРОГРЕССА С ЛЁГКИМ СВЕЧЕНИЕМ ВОКРУГ ПОЛОСЫ И ТАЙМЕРАМИ
         // ---------------------------------------------------------------------
         LinearLayout rowSeek = new LinearLayout(context);
         rowSeek.setOrientation(LinearLayout.HORIZONTAL);
         rowSeek.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams rowSeekLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, U(25));
-        rowSeekLp.bottomMargin = U(5);
+                LinearLayout.LayoutParams.MATCH_PARENT, U(26));
+        rowSeekLp.bottomMargin = U(4);
 
         elapsedTimeView = new TextView(context);
         elapsedTimeView.setText("0:00");
@@ -1261,7 +1277,7 @@ public class IslandOverlayController {
         LinearLayout.LayoutParams elLp = new LinearLayout.LayoutParams(U(42), LinearLayout.LayoutParams.WRAP_CONTENT);
         rowSeek.addView(elapsedTimeView, elLp);
 
-        islandSeekBar = new SeekBar(context);
+        islandSeekBar = new GlowSeekBar(context);
         islandSeekBar.setMax(1000);
         islandSeekBar.setProgress(0);
         islandSeekBar.setPadding(U(8), 0, U(8), 0);
@@ -1292,7 +1308,7 @@ public class IslandOverlayController {
                 }
             }
         });
-        LinearLayout.LayoutParams sbLp = new LinearLayout.LayoutParams(0, U(22), 1.0f);
+        LinearLayout.LayoutParams sbLp = new LinearLayout.LayoutParams(0, U(24), 1.0f);
         rowSeek.addView(islandSeekBar, sbLp);
 
         totalTimeView = new TextView(context);
@@ -1307,7 +1323,7 @@ public class IslandOverlayController {
         card.addView(rowSeek, rowSeekLp);
 
         // ---------------------------------------------------------------------
-        // РЯД 4: 3 ЧИСТЫЕ ВЕКТОРНЫЕ КНОПКИ ТРАНСПОРТА ИЗ НИЖНЕГО БАРА ПЛЕЕРА (|◀ ПРЕД | ▶/⏸ ПУСК | ▶| СЛЕД)
+        // РЯД 4: ТРАНСПОРТ БЕЗ РАМОК И БЕЗ ЖЁЛТЫХ ЭМОДЗИ (-10с | |◀ | ▶/⏸ | ▶| | +10с)
         // ---------------------------------------------------------------------
         LinearLayout rowTransport = new LinearLayout(context);
         rowTransport.setOrientation(LinearLayout.HORIZONTAL);
@@ -1315,11 +1331,17 @@ public class IslandOverlayController {
         LinearLayout.LayoutParams rowTransLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, U(38));
 
-        btnPrevBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xFF161229, 0xFF1E1736});
-        btnPrevBg.setCornerRadius(U(13));
-        btnPrevBg.setStroke(U(1.3f), 0xFF4B327A);
-        btnPrev = new ActionIconView(context, ICON_PREV, 0xFFF0F6FC, 0.56f);
-        btnPrev.setBackground(btnPrevBg);
+        // Чисто текст «-10с» без жёлтых значков и без рамки
+        btnRew10 = createBorderlessStepButton("-10с");
+        btnRew10.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                seekRelativeSeconds(-10.0);
+            }
+        });
+
+        // Чистая векторная иконка Предыдущий (|◀) из плеера без кружка/квадрата
+        btnPrev = new ActionIconView(context, ICON_PREV, 0xFFD2A8FF, 0.58f);
         btnPrev.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1327,11 +1349,8 @@ public class IslandOverlayController {
             }
         });
 
-        btnPlayPauseBgDrawable = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xFF6E38C5, 0xFFA371F7});
-        btnPlayPauseBgDrawable.setCornerRadius(U(14));
-        btnPlayPauseBgDrawable.setStroke(U(1.5f), 0xFFD2A8FF);
-        btnPlayPause = new ActionIconView(context, ICON_PLAY, 0xFFFFFFFF, 0.64f);
-        btnPlayPause.setBackground(btnPlayPauseBgDrawable);
+        // Чистая векторная иконка Пуск/Пауза (▶/⏸) из плеера без кружка/квадрата
+        btnPlayPause = new ActionIconView(context, ICON_PLAY, 0xFFFFFFFF, 0.72f);
         btnPlayPause.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1342,11 +1361,8 @@ public class IslandOverlayController {
             }
         });
 
-        btnNextBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xFF161229, 0xFF1E1736});
-        btnNextBg.setCornerRadius(U(13));
-        btnNextBg.setStroke(U(1.3f), 0xFF4B327A);
-        btnNext = new ActionIconView(context, ICON_NEXT, 0xFFF0F6FC, 0.56f);
-        btnNext.setBackground(btnNextBg);
+        // Чистая векторная иконка Следующий (▶|) из плеера без кружка/квадрата
+        btnNext = new ActionIconView(context, ICON_NEXT, 0xFFD2A8FF, 0.58f);
         btnNext.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1354,15 +1370,20 @@ public class IslandOverlayController {
             }
         });
 
-        LinearLayout.LayoutParams trLp1 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f);
-        trLp1.rightMargin = U(8.0f);
-        LinearLayout.LayoutParams trLp2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.35f);
-        trLp2.rightMargin = U(8.0f);
-        LinearLayout.LayoutParams trLp3 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f);
+        // Чисто текст «+10с» без жёлтых значков и без рамки
+        btnFwd10 = createBorderlessStepButton("+10с");
+        btnFwd10.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                seekRelativeSeconds(10.0);
+            }
+        });
 
-        rowTransport.addView(btnPrev, trLp1);
-        rowTransport.addView(btnPlayPause, trLp2);
-        rowTransport.addView(btnNext, trLp3);
+        rowTransport.addView(btnRew10, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
+        rowTransport.addView(btnPrev, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
+        rowTransport.addView(btnPlayPause, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.15f));
+        rowTransport.addView(btnNext, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
+        rowTransport.addView(btnFwd10, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
 
         card.addView(rowTransport, rowTransLp);
 
@@ -1370,7 +1391,7 @@ public class IslandOverlayController {
     }
 
     private SourceIconView createSourceIconButton(final String modeKey, int signatureColor) {
-        SourceIconView iv = new SourceIconView(context, modeKey, signatureColor, true, 0.64f);
+        SourceIconView iv = new SourceIconView(context, modeKey, signatureColor, true, 0.62f);
         iv.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1380,6 +1401,17 @@ public class IslandOverlayController {
             }
         });
         return iv;
+    }
+
+    private TextView createBorderlessStepButton(String label) {
+        TextView tv = new TextView(context);
+        tv.setText(label);
+        tv.setGravity(Gravity.CENTER);
+        tv.setSingleLine(true);
+        tv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, U(12.0f));
+        tv.setTextColor(0xFFD2A8FF);
+        return tv;
     }
 
     private void styleNeonSeekBar(SeekBar sb) {
@@ -1402,7 +1434,7 @@ public class IslandOverlayController {
         layers.setId(0, android.R.id.background);
         layers.setId(1, android.R.id.progress);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            int padV = U(6.5f);
+            int padV = U(8.5f);
             layers.setLayerInset(0, 0, padV, 0, padV);
             layers.setLayerInset(1, 0, padV, 0, padV);
         }
@@ -1424,96 +1456,82 @@ public class IslandOverlayController {
         sb.setThumbOffset(0);
     }
 
-    private void styleFavoriteButton(boolean isFav, int primary, int bright, int themeDimBorder, int themeSurfaceTint) {
-        if (favHeartBtn == null || favHeartBgDrawable == null) return;
-        favHeartBtn.setFilledState(isFav);
-        if (isFav) {
-            favHeartBtn.setIconColor(0xFFFF4D79);
-            favHeartBgDrawable.setColors(new int[]{0xFF4A1228, 0xFF2E0F24});
-            favHeartBgDrawable.setStroke(U(1.5f), 0xFFFF4D79);
-        } else {
-            favHeartBtn.setIconColor(bright);
-            favHeartBgDrawable.setColors(new int[]{themeSurfaceTint, 0xFF121622});
-            favHeartBgDrawable.setStroke(U(1.3f), themeDimBorder);
-        }
-    }
-
-    /**
-     * Перекрашивает ВЕСЬ интерфейс плашки и мини-капсулы (кроме самих 4 значков источников)
-     * в цветовую палитру активного значка источника!
-     */
     private void applyFullChameleonTheme(String activeMode) {
         String m = (activeMode != null) ? activeMode.toLowerCase(Locale.ROOT) : "music";
 
         int primary = COLOR_ICON_MUSIC;
         int bright = 0xFFD2A8FF;
         int secondary = 0xFF6E38C5;
-        int darkTint = 0xFA170D2B;
-        int surfaceTint = 0xFF1A1330;
+        int darkTint = 0x170D2B;
         int dimBorder = 0xFF4B327A;
 
         if ("radio".equals(m)) {
-            primary = COLOR_ICON_RADIO;      // #58A6FF Голубой неон
+            primary = COLOR_ICON_RADIO;      // #58A6FF
             bright = 0xFF79C0FF;
             secondary = 0xFF1F6FEB;
-            darkTint = 0xFA09192E;
-            surfaceTint = 0xFF0F1E36;
+            darkTint = 0x09192E;
             dimBorder = 0xFF264F88;
         } else if ("soundcloud".equals(m)) {
-            primary = COLOR_ICON_SOUNDCLOUD; // #FF8C42 Оранжевое облачко
+            primary = COLOR_ICON_SOUNDCLOUD; // #FF8C42
             bright = 0xFFFFB070;
             secondary = 0xFFD9531E;
-            darkTint = 0xFA261209;
-            surfaceTint = 0xFF2B170E;
+            darkTint = 0x261209;
             dimBorder = 0xFF7A3E1D;
         } else if ("youtube".equals(m)) {
-            primary = COLOR_ICON_YOUTUBE;    // #FF5555 Красный неон YouTube
+            primary = COLOR_ICON_YOUTUBE;    // #FF5555
             bright = 0xFFFF8888;
             secondary = 0xFFB62324;
-            darkTint = 0xFA280B12;
-            surfaceTint = 0xFF2B1118;
+            darkTint = 0x280B12;
             dimBorder = 0xFF7D2431;
         }
 
-        // 1. Четыре значка переключения источников сохраняют свои фирменные цвета
+        // 1. Значки переключения источников (без рамок)
         if (modeBtnMusic != null) modeBtnMusic.updateTabVisualState("music".equals(m));
         if (modeBtnRadio != null) modeBtnRadio.updateTabVisualState("radio".equals(m));
         if (modeBtnSoundCloud != null) modeBtnSoundCloud.updateTabVisualState("soundcloud".equals(m));
         if (modeBtnYoutube != null) modeBtnYoutube.updateTabVisualState("youtube".equals(m));
 
-        // 2. Фон и неоновая рамка большой плашки
-        if (plateCardBgDrawable != null) {
-            plateCardBgDrawable.setColors(new int[]{0xFA070A12, 0xFA0C111E, darkTint});
-            plateCardBgDrawable.setStroke(U(1.9f), primary);
+        // 2. Фон и мягкое размытое свечение главной рамки
+        if (expandedPlateCard != null) {
+            expandedPlateCard.setColorsAndInvalidate(primary, darkTint);
+        }
+        if (collapsedMiniPill != null) {
+            collapsedMiniPill.setColorsAndInvalidate(primary, darkTint);
         }
 
-        // 3. Фирменный логотип JENNY PLAYER и кнопка сворачивания ▲ в шапке
-        if (jennyBrandLogoView != null) {
-            jennyBrandLogoView.setThemeColors(primary, bright);
+        // 3. Значок открытия плеера посередине и кнопка сворачивания ▲ справа
+        if (openAppZoneBtn != null) {
+            openAppZoneBtn.setIconColor(bright);
         }
-        if (collapseBtn != null && collapseBtnBg != null) {
+        if (collapseBtn != null) {
             collapseBtn.setIconColor(bright);
-            collapseBtnBg.setColor(surfaceTint);
-            collapseBtnBg.setStroke(U(1.2f), dimBorder);
         }
 
-        // 4. Кнопка «Поделиться / Экспорт» слева во 2-м ряду + подзаголовок + Сердечко справа
-        if (shareTrackBtn != null && shareTrackBtnBg != null) {
-            shareTrackBtn.setIconColor(bright);
-            shareTrackBtnBg.setColors(new int[]{surfaceTint, darkTint});
-            shareTrackBtnBg.setStroke(U(1.4f), primary);
+        // 4. Кнопка Экспорта в .xFLAC слева и кнопка Избранного справа (работают для локальных аудиофайлов "music")
+        boolean isLocalMusic = "music".equals(m);
+        if (exportTrackBtn != null) {
+            exportTrackBtn.setVisibility(isLocalMusic ? View.VISIBLE : View.INVISIBLE);
+            exportTrackBtn.setIconColor(bright);
         }
+        if (favHeartBtn != null) {
+            favHeartBtn.setVisibility(isLocalMusic ? View.VISIBLE : View.INVISIBLE);
+            favHeartBtn.setFilledState(isCurrentTrackFav);
+            favHeartBtn.setIconColor(isCurrentTrackFav ? 0xFFFF4D79 : bright);
+        }
+
         if (islandSubtitleView != null) {
             islandSubtitleView.setTextColor(bright);
         }
-        styleFavoriteButton(isCurrentTrackFav, primary, bright, dimBorder, surfaceTint);
 
-        // 5. Шкала прогресса (Seek) и таймеры
+        // 5. Шкала прогресса с лёгким свечением вокруг неё и таймеры
         if (elapsedTimeView != null) {
             elapsedTimeView.setTextColor(bright);
         }
         if (totalTimeView != null) {
             totalTimeView.setTextColor(primary);
+        }
+        if (islandSeekBar != null) {
+            islandSeekBar.setGlowColor(primary);
         }
         if (seekBgTrackDrawable != null) {
             seekBgTrackDrawable.setStroke(U(1.0f), dimBorder);
@@ -1525,31 +1543,25 @@ public class IslandOverlayController {
             seekThumbDrawable.setColors(new int[]{bright, primary});
         }
 
-        // 6. Три чистые векторные кнопки транспорта (|◀ Пред, ▶/⏸ Плей, ▶| След)
-        if (btnPrev != null && btnPrevBg != null) {
+        // 6. Кнопки транспорта без рамок (-10с, Пред, Пуск/Пауза, След, +10с)
+        if (btnRew10 != null) {
+            btnRew10.setTextColor(bright);
+        }
+        if (btnFwd10 != null) {
+            btnFwd10.setTextColor(bright);
+        }
+        if (btnPrev != null) {
             btnPrev.setIconColor(bright);
-            btnPrevBg.setColors(new int[]{surfaceTint, 0xFF121724});
-            btnPrevBg.setStroke(U(1.3f), dimBorder);
         }
-        if (btnNext != null && btnNextBg != null) {
+        if (btnNext != null) {
             btnNext.setIconColor(bright);
-            btnNextBg.setColors(new int[]{surfaceTint, 0xFF121724});
-            btnNextBg.setStroke(U(1.3f), dimBorder);
         }
-        if (btnPlayPause != null && btnPlayPauseBgDrawable != null) {
+        if (btnPlayPause != null) {
             btnPlayPause.setIconType(isPlaying ? ICON_PAUSE : ICON_PLAY);
             btnPlayPause.setIconColor(isPlaying ? 0xFFFFFFFF : bright);
-            btnPlayPauseBgDrawable.setColors(isPlaying
-                    ? new int[]{secondary, primary}
-                    : new int[]{surfaceTint, darkTint});
-            btnPlayPauseBgDrawable.setStroke(U(1.5f), isPlaying ? bright : primary);
         }
 
-        // 7. Свёрнутая мини-плашка (5 чистых векторных иконок без внутренних рамок в цвете активного источника)
-        if (miniPillBgDrawable != null) {
-            miniPillBgDrawable.setColors(new int[]{0xF4080B14, surfaceTint, darkTint});
-            miniPillBgDrawable.setStroke(U(1.5f), primary);
-        }
+        // 7. Свёрнутая мини-капсула
         if (miniPillIconView != null) {
             miniPillIconView.setSourceTypeAndColor(m, primary);
         }
@@ -1558,7 +1570,7 @@ public class IslandOverlayController {
         }
         if (miniPillPlayBtn != null) {
             miniPillPlayBtn.setIconType(isPlaying ? ICON_PAUSE : ICON_PLAY);
-            miniPillPlayBtn.setIconColor(0xFFFFFFFF);
+            miniPillPlayBtn.setIconColor(isPlaying ? 0xFFFFFFFF : bright);
         }
         if (miniPillNextBtn != null) {
             miniPillNextBtn.setIconColor(bright);
@@ -1568,12 +1580,26 @@ public class IslandOverlayController {
         }
     }
 
+    private void seekRelativeSeconds(double deltaSec) {
+        if (currentDurMs <= 0) return;
+        long estMs = getEstimatedCurrentPositionMs();
+        long targetMs = Math.max(0L, Math.min(currentDurMs, estMs + Math.round(deltaSec * 1000.0)));
+        currentPosMs = targetMs;
+        lastPosUpdateUptimeMs = android.os.SystemClock.uptimeMillis();
+        refreshIslandProgressOnly();
+        double targetSec = targetMs / 1000.0;
+        MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('seek','" + targetSec + "'); else if(window.seekFromNotification) window.seekFromNotification(" + targetSec + ");");
+    }
+
     private long getEstimatedCurrentPositionMs() {
         long base = Math.max(0L, currentPosMs);
         if (isPlaying && lastPosUpdateUptimeMs > 0L) {
             long dt = Math.max(0L, android.os.SystemClock.uptimeMillis() - lastPosUpdateUptimeMs);
-            float spd = currentSpeed > 0.05f ? currentSpeed : 1.0f;
+            float spd = Math.abs(currentSpeed) > 0.05f ? currentSpeed : 1.0f;
             base += Math.round(dt * spd);
+        }
+        if (base < 0L) {
+            base = 0L;
         }
         if (currentDurMs > 0L && base > currentDurMs) {
             base = currentDurMs;
@@ -1602,7 +1628,7 @@ public class IslandOverlayController {
         elapsedTimeView.setText(formatTimeMs(pos));
         totalTimeView.setText(dur > 0L ? formatTimeMs(dur) : "0:00");
         if (!isUserSeekingIsland) {
-            int prog = (dur > 0L) ? (int) Math.min(1000L, (pos * 1000L) / dur) : 0;
+            int prog = (dur > 0L) ? (int) Math.min(1000L, Math.max(0L, (pos * 1000L) / dur)) : 0;
             islandSeekBar.setProgress(prog);
         }
     }
@@ -1614,8 +1640,8 @@ public class IslandOverlayController {
         String displayTitle = currentTitle;
         String displaySub = currentSubtitle;
         if ("youtube".equals(currentIslandMode) && !isPlaying) {
-            displayTitle = "▶️ YouTube Studio • Модуль в разработке";
-            displaySub = "🚧 Заглушка: скоро прямое воспроизведение YouTube потоков";
+            displayTitle = "YouTube Studio • Модуль в разработке";
+            displaySub = "Заглушка: скоро прямое воспроизведение YouTube потоков";
         }
 
         if (islandTitleView != null) {
