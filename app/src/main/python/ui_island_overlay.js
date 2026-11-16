@@ -234,6 +234,17 @@
     // -------------------------------------------------------------------------
     // 2. РАДИО И SOUNDCLOUD ПОМОЩНИКИ
     // -------------------------------------------------------------------------
+    function pauseExternalPreviewOnlyV247() {
+        var khAud = window._khStateV88 && window._khStateV88.previewAudio;
+        if (khAud && !khAud.paused) {
+            if (typeof window.toggleKhMiniPlayPauseV90 === 'function') {
+                window.toggleKhMiniPlayPauseV90();
+            } else {
+                try { khAud.pause(); } catch (e) {}
+            }
+        }
+    }
+
     function startOrResumeOriginalRadioV245() {
         var rst = window._radioStateV91;
         var radAud = (rst && rst.audio) || window._lastRadioAudioElV243;
@@ -242,14 +253,25 @@
         }
         if (radAud && radAud.paused && (radAud.src || window._lastRadioSrcUrlV243)) {
             if (typeof window.pauseMainPlayerForOstV90 === 'function') window.pauseMainPlayerForOstV90();
-            if (typeof window.stopKhPreviewV88 === 'function') window.stopKhPreviewV88();
-            if (!radAud.src && window._lastRadioSrcUrlV243) {
-                radAud.src = window._lastRadioSrcUrlV243;
+            pauseExternalPreviewOnlyV247();
+            var liveRadAud = (rst && rst.audio) || radAud;
+            if (liveRadAud) {
+                if (!liveRadAud.src && window._lastRadioSrcUrlV243) {
+                    liveRadAud.src = window._lastRadioSrcUrlV243;
+                }
+                var playPromise = liveRadAud.play();
+                if (playPromise && typeof playPromise.then === 'function') {
+                    playPromise.then(function() {
+                        if (typeof window.renderRadioFiltersAndStationsV92 === 'function') {
+                            window.renderRadioFiltersAndStationsV92();
+                        }
+                        window.syncPermanentForegroundNotificationV212(true);
+                    }).catch(function() {
+                        triggerStationByIndexV245(findCurrentRadioIndexV245());
+                    });
+                }
+                return;
             }
-            radAud.play().catch(function() {
-                triggerStationByIndexV245(window._lastRadioStationIdxV245 || 0);
-            });
-            return;
         }
         var targetIdx = findCurrentRadioIndexV245();
         triggerStationByIndexV245(targetIdx);
