@@ -13925,4 +13925,203 @@ def api_radio_abort_stale_v243():
                             pass
     return json.dumps({"status": "ok", "killed": killed})
 _override_bottle_route_v212('/api/radio/abort_stale_v243', 'POST', api_radio_abort_stale_v243)
+
+
+# [FIX-ISLAND-OVERLAY] Быстрый client_id и живой непрерывный MP3-поток SoundCloud для мгновенного старта в плеере и на плашке
+def _sc_get_client_id_fast_v246(force_refresh: bool = False):
+    global _SC_CLIENT_ID_V92
+    if _SC_CLIENT_ID_V92 and not force_refresh:
+        return _SC_CLIENT_ID_V92
+    if not force_refresh:
+        for cand in _SC_FALLBACK_IDS_V105:
+            try:
+                with _sc_urlopen_v95(f"https://api-v2.soundcloud.com/search/tracks?q=test&client_id={cand}&limit=1", timeout=4) as r:
+                    if r.status == 200:
+                        _SC_CLIENT_ID_V92 = cand
+                        return cand
+            except Exception:
+                pass
+    for page_u in ("https://soundcloud.com/discover", "https://soundcloud.com"):
+        try:
+            with _sc_urlopen_v95(page_u, timeout=6) as r:
+                html = r.read().decode("utf-8", errors="ignore")
+            scripts = re.findall(r'src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)"', html)
+            for s_url in reversed(scripts[-6:]):
+                try:
+                    with _sc_urlopen_v95(s_url, timeout=5) as sr:
+                        js_txt = sr.read().decode("utf-8", errors="ignore")
+                    m = re.search(r'client_id\s*[:=]\s*"([a-zA-Z0-9]{32})"', js_txt)
+                    if m:
+                        _SC_CLIENT_ID_V92 = m.group(1)
+                        return _SC_CLIENT_ID_V92
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    for cand in _SC_FALLBACK_IDS_V105:
+        try:
+            with _sc_urlopen_v95(f"https://api-v2.soundcloud.com/search/tracks?q=test&client_id={cand}&limit=1", timeout=4) as r:
+                if r.status == 200:
+                    _SC_CLIENT_ID_V92 = cand
+                    return cand
+        except Exception:
+            pass
+    _SC_CLIENT_ID_V92 = _SC_FALLBACK_IDS_V105[0]
+    return _SC_CLIENT_ID_V92
+
+_sc_get_client_id_v92 = _sc_get_client_id_fast_v246
+
+_orig_ost_resolve_urls_v246 = _ost_resolve_urls_from_pack_v88
+def _ost_resolve_urls_from_pack_v88(page_path: str):
+    if page_path and page_path.startswith("sc:"):
+        live_u = f"/api/soundcloud/live_stream_v246?page_path={urllib.parse.quote(page_path)}&_ts={int(time.time() * 1000)}"
+        return {"flac_url": "", "mp3_url": live_u}
+    return _orig_ost_resolve_urls_v246(page_path)
+
+_ACTIVE_SC_LIVE_PROCS_V246 = []
+_ACTIVE_SC_LIVE_LOCK_V246 = threading.Lock()
+
+def _kill_active_sc_live_procs_v246():
+    with _ACTIVE_SC_LIVE_LOCK_V246:
+        while _ACTIVE_SC_LIVE_PROCS_V246:
+            item = _ACTIVE_SC_LIVE_PROCS_V246.pop(0)
+            try:
+                item["stop"][0] = True
+            except Exception:
+                pass
+            p = item.get("proc")
+            if p is not None:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+
+def api_soundcloud_live_stream_v246():
+    page_path = (request.query.get("page_path") or "").strip()
+    if not page_path.startswith("sc:"):
+        response.status = 400
+        return "Invalid SoundCloud page_path"
+
+    _kill_active_sc_live_procs_v246()
+    try:
+        stream_u = _sc_resolve_direct_url_v92(page_path)
+    except Exception as e:
+        response.status = 502
+        return str(e)
+
+    response.content_type = "audio/mpeg"
+    response.set_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+    response.set_header("Accept-Ranges", "none")
+
+    def _gen():
+        stop_flag = [False]
+        proc_Entry = {"stop": stop_flag, "proc": None}
+        with _ACTIVE_SC_LIVE_LOCK_V246:
+            _ACTIVE_SC_LIVE_PROCS_V246.append(proc_Entry)
+        try:
+            with _sc_urlopen_v95(stream_u, timeout=15) as r:
+                first_b = r.read(16384)
+                if not (first_b.lstrip().startswith(b"#EXTM3U") or ".m3u8" in stream_u.lower()):
+                    if first_b:
+                        yield first_b
+                    while not stop_flag[0]:
+                        chunk = r.read(32768)
+                        if not chunk:
+                            break
+                        yield chunk
+                    return
+
+                m3u8_txt = (first_b + r.read()).decode("utf-8", errors="ignore")
+
+            map_url = None
+            seg_urls = []
+            for ln in m3u8_txt.splitlines():
+                s_ln = ln.strip()
+                if s_ln.startswith("#EXT-X-MAP:"):
+                    m_map = re.search(r'URI="([^"]+)"', s_ln)
+                    if m_map and m_map.group(1).startswith("http"):
+                        map_url = m_map.group(1)
+                elif s_ln.startswith("http"):
+                    seg_urls.append(s_ln)
+
+            if not seg_urls:
+                return
+
+            # Если плейлист содержит #EXT-X-MAP (fMP4 AAC 160k), транскодируем на лету через FFmpeg в непрерывный поток MP3
+            ff_bin = find_ffmpeg_binary()
+            if map_url and ff_bin:
+                cmd = [
+                    ff_bin, "-hide_banner", "-loglevel", "error",
+                    "-i", "pipe:0",
+                    "-vn", "-sn", "-dn",
+                    "-ac", "2", "-ar", "44100",
+                    "-b:a", "192k",
+                    "-flush_packets", "1", "-f", "mp3", "pipe:1"
+                ]
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    bufsize=32768
+                )
+                proc_Entry["proc"] = proc
+
+                all_urls = [map_url] + seg_urls
+                def _feed_ffmpeg():
+                    try:
+                        for u_seg in all_urls:
+                            if stop_flag[0]:
+                                break
+                            try:
+                                with _sc_urlopen_v95(u_seg, timeout=12) as sr:
+                                    while not stop_flag[0]:
+                                        b_seg = sr.read(32768)
+                                        if not b_seg:
+                                            break
+                                        proc.stdin.write(b_seg)
+                                    proc.stdin.flush()
+                            except Exception:
+                                break
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            proc.stdin.close()
+                        except Exception:
+                            pass
+
+                threading.Thread(target=_feed_ffmpeg, daemon=True).start()
+                while not stop_flag[0]:
+                    out_chunk = proc.stdout.read(16384)
+                    if not out_chunk:
+                        break
+                    yield out_chunk
+            else:
+                # Обычные MP3 HLS-сегменты: склеиваем напрямую без перекодирования
+                for u_seg in seg_urls:
+                    if stop_flag[0]:
+                        break
+                    try:
+                        with _sc_urlopen_v95(u_seg, timeout=12) as sr:
+                            seg_raw = sr.read()
+                        clean_seg = _clean_concatenated_hls_mp3_bytes_v102(seg_raw)
+                        if clean_seg:
+                            yield clean_seg
+                    except Exception:
+                        break
+        except Exception:
+            pass
+        finally:
+            stop_flag[0] = True
+            p = proc_Entry.get("proc")
+            if p is not None:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+
+    return _gen()
+
+_override_bottle_route_v212('/api/soundcloud/live_stream_v246', 'GET', api_soundcloud_live_stream_v246)
 # ================= END JENNY_V243_UNIFIED_FIXES =================

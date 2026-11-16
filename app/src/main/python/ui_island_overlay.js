@@ -137,9 +137,10 @@
                     window._lastExternalTitleV243 = trk.title || 'SoundCloud Поток';
                     var bodyEl = document.getElementById('scDedicatedBodyV93');
                     var btnEl = bodyEl ? bodyEl.querySelector('button[onclick*="previewScTrackV96(' + trk.index + ',"]') : null;
-                    // Если этот же трек уже загружен и мы делаем старт (stepDelta === 0), а он на паузе:
-                    if (stepDelta === 0 && aud && aud._pagePath === trk.page_path && aud.paused && typeof window.toggleKhMiniPlayPauseV90 === 'function') {
-                        window.toggleKhMiniPlayPauseV90();
+                    if (stepDelta === 0 && aud && aud._pagePath === trk.page_path) {
+                        if (aud.paused && typeof window.toggleKhMiniPlayPauseV90 === 'function') {
+                            window.toggleKhMiniPlayPauseV90();
+                        }
                     } else {
                         window.previewScTrackV96(trk.index, btnEl);
                     }
@@ -148,19 +149,28 @@
                 return;
             }
             attempt++;
-            if (attempt === 1 && typeof window.runScDedicatedSearchV93 === 'function') {
+            if (attempt === 1 && !window._scSearchInFlightV246 && typeof window.runScDedicatedSearchV93 === 'function') {
+                window._scSearchInFlightV246 = true;
                 var scModal = document.getElementById('jennySoundCloudModalV93');
+                var pSearch;
                 if (!scModal && typeof window.openSoundCloudModalV92 === 'function') {
-                    window.openSoundCloudModalV92();
+                    pSearch = window.openSoundCloudModalV92();
                     if (document.getElementById('jennySoundCloudModalV93')) {
                         document.getElementById('jennySoundCloudModalV93').style.setProperty('display', 'none', 'important');
                     }
                 } else {
-                    window.runScDedicatedSearchV93();
+                    var bodyCheck = document.getElementById('scDedicatedBodyV93');
+                    var alreadySearching = bodyCheck && bodyCheck.textContent && bodyCheck.textContent.indexOf('Поиск') !== -1;
+                    if (!alreadySearching) {
+                        pSearch = window.runScDedicatedSearchV93();
+                    }
                 }
+                Promise.resolve(pSearch).finally(function() {
+                    setTimeout(function() { window._scSearchInFlightV246 = false; }, 400);
+                });
             }
-            if (attempt < 20) {
-                setTimeout(tryPlaySc, 220);
+            if (attempt < 55) {
+                setTimeout(tryPlaySc, 240);
             }
         };
         tryPlaySc();
@@ -399,6 +409,21 @@
         var c = String(cmd || '').toLowerCase();
         var a = String(arg || '');
         var snap = window.getActiveSourcesSnapshotV243 ? window.getActiveSourcesSnapshotV243() : {};
+
+        if (c === 'share' || c === 'export') {
+            if (!window.currentPlayingTrack && Array.isArray(window.allTracks) && window.allTracks.length > 0) {
+                window.currentPlayingTrack = window.allTracks[0];
+            }
+            if (typeof window.exportCurrentTrack === 'function') {
+                window.exportCurrentTrack();
+            } else {
+                var expBtn = document.getElementById('btnExport');
+                if (expBtn && typeof expBtn.click === 'function') {
+                    expBtn.click();
+                }
+            }
+            return;
+        }
 
         if (c === 'fav') {
             var trk = window.currentPlayingTrack;
