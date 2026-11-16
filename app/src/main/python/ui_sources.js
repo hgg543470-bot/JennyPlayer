@@ -4674,51 +4674,186 @@ window.stopAllExternalStreamsV97 = function() {
 
 /* ================= [FIX-YOUTUBE-COMPLETE-V252] YOUTUBE STUDIO + YOUTUBE MUSIC + 1-CLICK ENGINE UPDATER ================= */
 (function() {
+    function loadSavedYtHeightV253() {
+        try {
+            var v = parseInt(localStorage.getItem('jenny_yt_quality_h_v253') || '720', 10);
+            if ([360, 480, 720, 1080].indexOf(v) !== -1) return v;
+        } catch (e) {}
+        return 720;
+    }
+
+    function loadSavedYtPreloadLimitMbV253() {
+        try {
+            if (window.appConfig && typeof window.appConfig.ytFullPreloadLimitMbV253 === 'number') {
+                return window.appConfig.ytFullPreloadLimitMbV253;
+            }
+            var raw = localStorage.getItem('jenny_yt_preload_limit_mb_v253');
+            if (raw !== null && raw !== '') {
+                var n = parseFloat(raw);
+                if (!isNaN(n) && n >= 0) return n;
+            }
+        } catch (e) {}
+        return 300;
+    }
+
     window._ytStudioStateV252 = window._ytStudioStateV252 || {
         mode: 'music', // 'music' | 'video'
         results: [],
         currentIdx: -1,
-        selectedHeight: 720,
+        selectedHeight: loadSavedYtHeightV253(),
+        preloadLimitMb: loadSavedYtPreloadLimitMbV253(),
         engineInfo: null
     };
 
+    window.getYtPreloadLimitMbV253 = function() {
+        var st = window._ytStudioStateV252;
+        if (st && typeof st.preloadLimitMb === 'number') return st.preloadLimitMb;
+        return loadSavedYtPreloadLimitMbV253();
+    };
+
+    window.setYtPreloadLimitMbV253 = function(mbVal) {
+        var n = Math.max(0, parseFloat(mbVal) || 0);
+        window._ytStudioStateV252.preloadLimitMb = n;
+        window.appConfig = window.appConfig || {};
+        window.appConfig.ytFullPreloadLimitMbV253 = n;
+        try {
+            localStorage.setItem('jenny_yt_preload_limit_mb_v253', String(n));
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+        } catch (e) {}
+        window.refreshYtQualityAndLimitPillsV253();
+    };
+
+    window.setYtStudioQualityV253 = function(hVal) {
+        var h = parseInt(hVal, 10) || 720;
+        window._ytStudioStateV252.selectedHeight = h;
+        try {
+            localStorage.setItem('jenny_yt_quality_h_v253', String(h));
+        } catch (e) {}
+        window.refreshYtQualityAndLimitPillsV253();
+        if (typeof window.showToast === 'function') {
+            window.showToast('🎬 Выбрано качество видео: ' + h + 'p');
+        }
+    };
+
+    window.refreshYtQualityAndLimitPillsV253 = function() {
+        var st = window._ytStudioStateV252;
+        var curH = st.selectedHeight || 720;
+        var curLim = window.getYtPreloadLimitMbV253();
+
+        [360, 480, 720, 1080].forEach(function(h) {
+            var b = document.getElementById('ytQualPillV253_' + h);
+            if (b) {
+                var active = (curH === h);
+                b.style.background = active ? 'linear-gradient(135deg,#ff3b3b,#b91c1c)' : 'rgba(255,255,255,0.06)';
+                b.style.color = active ? '#fff' : '#c9d1d9';
+                b.style.borderColor = active ? '#ff6b6b' : 'rgba(255,255,255,0.16)';
+                b.style.boxShadow = active ? '0 0 8px rgba(255,80,80,0.45)' : 'none';
+            }
+        });
+
+        [0, 100, 300, 600, 99999].forEach(function(lim) {
+            var b1 = document.getElementById('ytLimPillModalV253_' + lim);
+            var b2 = document.getElementById('ytLimPillSetV253_' + lim);
+            var active = (Math.abs(curLim - lim) < 1);
+            [b1, b2].forEach(function(btn) {
+                if (btn) {
+                    btn.style.background = active ? 'linear-gradient(135deg,#6e38c5,#a371f7)' : 'rgba(255,255,255,0.06)';
+                    btn.style.color = active ? '#fff' : '#c9d1d9';
+                    btn.style.borderColor = active ? '#d2a8ff' : 'rgba(255,255,255,0.16)';
+                }
+            });
+        });
+
+        var lblSet = document.getElementById('lblYtPreloadLimitDescV253');
+        if (lblSet) {
+            lblSet.innerText = (curLim <= 0)
+                ? 'Режим: всегда потоком кусками (1.5 МБ)'
+                : ((curLim >= 90000) ? 'Режим: всегда целиком в ОЗУ/кэш' : ('До ' + curLim + ' МБ — целиком в ОЗУ, свыше — кусками'));
+        }
+    };
+
+    window.ensureYtPreloadSettingsBlockV253 = function() {
+        var container = document.getElementById('settingsContent') || document.querySelector('#settingsModal .modal-body');
+        if (!container || document.getElementById('jennyYtPreloadSettingsBoxV253')) return;
+
+        var box = document.createElement('div');
+        box.id = 'jennyYtPreloadSettingsBoxV253';
+        box.style.cssText = 'margin:10px 0 12px 0;padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(40,12,24,0.92),rgba(16,18,28,0.95));border:1px solid rgba(255,85,85,0.45);display:flex;flex-direction:column;gap:8px;';
+        box.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">' +
+                '<span style="color:#fff;font-weight:800;font-size:13px;">🎬 Лимит полной загрузки YouTube в память (Дека А / Дека Б)</span>' +
+                '<span id="lblYtPreloadLimitDescV253" style="color:#ff9999;font-size:11px;font-weight:700;"></span>' +
+            '</div>' +
+            '<div style="font-size:11px;color:#b1bac4;line-height:1.35;">' +
+                'Файлы меньше выбранного порога скачиваются целиком в быстрый кэш и ОЗУ-буферы дек (#1/#2 и #3/#4). Большие файлы свыше порога (например, 2-часовые видео и стримы) запускаются сразу потоком кусками по 1.5 МБ.' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px;">' +
+                '<button type="button" id="ytLimPillSetV253_0" onclick="window.setYtPreloadLimitMbV253(0)" style="flex:1;min-width:72px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">Поток (0 МБ)</button>' +
+                '<button type="button" id="ytLimPillSetV253_100" onclick="window.setYtPreloadLimitMbV253(100)" style="flex:1;min-width:64px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">100 МБ</button>' +
+                '<button type="button" id="ytLimPillSetV253_300" onclick="window.setYtPreloadLimitMbV253(300)" style="flex:1;min-width:64px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">300 МБ</button>' +
+                '<button type="button" id="ytLimPillSetV253_600" onclick="window.setYtPreloadLimitMbV253(600)" style="flex:1;min-width:64px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">600 МБ</button>' +
+                '<button type="button" id="ytLimPillSetV253_99999" onclick="window.setYtPreloadLimitMbV253(99999)" style="flex:1;min-width:78px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">Всегда целиком</button>' +
+            '</div>';
+
+        var firstRow = container.querySelector('.setting-row');
+        if (firstRow && firstRow.parentNode === container) {
+            container.insertBefore(box, firstRow);
+        } else {
+            container.appendChild(box);
+        }
+        window.refreshYtQualityAndLimitPillsV253();
+    };
+
+    setTimeout(function() {
+        window.ensureYtPreloadSettingsBlockV253();
+    }, 600);
+
     window.getEffectiveYtTotalDurSecV252 = function(aud) {
-        if (!aud) return 0;
+        if (window._isYoutubeDeckAActiveV253) {
+            if (window.studioBuffer && window.studioBuffer.duration > 0) return window.studioBuffer.duration;
+            var p = document.getElementById('audioPlayer');
+            if (p && isFinite(p.duration) && p.duration > 0 && p.duration < 864000) return p.duration;
+            if (Number(window._ytKnownDeckADurationV253 || 0) > 0) return Number(window._ytKnownDeckADurationV253);
+        }
+        if (!aud) return Number(window._ytKnownDeckADurationV253 || 180);
         var d = Number(aud._ytKnownDurationSecV252 || 0);
         if (d > 0) return d;
-        if (isFinite(aud.duration) && aud.duration > 0 && aud.duration < 86400) return aud.duration;
+        if (isFinite(aud.duration) && aud.duration > 0 && aud.duration < 864000) return aud.duration;
         return 180;
     };
 
     window.getEffectiveYtCurrentSecV252 = function(aud) {
+        if (window._isYoutubeDeckAActiveV253) {
+            if (typeof window.getTruePlaybackTimeV74_2 === 'function' && window.studioBuffer) {
+                return window.getTruePlaybackTimeV74_2();
+            }
+            var p = document.getElementById('audioPlayer');
+            if (p && isFinite(p.currentTime)) return p.currentTime;
+        }
         if (!aud) return 0;
         return Math.max(0, Number(aud._ytSeekBaseSecV252 || 0) + Number(aud.currentTime || 0));
     };
 
     window.seekYoutubeStreamToSecV252 = function(aud, targetSec) {
-        if (!aud) return;
-        var vid = aud._ytVideoIdV252 || '';
-        var tot = window.getEffectiveYtTotalDurSecV252(aud);
-        var clamped = Math.max(0, Math.min(tot > 0 ? tot - 0.5 : targetSec, Number(targetSec) || 0));
-        // If playing a direct m4a/mp3 file with native Range support and _ytSeekBaseSecV252 == 0, try native currentTime first
-        if (!aud._ytSeekBaseSecV252 && isFinite(aud.duration) && aud.duration > 1 && aud.seekable && aud.seekable.length > 0) {
-            try {
-                if (aud.seekable.end(0) >= clamped) {
-                    aud.currentTime = clamped;
-                    if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
-                        window.syncPermanentForegroundNotificationV212(true);
-                    }
-                    return;
+        var clamped = Math.max(0, Number(targetSec) || 0);
+        if (window._isYoutubeDeckAActiveV253) {
+            if (window.studioBuffer && typeof window.seekDeckAToExactSecondV371 === 'function') {
+                window.seekDeckAToExactSecondV371(clamped);
+            } else {
+                var p = document.getElementById('audioPlayer');
+                if (p) {
+                    try { p.currentTime = clamped; } catch (e) {}
                 }
-            } catch (e) {}
+            }
+            if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                window.syncPermanentForegroundNotificationV212(true);
+            }
+            return;
         }
-        if (!vid) return;
-        var wasPlaying = !aud.paused;
-        aud._ytSeekBaseSecV252 = clamped;
-        aud.src = '/api/youtube/live_stream?v=' + encodeURIComponent(vid) + '&seek=' + clamped.toFixed(1) + '&_t=' + Date.now();
-        if (wasPlaying) {
-            aud.play().catch(function() {});
-        }
+        if (!aud) return;
+        try {
+            aud.currentTime = clamped;
+        } catch (e) {}
         if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
             window.syncPermanentForegroundNotificationV212(true);
         }
@@ -4726,6 +4861,16 @@ window.stopAllExternalStreamsV97 = function() {
 
     var _origSeekKhMiniV252 = window.seekKhMiniPlayerV90;
     window.seekKhMiniPlayerV90 = function(val1000) {
+        var ytModal = document.getElementById('jennyYoutubeStudioModalV230');
+        var isYtModalVisible = Boolean(ytModal && ytModal.style.display !== 'none');
+        if (isYtModalVisible && window._isYoutubeDeckAActiveV253) {
+            var totA = window.getEffectiveYtTotalDurSecV252(null);
+            if (totA > 0) {
+                var tSecA = (Math.max(0, Math.min(1000, Number(val1000) || 0)) / 1000.0) * totA;
+                window.seekYoutubeStreamToSecV252(null, tSecA);
+                return;
+            }
+        }
         var aud = window._khStateV88 && window._khStateV88.previewAudio;
         if (aud && (aud._previewOwnerModalV241 === 'jennyYoutubeStudioModalV230' || String(aud._pagePath || '').indexOf('yt:') === 0)) {
             var tot = window.getEffectiveYtTotalDurSecV252(aud);
@@ -4869,16 +5014,55 @@ window.stopAllExternalStreamsV97 = function() {
         listEl.innerHTML = html;
     };
 
+    // Sync YouTube modal mini-player with Deck A when _isYoutubeDeckAActiveV253 is true
+    setInterval(function() {
+        if (!window._isYoutubeDeckAActiveV253) return;
+        var modal = document.getElementById('jennyYoutubeStudioModalV230');
+        if (!modal || modal.style.display === 'none') return;
+        var curS = window.getEffectiveYtCurrentSecV252(null);
+        var totS = window.getEffectiveYtTotalDurSecV252(null);
+        var seekEl = modal.querySelector('.jenny-univ-mini-player-v98 .ump-seek');
+        var timeEl = modal.querySelector('.jenny-univ-mini-player-v98 .ump-time');
+        var playBtn = modal.querySelector('.jenny-univ-mini-player-v98 .ump-play-btn');
+        var titleEl = modal.querySelector('.jenny-univ-mini-player-v98 .ump-title');
+        if (titleEl && window._lastYtTrackMetaV252) {
+            titleEl.innerText = ((window._lastYtTrackIdxV252 || 0) + 1) + '. ' + (window._lastYtTrackMetaV252.title || 'YouTube');
+        }
+        if (seekEl && totS > 0 && document.activeElement !== seekEl) {
+            seekEl.value = Math.min(1000, Math.round((curS / totS) * 1000));
+        }
+        if (timeEl) {
+            var fmt = function(s) {
+                s = Math.max(0, Math.floor(s || 0));
+                return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+            };
+            timeEl.innerText = fmt(curS) + ' / ' + fmt(totS);
+        }
+        if (playBtn) {
+            var p = document.getElementById('audioPlayer');
+            var playing = Boolean(window.isStudioPlaying || (p && !p.paused && !p.ended));
+            playBtn.innerText = playing ? '⏸' : '▶';
+        }
+    }, 500);
+
     window.playYtStudioItemByIndexV252 = async function(idx, btnEl) {
         var st = window._ytStudioStateV252;
         var items = st.results || [];
         if (idx < 0 || idx >= items.length) return;
         var item = items[idx];
 
-        // If already playing this exact item, toggle pause
-        var curAud = window._khStateV88 && window._khStateV88.previewAudio;
-        if (curAud && curAud._ytVideoIdV252 === item.id && !curAud.paused) {
-            curAud.pause();
+        var mainPlayer = document.getElementById('audioPlayer');
+        var isAlreadyPlayingThis = Boolean(
+            window._isYoutubeDeckAActiveV253 &&
+            window._lastYtVideoIdV252 === item.id &&
+            (window.isStudioPlaying || (mainPlayer && !mainPlayer.paused && !mainPlayer.ended))
+        );
+        if (isAlreadyPlayingThis) {
+            if (typeof window.togglePlay === 'function') {
+                window.togglePlay();
+            } else if (mainPlayer) {
+                mainPlayer.pause();
+            }
             if (btnEl) btnEl.innerText = '▶ Слушать';
             if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
                 window.syncPermanentForegroundNotificationV212(true);
@@ -4894,82 +5078,96 @@ window.stopAllExternalStreamsV97 = function() {
         window._lastYtTrackIdxV252 = idx;
         window._lastYtVideoIdV252 = item.id;
         window._lastYtTrackMetaV252 = item;
+        window._isYoutubeDeckAActiveV253 = true;
+        window._islandActiveModeV245 = 'youtube';
+        window._islandExplicitModeTsV245 = Date.now();
         window._forcedIslandModeV245 = 'youtube';
         window._lastActiveMediaSourceV243 = 'youtube';
 
-        if (btnEl) btnEl.innerText = '⏳ Загрузка...';
+        if (btnEl) btnEl.innerText = '⏳ В Деку А...';
         if (typeof window.showToast === 'function') {
-            window.showToast('⏳ Подготовка потока YouTube: ' + (item.title || item.id));
+            window.showToast('⏳ Запуск в Деке А: ' + (item.title || item.id));
         }
 
         var myReqId = (window._previewReqIdV97 = (window._previewReqIdV97 || 0) + 1);
         try {
-            // Warm up info & stream cache
-            var infoRes = await fetch('/api/youtube/info', {
+            var limitMb = window.getYtPreloadLimitMbV253();
+            var prepRes = await fetch('/api/youtube/prepare_deck_a', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: item.id })
+                body: JSON.stringify({ id: item.id, limit_mb: limitMb })
             });
-            var infoJson = await infoRes.json();
+            var prepJson = await prepRes.json();
             if (myReqId !== window._previewReqIdV97) return;
-            if (infoJson.status === 'ok' && infoJson.duration > 0) {
-                item.duration = infoJson.duration;
+            if (!prepJson || prepJson.status !== 'ok') {
+                throw new Error((prepJson && prepJson.error) ? prepJson.error : 'Не удалось подготовить аудио для Деки А');
             }
 
-            var aud = new Audio('/api/youtube/live_stream?v=' + encodeURIComponent(item.id) + '&seek=0&_t=' + Date.now());
-            aud._pagePath = 'yt:' + item.id;
-            aud._ytVideoIdV252 = item.id;
-            aud._ytTitleV252 = item.title || 'YouTube';
-            aud._ytChannelV252 = item.channel || 'YouTube';
-            aud._ytSeekBaseSecV252 = 0;
-            aud._ytKnownDurationSecV252 = Number(item.duration || 0) > 0 ? Number(item.duration) : 0;
-            aud._previewOwnerModalV241 = 'jennyYoutubeStudioModalV230';
-            aud.volume = (typeof window.getKhPreviewVolumeV90 === 'function') ? window.getKhPreviewVolumeV90() : 1.0;
-
-            window._khStateV88 = window._khStateV88 || {};
-            window._khStateV88.previewAudio = aud;
-            window._lastExternalAudioElV243 = aud;
-            window._lastExternalTitleV243 = item.title || 'YouTube';
-            window._ytAudioElV252 = aud;
-
-            if (typeof window.bindAudioToSingleModalMiniPlayerV241 === 'function') {
-                window.bindAudioToSingleModalMiniPlayerV241(aud, (idx + 1) + '. ' + (item.title || 'YouTube'), 'jennyYoutubeStudioModalV230');
+            if (prepJson.duration > 0) {
+                item.duration = prepJson.duration;
+                window._ytKnownDeckADurationV253 = prepJson.duration;
+            } else {
+                window._ytKnownDeckADurationV253 = Number(item.duration || 0);
             }
 
-            aud.addEventListener('timeupdate', function() {
-                var modal = document.getElementById('jennyYoutubeStudioModalV230');
-                if (!modal) return;
-                var curS = window.getEffectiveYtCurrentSecV252(aud);
-                var totS = window.getEffectiveYtTotalDurSecV252(aud);
-                var seekEl = modal.querySelector('.jenny-univ-mini-player-v98 .ump-seek');
-                var timeEl = modal.querySelector('.jenny-univ-mini-player-v98 .ump-time');
-                if (seekEl && totS > 0 && document.activeElement !== seekEl) {
-                    seekEl.value = Math.min(1000, Math.round((curS / totS) * 1000));
+            if (prepJson.mode === 'full_ram' && typeof window.playTrack === 'function') {
+                // Play directly in Deck A with Full RAM Buffer #1 (Forward) & #2 (Reverse)!
+                window._isYoutubeDeckAActiveV253 = true;
+                var playProm = window.playTrack(prepJson.filename, 'youtube');
+                // Keep Red Floating Island in 'youtube' mode while Deck A plays
+                window._isYoutubeDeckAActiveV253 = true;
+                window._islandActiveModeV245 = 'youtube';
+                window._islandExplicitModeTsV245 = Date.now();
+                window._lastActiveMediaSourceV243 = 'youtube';
+                if (mainPlayer && typeof window.bindAudioToSingleModalMiniPlayerV241 === 'function') {
+                    window.bindAudioToSingleModalMiniPlayerV241(mainPlayer, (idx + 1) + '. ' + (item.title || 'YouTube'), 'jennyYoutubeStudioModalV230');
                 }
-                if (timeEl) {
-                    var fmt = function(s) {
-                        s = Math.max(0, Math.floor(s || 0));
-                        return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
-                    };
-                    timeEl.innerText = fmt(curS) + ' / ' + fmt(totS);
+                if (playProm && typeof playProm.then === 'function') {
+                    playProm.then(function() {
+                        window._isYoutubeDeckAActiveV253 = true;
+                        window._islandActiveModeV245 = 'youtube';
+                        if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                            window.syncPermanentForegroundNotificationV212(true);
+                        }
+                    }).catch(function() {});
                 }
-            });
+            } else {
+                // Chunked Stream mode (> limit_mb, e.g. 2-hour video/podcast) directly in Deck A (#audioPlayer)!
+                if (typeof window.abortPendingAudioRamLoadsV216 === 'function') {
+                    window.abortPendingAudioRamLoadsV216();
+                }
+                if (window.studioSourceNode) {
+                    try { window.studioSourceNode.onended = null; window.studioSourceNode.stop(0); window.studioSourceNode.disconnect(); } catch (e) {}
+                    window.studioSourceNode = null;
+                }
+                window.isStudioPlaying = false;
+                window.studioBuffer = null;
+                window.reversedStudioBuffer = null;
+                window._userPausedV75_2 = false;
+                window.currentPlayingTrack = prepJson.filename;
 
-            aud.onended = function() {
-                if (btnEl) btnEl.innerText = '▶ Слушать';
-                // Auto-advance to next track in YouTube list
-                if (idx + 1 < (window._ytStudioStateV252.results || []).length) {
-                    window.playYtStudioItemByIndexV252(idx + 1, null);
-                } else if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
-                    window.syncPermanentForegroundNotificationV212(true);
+                if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
+                if (window.audioCtx && window.audioCtx.state === 'suspended') {
+                    try { window.audioCtx.resume(); } catch (e) {}
                 }
-            };
+                if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
 
-            await aud.play();
-            if (myReqId !== window._previewReqIdV97) {
-                aud.pause();
-                return;
+                var titleEl = document.getElementById('nowPlaying');
+                if (titleEl) {
+                    titleEl.innerText = '🎵 Поток (кусками 1.5 МБ): ' + (item.title || prepJson.filename);
+                }
+                if (mainPlayer) {
+                    mainPlayer.loop = false;
+                    mainPlayer.src = prepJson.stream_url + '&_t=' + Date.now();
+                    mainPlayer.currentTime = 0;
+                    mainPlayer.preservesPitch = true;
+                    if (typeof window.bindAudioToSingleModalMiniPlayerV241 === 'function') {
+                        window.bindAudioToSingleModalMiniPlayerV241(mainPlayer, (idx + 1) + '. ' + (item.title || 'YouTube'), 'jennyYoutubeStudioModalV230');
+                    }
+                    await mainPlayer.play();
+                }
             }
+
             window.renderYtSearchResultsV252();
             var newBtn = document.getElementById('ytPlayBtnV252_' + idx);
             if (newBtn) newBtn.innerText = '⏸ Пауза';
@@ -5027,8 +5225,7 @@ window.stopAllExternalStreamsV97 = function() {
         var st = window._ytStudioStateV252;
         var item = (st.results || [])[idx];
         if (!item || !item.id) return;
-        var qSel = document.getElementById('ytQualitySelectV252');
-        var prefH = qSel ? (parseInt(qSel.value, 10) || 720) : (st.selectedHeight || 720);
+        var prefH = st.selectedHeight || 720;
         if (typeof window.playYoutubeVideoInDeckBV230 === 'function') {
             await window.playYoutubeVideoInDeckBV230(item.id, item.title, prefH, btnEl);
         }
@@ -5038,8 +5235,7 @@ window.stopAllExternalStreamsV97 = function() {
         var st = window._ytStudioStateV252;
         var item = (st.results || [])[idx];
         if (!item || !item.id) return;
-        var qSel = document.getElementById('ytQualitySelectV252');
-        var prefH = qSel ? (parseInt(qSel.value, 10) || 720) : (st.selectedHeight || 720);
+        var prefH = st.selectedHeight || 720;
         if (typeof window.downloadYoutubeVideoV230 === 'function') {
             await window.downloadYoutubeVideoV230(item.id, item.title, prefH, btnEl);
         }
@@ -5061,7 +5257,7 @@ window.stopAllExternalStreamsV97 = function() {
         modal.innerHTML =
             '<div style="width:100%;max-width:560px;max-height:92vh;background:linear-gradient(180deg,#180c12 0%,#0d1117 100%);border:1.5px solid #ff5555;border-radius:18px;box-shadow:0 0 32px rgba(255,60,60,0.28);display:flex;flex-direction:column;overflow:hidden;color:#f0f6fc;">' +
                 // Header
-                '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,85,85,0.25);background:rgba(255,50,50,0.08);">' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid rgba(255,85,85,0.25);background:rgba(255,50,50,0.08);">' +
                     '<div style="display:flex;align-items:center;gap:8px;">' +
                         '<span style="font-size:18px;">▶</span>' +
                         '<div>' +
@@ -5070,25 +5266,36 @@ window.stopAllExternalStreamsV97 = function() {
                         '</div>' +
                     '</div>' +
                     '<div style="display:flex;align-items:center;gap:6px;">' +
-                        '<button onclick="window.triggerOneClickYtEngineUpdateV252(this)" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,136,136,0.5);background:rgba(255,60,60,0.2);color:#ffd2d2;font-size:11px;font-weight:700;cursor:pointer;">🔄 Обновить ядро (1 клик)</button>' +
-                        '<button onclick="document.getElementById(\'jennyYoutubeStudioModalV230\').remove()" style="width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#fff;font-size:16px;cursor:pointer;">✕</button>' +
+                        '<button type="button" onclick="window.triggerOneClickYtEngineUpdateV252(this)" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,136,136,0.5);background:rgba(255,60,60,0.2);color:#ffd2d2;font-size:11px;font-weight:700;cursor:pointer;">🔄 Обновить ядро (1 клик)</button>' +
+                        '<button type="button" onclick="document.getElementById(\'jennyYoutubeStudioModalV230\').remove()" style="width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#fff;font-size:16px;cursor:pointer;">✕</button>' +
                     '</div>' +
                 '</div>' +
-                // Mode tabs + Quality selector
-                '<div style="display:flex;gap:8px;padding:10px 14px 6px 14px;align-items:center;">' +
-                    '<button id="ytModeBtnMusicV252" onclick="window.switchYtStudioModeV252(\'music\')" style="flex:1;padding:8px 10px;border-radius:10px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#b91c1c);color:#fff;font-weight:700;font-size:12px;cursor:pointer;">🎵 YouTube Music</button>' +
-                    '<button id="ytModeBtnVideoV252" onclick="window.switchYtStudioModeV252(\'video\')" style="flex:1;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:#aaa;font-weight:700;font-size:12px;cursor:pointer;">🎬 YouTube Видео</button>' +
-                    '<select id="ytQualitySelectV252" onchange="window._ytStudioStateV252.selectedHeight=parseInt(this.value,10)||720" style="padding:7px 8px;border-radius:10px;border:1px solid rgba(255,120,120,0.4);background:#161b22;color:#ffd2d2;font-size:11.5px;font-weight:700;">' +
-                        '<option value="1080">1080p</option>' +
-                        '<option value="720" selected>720p</option>' +
-                        '<option value="480">480p</option>' +
-                        '<option value="360">360p</option>' +
-                    '</select>' +
+                // Mode tabs
+                '<div style="display:flex;gap:8px;padding:8px 14px 4px 14px;align-items:center;">' +
+                    '<button type="button" id="ytModeBtnMusicV252" onclick="window.switchYtStudioModeV252(\'music\')" style="flex:1;padding:7px 10px;border-radius:10px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#b91c1c);color:#fff;font-weight:700;font-size:12px;cursor:pointer;">🎵 YouTube Music</button>' +
+                    '<button type="button" id="ytModeBtnVideoV252" onclick="window.switchYtStudioModeV252(\'video\')" style="flex:1;padding:7px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:#aaa;font-weight:700;font-size:12px;cursor:pointer;">🎬 YouTube Видео</button>' +
+                '</div>' +
+                // Direct clickable Quality Pills (360p / 480p / 720p / 1080p)
+                '<div style="display:flex;align-items:center;gap:6px;padding:4px 14px;">' +
+                    '<span style="font-size:11px;color:#ff9999;font-weight:700;white-space:nowrap;">Качество видео:</span>' +
+                    '<button type="button" id="ytQualPillV253_360" onclick="window.setYtStudioQualityV253(360)" style="flex:1;padding:5px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11.5px;font-weight:800;cursor:pointer;">360p</button>' +
+                    '<button type="button" id="ytQualPillV253_480" onclick="window.setYtStudioQualityV253(480)" style="flex:1;padding:5px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11.5px;font-weight:800;cursor:pointer;">480p</button>' +
+                    '<button type="button" id="ytQualPillV253_720" onclick="window.setYtStudioQualityV253(720)" style="flex:1;padding:5px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11.5px;font-weight:800;cursor:pointer;">720p</button>' +
+                    '<button type="button" id="ytQualPillV253_1080" onclick="window.setYtStudioQualityV253(1080)" style="flex:1;padding:5px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11.5px;font-weight:800;cursor:pointer;">1080p</button>' +
+                '</div>' +
+                // Preload Limit Pills (0 Поток / 100 МБ / 300 МБ / 600 МБ / Всегда целиком)
+                '<div style="display:flex;align-items:center;gap:5px;padding:2px 14px 6px 14px;flex-wrap:wrap;">' +
+                    '<span style="font-size:10.5px;color:#d2a8ff;font-weight:700;white-space:nowrap;">В ОЗУ целиком:</span>' +
+                    '<button type="button" id="ytLimPillModalV253_0" onclick="window.setYtPreloadLimitMbV253(0)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">Поток</button>' +
+                    '<button type="button" id="ytLimPillModalV253_100" onclick="window.setYtPreloadLimitMbV253(100)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">≤100МБ</button>' +
+                    '<button type="button" id="ytLimPillModalV253_300" onclick="window.setYtPreloadLimitMbV253(300)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">≤300МБ</button>' +
+                    '<button type="button" id="ytLimPillModalV253_600" onclick="window.setYtPreloadLimitMbV253(600)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">≤600МБ</button>' +
+                    '<button type="button" id="ytLimPillModalV253_99999" onclick="window.setYtPreloadLimitMbV253(99999)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">Всегда</button>' +
                 '</div>' +
                 // Search bar
-                '<div style="display:flex;gap:8px;padding:6px 14px 10px 14px;">' +
+                '<div style="display:flex;gap:8px;padding:4px 14px 10px 14px;">' +
                     '<input id="ytSearchInputV252" type="text" placeholder="Поиск трека, клипа или ссылка YouTube..." style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,100,100,0.35);background:#0d1117;color:#fff;font-size:13px;outline:none;" onkeydown="if(event.key===\'Enter\') window.runYtStudioSearchV252()">' +
-                    '<button onclick="window.runYtStudioSearchV252()" style="padding:10px 16px;border-radius:10px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#c91c1c);color:#fff;font-weight:800;font-size:13px;cursor:pointer;">Найти</button>' +
+                    '<button type="button" onclick="window.runYtStudioSearchV252()" style="padding:10px 16px;border-radius:10px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#c91c1c);color:#fff;font-weight:800;font-size:13px;cursor:pointer;">Найти</button>' +
                 '</div>' +
                 // Results list
                 '<div id="ytResultsListV252" style="flex:1;overflow-y:auto;padding:4px 14px 12px 14px;min-height:180px;"></div>' +
@@ -5102,6 +5309,7 @@ window.stopAllExternalStreamsV97 = function() {
             window.ensureUniversalMiniPlayerInModalV241('jennyYoutubeStudioModalV230');
         }
         window.switchYtStudioModeV252(st.mode);
+        window.refreshYtQualityAndLimitPillsV253();
         window.refreshYtEngineStatusBadgeV252();
     };
 

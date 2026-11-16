@@ -8060,10 +8060,23 @@
 
 /* ================= [FIX-YOUTUBE-COMPLETE-V252] YOUTUBE VIDEO DECK B & MP4 DOWNLOAD ================= */
 (function() {
+    var _origGetEffVidDurV253 = window.getEffectiveVideoDurationV210;
+    if (typeof _origGetEffVidDurV253 === 'function') {
+        window.getEffectiveVideoDurationV210 = function(vidEl) {
+            var d = _origGetEffVidDurV253.apply(this, arguments);
+            if (d && isFinite(d) && d > 1) return d;
+            if (Number(window._ytDeckBKnownDurationSecV253 || 0) > 0) {
+                return Number(window._ytDeckBKnownDurationSecV253);
+            }
+            return d;
+        };
+    }
+
     window.playYoutubeVideoInDeckBV230 = async function(videoId, title, preferredHeight, btnEl) {
         var vid = String(videoId || '').trim();
         if (!vid) return;
-        var prefH = parseInt(preferredHeight, 10) || 720;
+        var prefH = parseInt(preferredHeight, 10) || (window._ytStudioStateV252 && window._ytStudioStateV252.selectedHeight) || 720;
+        var limitMb = (typeof window.getYtPreloadLimitMbV253 === 'function') ? window.getYtPreloadLimitMbV253() : 300;
 
         if (typeof window.stopAllExternalPreviewsAndMainDecksV241 === 'function') {
             window.stopAllExternalPreviewsAndMainDecksV241();
@@ -8081,7 +8094,7 @@
             var r = await fetch('/api/youtube/resolve_deck_b', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: vid, height: prefH })
+                body: JSON.stringify({ id: vid, height: prefH, limit_mb: limitMb })
             });
             var rawTxt = await r.text();
             var j = null;
@@ -8090,16 +8103,19 @@
             } catch (pe) {
                 throw new Error('Некорректный ответ сервера: ' + rawTxt.slice(0, 80));
             }
-            if (!j || j.status !== 'ok' || !j.local_path) {
+            if (!j || j.status !== 'ok' || !j.stream_url) {
                 throw new Error((j && j.error) ? j.error : 'Не удалось подготовить видео для Деки Б');
             }
+
+            window._ytDeckBKnownDurationSecV253 = Number(j.duration || 0);
 
             var ytModal = document.getElementById('jennyYoutubeStudioModalV230');
             if (ytModal) ytModal.style.setProperty('display', 'none', 'important');
 
-            var dispName = (j.title || title || ('YouTube_' + vid)) + ' [' + (j.height || prefH) + 'p].mp4';
+            var modeTag = (j.mode === 'chunked_stream') ? ' [Поток 1.5МБ • ' : ' [';
+            var dispName = (j.title || title || ('YouTube_' + vid)) + modeTag + (j.height || prefH) + 'p].mp4';
             if (typeof window.openJennyVideoPlayerV130 === 'function') {
-                await window.openJennyVideoPlayerV130(j.local_path, dispName, 0, false);
+                await window.openJennyVideoPlayerV130(j.stream_url, dispName, {});
             }
         } catch (e) {
             if (typeof window.showToast === 'function') {
@@ -8116,7 +8132,7 @@
     window.downloadYoutubeVideoV230 = async function(videoId, title, preferredHeight, btnEl) {
         var vid = String(videoId || '').trim();
         if (!vid) return;
-        var prefH = parseInt(preferredHeight, 10) || 720;
+        var prefH = parseInt(preferredHeight, 10) || (window._ytStudioStateV252 && window._ytStudioStateV252.selectedHeight) || 720;
 
         var oldTxt = btnEl ? btnEl.innerText : '';
         if (btnEl) {

@@ -15111,13 +15111,38 @@ def _get_yt_engine_dir_v252() -> str:
 
 
 def _get_yt_stream_cache_dir_v252() -> str:
-    for d in ("/tmp/jenny_yt_stream_cache_v252", os.path.join(_get_yt_engine_dir_v252(), "stream_cache")):
+    candidates = []
+    if os.path.isdir("/storage/emulated/0"):
+        candidates.append(os.path.join(get_jenny_hub_root_v242(), "yt_stream_cache_v253"))
+        candidates.append("/storage/emulated/0/JennyVideo/.yt_cache_v253")
+    candidates.extend([
+        "/tmp/jenny_yt_stream_cache_v252",
+        os.path.join(_get_yt_engine_dir_v252(), "stream_cache"),
+    ])
+    for d in candidates:
         try:
             os.makedirs(d, exist_ok=True)
+            test_f = os.path.join(d, ".wtest")
+            with open(test_f, "w", encoding="utf-8") as f:
+                f.write("ok")
+            os.remove(test_f)
             return d
         except Exception:
             continue
     return "/tmp"
+
+
+def _safe_move_file_v253(src_path: str, dst_path: str) -> str:
+    os.makedirs(os.path.dirname(os.path.abspath(dst_path)), exist_ok=True)
+    try:
+        os.replace(src_path, dst_path)
+    except OSError:
+        shutil.copyfile(src_path, dst_path)
+        try:
+            os.remove(src_path)
+        except Exception:
+            pass
+    return dst_path
 
 
 def _find_native_lib_dir_v252() -> str:
@@ -15765,25 +15790,41 @@ def _extract_yt_full_v252(video_id: str, force_refresh: bool = False) -> dict:
     return data
 
 
-def _download_yt_url_fast_v252(stream_info: dict, dest_path: str, max_workers: int = 4) -> str:
+_YT_VIRTUAL_MAP_V253 = {}
+_YT_RANGE_CHUNK_CACHE_V253 = {}
+_YT_RANGE_CHUNK_LOCK_V253 = threading.Lock()
+
+
+def _probe_yt_stream_size_v253(stream_info: dict) -> int:
+    sz = int(stream_info.get("filesize") or 0)
+    if sz > 0:
+        return sz
+    url = str(stream_info.get("url") or "")
+    if not url:
+        return 0
+    hdrs = dict(stream_info.get("headers") or {"User-Agent": "Mozilla/5.0"})
+    try:
+        sep = "&" if "?" in url else "?"
+        probe_req = urllib.request.Request(f"{url}{sep}range=0-1", headers=hdrs)
+        with urllib.request.urlopen(probe_req, timeout=10) as resp:
+            cr = str(resp.headers.get("Content-Range") or "")
+            if "/" in cr:
+                sz = int(cr.split("/")[-1].strip())
+                stream_info["filesize"] = sz
+                return sz
+    except Exception:
+        pass
+    return 0
+
+
+def _download_yt_url_fast_v252(stream_info: dict, dest_path: str, max_workers: int = 6) -> str:
     url = str(stream_info.get("url") or "")
     if not url:
         raise ValueError("Пустой URL потока")
     hdrs = dict(stream_info.get("headers") or {"User-Agent": "Mozilla/5.0"})
-    total_size = int(stream_info.get("filesize") or 0)
+    total_size = _probe_yt_stream_size_v253(stream_info)
 
-    # Probe exact Content-Length via range=0-1 if filesize wasn't reported
-    if total_size <= 0:
-        try:
-            sep = "&" if "?" in url else "?"
-            probe_req = urllib.request.Request(f"{url}{sep}range=0-1", headers=hdrs)
-            with urllib.request.urlopen(probe_req, timeout=10) as resp:
-                cr = str(resp.headers.get("Content-Range") or "")
-                if "/" in cr:
-                    total_size = int(cr.split("/")[-1].strip())
-        except Exception:
-            total_size = 0
-
+    os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
     tmp_path = f"{dest_path}.part_{int(time.time() * 1000)}"
     if total_size > 0 and ("googlevideo.com" in url):
         chunk_sz = 1536 * 1024  # 1.5 MB chunks bypass YouTube DASH throttling completely
@@ -15794,35 +15835,46 @@ def _download_yt_url_fast_v252(stream_info: dict, dest_path: str, max_workers: i
             ranges.append((pos, end))
             pos = end + 1
 
-        def _fetch_one_range(rng):
-            s, e = rng
-            sep = "&" if "?" in url else "?"
-            r_url = f"{url}{sep}range={s}-{e}"
-            for attempt in range(3):
-                try:
-                    req = urllib.request.Request(r_url, headers=hdrs)
-                    with urllib.request.urlopen(req, timeout=15) as resp:
-                        return resp.read()
-                except Exception:
-                    if attempt == 2:
-                        raise
-                    time.sleep(0.25 * (attempt + 1))
-            return b""
+        fd = os.open(tmp_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+        try:
+            def _fetch_and_pwrite(rng):
+                s, e = rng
+                sep = "&" if "?" in url else "?"
+                r_url = f"{url}{sep}range={s}-{e}"
+                for attempt in range(4):
+                    try:
+                        req = urllib.request.Request(r_url, headers=hdrs)
+                        with urllib.request.urlopen(req, timeout=18) as resp:
+                            data = resp.read()
+                        if data:
+                            os.pwrite(fd, data, s)
+                            return len(data)
+                    except Exception:
+                        if attempt == 3:
+                            raise
+                        time.sleep(0.25 * (attempt + 1))
+                return 0
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-            parts = list(ex.map(_fetch_one_range, ranges))
-        with open(tmp_path, "wb") as f:
-            for p in parts:
-                f.write(p)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+                list(ex.map(_fetch_and_pwrite, ranges))
+        finally:
+            os.close(fd)
     else:
         req = urllib.request.Request(url, headers=hdrs)
-        with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as f:
+        with urllib.request.urlopen(req, timeout=45) as resp, open(tmp_path, "wb") as f:
             shutil.copyfileobj(resp, f, length=256 * 1024)
 
     if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
-        os.replace(tmp_path, dest_path)
-        return dest_path
+        return _safe_move_file_v253(tmp_path, dest_path)
     raise RuntimeError("Скачанный файл потока пуст")
+
+
+def _register_yt_virtual_file_v253(virt_name: str, full_path: str) -> str:
+    bn = os.path.basename(virt_name)
+    _YT_VIRTUAL_MAP_V253[virt_name] = full_path
+    _YT_VIRTUAL_MAP_V253[bn] = full_path
+    _YT_VIRTUAL_MAP_V253[os.path.basename(full_path)] = full_path
+    return bn
 
 
 def _ensure_yt_audio_cached_v252(vid: str) -> tuple:
@@ -15834,70 +15886,161 @@ def _ensure_yt_audio_cached_v252(vid: str) -> tuple:
     cache_dir = _get_yt_stream_cache_dir_v252()
     local_raw = os.path.join(cache_dir, f"yt_aud_{vid}.{ext}")
     if not (os.path.isfile(local_raw) and os.path.getsize(local_raw) > 32768):
-        _download_yt_url_fast_v252(ba, local_raw, max_workers=4)
+        _download_yt_url_fast_v252(ba, local_raw, max_workers=6)
+    _register_yt_virtual_file_v253(os.path.basename(local_raw), local_raw)
     return local_raw, meta
+
+
+def _select_yt_quality_entry_v253(meta: dict, preferred_height: int = 720) -> tuple:
+    quals = meta.get("qualities") or []
+    chosen = None
+    for q in quals:
+        if int(q.get("height") or 0) == preferred_height:
+            chosen = q
+            break
+    if not chosen:
+        for q in quals:
+            if int(q.get("height") or 0) <= preferred_height:
+                chosen = q
+                break
+    if not chosen and quals:
+        chosen = quals[-1]
+    h_tag = int((chosen or {}).get("height") or 360)
+    return chosen, h_tag
+
+
+def _estimate_yt_quality_size_mb_v253(meta: dict, chosen: dict) -> float:
+    if not chosen:
+        return 0.0
+    total_b = 0
+    if chosen.get("combined") and chosen.get("video"):
+        total_b = _probe_yt_stream_size_v253(chosen["video"])
+    else:
+        if chosen.get("video"):
+            total_b += _probe_yt_stream_size_v253(chosen["video"])
+        if chosen.get("audio"):
+            total_b += _probe_yt_stream_size_v253(chosen["audio"])
+    if total_b > 0:
+        return total_b / (1024.0 * 1024.0)
+    dur = float(meta.get("duration") or 0)
+    if dur > 0:
+        h = int(chosen.get("height") or 360)
+        kbps = 2500 if h >= 1080 else (1200 if h >= 720 else (650 if h >= 480 else 400))
+        return (dur * kbps) / 8192.0
+    return 25.0
 
 
 def _ensure_yt_deckb_mp4_cached_v252(vid: str, preferred_height: int = 720) -> tuple:
     meta = _extract_yt_full_v252(vid)
     cache_dir = _get_yt_stream_cache_dir_v252()
-    quals = meta.get("qualities") or []
-    chosen = None
-    for q in quals:
-        if int(q.get("height") or 0) <= preferred_height:
-            chosen = q
-            break
-    if not chosen and quals:
-        chosen = quals[-1]
+    chosen, h_tag = _select_yt_quality_entry_v253(meta, preferred_height)
 
-    h_tag = int((chosen or {}).get("height") or 360)
     out_mp4 = os.path.join(cache_dir, f"yt_deckb_{vid}_{h_tag}p.mp4")
     if os.path.isfile(out_mp4) and os.path.getsize(out_mp4) > 65536:
+        _register_yt_virtual_file_v253(os.path.basename(out_mp4), out_mp4)
         return out_mp4, meta, h_tag
 
     ff = find_ffmpeg_binary()
     if chosen and chosen.get("combined"):
-        _download_yt_url_fast_v252(chosen["video"], out_mp4, max_workers=4)
+        _download_yt_url_fast_v252(chosen["video"], out_mp4, max_workers=6)
+        _register_yt_virtual_file_v253(os.path.basename(out_mp4), out_mp4)
         return out_mp4, meta, h_tag
 
     if chosen and chosen.get("video") and chosen.get("audio") and ff:
-        v_tmp = os.path.join(cache_dir, f"yt_vtmp_{vid}_{h_tag}.mp4")
-        a_tmp = os.path.join(cache_dir, f"yt_atmp_{vid}.m4a")
+        v_ext = chosen["video"].get("ext") or "mp4"
+        a_ext = chosen["audio"].get("ext") or "m4a"
+        v_tmp = os.path.join(cache_dir, f"yt_vtmp_{vid}_{h_tag}.{v_ext}")
+        a_tmp = os.path.join(cache_dir, f"yt_atmp_{vid}.{a_ext}")
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            fv = ex.submit(_download_yt_url_fast_v252, chosen["video"], v_tmp, 4)
-            fa = ex.submit(_download_yt_url_fast_v252, chosen["audio"], a_tmp, 4)
+            fv = ex.submit(_download_yt_url_fast_v252, chosen["video"], v_tmp, 6)
+            fa = ex.submit(_download_yt_url_fast_v252, chosen["audio"], a_tmp, 6)
             fv.result()
             fa.result()
         mux_tmp = f"{out_mp4}.muxing.mp4"
+        acodec_str = str(chosen["audio"].get("acodec") or "").lower()
+        is_aac_compatible = (a_ext in ("m4a", "aac", "mp4") or "mp4a" in acodec_str or "aac" in acodec_str)
+        audio_codec_args = ["-c:a", "copy"] if is_aac_compatible else ["-c:a", "aac", "-b:a", "192k"]
         cmd = [
             ff, "-y", "-hide_banner", "-loglevel", "error",
             "-i", v_tmp, "-i", a_tmp,
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy",
+            *audio_codec_args,
             "-movflags", "+faststart",
             mux_tmp,
         ]
-        subprocess.run(cmd, timeout=90, check=False)
+        subprocess.run(cmd, timeout=600, check=False)
         try:
             os.remove(v_tmp)
         except Exception:
             pass
         if os.path.isfile(mux_tmp) and os.path.getsize(mux_tmp) > 65536:
-            os.replace(mux_tmp, out_mp4)
+            _safe_move_file_v253(mux_tmp, out_mp4)
+            _register_yt_virtual_file_v253(os.path.basename(out_mp4), out_mp4)
             return out_mp4, meta, h_tag
 
     if meta.get("best_combined"):
-        _download_yt_url_fast_v252(meta["best_combined"], out_mp4, max_workers=4)
+        _download_yt_url_fast_v252(meta["best_combined"], out_mp4, max_workers=6)
+        _register_yt_virtual_file_v253(os.path.basename(out_mp4), out_mp4)
         return out_mp4, meta, int(meta["best_combined"].get("height") or 360)
 
     raise RuntimeError("Не удалось подготовить MP4 для Видео Деки Б")
 
 
-# Hook _resolve_any_media_path_v218 so yt://<vid> resolves to the local cached .mp4 file for Deck B!
+# Hook resolve_track_full_path_v71, _resolve_video_src_input_v131, and _resolve_any_media_path_v218
+# so Deck A and Deck B resolve /api/media/<yt_file> and /api/youtube/range_proxy seamlessly!
+_ORIG_RESOLVE_TRACK_V253 = resolve_track_full_path_v71
+
+
+def _resolve_track_full_path_v253(filename: str) -> str:
+    s = str(filename or "").strip()
+    if not s:
+        return ""
+    if os.path.isabs(s) and os.path.isfile(s):
+        return s
+    bn = os.path.basename(urllib.parse.unquote(s.split("?")[0]))
+    if s in _YT_VIRTUAL_MAP_V253 and os.path.isfile(_YT_VIRTUAL_MAP_V253[s]):
+        return _YT_VIRTUAL_MAP_V253[s]
+    if bn in _YT_VIRTUAL_MAP_V253 and os.path.isfile(_YT_VIRTUAL_MAP_V253[bn]):
+        return _YT_VIRTUAL_MAP_V253[bn]
+    cache_dir = _get_yt_stream_cache_dir_v252()
+    cand_c = os.path.join(cache_dir, bn)
+    if os.path.isfile(cand_c):
+        return cand_c
+    # Also check if filename has [vid] pattern like "[YT] Title [GllEDACUbNo].m4a"
+    m_vid = re.search(r"\[([A-Za-z0-9_-]{11})\]\.(m4a|webm|mp3|mp4)$", bn)
+    if m_vid:
+        vid_m, ext_m = m_vid.group(1), m_vid.group(2)
+        cand_aud = os.path.join(cache_dir, f"yt_aud_{vid_m}.{ext_m}")
+        if os.path.isfile(cand_aud):
+            return cand_aud
+    return _ORIG_RESOLVE_TRACK_V253(filename)
+
+
+resolve_track_full_path_v71 = _resolve_track_full_path_v253
+
+if "_resolve_video_src_input_v131" in globals():
+    _ORIG_RESOLVE_VID_SRC_V253 = _resolve_video_src_input_v131
+
+    def _resolve_video_src_input_v253(src: str) -> str:
+        s = str(src or "").strip()
+        if s.startswith("/api/youtube/range_proxy") or s.startswith("/api/youtube/live_mux_v253"):
+            return f"http://127.0.0.1:8080{s}"
+        if s.startswith("http://127.0.0.1") and ("/api/youtube/" in s):
+            return s
+        if os.path.isabs(s) and os.path.isfile(s):
+            return s
+        return _ORIG_RESOLVE_VID_SRC_V253(src)
+
+    _resolve_video_src_input_v131 = _resolve_video_src_input_v253
+
 _ORIG_RESOLVE_ANY_MEDIA_V252 = _resolve_any_media_path_v218
 
 
 def _resolve_any_media_path_v252(path_or_id: str) -> str:
     s = (path_or_id or "").strip()
+    if os.path.isabs(s) and os.path.isfile(s):
+        return s
     if s.startswith("yt://"):
         vid = _normalize_yt_video_id_v252(s[5:].split("?")[0].split("&")[0])
         if vid:
@@ -15906,15 +16049,190 @@ def _resolve_any_media_path_v252(path_or_id: str) -> str:
                 cand = os.path.join(cache_dir, f"yt_deckb_{vid}_{h}p.mp4")
                 if os.path.isfile(cand) and os.path.getsize(cand) > 65536:
                     return cand
-            try:
-                mp4_p, _, _ = _ensure_yt_deckb_mp4_cached_v252(vid, preferred_height=720)
-                return mp4_p
-            except Exception:
-                pass
     return _ORIG_RESOLVE_ANY_MEDIA_V252(path_or_id)
 
 
 _resolve_any_media_path_v218 = _resolve_any_media_path_v252
+
+
+def _fetch_yt_range_chunk_cached_v253(url: str, hdrs: dict, chunk_idx: int, total_size: int, chunk_sz: int = 1536 * 1024) -> bytes:
+    key = (url, chunk_idx)
+    with _YT_RANGE_CHUNK_LOCK_V253:
+        if key in _YT_RANGE_CHUNK_CACHE_V253:
+            return _YT_RANGE_CHUNK_CACHE_V253[key]
+    s = chunk_idx * chunk_sz
+    e = min(s + chunk_sz - 1, total_size - 1) if total_size > 0 else (s + chunk_sz - 1)
+    sep = "&" if "?" in url else "?"
+    r_url = f"{url}{sep}range={s}-{e}"
+    data = b""
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(r_url, headers=hdrs)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = resp.read()
+            break
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+    with _YT_RANGE_CHUNK_LOCK_V253:
+        if len(_YT_RANGE_CHUNK_CACHE_V253) >= 10:
+            oldest_k = next(iter(_YT_RANGE_CHUNK_CACHE_V253))
+            _YT_RANGE_CHUNK_CACHE_V253.pop(oldest_k, None)
+        _YT_RANGE_CHUNK_CACHE_V253[key] = data
+    return data
+
+
+def api_youtube_range_proxy_v253():
+    """HTTP 206 Partial Content Range Proxy translating browser/FFmpeg byte-range requests into 1.5 MB &range= chunks."""
+    vid = _normalize_yt_video_id_v252(request.query.get("v") or request.query.get("id") or "")
+    kind = str(request.query.get("kind") or "audio").strip().lower()
+    pref_h = int(request.query.get("h") or 720)
+    if not vid:
+        response.status = 400
+        return b""
+    try:
+        meta = _extract_yt_full_v252(vid)
+        stream_info = None
+        if kind == "audio":
+            stream_info = meta.get("best_audio") or meta.get("best_combined")
+        elif kind == "combined":
+            stream_info = meta.get("best_combined")
+            if not stream_info:
+                chosen, _ = _select_yt_quality_entry_v253(meta, pref_h)
+                stream_info = (chosen or {}).get("video")
+        else:
+            chosen, _ = _select_yt_quality_entry_v253(meta, pref_h)
+            stream_info = (chosen or {}).get("video") or meta.get("best_combined")
+
+        if not stream_info:
+            response.status = 404
+            return b""
+
+        total_size = _probe_yt_stream_size_v253(stream_info)
+        ext = str(stream_info.get("ext") or ("mp4" if kind != "audio" else "m4a"))
+        mime = "video/mp4" if kind != "audio" else ("audio/mp4" if ext == "m4a" else "audio/webm")
+
+        response.set_header("Content-Type", mime)
+        response.set_header("Accept-Ranges", "bytes")
+        response.set_header("Cache-Control", "no-store")
+
+        if request.method == "HEAD":
+            if total_size > 0:
+                response.set_header("Content-Length", str(total_size))
+            return b""
+
+        range_hdr = str(request.headers.get("Range") or "").strip()
+        start_b = 0
+        end_b = (total_size - 1) if total_size > 0 else (1536 * 1024 - 1)
+        is_partial = False
+        if range_hdr.startswith("bytes="):
+            is_partial = True
+            r_part = range_hdr.split("=", 1)[1].split(",")[0].strip()
+            s_str, e_str = r_part.split("-", 1)
+            if s_str:
+                start_b = int(s_str)
+            if e_str:
+                end_b = int(e_str)
+            elif total_size > 0:
+                end_b = total_size - 1
+
+        if total_size > 0:
+            start_b = max(0, min(start_b, total_size - 1))
+            end_b = max(start_b, min(end_b, total_size - 1))
+            content_len = end_b - start_b + 1
+            response.set_header("Content-Length", str(content_len))
+            if is_partial:
+                response.status = 206
+                response.set_header("Content-Range", f"bytes {start_b}-{end_b}/{total_size}")
+
+        url = str(stream_info.get("url") or "")
+        hdrs = dict(stream_info.get("headers") or {"User-Agent": "Mozilla/5.0"})
+        chunk_sz = 1536 * 1024
+
+        def _stream_gen():
+            cur = start_b
+            while cur <= end_b:
+                c_idx = cur // chunk_sz
+                c_off = cur % chunk_sz
+                c_data = _fetch_yt_range_chunk_cached_v253(url, hdrs, c_idx, total_size, chunk_sz)
+                if not c_data or c_off >= len(c_data):
+                    break
+                take = min(len(c_data) - c_off, end_b - cur + 1)
+                yield c_data[c_off:c_off + take]
+                cur += take
+
+        return _stream_gen()
+    except Exception:
+        response.status = 500
+        return b""
+
+
+def api_youtube_prepare_deck_a_v253():
+    """Prepares a YouTube track for playback in Deck A (either Full RAM/Cache <= limit_mb, or Chunked Stream > limit_mb)."""
+    response.content_type = "application/json; charset=utf-8"
+    try:
+        body = json.loads(request.body.read().decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    vid = _normalize_yt_video_id_v252(str(body.get("id") or body.get("v") or body.get("url") or ""))
+    if not vid:
+        return json.dumps({"status": "error", "error": "Некорректный ID трека YouTube"}, ensure_ascii=False)
+    try:
+        limit_mb = float(body.get("limit_mb") if body.get("limit_mb") is not None else 300.0)
+    except Exception:
+        limit_mb = 300.0
+
+    try:
+        meta = _extract_yt_full_v252(vid)
+        ba = meta.get("best_audio") or meta.get("best_combined")
+        if not ba:
+            return json.dumps({"status": "error", "error": "Аудиопоток не найден"}, ensure_ascii=False)
+
+        title = str(meta.get("title") or f"YouTube_{vid}").strip()
+        channel = str(meta.get("channel") or "YouTube").strip()
+        dur = int(meta.get("duration") or 0)
+        ext = str(ba.get("ext") or "m4a")
+        sz_b = _probe_yt_stream_size_v253(ba)
+        sz_mb = round(sz_b / (1024.0 * 1024.0), 2) if sz_b > 0 else round((dur * 16.0) / 1024.0, 2)
+
+        safe_title = re.sub(r'[\\/*?:"<>|]', "_", title).strip()[:110] or f"YouTube_{vid}"
+        virt_fn = f"[YT] {safe_title} [{vid}].{ext}"
+
+        cache_dir = _get_yt_stream_cache_dir_v252()
+        local_raw = os.path.join(cache_dir, f"yt_aud_{vid}.{ext}")
+        already_cached = os.path.isfile(local_raw) and os.path.getsize(local_raw) > 32768
+
+        if already_cached or (limit_mb > 0 and sz_mb <= limit_mb):
+            if not already_cached:
+                _download_yt_url_fast_v252(ba, local_raw, max_workers=6)
+            _register_yt_virtual_file_v253(virt_fn, local_raw)
+            return json.dumps({
+                "status": "ok",
+                "mode": "full_ram",
+                "id": vid,
+                "title": title,
+                "channel": channel,
+                "duration": dur,
+                "size_mb": sz_mb,
+                "filename": virt_fn,
+                "stream_url": "/api/media/" + urllib.parse.quote(virt_fn),
+            }, ensure_ascii=False)
+        else:
+            # Chunked streaming mode for tracks exceeding limit_mb (or when limit_mb == 0)
+            return json.dumps({
+                "status": "ok",
+                "mode": "chunked_stream",
+                "id": vid,
+                "title": title,
+                "channel": channel,
+                "duration": dur,
+                "size_mb": sz_mb,
+                "filename": f"[YT Поток] {safe_title} [{vid}]",
+                "stream_url": f"/api/youtube/range_proxy?v={vid}&kind=audio",
+            }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
 def api_youtube_engine_status_v252():
@@ -15940,7 +16258,6 @@ def api_youtube_search_v252():
     if not q:
         return json.dumps({"status": "error", "error": "Введите поисковый запрос"}, ensure_ascii=False)
 
-    # Check if direct URL or video ID
     direct_vid = _normalize_yt_video_id_v252(q) if ("youtube.com" in q or "youtu.be" in q or len(q) == 11) else ""
     if direct_vid and (" " not in q):
         try:
@@ -16044,12 +16361,10 @@ def api_youtube_live_stream_v252():
         cache_dir = _get_yt_stream_cache_dir_v252()
         ff = find_ffmpeg_binary()
 
-        # If seek_sec == 0 and file is already m4a/mp3, serve directly with full Range support!
         if seek_sec <= 0.05 and local_raw.endswith((".m4a", ".mp3", ".aac")):
             mime = "audio/mp4" if local_raw.endswith(".m4a") else "audio/mpeg"
             return static_file(os.path.basename(local_raw), root=os.path.dirname(local_raw), mimetype=mime)
 
-        # If seek > 0 or opus/webm container, fast-slice via FFmpeg into m4a/mp3 and serve
         if ff:
             out_seek_name = f"yt_seek_{vid}_{int(seek_sec * 10)}.mp3"
             out_seek_path = os.path.join(cache_dir, out_seek_name)
@@ -16083,48 +16398,99 @@ def api_youtube_save_xflac_v252():
         channel = str(body.get("channel") or meta.get("channel") or "YouTube").strip()
         thumb_url = str(meta.get("thumbnail") or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")
 
-        safe_name = re.sub(r'[\\/*?:"<>|]', "_", f"{channel} - {title}" if channel and channel.lower() not in title.lower() else title).strip()
+        safe_name = re.sub(r'[\\/*?:"<>|]', "_", f"{channel} - {title}" if channel and channel.lower() not in title.lower() else title).strip()[:140]
         if not safe_name:
             safe_name = f"YouTube_{vid}"
-        os.makedirs(MUSIC_DIR, exist_ok=True)
-        out_xflac = os.path.join(MUSIC_DIR, f"{safe_name}.xflac")
+
+        # Always save audio tracks to the active music directory (not JennyVideo)
+        target_music_dir = MUSIC_DIR
+        if "jennyvideo" in str(target_music_dir).lower():
+            target_music_dir = DEFAULT_MUSIC_DIR
+        os.makedirs(target_music_dir, exist_ok=True)
+        out_xflac = os.path.join(target_music_dir, f"{safe_name}.xflac")
 
         ff = find_ffmpeg_binary()
         if not ff:
             return json.dumps({"status": "error", "error": "FFmpeg не найден"}, ensure_ascii=False)
 
-        # Fetch cover art bytes
         cover_bytes = b""
         try:
             cover_bytes = _http_get_bytes_v252(thumb_url, timeout=10)
         except Exception:
             pass
 
-        tmp_flac = os.path.join(_get_yt_stream_cache_dir_v252(), f"yt_tmp_{vid}.flac")
-        cmd = [
-            ff, "-y", "-hide_banner", "-loglevel", "error",
-            "-i", local_raw,
-            "-vn", "-c:a", "flac", "-compression_level", "5",
-            "-metadata", f"title={title}",
-            "-metadata", f"artist={channel}",
-            "-metadata", "album=YouTube Studio",
-            tmp_flac,
-        ]
-        subprocess.run(cmd, timeout=90, check=False)
-        if not (os.path.isfile(tmp_flac) and os.path.getsize(tmp_flac) > 16384):
-            shutil.copyfile(local_raw, out_xflac)
-        else:
-            if cover_bytes and "_embed_cover_and_tags_into_audio_v250" in globals():
-                try:
-                    _embed_cover_and_tags_into_audio_v250(tmp_flac, cover_bytes, title=title, artist=channel, album="YouTube Studio")
-                except Exception:
-                    pass
-            os.replace(tmp_flac, out_xflac)
+        # 1) Decode to 16-bit 44.1kHz stereo WAV and encode genuine XFC3 .xflac via _encode_wav_to_xflac_bytes_v85
+        encoded_xfc_ok = False
+        tmp_wav = os.path.join(_get_yt_stream_cache_dir_v252(), f"yt_wav_{vid}.wav")
+        try:
+            cmd_wav = [
+                ff, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", local_raw,
+                "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                "-f", "wav", tmp_wav,
+            ]
+            subprocess.run(cmd_wav, timeout=180, check=False)
+            if os.path.isfile(tmp_wav) and os.path.getsize(tmp_wav) > 4096:
+                with open(tmp_wav, "rb") as wf:
+                    wav_bytes = wf.read()
+                xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_bytes, 2)
+                with open(out_xflac, "wb") as xf_out:
+                    xf_out.write(xfc_bytes)
+                encoded_xfc_ok = True
+        except Exception:
+            encoded_xfc_ok = False
+        finally:
+            try:
+                if os.path.exists(tmp_wav):
+                    os.remove(tmp_wav)
+            except Exception:
+                pass
+
+        # Fallback to standard .flac if track is huge or libxflac wasn't available
+        if not encoded_xfc_ok:
+            out_xflac = os.path.join(target_music_dir, f"{safe_name}.flac")
+            tmp_flac = os.path.join(_get_yt_stream_cache_dir_v252(), f"yt_tmp_{vid}.flac")
+            cmd_flac = [
+                ff, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", local_raw,
+                "-vn", "-c:a", "flac", "-compression_level", "5",
+                "-metadata", f"title={title}",
+                "-metadata", f"artist={channel}",
+                "-metadata", "album=YouTube Studio",
+                tmp_flac,
+            ]
+            subprocess.run(cmd_flac, timeout=180, check=False)
+            if os.path.isfile(tmp_flac) and os.path.getsize(tmp_flac) > 8192:
+                _safe_move_file_v253(tmp_flac, out_xflac)
+            else:
+                out_xflac = os.path.join(target_music_dir, f"{safe_name}.m4a")
+                shutil.copyfile(local_raw, out_xflac)
+
+        final_fn = os.path.basename(out_xflac)
+        if cover_bytes and "_save_and_embed_track_cover_v251" in globals():
+            try:
+                _save_and_embed_track_cover_v251(out_xflac, cover_bytes, "image/jpeg")
+            except Exception:
+                pass
+
+        try:
+            db = load_custom_tags_db_v74()
+            db[final_fn] = {"TITLE": title, "ARTIST": channel, "ALBUM": "YouTube Studio", "GENRE": "YouTube"}
+            save_custom_tags_db_v74(db)
+            TRACK_META_CACHE_V71.pop(out_xflac, None)
+        except Exception:
+            pass
+
+        try:
+            sz_mb = round(os.path.getsize(out_xflac) / (1024.0 * 1024.0), 2)
+            record_jenny_hub_item_v242("youtube", final_fn, title=title, subtitle=f"YouTube Audio • {channel}", size_mb=sz_mb)
+        except Exception:
+            pass
 
         return json.dumps({
             "status": "ok",
             "path": out_xflac,
-            "filename": os.path.basename(out_xflac),
+            "filename": final_fn,
             "title": title,
             "channel": channel,
         }, ensure_ascii=False)
@@ -16144,21 +16510,59 @@ def api_youtube_resolve_deck_b_v252():
         return json.dumps({"status": "error", "error": "Некорректный ID видео YouTube"}, ensure_ascii=False)
     pref_h = int(body.get("height") or body.get("quality") or 720)
     try:
-        mp4_path, meta, actual_h = _ensure_yt_deckb_mp4_cached_v252(vid, preferred_height=pref_h)
-        q_path = urllib.parse.quote(mp4_path)
-        return json.dumps({
-            "status": "ok",
-            "id": vid,
-            "title": meta["title"],
-            "channel": meta["channel"],
-            "duration": meta["duration"],
-            "height": actual_h,
-            "local_path": mp4_path,
-            "virtual_path": mp4_path,
-            "stream_url": f"/api/video/stream?path={q_path}",
-            "direct_url": f"/api/video/stream?path={q_path}",
-            "mux_url": f"/api/video/stream?path={q_path}",
-        }, ensure_ascii=False)
+        limit_mb = float(body.get("limit_mb") if body.get("limit_mb") is not None else 300.0)
+    except Exception:
+        limit_mb = 300.0
+
+    try:
+        meta = _extract_yt_full_v252(vid)
+        chosen, h_tag = _select_yt_quality_entry_v253(meta, pref_h)
+        est_mb = _estimate_yt_quality_size_mb_v253(meta, chosen)
+        cache_dir = _get_yt_stream_cache_dir_v252()
+        cached_mp4 = os.path.join(cache_dir, f"yt_deckb_{vid}_{h_tag}p.mp4")
+        already_cached = os.path.isfile(cached_mp4) and os.path.getsize(cached_mp4) > 65536
+
+        if already_cached or (limit_mb > 0 and est_mb <= limit_mb):
+            mp4_path, meta, actual_h = _ensure_yt_deckb_mp4_cached_v252(vid, preferred_height=pref_h)
+            fn = os.path.basename(mp4_path)
+            _register_yt_virtual_file_v253(fn, mp4_path)
+            media_url = "/api/media/" + urllib.parse.quote(fn)
+            return json.dumps({
+                "status": "ok",
+                "mode": "full_ram",
+                "id": vid,
+                "title": meta["title"],
+                "channel": meta["channel"],
+                "duration": meta["duration"],
+                "height": actual_h,
+                "size_mb": round(os.path.getsize(mp4_path) / (1024.0 * 1024.0), 2),
+                "filename": fn,
+                "local_path": mp4_path,
+                "virtual_path": mp4_path,
+                "stream_url": media_url,
+                "direct_url": media_url,
+                "mux_url": media_url,
+            }, ensure_ascii=False)
+        else:
+            # Chunked streaming mode for large videos (> limit_mb, e.g. 2-hour movies!)
+            # Start background cache preparation if disk space allows, while immediately returning seekable range_proxy stream!
+            stream_url = f"/api/youtube/range_proxy?v={vid}&kind=combined&h={h_tag}"
+            return json.dumps({
+                "status": "ok",
+                "mode": "chunked_stream",
+                "id": vid,
+                "title": meta["title"],
+                "channel": meta["channel"],
+                "duration": meta["duration"],
+                "height": h_tag,
+                "size_mb": round(est_mb, 2),
+                "filename": f"yt_stream_{vid}_{h_tag}p.mp4",
+                "local_path": stream_url,
+                "virtual_path": stream_url,
+                "stream_url": stream_url,
+                "direct_url": stream_url,
+                "mux_url": stream_url,
+            }, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
@@ -16177,13 +16581,13 @@ def api_youtube_download_mp4_v252():
     try:
         mp4_cached, meta, actual_h = _ensure_yt_deckb_mp4_cached_v252(vid, preferred_height=pref_h)
         title = str(meta.get("title") or f"YouTube_{vid}").strip()
-        safe_title = re.sub(r'[\\/*?:"<>|]', "_", title).strip() or f"YouTube_{vid}"
+        safe_title = re.sub(r'[\\/*?:"<>|]', "_", title).strip()[:140] or f"YouTube_{vid}"
 
         out_dirs = [
             "/storage/emulated/0/JennyVideo",
             "/storage/emulated/0/Movies/JennyPlayer",
             "/storage/emulated/0/Download",
-            os.path.join(MUSIC_DIR, "JennyVideo"),
+            os.path.join(DEFAULT_MUSIC_DIR, "JennyVideo"),
         ]
         target_dir = out_dirs[-1]
         for d in out_dirs:
@@ -16195,8 +16599,17 @@ def api_youtube_download_mp4_v252():
                 continue
 
         final_mp4 = os.path.join(target_dir, f"{safe_title} [{actual_h}p].mp4")
-        shutil.copyfile(mp4_cached, final_mp4)
+        if os.path.abspath(mp4_cached) != os.path.abspath(final_mp4):
+            shutil.copyfile(mp4_cached, final_mp4)
         sz_mb = round(os.path.getsize(final_mp4) / (1024.0 * 1024.0), 2)
+        try:
+            sync_downloaded_videos_to_library_v134(True)
+        except Exception:
+            pass
+        try:
+            record_jenny_hub_item_v242("youtube", os.path.basename(final_mp4), title=title, subtitle=f"YouTube Video • {actual_h}p", size_mb=sz_mb)
+        except Exception:
+            pass
         return json.dumps({
             "status": "ok",
             "path": final_mp4,
@@ -16239,6 +16652,9 @@ _override_bottle_route_v212('/api/youtube/search', 'GET', api_youtube_search_v25
 _override_bottle_route_v212('/api/youtube/info', 'POST', api_youtube_info_v252)
 _override_bottle_route_v212('/api/youtube/info', 'GET', api_youtube_info_v252)
 _override_bottle_route_v212('/api/youtube/live_stream', 'GET', api_youtube_live_stream_v252)
+_override_bottle_route_v212('/api/youtube/range_proxy', 'GET', api_youtube_range_proxy_v253)
+_override_bottle_route_v212('/api/youtube/range_proxy', 'HEAD', api_youtube_range_proxy_v253)
+_override_bottle_route_v212('/api/youtube/prepare_deck_a', 'POST', api_youtube_prepare_deck_a_v253)
 _override_bottle_route_v212('/api/youtube/save_xflac', 'POST', api_youtube_save_xflac_v252)
 _override_bottle_route_v212('/api/youtube/resolve_deck_b', 'POST', api_youtube_resolve_deck_b_v252)
 _override_bottle_route_v212('/api/youtube/download', 'POST', api_youtube_download_mp4_v252)
