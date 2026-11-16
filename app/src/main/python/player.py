@@ -11536,6 +11536,14 @@ def _radio_tee_publish_chunk_v376(url: str, chunk: bytes):
             _RADIO_LIVE_TEE_STATE_V376["url"] = url
             _RADIO_LIVE_TEE_STATE_V376["preroll"] = []
             _RADIO_LIVE_TEE_STATE_V376["preroll_bytes"] = 0
+            _RADIO_LIVE_TEE_STATE_V376["bos_header"] = b""
+        # [FIX-RADIO-REC-BOS-V249] Preserve initial Ogg/FLAC BOS header (first 32 KB or new OggS BOS page)
+        cur_bos = _RADIO_LIVE_TEE_STATE_V376.get("bos_header") or b""
+        if len(cur_bos) < 32768:
+            _RADIO_LIVE_TEE_STATE_V376["bos_header"] = (cur_bos + chunk)[:32768]
+        elif b"OggS\x00\x02" in chunk:
+            idx_bos = chunk.find(b"OggS\x00\x02")
+            _RADIO_LIVE_TEE_STATE_V376["bos_header"] = chunk[idx_bos:idx_bos + 32768]
         _RADIO_LIVE_TEE_STATE_V376["active"] = True
         pr = _RADIO_LIVE_TEE_STATE_V376["preroll"]
         pr.append(chunk)
@@ -11616,40 +11624,11 @@ def _radio_live_pcm_worker_v240(url: str, dst_path: str, is_lossless: bool):
                     except Exception:
                         pass
 
-            # 1) If buffered radio playback is ALREADY streaming this exact URL in Python,
-            #    subscribe to its live upstream tee first (0 duplicate Icecast connections!).
-            import queue as _q_v376
-            with _RADIO_LIVE_TEE_LOCK_V376:
-                if _RADIO_LIVE_TEE_STATE_V376.get("active") and _RADIO_LIVE_TEE_STATE_V376.get("url") == url:
-                    sub_q = _q_v376.Queue(maxsize=512)
-                    for pr_chunk in (_RADIO_LIVE_TEE_STATE_V376.get("preroll") or [])[-4:]:
-                        try:
-                            sub_q.put_nowait(pr_chunk)
-                        except Exception:
-                            pass
-                    _RADIO_LIVE_TEE_STATE_V376["subscribers"].append(sub_q)
-
-            while sub_q is not None and not _RADIO_REC_V91.get("stop_flag"):
-                try:
-                    c_tee = sub_q.get(timeout=0.65)
-                    if c_tee is None:
-                        break
-                    _handle_incoming_chunk(c_tee)
-                except _q_v376.Empty:
-                    with _RADIO_LIVE_TEE_LOCK_V376:
-                        still_tee = bool(_RADIO_LIVE_TEE_STATE_V376.get("active") and _RADIO_LIVE_TEE_STATE_V376.get("url") == url)
-                    if not still_tee or (int(_RADIO_REC_V91.get("raw_stream_bytes") or 0) == 0):
-                        break
-
-            if sub_q is not None:
-                with _RADIO_LIVE_TEE_LOCK_V376:
-                    if sub_q in _RADIO_LIVE_TEE_STATE_V376.get("subscribers", []):
-                        _RADIO_LIVE_TEE_STATE_V376["subscribers"].remove(sub_q)
-                sub_q = None
-
-            # 2) Direct Python urllib HTTP/HTTPS stream (with auto-reconnect while recording is active)
+            # [FIX-RADIO-REC-BOS-V249] 1) Open direct HTTP/HTTPS stream FIRST so Icecast/Shoutcast
+            # delivers the complete Ogg-FLAC BOS + FLAC STREAMINFO header from byte 0
+            # (mid-stream Ogg pages from tee lack the BOS header and cause FFmpeg to output 0 PCM bytes!).
             retries = 0
-            while not _RADIO_REC_V91.get("stop_flag") and retries < 4:
+            while not _RADIO_REC_V91.get("stop_flag") and retries < 3:
                 try:
                     with _radio_open_urllib_stream_v376(url, timeout_sec=15.0) as resp:
                         retries = 0
@@ -11665,9 +11644,46 @@ def _radio_live_pcm_worker_v240(url: str, dst_path: str, is_lossless: bool):
                 except Exception as e_net:
                     _RADIO_REC_V91["err"] = str(e_net)
                     retries += 1
-                    if _RADIO_REC_V91.get("stop_flag") or retries >= 4:
+                    if _RADIO_REC_V91.get("stop_flag") or retries >= 3:
                         break
                     time.sleep(0.35)
+
+            # 2) Fallback to live upstream tee ONLY if direct connection yielded 0 bytes
+            if not _RADIO_REC_V91.get("stop_flag") and int(_RADIO_REC_V91.get("raw_stream_bytes") or 0) == 0:
+                import queue as _q_v376
+                with _RADIO_LIVE_TEE_LOCK_V376:
+                    if _RADIO_LIVE_TEE_STATE_V376.get("active") and _RADIO_LIVE_TEE_STATE_V376.get("url") == url:
+                        sub_q = _q_v376.Queue(maxsize=512)
+                        bos_hdr = _RADIO_LIVE_TEE_STATE_V376.get("bos_header") or b""
+                        if bos_hdr:
+                            try:
+                                sub_q.put_nowait(bos_hdr)
+                            except Exception:
+                                pass
+                        for pr_chunk in (_RADIO_LIVE_TEE_STATE_V376.get("preroll") or [])[-4:]:
+                            try:
+                                sub_q.put_nowait(pr_chunk)
+                            except Exception:
+                                pass
+                        _RADIO_LIVE_TEE_STATE_V376["subscribers"].append(sub_q)
+
+                while sub_q is not None and not _RADIO_REC_V91.get("stop_flag"):
+                    try:
+                        c_tee = sub_q.get(timeout=0.65)
+                        if c_tee is None:
+                            break
+                        _handle_incoming_chunk(c_tee)
+                    except _q_v376.Empty:
+                        with _RADIO_LIVE_TEE_LOCK_V376:
+                            still_tee = bool(_RADIO_LIVE_TEE_STATE_V376.get("active") and _RADIO_LIVE_TEE_STATE_V376.get("url") == url)
+                        if not still_tee or (int(_RADIO_REC_V91.get("raw_stream_bytes") or 0) == 0):
+                            break
+
+                if sub_q is not None:
+                    with _RADIO_LIVE_TEE_LOCK_V376:
+                        if sub_q in _RADIO_LIVE_TEE_STATE_V376.get("subscribers", []):
+                            _RADIO_LIVE_TEE_STATE_V376["subscribers"].remove(sub_q)
+                    sub_q = None
 
         if proc and proc.stdin and not _RADIO_REC_PROC_V240.get("stdin_closed"):
             _RADIO_REC_PROC_V240["stdin_closed"] = True

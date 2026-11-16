@@ -617,26 +617,38 @@ public class IslandOverlayController {
                 path.lineTo(ox + 18.5f * s, oy + 8.8f * s);
                 canvas.drawPath(path, strokePaint);
             } else if (iconType == ICON_REC) {
-                // [FIX-ISLAND-RADIO-V249] Кнопка записи REC с кружком в том же синем цвете, что и сам островок
+                // [FIX-ISLAND-RADIO-V249] В режиме ожидания — кнопка REC с кружком;
+                // во время активной записи (isFilledState == true) — меняется на квадратик шириной с надпись REC в том же синем цвете!
                 float cy = h * 0.5f;
-                float cx = U(6.5f);
-                int rgb = iconColor & 0x00FFFFFF;
-                if (isFilledState) {
-                    fillPaint.setColor((0x38 << 24) | rgb);
-                    canvas.drawCircle(cx, cy, U(6.2f), fillPaint);
-                }
-                strokePaint.setColor(iconColor);
-                strokePaint.setStrokeWidth(U(1.35f));
-                canvas.drawCircle(cx, cy, U(4.4f), strokePaint);
-
-                fillPaint.setColor(iconColor);
-                canvas.drawCircle(cx, cy, isFilledState ? U(2.8f) : U(2.2f), fillPaint);
-
                 textPaint.setColor(iconColor);
                 textPaint.setTextSize(U(10.5f));
-                Paint.FontMetrics fm = textPaint.getFontMetrics();
-                float textY = cy - (fm.ascent + fm.descent) * 0.5f;
-                canvas.drawText("REC", U(13.2f), textY, textPaint);
+                float recW = Math.max(U(17.5f), textPaint.measureText("REC"));
+
+                if (isFilledState) {
+                    int rgb = iconColor & 0x00FFFFFF;
+                    float sqSide = recW;
+                    float sqLeft = U(13.2f);
+                    float sqTop = cy - sqSide * 0.5f;
+                    fillPaint.setColor((0x32 << 24) | rgb);
+                    rectF.set(sqLeft - U(2.2f), sqTop - U(2.2f), sqLeft + sqSide + U(2.2f), sqTop + sqSide + U(2.2f));
+                    canvas.drawRoundRect(rectF, U(3.5f), U(3.5f), fillPaint);
+
+                    fillPaint.setColor(iconColor);
+                    rectF.set(sqLeft, sqTop, sqLeft + sqSide, sqTop + sqSide);
+                    canvas.drawRoundRect(rectF, U(2.4f), U(2.4f), fillPaint);
+                } else {
+                    float cx = U(6.5f);
+                    strokePaint.setColor(iconColor);
+                    strokePaint.setStrokeWidth(U(1.35f));
+                    canvas.drawCircle(cx, cy, U(4.4f), strokePaint);
+
+                    fillPaint.setColor(iconColor);
+                    canvas.drawCircle(cx, cy, U(2.2f), fillPaint);
+
+                    Paint.FontMetrics fm = textPaint.getFontMetrics();
+                    float textY = cy - (fm.ascent + fm.descent) * 0.5f;
+                    canvas.drawText("REC", U(13.2f), textY, textPaint);
+                }
             }
         }
     }
@@ -1217,6 +1229,10 @@ public class IslandOverlayController {
                 if ("music".equals(currentIslandMode)) {
                     MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('export_xflac','');");
                 } else if ("radio".equals(currentIslandMode)) {
+                    boolean wasRec = currentRawTrack != null && currentRawTrack.toUpperCase(Locale.ROOT).contains("|REC");
+                    String baseQ = (currentRawTrack != null && currentRawTrack.toUpperCase(Locale.ROOT).startsWith("LOSSY")) ? "LOSSY" : "LOSSLESS";
+                    currentRawTrack = wasRec ? baseQ : (baseQ + "|REC");
+                    refreshUi();
                     MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('radio_rec','');");
                 }
             }

@@ -462,18 +462,31 @@
         if (typeof window.toggleRadioRecordToXflacV91 === 'function' && !window.toggleRadioRecordToXflacV91._v249Hooked) {
             var origToggleRec = window.toggleRadioRecordToXflacV91;
             window.toggleRadioRecordToXflacV91 = async function() {
-                var r = await origToggleRec.apply(this, arguments);
-                setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
-                return r;
+                var wasRec = Boolean(window._radioStateV91 && window._radioStateV91.isRecording);
+                window._radioRecOptimisticV249 = !wasRec;
+                window.syncPermanentForegroundNotificationV212(true);
+                try {
+                    var r = await origToggleRec.apply(this, arguments);
+                    return r;
+                } finally {
+                    window._radioRecOptimisticV249 = null;
+                    setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 60);
+                }
             };
             window.toggleRadioRecordToXflacV91._v249Hooked = true;
         }
         if (typeof window.finalizeActiveRadioRecordingV240 === 'function' && !window.finalizeActiveRadioRecordingV240._v249Hooked) {
             var origFinRec = window.finalizeActiveRadioRecordingV240;
             window.finalizeActiveRadioRecordingV240 = async function() {
-                var r = await origFinRec.apply(this, arguments);
-                setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
-                return r;
+                window._radioRecOptimisticV249 = false;
+                window.syncPermanentForegroundNotificationV212(true);
+                try {
+                    var r = await origFinRec.apply(this, arguments);
+                    return r;
+                } finally {
+                    window._radioRecOptimisticV249 = null;
+                    setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 60);
+                }
             };
             window.finalizeActiveRadioRecordingV240._v249Hooked = true;
         }
@@ -699,7 +712,9 @@
         }
 
         var isFav = Boolean(window.currentPlayingTrack && Array.isArray(window.favorites) && window.favorites.indexOf(window.currentPlayingTrack) !== -1);
-        var isRadioRec = Boolean(window._radioStateV91 && window._radioStateV91.isRecording);
+        var isRadioRec = (typeof window._radioRecOptimisticV249 === 'boolean')
+            ? window._radioRecOptimisticV249
+            : Boolean(window._radioStateV91 && window._radioStateV91.isRecording);
         var radioQuality = resolveCurrentRadioQualityV249();
         var extraRaw = (activeMode === 'radio')
             ? (radioQuality + (isRadioRec ? '|REC' : ''))
