@@ -296,6 +296,20 @@
         return 0;
     }
 
+    // [FIX-ISLAND-RADIO-V249] Определяем качество активной радиостанции (LOSSLESS или LOSSY) как внутри радио в плеере
+    function resolveCurrentRadioQualityV249() {
+        var rst = window._radioStateV91;
+        var st = rst && rst.currentStation;
+        if (!st && rst && Array.isArray(rst.stations) && rst.stations.length > 0) {
+            var idx = findCurrentRadioIndexV245();
+            st = rst.stations[idx] || rst.stations[0];
+        }
+        if (st && st.lossless === false) {
+            return 'LOSSY';
+        }
+        return 'LOSSLESS';
+    }
+
     function triggerStationByIndexV245(idx) {
         var attempt = 0;
         var tryPlay = function() {
@@ -442,6 +456,26 @@
                 return res;
             };
             window.playTrack._v245Hooked = true;
+        }
+
+        // [FIX-ISLAND-RADIO-V249] Синхронизация состояния кнопки REC при старте/остановке записи радио
+        if (typeof window.toggleRadioRecordToXflacV91 === 'function' && !window.toggleRadioRecordToXflacV91._v249Hooked) {
+            var origToggleRec = window.toggleRadioRecordToXflacV91;
+            window.toggleRadioRecordToXflacV91 = async function() {
+                var r = await origToggleRec.apply(this, arguments);
+                setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
+                return r;
+            };
+            window.toggleRadioRecordToXflacV91._v249Hooked = true;
+        }
+        if (typeof window.finalizeActiveRadioRecordingV240 === 'function' && !window.finalizeActiveRadioRecordingV240._v249Hooked) {
+            var origFinRec = window.finalizeActiveRadioRecordingV240;
+            window.finalizeActiveRadioRecordingV240 = async function() {
+                var r = await origFinRec.apply(this, arguments);
+                setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
+                return r;
+            };
+            window.finalizeActiveRadioRecordingV240._v249Hooked = true;
         }
     }
 
@@ -665,10 +699,15 @@
         }
 
         var isFav = Boolean(window.currentPlayingTrack && Array.isArray(window.favorites) && window.favorites.indexOf(window.currentPlayingTrack) !== -1);
+        var isRadioRec = Boolean(window._radioStateV91 && window._radioStateV91.isRecording);
+        var radioQuality = resolveCurrentRadioQualityV249();
+        var extraRaw = (activeMode === 'radio')
+            ? (radioQuality + (isRadioRec ? '|REC' : ''))
+            : String(window.currentPlayingTrack || '');
 
         var finalTitle = titleParts.join(' │ ');
         var finalSub = subParts.join(' • ');
-        var curSig = finalTitle + '|' + finalSub + '|' + (isActuallyPlaying ? '1' : '0') + '|' + (isFav ? 'F1' : 'F0') + '|' + activeMode + '|' + (isRevA ? 'R1' : 'R0');
+        var curSig = finalTitle + '|' + finalSub + '|' + (isActuallyPlaying ? '1' : '0') + '|' + (isFav ? 'F1' : 'F0') + '|' + activeMode + '|' + (isRevA ? 'R1' : 'R0') + '|' + extraRaw;
 
         if (!force && curSig === window._lastNotifSigV243 && (!isActuallyPlaying || (now - (window._lastPermNotifSyncTsV212 || 0) < 900))) {
             return;
@@ -678,7 +717,7 @@
 
         try {
             if (typeof window.AndroidBridge.updateIslandExtraState === 'function') {
-                window.AndroidBridge.updateIslandExtraState(isFav, activeMode, String(window.currentPlayingTrack || ''));
+                window.AndroidBridge.updateIslandExtraState(isFav, activeMode, extraRaw);
             }
             if (typeof window.AndroidBridge.updateMediaStateFull === 'function') {
                 window.AndroidBridge.updateMediaStateFull(finalTitle, finalSub, isActuallyPlaying, posSec, durSec, spd);
@@ -732,6 +771,15 @@
         var a = String(arg || '');
         var snap = window.getActiveSourcesSnapshotV243 ? window.getActiveSourcesSnapshotV243() : {};
         var curMode = window._islandActiveModeV245 || 'music';
+
+        // [FIX-ISLAND-RADIO-V249] Запись радиоэфира по нажатию кнопки REC на синей плашке
+        if (c === 'radio_rec') {
+            if (typeof window.toggleRadioRecordToXflacV91 === 'function') {
+                await window.toggleRadioRecordToXflacV91();
+            }
+            window.syncPermanentForegroundNotificationV212(true);
+            return;
+        }
 
         // Прямой экспорт локального трека со всеми активными эффектами в .xFLAC (с распаковкой в WAV -> запеканием DSP -> упаковкой в .xFLAC)
         if (c === 'export_xflac' || c === 'share' || c === 'export') {

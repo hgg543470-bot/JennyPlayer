@@ -480,8 +480,9 @@ window.JENNY_NEON_SVGS_V92 = {
     torrent: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#d2a8ff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(210,168,255,0.65));"><polygon points="12 2 19 5 22 12 19 19 12 22 5 19 2 12 5 5"/><polygon points="12 6.5 16 8.2 17.5 12 16 15.8 12 17.5 8 15.8 6.5 12 8 8.2"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>',
     archive: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#79c0ff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(121,192,255,0.65));"><polygon points="12 2 2 7 22 7"/><line x1="6" y1="7" x2="6" y2="17"/><line x1="10" y1="7" x2="10" y2="17"/><line x1="14" y1="7" x2="14" y2="17"/><line x1="18" y1="7" x2="18" y2="17"/><rect x="3" y="17" width="18" height="4" rx="1"/></svg>',
     soundcloud: '<svg viewBox="0 0 24 24" width="18" height="17" fill="none" stroke="#ff8c42" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 5px rgba(255,140,66,0.65));"><line x1="2" y1="13" x2="2" y2="17"/><line x1="5" y1="10" x2="5" y2="18"/><line x1="8" y1="11" x2="8" y2="18"/><path d="M11 18h7.5a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6-1.5A3.5 3.5 0 0 0 11 18z"/></svg>',
-    badgeHigh: '<svg viewBox="0 0 36 16" width="34" height="15" style="vertical-align:middle;filter:drop-shadow(0 0 4px rgba(63,185,80,0.45));"><rect x="1" y="1" width="34" height="14" rx="4" fill="rgba(63,185,80,0.14)" stroke="#3fb950" stroke-width="1.3"/><text x="18" y="11" fill="#3fb950" font-size="9.5" font-weight="900" font-family="monospace" text-anchor="middle">HIGH</text></svg>',
-    badgeLow: '<svg viewBox="0 0 32 16" width="30" height="15" style="vertical-align:middle;filter:drop-shadow(0 0 4px rgba(227,179,65,0.4));"><rect x="1" y="1" width="30" height="14" rx="4" fill="rgba(227,179,65,0.14)" stroke="#e3b341" stroke-width="1.3"/><text x="16" y="11" fill="#e3b341" font-size="9.5" font-weight="900" font-family="monospace" text-anchor="middle">LOW</text></svg>'
+    // [FIX-ISLAND-RADIO-V249] Заменяем бейджи HIGH/LOW на LOSSLESS/LOSSY внутри радио в плеере
+    badgeHigh: '<svg viewBox="0 0 58 16" width="54" height="15" style="vertical-align:middle;filter:drop-shadow(0 0 4px rgba(63,185,80,0.45));"><rect x="1" y="1" width="56" height="14" rx="4" fill="rgba(63,185,80,0.14)" stroke="#3fb950" stroke-width="1.3"/><text x="29" y="11" fill="#3fb950" font-size="8.8" font-weight="900" font-family="monospace" text-anchor="middle">LOSSLESS</text></svg>',
+    badgeLow: '<svg viewBox="0 0 42 16" width="38" height="15" style="vertical-align:middle;filter:drop-shadow(0 0 4px rgba(227,179,65,0.4));"><rect x="1" y="1" width="40" height="14" rx="4" fill="rgba(227,179,65,0.14)" stroke="#e3b341" stroke-width="1.3"/><text x="21" y="11" fill="#e3b341" font-size="8.8" font-weight="900" font-family="monospace" text-anchor="middle">LOSSY</text></svg>'
 };
 
 window.SOURCES_CATALOG_V91 = [
@@ -673,7 +674,7 @@ window.renderRadioFiltersAndStationsV92 = function() {
         ? all.filter(s => (s.genre || 'Pop / Misc') === st.selectedGenre)
         : all;
 
-    // 2-й ФИЛЬТР (Нижняя подстрока): только качество HIGH (Lossless) и LOW (Обычное) внутри выбранной категории!
+    // 2-й ФИЛЬТР (Нижняя подстрока): только качество LOSSLESS и LOSSY внутри выбранной категории!
     const qBar = document.getElementById('radQualitySubStripV92');
     if (qBar) {
         const llCnt = byCategory.filter(x => x.lossless).length;
@@ -681,7 +682,7 @@ window.renderRadioFiltersAndStationsV92 = function() {
         const svgs = window.JENNY_NEON_SVGS_V92;
         const qItems = [
             { id: 'lossless', html: `${svgs.badgeHigh} <span style="color:#3fb950;">Lossless (${llCnt})</span>` },
-            { id: 'lossy',    html: `${svgs.badgeLow} <span style="color:#e3b341;">Обычное (${lsCnt})</span>` }
+            { id: 'lossy',    html: `${svgs.badgeLow} <span style="color:#e3b341;">Lossy (${lsCnt})</span>` }
         ];
         qBar.innerHTML = qItems.map(qi => {
             const act = (st.qualityFilter === qi.id);
@@ -709,10 +710,11 @@ window.renderRadioFiltersAndStationsV92 = function() {
         const isPlayingThis = Boolean(st.audio && st.currentStation && st.currentStation.url === s.url && !st.audio.paused);
         const badgeSvg = s.lossless ? svgs.badgeHigh : svgs.badgeLow;
         const clr = s.lossless ? '#3fb950' : '#e3b341';
+        const qTag = s.lossless ? 'LOSSLESS' : 'LOSSY';
         return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#0d1117;border:1px solid ${isPlayingThis ? '#3fb950' : '#262c36'};border-radius:9px;">
             <div style="flex:1;min-width:0;" onclick="window.playFlacRadioStationV91(${origIdx}, this.nextElementSibling)">
                 <div style="color:#e6edf3;font-size:12px;font-weight:bold;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.32;display:flex;align-items:center;gap:6px;">${badgeSvg}<span>${s.title}</span></div>
-                <div style="font-size:10px;margin-top:3px;color:#8b949e;"><span style="color:${clr};font-weight:bold;">${s.codec}</span> • ${s.genre}</div>
+                <div style="font-size:10px;margin-top:3px;color:#8b949e;"><span style="color:${clr};font-weight:bold;">${qTag} • ${s.codec}</span> • ${s.genre}</div>
             </div>
             <button type="button" class="rad-play-btn-v91" onclick="window.playFlacRadioStationV91(${origIdx}, this)" style="padding:5px 10px;font-size:11px;background:#161b22;color:#58a6ff;border:1px solid #30363d;">${isPlayingThis ? '⏹' : '▶'}</button>
         </div>`;

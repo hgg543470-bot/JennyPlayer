@@ -100,6 +100,7 @@ public class IslandOverlayController {
     private static final int ICON_CHEVRON_UP   = 7;
     private static final int ICON_CHEVRON_DOWN = 8;
     private static final int ICON_OPEN_PLAYER  = 9;
+    private static final int ICON_REC          = 10;
 
     // Виджеты развёрнутой плашки
     private SourceIconView modeBtnMusic;
@@ -456,6 +457,7 @@ public class IslandOverlayController {
         private final float iconRatio;
         private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path path = new Path();
         private final RectF rectF = new RectF();
 
@@ -469,6 +471,8 @@ public class IslandOverlayController {
             strokePaint.setStyle(Paint.Style.STROKE);
             strokePaint.setStrokeCap(Paint.Cap.ROUND);
             strokePaint.setStrokeJoin(Paint.Join.ROUND);
+            textPaint.setStyle(Paint.Style.FILL);
+            textPaint.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.BOLD));
         }
 
         void setIconType(int newType) {
@@ -612,6 +616,27 @@ public class IslandOverlayController {
                 path.lineTo(ox + 12.0f * s, oy + 15.4f * s);
                 path.lineTo(ox + 18.5f * s, oy + 8.8f * s);
                 canvas.drawPath(path, strokePaint);
+            } else if (iconType == ICON_REC) {
+                // [FIX-ISLAND-RADIO-V249] Кнопка записи REC с кружком в том же синем цвете, что и сам островок
+                float cy = h * 0.5f;
+                float cx = U(6.5f);
+                int rgb = iconColor & 0x00FFFFFF;
+                if (isFilledState) {
+                    fillPaint.setColor((0x38 << 24) | rgb);
+                    canvas.drawCircle(cx, cy, U(6.2f), fillPaint);
+                }
+                strokePaint.setColor(iconColor);
+                strokePaint.setStrokeWidth(U(1.35f));
+                canvas.drawCircle(cx, cy, U(4.4f), strokePaint);
+
+                fillPaint.setColor(iconColor);
+                canvas.drawCircle(cx, cy, isFilledState ? U(2.8f) : U(2.2f), fillPaint);
+
+                textPaint.setColor(iconColor);
+                textPaint.setTextSize(U(10.5f));
+                Paint.FontMetrics fm = textPaint.getFontMetrics();
+                float textY = cy - (fm.ascent + fm.descent) * 0.5f;
+                canvas.drawText("REC", U(13.2f), textY, textPaint);
             }
         }
     }
@@ -1184,13 +1209,16 @@ public class IslandOverlayController {
                 LinearLayout.LayoutParams.MATCH_PARENT, U(44));
         rowTrackLp.bottomMargin = U(4);
 
-        // Слева (где было 32-BIT, прямо над левым таймером): чистая векторная кнопка Экспорта в .xFLAC (без рамки!)
+        // Слева (над левым таймером): кнопка Экспорта в .xFLAC (в режиме Музыки) или кнопка записи REC с кружком (в режиме Радио)
         exportTrackBtn = new ActionIconView(context, ICON_EXPORT, 0xFFD2A8FF, 0.54f);
         exportTrackBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (!"music".equals(currentIslandMode)) return;
-                MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('export_xflac','');");
+                if ("music".equals(currentIslandMode)) {
+                    MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('export_xflac','');");
+                } else if ("radio".equals(currentIslandMode)) {
+                    MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('radio_rec','');");
+                }
             }
         });
         LinearLayout.LayoutParams expBtnLp = new LinearLayout.LayoutParams(U(42), LinearLayout.LayoutParams.MATCH_PARENT);
@@ -1274,7 +1302,10 @@ public class IslandOverlayController {
         elapsedTimeView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         elapsedTimeView.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         elapsedTimeView.setTextSize(TypedValue.COMPLEX_UNIT_PX, U(11.0f));
-        LinearLayout.LayoutParams elLp = new LinearLayout.LayoutParams(U(42), LinearLayout.LayoutParams.WRAP_CONTENT);
+        elapsedTimeView.setSingleLine(true);
+        elapsedTimeView.setMinWidth(U(42));
+        LinearLayout.LayoutParams elLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         rowSeek.addView(elapsedTimeView, elLp);
 
         islandSeekBar = new GlowSeekBar(context);
@@ -1317,7 +1348,10 @@ public class IslandOverlayController {
         totalTimeView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         totalTimeView.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
         totalTimeView.setTextSize(TypedValue.COMPLEX_UNIT_PX, U(11.0f));
-        LinearLayout.LayoutParams totLp = new LinearLayout.LayoutParams(U(42), LinearLayout.LayoutParams.WRAP_CONTENT);
+        totalTimeView.setSingleLine(true);
+        totalTimeView.setMinWidth(U(42));
+        LinearLayout.LayoutParams totLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         rowSeek.addView(totalTimeView, totLp);
 
         card.addView(rowSeek, rowSeekLp);
@@ -1507,11 +1541,25 @@ public class IslandOverlayController {
             collapseBtn.setIconColor(bright);
         }
 
-        // 4. Кнопка Экспорта в .xFLAC слева и кнопка Избранного справа (работают для локальных аудиофайлов "music")
+        // 4. Кнопка Экспорта в .xFLAC (в "music") / кнопка записи REC с кружком (в "radio") слева на одних и тех же координатах,
+        //    и кнопка Избранного справа (только в "music")
         boolean isLocalMusic = "music".equals(m);
+        boolean isRadioMode = "radio".equals(m);
+        boolean isRadioRec = isRadioMode && currentRawTrack != null && currentRawTrack.toUpperCase(Locale.ROOT).contains("|REC");
         if (exportTrackBtn != null) {
-            exportTrackBtn.setVisibility(isLocalMusic ? View.VISIBLE : View.INVISIBLE);
-            exportTrackBtn.setIconColor(bright);
+            if (isLocalMusic) {
+                exportTrackBtn.setVisibility(View.VISIBLE);
+                exportTrackBtn.setIconType(ICON_EXPORT);
+                exportTrackBtn.setFilledState(false);
+                exportTrackBtn.setIconColor(bright);
+            } else if (isRadioMode) {
+                exportTrackBtn.setVisibility(View.VISIBLE);
+                exportTrackBtn.setIconType(ICON_REC);
+                exportTrackBtn.setFilledState(isRadioRec);
+                exportTrackBtn.setIconColor(bright);
+            } else {
+                exportTrackBtn.setVisibility(View.INVISIBLE);
+            }
         }
         if (favHeartBtn != null) {
             favHeartBtn.setVisibility(isLocalMusic ? View.VISIBLE : View.INVISIBLE);
@@ -1519,18 +1567,22 @@ public class IslandOverlayController {
             favHeartBtn.setIconColor(isCurrentTrackFav ? 0xFFFF4D79 : bright);
         }
 
+        // В режиме Радио убираем подстроку «Прямой радиоэфир», чтобы осталась только строка с названием станции
         if (islandSubtitleView != null) {
+            islandSubtitleView.setVisibility(isRadioMode ? View.GONE : View.VISIBLE);
             islandSubtitleView.setTextColor(bright);
         }
 
-        // 5. Шкала прогресса с лёгким свечением вокруг неё и таймеры
+        // 5. Шкала прогресса (скрыта в режиме Радио) и боковые надписи (LIVE и LOSSLESS / LOSSY в режиме Радио)
         if (elapsedTimeView != null) {
             elapsedTimeView.setTextColor(bright);
         }
         if (totalTimeView != null) {
-            totalTimeView.setTextColor(primary);
+            totalTimeView.setTextColor(isRadioMode ? bright : primary);
         }
         if (islandSeekBar != null) {
+            islandSeekBar.setVisibility(isRadioMode ? View.INVISIBLE : View.VISIBLE);
+            islandSeekBar.setEnabled(!isRadioMode);
             islandSeekBar.setGlowColor(primary);
         }
         if (seekBgTrackDrawable != null) {
@@ -1543,11 +1595,17 @@ public class IslandOverlayController {
             seekThumbDrawable.setColors(new int[]{bright, primary});
         }
 
-        // 6. Кнопки транспорта без рамок (-10с, Пред, Пуск/Пауза, След, +10с)
+        // 6. Кнопки транспорта без рамок (в режиме Радио кнопки -10с и +10с убраны)
         if (btnRew10 != null) {
+            btnRew10.setVisibility(isRadioMode ? View.INVISIBLE : View.VISIBLE);
+            btnRew10.setEnabled(!isRadioMode);
+            btnRew10.setClickable(!isRadioMode);
             btnRew10.setTextColor(bright);
         }
         if (btnFwd10 != null) {
+            btnFwd10.setVisibility(isRadioMode ? View.INVISIBLE : View.VISIBLE);
+            btnFwd10.setEnabled(!isRadioMode);
+            btnFwd10.setClickable(!isRadioMode);
             btnFwd10.setTextColor(bright);
         }
         if (btnPrev != null) {
@@ -1617,10 +1675,11 @@ public class IslandOverlayController {
             islandSeekBar.setProgress(0);
             return;
         }
-        if ("radio".equals(currentIslandMode) && currentDurMs <= 0L) {
-            elapsedTimeView.setText(isPlaying ? "LIVE" : "ПАУЗА");
-            totalTimeView.setText("FLAC");
-            islandSeekBar.setProgress(isPlaying ? 1000 : 0);
+        if ("radio".equals(currentIslandMode)) {
+            boolean isLossy = currentRawTrack != null && currentRawTrack.toUpperCase(Locale.ROOT).startsWith("LOSSY");
+            elapsedTimeView.setText("LIVE");
+            totalTimeView.setText(isLossy ? "LOSSY" : "LOSSLESS");
+            islandSeekBar.setProgress(0);
             return;
         }
         long pos = getEstimatedCurrentPositionMs();
