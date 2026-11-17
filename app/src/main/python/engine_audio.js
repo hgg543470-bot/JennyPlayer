@@ -38,8 +38,8 @@ window.studioSourceNode = null;
 window.isStudioPlaying = false;
 window.lastComputedCeilingDb = 0.0;
 
-// Вариант аудио-сборки APK (1 = Ориг. DSP + AutoRMS и Макс. битность/потоки, 2 = Полный ремастер + новые дефолты, 3 = Все внутренние фиксы движка БЕЗ изменения UI-настроек и С СОХРАНЕНИЕМ противофазы)
-window.JENNY_AUDIO_APK_VARIANT = window.JENNY_AUDIO_APK_VARIANT || 3;
+// Закреплён эталонный Вариант 1 (Оригинальный фирменный DSP + рабочий Auto-RMS + 48кГц/32-bit без урезания + макс. потоки Opus 251)
+window.JENNY_AUDIO_APK_VARIANT = 1;
 
 window.appConfig = JSON.parse(localStorage.getItem('ytm_config')) || {};
 
