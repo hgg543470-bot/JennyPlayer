@@ -46,43 +46,41 @@
     window.calculateAutoMasterPadDbDeckB = function(cfg) {
         cfg = cfg || (window.videoDeckV131 && window.videoDeckV131.config) || {};
         var hotDb = 0.0;
-        var variant = window.JENNY_AUDIO_APK_VARIANT || 3;
-        var isRemasteredPad = (variant === 2 || variant === 3);
 
         if (cfg.firEnabled && cfg.firSettings) {
             var fg = parseFloat(cfg.firSettings.gain) || 2.0;
             var firHot = 0.0;
-            if (fg > 1.0) firHot += 20 * Math.log10(fg) * (isRemasteredPad ? 0.18 : 0.45);
+            if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.45;
             if (cfg.opt_cleanFir) {
                 var cfDb = parseFloat(cfg.val_cleanFir) || 0;
-                if (cfDb > 0) firHot += cfDb * (isRemasteredPad ? 0.16 : 0.4);
+                if (cfDb > 0) firHot += cfDb * 0.4;
             }
             if (firHot > 0.05) hotDb += firHot;
         }
         if (cfg.opt_midPhase) {
             var mpDb = Math.min(15, parseFloat(cfg.val_midPhase) || 0);
-            if (mpDb > 0) hotDb += mpDb * (isRemasteredPad ? 0.18 : 0.45);
+            if (mpDb > 0) hotDb += mpDb * 0.45;
         }
         if (cfg.opt_deEsser) {
             var deDb = Math.min(12, parseFloat(cfg.val_deEsser) || 0);
-            if (deDb > 0) hotDb += deDb * (isRemasteredPad ? 0.14 : 0.35);
+            if (deDb > 0) hotDb += deDb * 0.35;
         }
         if (cfg.opt_punch) {
             var pDb = Math.min(24, parseFloat(cfg.val_punch) || 0);
-            if (pDb > 0) hotDb += pDb * (isRemasteredPad ? 0.10 : 0.18);
+            if (pDb > 0) hotDb += pDb * 0.18;
         }
         if (cfg.opt_msWidth) {
             var wPct = parseFloat(cfg.val_msWidth);
             if (isNaN(wPct)) wPct = 160;
             if (wPct > 100) {
-                var v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * (isRemasteredPad ? 0.25 : 0.68));
+                var v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.68);
                 if (v > 0.05) hotDb += v;
             }
         }
         if (cfg.opt_crossfeed) {
             var cPct = parseFloat(cfg.val_crossfeed) || 0;
             if (cPct > 80) {
-                var vc = Math.min(6, (cPct - 80) * (isRemasteredPad ? 0.015 : 0.03));
+                var vc = Math.min(6, (cPct - 80) * 0.03);
                 if (vc > 0.05) hotDb += vc;
             }
         }
@@ -92,13 +90,13 @@
             var vd = window.videoDeckV131;
             var hasBuf = Boolean(vd && vd.studioBuffer);
             if (tRms > -12) {
-                var mult = hasBuf ? (isRemasteredPad ? 0.24 : 0.75) : (isRemasteredPad ? 0.10 : 0.25);
+                var mult = hasBuf ? 0.75 : 0.25;
                 var vr = (tRms + 12) * mult;
                 if (vr > 0.05) hotDb += vr;
             }
         }
 
-        var padDb = -Math.max(isRemasteredPad ? 0.3 : 0.5, hotDb);
+        var padDb = -Math.max(0.5, hotDb);
         if (window.videoDeckV131) {
             window.videoDeckV131.lastComputedCeilingDb = Math.round(padDb * 10) / 10;
         }
