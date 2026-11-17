@@ -2103,17 +2103,24 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         }
         if (dur <= 0) return null;
 
-        var srCandidates = (dur > 5400) ? [16000, 12000, 8000] : ((dur > 2400) ? [24000, 16000, 12000] : [44100, 32000, 24000]);
+        var ctxSr = (window.audioCtx && window.audioCtx.sampleRate >= 44100) ? window.audioCtx.sampleRate : 48000;
+        var srCandidates = [ctxSr, 48000, 44100];
         var sr = srCandidates[0];
         var totalFrames = Math.floor(dur * sr);
         var audioBuf = null;
         for (var sIdx = 0; sIdx < srCandidates.length; sIdx++) {
-            try {
-                sr = srCandidates[sIdx];
-                totalFrames = Math.floor(dur * sr);
-                audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
-                if (audioBuf) break;
-            } catch (allocErr) {}
+            var capList = [dur, 10800, 7200, 5400, 3600, 2400];
+            for (var cIdx = 0; cIdx < capList.length; cIdx++) {
+                var capDur = capList[cIdx];
+                if (capDur > dur && cIdx > 0) continue;
+                try {
+                    sr = srCandidates[sIdx];
+                    totalFrames = Math.floor(Math.min(dur, capDur) * sr);
+                    audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
+                    if (audioBuf) break;
+                } catch (allocErr) {}
+            }
+            if (audioBuf) break;
         }
         if (!audioBuf) return null;
 

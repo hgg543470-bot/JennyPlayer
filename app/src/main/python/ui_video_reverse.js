@@ -149,14 +149,15 @@ window.wakeVideoHudV130(false);
             var rawUrl = st.rawTorStreamUrlV214 || st.currentUrl || '';
             var chunkStart = Math.max(0, startAnchorSec - 28);
             var chunkDur = Math.max(6, Math.min(30, startAnchorSec - chunkStart + 2));
-            fetch('/api/video/pcm_chunk?src=' + encodeURIComponent(rawUrl) + '&start=' + chunkStart.toFixed(1) + '&dur=' + chunkDur.toFixed(1) + '&sr=32000')
+            var revSr = (vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000;
+            fetch('/api/video/pcm_chunk?src=' + encodeURIComponent(rawUrl) + '&start=' + chunkStart.toFixed(1) + '&dur=' + chunkDur.toFixed(1) + '&sr=' + revSr)
                 .then(function(r) { return r.ok ? r.arrayBuffer() : null; })
                 .then(function(ab) {
                     vd._fetchingRevChunkV217 = false;
                     if (!ab || !vd.ctx || !vd.isReversed) return;
                     var frames = Math.floor(ab.byteLength / 8);
                     if (frames <= 200) return;
-                    var aBuf = vd.ctx.createBuffer(2, frames, 32000);
+                    var aBuf = vd.ctx.createBuffer(2, frames, revSr);
                     var chL = aBuf.getChannelData(0), chR = aBuf.getChannelData(1);
                     var leftIn = new Float32Array(ab, 0, frames);
                     var rightIn = new Float32Array(ab, frames * 4, frames);

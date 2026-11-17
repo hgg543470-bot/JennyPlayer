@@ -38,9 +38,23 @@ window.studioSourceNode = null;
 window.isStudioPlaying = false;
 window.lastComputedCeilingDb = 0.0;
 
+// Вариант аудио-сборки APK (1 = Ориг. DSP + AutoRMS и Макс. битность/потоки, 2 = Полный ремастер + новые дефолты, 3 = Все внутренние фиксы движка БЕЗ изменения UI-настроек и С СОХРАНЕНИЕМ противофазы)
+window.JENNY_AUDIO_APK_VARIANT = window.JENNY_AUDIO_APK_VARIANT || 3;
+
 window.appConfig = JSON.parse(localStorage.getItem('ytm_config')) || {};
 
-window.DSP_MOD_DEFAULTS = {
+window.DSP_MOD_DEFAULTS = (window.JENNY_AUDIO_APK_VARIANT === 2) ? {
+    opt_midPhase: true,    val_midPhase: 1.5,
+    opt_midQ: true,        val_midQ: 120,
+    opt_deEsser: true,     val_deEsser: 0.0,
+    opt_cleanFir: true,    val_cleanFir: 2.0,
+    opt_masterCeil: true,  val_masterCeil: -0.5,
+    opt_autoRms: true,     val_autoRms: -6.0,
+    opt_monoBass: true,    val_monoBass: 79,
+    opt_msWidth: true,     val_msWidth: 125,
+    opt_punch: true,       val_punch: 2.0,
+    opt_crossfeed: false,  val_crossfeed: 65
+} : {
     opt_midPhase: true,    val_midPhase: 4.0,
     opt_midQ: true,        val_midQ: 120,
     opt_deEsser: true,     val_deEsser: -2.0,
@@ -94,14 +108,16 @@ window.createSoftClipWaveShaper = function(ctx, bucket) {
 window.calculateAutoMasterPadDb = function(cfg) {
     let hotDb = 0.0;
     let parts = [];
+    const variant = window.JENNY_AUDIO_APK_VARIANT || 3;
+    const isRemasteredPad = (variant === 2 || variant === 3);
 
     if (cfg.firEnabled && cfg.firSettings) {
         let fg = parseFloat(cfg.firSettings.gain) || 2.0;
         let firHot = 0.0;
-        if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.45;
+        if (fg > 1.0) firHot += 20 * Math.log10(fg) * (isRemasteredPad ? 0.18 : 0.45);
         if (cfg.opt_cleanFir) {
             let cfDb = parseFloat(cfg.val_cleanFir) || 0;
-            if (cfDb > 0) firHot += cfDb * 0.4;
+            if (cfDb > 0) firHot += cfDb * (isRemasteredPad ? 0.16 : 0.4);
         }
         if (firHot > 0.05) {
             hotDb += firHot;
@@ -111,7 +127,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.opt_midPhase) {
         let mpDb = Math.min(15, parseFloat(cfg.val_midPhase) || 0);
         if (mpDb > 0) {
-            let v = mpDb * 0.45;
+            let v = mpDb * (isRemasteredPad ? 0.18 : 0.45);
             hotDb += v;
             parts.push(`🎯СЧ -${v.toFixed(1)}`);
         }
@@ -119,7 +135,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.opt_deEsser) {
         let deDb = Math.min(12, parseFloat(cfg.val_deEsser) || 0);
         if (deDb > 0) {
-            let v = deDb * 0.35;
+            let v = deDb * (isRemasteredPad ? 0.14 : 0.35);
             hotDb += v;
             parts.push(`🐍ВЧ -${v.toFixed(1)}`);
         }
@@ -127,7 +143,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.opt_punch) {
         let pDb = Math.min(24, parseFloat(cfg.val_punch) || 0);
         if (pDb > 0) {
-            let v = pDb * 0.18;
+            let v = pDb * (isRemasteredPad ? 0.10 : 0.18);
             hotDb += v;
             parts.push(`🥁Панч -${v.toFixed(1)}`);
         }
@@ -136,7 +152,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
         let wPct = parseFloat(cfg.val_msWidth);
         if (isNaN(wPct)) wPct = 160;
         if (wPct > 100) {
-            let v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.68);
+            let v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * (isRemasteredPad ? 0.25 : 0.68));
             if (v > 0.05) {
                 hotDb += v;
                 parts.push(`🎭Стерео -${v.toFixed(1)}`);
@@ -146,7 +162,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.opt_crossfeed) {
         let cPct = parseFloat(cfg.val_crossfeed) || 0;
         if (cPct > 80) {
-            let v = Math.min(6, (cPct - 80) * 0.03);
+            let v = Math.min(6, (cPct - 80) * (isRemasteredPad ? 0.015 : 0.03));
             if (v > 0.05) {
                 hotDb += v;
                 parts.push(`🎧Бин -${v.toFixed(1)}`);
@@ -156,8 +172,11 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.opt_autoRms) {
         let tRms = parseFloat(cfg.val_autoRms);
         if (isNaN(tRms)) tRms = -10;
+        // Во всех 3 вариантах: если studioBuffer еще не загружен (стрим/старт), не гасим громкость вхолостую на -4.5 dB!
+        let hasBuf = Boolean(window.studioBuffer);
         if (tRms > -12) {
-            let v = (tRms + 12) * 0.75;
+            let mult = hasBuf ? (isRemasteredPad ? 0.24 : 0.75) : (isRemasteredPad ? 0.10 : 0.25);
+            let v = (tRms + 12) * mult;
             if (v > 0.05) {
                 hotDb += v;
                 parts.push(`⚡RMS -${v.toFixed(1)}`);
@@ -165,7 +184,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
         }
     }
 
-    let padDb = -Math.max(0.5, hotDb);
+    let padDb = -Math.max(isRemasteredPad ? 0.3 : 0.5, hotDb);
     window.lastComputedCeilingDb = Math.round(padDb * 10) / 10;
     window.lastCeilingBreakdown = parts.length > 0 ? parts.join(' │ ') : 'Базовый запас -0.5 dB';
 
@@ -227,6 +246,7 @@ window.createFIRImpulse = function(context, decayMs) {
     if (isNaN(cleanDriveDb)) cleanDriveDb = 3.0;
     let cleanLinear = window.dbToLinear(cleanDriveDb);
 
+    const variant = window.JENNY_AUDIO_APK_VARIANT || 3;
     for (let channel = 0; channel < 2; channel++) {
         let data = impulse.getChannelData(channel);
         for (let i = 0; i < length; i++) {
@@ -234,12 +254,13 @@ window.createFIRImpulse = function(context, decayMs) {
             let tailWindow = 0.5 * (1 + Math.cos(Math.PI * i / length));
             if (i === 0) {
                 data[i] = 1.0;
-            } else if (cfg.phaseFixEnabled) {
+            } else if (cfg.phaseFixEnabled && variant !== 2) {
                 data[i] = Math.exp(-i / (length / 2.5)) * tailWindow * 0.055 * lengthNorm * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
             } else if (cfg.opt_cleanFir) {
                 let a = Math.exp(-i / (length / 6.0));
                 let b = Math.exp(-i / (length / 2.1));
-                data[i] = (a - 0.46 * b) * tailWindow * 0.08 * lengthNorm * cleanLinear;
+                let scale = (variant === 2) ? 0.045 : 0.08;
+                data[i] = (a - 0.46 * b) * tailWindow * scale * lengthNorm * cleanLinear;
             } else {
                 data[i] = Math.exp(-i / (length / 3)) * tailWindow * 0.05 * lengthNorm;
             }
@@ -341,12 +362,13 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         kickBody.Q.value = 1.4;
         kickBody.gain.value = clampedPunch * 0.75;
 
-        // 2. Анти-муть (230 Гц): при +Панче слегка расчищает коробочный гул, чтобы удар и середина стреляли чётко
+        // 2. Анти-муть (230 Гц): при любом Панче расчищает коробочный гул (в Вариантах 2 и 3 даже при отрицательном val_punch не задирает 230 Гц в плюс!)
         let mudCut = reg(ctx.createBiquadFilter());
         mudCut.type = 'peaking';
         mudCut.frequency.value = 230;
         mudCut.Q.value = 1.1;
-        mudCut.gain.value = -clampedPunch * 0.35;
+        const variantP = window.JENNY_AUDIO_APK_VARIANT || 3;
+        mudCut.gain.value = (variantP === 2 || variantP === 3) ? (-Math.abs(clampedPunch) * 0.35) : (-clampedPunch * 0.35);
 
         // 3. Хлыст атаки и середины (2600 Гц — 100% отдача при + и уход в глубокий фон при -)
         let snareSnap = reg(ctx.createBiquadFilter());
@@ -411,8 +433,9 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         mL.connect(mg, 0, 0); mR.connect(mg, 0, 0); sideFinal.connect(mg, 0, 0);
         mL.connect(mg, 0, 1); mR.connect(mg, 0, 1); sInv.connect(mg, 0, 1);
 
-        // Фазовый 90° All-Pass декореллятор (создаёт широкую голографическую сцену БЕЗ эха даже на моно-дорожках!)
-        if (w > 1.0) {
+        // Фазовый 90° All-Pass декореллятор (сохраняется в Вариантах 1 и 3 как фирменная противофаза сцены, отключается только в Варианте 2)
+        const variantSt = window.JENNY_AUDIO_APK_VARIANT || 3;
+        if (w > 1.0 && variantSt !== 2) {
             let apGain = Math.min(0.48, (w - 1.0) * 0.24);
             let hpAp = reg(ctx.createBiquadFilter());
             hpAp.channelCount = 1; hpAp.channelCountMode = 'explicit';
@@ -437,7 +460,8 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         }
 
         let out = reg(ctx.createGain());
-        out.gain.value = 1.0 / (1.0 + Math.max(0, w - 1.0) * 0.25);
+        let widthAtten = (variantSt === 2 || variantSt === 3) ? 0.10 : 0.25;
+        out.gain.value = 1.0 / (1.0 + Math.max(0, w - 1.0) * widthAtten);
         mg.connect(out);
         cur = out;
     }
@@ -606,8 +630,16 @@ window._buildAudioGraphCore = function() {
 
     const cfg = window.appConfig || {};
     const player = document.getElementById('audioPlayer');
+    const variantG = window.JENNY_AUDIO_APK_VARIANT || 3;
+    try {
+        let nowM = window.audioCtx.currentTime;
+        window.inputMixer.gain.cancelScheduledValues(nowM);
+        window.inputMixer.gain.setValueAtTime(1.0, nowM);
+    } catch (e) {}
     window.inputMixer.gain.value = 1.0;
-    window.preAmpNode.gain.value = 0.6;
+    // В Вариантах 2 и 3 убираем скрытое зашитое гашение входа preAmpNode (0.6 -> 1.0) и preFirPad (0.8 -> 0.96), которых нет в настройках UI!
+    window.preAmpNode.gain.value = (variantG === 2 || variantG === 3) ? 1.0 : 0.6;
+    window.preFirPad.gain.value = (variantG === 2 || variantG === 3) ? 0.96 : 0.8;
 
     let currentNode = window.inputMixer;
     currentNode.connect(window.preAmpNode);
@@ -646,15 +678,23 @@ window._buildAudioGraphCore = function() {
         if (cfg.multiBandEnabled && cfg.multiBandSettings) {
             let lowFreq = Math.max(20, cfg.multiBandSettings.low || 200);
             let highFreq = Math.max(lowFreq + 200, cfg.multiBandSettings.high || 3600);
-            // Фокусируем центр СЧ-полосы строго в зоне живого голоса (не ниже 320 Гц по нижнему краю), чтобы басовый гул 50-150 Гц не лез в шёпот!
-            let vocalLowAnchor = Math.max(lowFreq, 320);
+            // В Вариантах 2 и 3 убираем частотные провалы между полосами (160-320 Гц и 1200-2528 Гц), делая ровный стык полос!
+            let vocalLowAnchor = (variantG === 2 || variantG === 3) ? Math.max(lowFreq, 180) : Math.max(lowFreq, 320);
             let midCenter = Math.sqrt(vocalLowAnchor * highFreq);
-            let midQ = Math.max(0.85, midCenter / (highFreq - vocalLowAnchor));
+            let midQ = (variantG === 2 || variantG === 3)
+                ? Math.max(0.48, (midCenter / (highFreq - vocalLowAnchor)) * 0.68)
+                : Math.max(0.85, midCenter / (highFreq - vocalLowAnchor));
 
             let now = window.audioCtx.currentTime;
             window.splitLow.frequency.setTargetAtTime(lowFreq, now, 0.012);
             window.splitMid.frequency.setTargetAtTime(midCenter, now, 0.012);
             window.splitHigh.frequency.setTargetAtTime(highFreq, now, 0.012);
+            if (variantG === 2 || variantG === 3) {
+                try {
+                    window.splitLow.Q.setTargetAtTime(0.707, now, 0.012);
+                    window.splitHigh.Q.setTargetAtTime(0.707, now, 0.012);
+                } catch (e) {}
+            }
 
             // Басовая полоса: мощный клубный кач по настройкам пользователя
             window.compLow.threshold.value = thresh; window.compLow.knee.value = knee; window.compLow.ratio.value = ratio;

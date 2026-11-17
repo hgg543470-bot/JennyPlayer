@@ -317,6 +317,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             ? window.playingQueueListV73.slice()
             : null;
 
+        window.studioBuffer = null;
+        window.reversedStudioBuffer = null;
+        window.reconstructedMasterBufferV67 = null;
+        window.reconstructedReversedBufferV67 = null;
+        window.currentTrackRevMapV67 = null;
+
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
         if (window.audioCtx && window.audioCtx.state === 'suspended') {
             try { window.audioCtx.resume(); } catch (e) {}
@@ -458,6 +464,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
             window.studioBuffer = decodedBuffer;
+            if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
+                window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
+            }
+            if (typeof window.buildAudioGraph === 'function') {
+                window.buildAudioGraph(true);
+            }
             if (typeof window.loadTrackReversibleDataV67 === 'function') {
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
             }
@@ -1019,6 +1031,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window._userPausedV75_2 = false;
         window._resumingFromUserPlayV232 = true;
 
+        window.studioBuffer = null;
+        window.reversedStudioBuffer = null;
+        window.reconstructedMasterBufferV67 = null;
+        window.reconstructedReversedBufferV67 = null;
+        window.currentTrackRevMapV67 = null;
+
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
         if (window.audioCtx && window.audioCtx.state === 'suspended') {
             try { window.audioCtx.resume(); } catch (e) {}
@@ -1345,6 +1363,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             ? window.playingQueueListV73.slice()
             : null;
 
+        window.studioBuffer = null;
+        window.reversedStudioBuffer = null;
+        window.reconstructedMasterBufferV67 = null;
+        window.reconstructedReversedBufferV67 = null;
+        window.currentTrackRevMapV67 = null;
+
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
         if (window.audioCtx && window.audioCtx.state === 'suspended') {
             try { window.audioCtx.resume(); } catch (e) {}
@@ -1523,6 +1547,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
             window.studioBuffer = decodedBuffer;
+            if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
+                window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
+            }
+            if (typeof window.buildAudioGraph === 'function') {
+                window.buildAudioGraph(true);
+            }
             if (typeof window.loadTrackReversibleDataV67 === 'function') {
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
             }

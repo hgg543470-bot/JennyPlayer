@@ -1235,9 +1235,9 @@ def get_pcm_chunk_v71(filename):
     try:
         st_sec = max(0.0, float(request.query.get('start', 0.0)))
         dur_sec = max(0.1, min(600.0, float(request.query.get('dur', 60.0))))
-        sr = int(request.query.get('sr', 44100))
-        if sr < 8000 or sr > 96000:
-            sr = 44100
+        sr = int(request.query.get('sr', 48000))
+        if sr < 8000 or sr > 384000:
+            sr = 48000
 
         src_path = _ensure_xflac_wav_cache_v87(fp) if filename.lower().endswith('.xflac') else fp
         ffmpeg_bin = find_ffmpeg_binary()
@@ -2778,7 +2778,7 @@ def _mux_clean_sc_stream_v107(src_file: str, base_dst_no_ext: str):
         )
         if not os.path.isfile(tmp_out) or os.path.getsize(tmp_out) < 16384:
             subprocess.run(
-                [ff_bin, '-y', '-i', src_file, '-vn', '-ar', '44100', '-ac', '2', '-b:a', '192k', '-write_xing', '1', tmp_out],
+                [ff_bin, '-y', '-i', src_file, '-vn', '-ar', '48000', '-ac', '2', '-b:a', '320k', '-write_xing', '1', tmp_out],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90
             )
         if os.path.isfile(tmp_out) and os.path.getsize(tmp_out) >= 16384:
@@ -4275,9 +4275,9 @@ def api_video_pcm_chunk_v131():
     try:
         st_sec = max(0.0, float(request.query.get('start', 0.0)))
         dur_sec = max(0.5, min(60.0, float(request.query.get('dur', 30.0))))
-        sr = int(request.query.get('sr', 44100))
-        if sr < 8000 or sr > 48000:
-            sr = 44100
+        sr = int(request.query.get('sr', 48000))
+        if sr < 8000 or sr > 384000:
+            sr = 48000
         src_input = _resolve_video_src_input_v131(src)
         cmd = [
             find_ffmpeg_binary(), '-v', 'error',
@@ -6209,9 +6209,9 @@ def api_video_pcm_chunk_v212():
     try:
         st_sec = max(0.0, float(request.query.get('start', 0.0)))
         dur_sec = max(0.5, min(60.0, float(request.query.get('dur', 30.0))))
-        sr = int(request.query.get('sr', 44100))
-        if sr < 8000 or sr > 48000:
-            sr = 44100
+        sr = int(request.query.get('sr', 48000))
+        if sr < 8000 or sr > 384000:
+            sr = 48000
         cmd = [
             find_ffmpeg_binary(), '-v', 'error',
             '-ss', f"{st_sec:.3f}", '-t', f"{dur_sec:.3f}",
@@ -9463,7 +9463,7 @@ def _build_reverse_ffmpeg_cmd_v223(src_input, seg_start, seg_dur, audio_idx, no_
     if no_audio:
         cmd.extend(['-an'])
     else:
-        cmd.extend(['-map', f'0:a:{int(audio_idx)}?', '-af', 'areverse', '-c:a', 'aac', '-b:a', '128k', '-ac', '2'])
+        cmd.extend(['-map', f'0:a:{int(audio_idx)}?', '-af', 'areverse', '-c:a', 'aac', '-b:a', '320k', '-ac', '2'])
 
     vf_str = f"scale=-2:'min({max_h},trunc(ih/2)*2)':flags=fast_bilinear,fps={encode_fps},reverse"
     cmd.extend([
@@ -9709,9 +9709,9 @@ def api_video_pcm_chunk_v220():
     try:
         st_sec = max(0.0, float(request.query.get('start', 0.0)))
         dur_sec = max(0.5, min(240.0, float(request.query.get('dur', 45.0))))
-        sr = int(request.query.get('sr', 44100))
-        if sr < 8000 or sr > 48000:
-            sr = 44100
+        sr = int(request.query.get('sr', 48000))
+        if sr < 8000 or sr > 384000:
+            sr = 48000
         try:
             aidx = max(0, int(request.query.get('aidx') or 0))
         except Exception:
@@ -15734,11 +15734,25 @@ def _extract_yt_full_v252(video_id: str, force_refresh: bool = False) -> dict:
                 entry["is_h264"] = is_h264
                 video_by_h[h] = entry
 
-    # Sort audio: prefer itag 140 (m4a AAC 128k) first for instant compatibility, then highest abr
-    audio_only.sort(key=lambda x: (1 if x["format_id"] == "140" else (0.9 if x["ext"] == "m4a" else 0.5), x["abr"]), reverse=True)
+    # Sort audio:
+    # 1) Studio Opus 251 (~160 kbps, full 20 kHz spectrum) / highest abr first for best_audio
+    # 2) Keep best_m4a_audio (itag 140 / m4a) for instant 0.5s -c:v copy -c:a copy MP4 video muxing
+    audio_m4a = sorted(
+        audio_only,
+        key=lambda x: (1 if x["format_id"] == "140" else (0.9 if x["ext"] == "m4a" else 0.5), x["abr"]),
+        reverse=True,
+    )
+    audio_only.sort(
+        key=lambda x: (
+            1.0 if x["format_id"] == "251" else (0.95 if "opus" in str(x.get("acodec") or "").lower() else (0.85 if x["format_id"] == "140" else 0.7)),
+            x["abr"],
+        ),
+        reverse=True,
+    )
     combined_mp4.sort(key=lambda x: (x["height"], x["vbr"]), reverse=True)
 
     best_audio = audio_only[0] if audio_only else (combined_mp4[0] if combined_mp4 else None)
+    best_m4a_audio = audio_m4a[0] if audio_m4a else best_audio
     best_combined = combined_mp4[0] if combined_mp4 else None
 
     # Build clean quality options (1080p, 720p, 480p, 360p)
@@ -15750,7 +15764,7 @@ def _extract_yt_full_v252(video_id: str, force_refresh: bool = False) -> dict:
                 "height": target_h,
                 "label": f"{target_h}p MP4",
                 "video": vf,
-                "audio": best_audio,
+                "audio": best_m4a_audio,
                 "combined": False,
             })
         else:
@@ -15782,6 +15796,8 @@ def _extract_yt_full_v252(video_id: str, force_refresh: bool = False) -> dict:
         "duration": int(float(info.get("duration") or 0)),
         "thumbnail": thumb,
         "best_audio": best_audio,
+        "best_m4a_audio": best_m4a_audio,
+        "audio_formats": audio_only,
         "best_combined": best_combined,
         "qualities": qualities,
     }
@@ -15877,16 +15893,62 @@ def _register_yt_virtual_file_v253(virt_name: str, full_path: str) -> str:
     return bn
 
 
-def _ensure_yt_audio_cached_v252(vid: str) -> tuple:
+_YT_AUDIO_STREAM_PREF_V255 = "opus_251"
+
+
+def _pick_yt_audio_by_pref_v255(meta: dict, pref: str = None) -> dict:
+    p = str(pref or _YT_AUDIO_STREAM_PREF_V255 or "opus_251").strip().lower()
+    afmts = list(meta.get("audio_formats") or [])
+    if not afmts:
+        return meta.get("best_audio") or meta.get("best_combined")
+    if p == "aac_140":
+        afmts.sort(
+            key=lambda x: (1.0 if x.get("format_id") == "140" else (0.9 if x.get("ext") == "m4a" else 0.5), float(x.get("abr") or 0)),
+            reverse=True,
+        )
+    elif p == "abr_max":
+        afmts.sort(
+            key=lambda x: (float(x.get("abr") or 0), 1.0 if x.get("format_id") == "251" else 0.8),
+            reverse=True,
+        )
+    else:
+        # opus_251 or wav_pcm: prefer highest-fidelity Opus 251 (160k+ 20kHz)
+        afmts.sort(
+            key=lambda x: (
+                1.0 if x.get("format_id") == "251" else (0.95 if "opus" in str(x.get("acodec") or "").lower() else (0.85 if x.get("format_id") == "140" else 0.7)),
+                float(x.get("abr") or 0),
+            ),
+            reverse=True,
+        )
+    return afmts[0]
+
+
+def _ensure_yt_audio_cached_v252(vid: str, pref: str = None) -> tuple:
     meta = _extract_yt_full_v252(vid)
-    ba = meta.get("best_audio") or meta.get("best_combined")
+    eff_pref = str(pref or _YT_AUDIO_STREAM_PREF_V255 or "opus_251").strip().lower()
+    ba = _pick_yt_audio_by_pref_v255(meta, eff_pref)
     if not ba:
         raise RuntimeError("Аудиопоток не найден")
-    ext = ba.get("ext") or "m4a"
+    ext = ba.get("ext") or "webm"
+    fid = ba.get("format_id") or "best"
     cache_dir = _get_yt_stream_cache_dir_v252()
-    local_raw = os.path.join(cache_dir, f"yt_aud_{vid}.{ext}")
+    local_raw = os.path.join(cache_dir, f"yt_aud_{vid}_{fid}.{ext}")
     if not (os.path.isfile(local_raw) and os.path.getsize(local_raw) > 32768):
         _download_yt_url_fast_v252(ba, local_raw, max_workers=6)
+    if eff_pref == "wav_pcm":
+        wav_out = os.path.join(cache_dir, f"yt_aud_{vid}_48k.wav")
+        if not (os.path.isfile(wav_out) and os.path.getsize(wav_out) > 65536):
+            ff = find_ffmpeg_binary()
+            if ff:
+                subprocess.run(
+                    [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", local_raw, "-vn", "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", wav_out],
+                    timeout=90,
+                    check=False,
+                )
+                _sanitize_canonical_wav_file_v159(wav_out)
+        if os.path.isfile(wav_out) and os.path.getsize(wav_out) > 65536:
+            _register_yt_virtual_file_v253(os.path.basename(wav_out), wav_out)
+            return wav_out, meta
     _register_yt_virtual_file_v253(os.path.basename(local_raw), local_raw)
     return local_raw, meta
 
@@ -16007,13 +16069,14 @@ def _resolve_track_full_path_v253(filename: str) -> str:
     cand_c = os.path.join(cache_dir, bn)
     if os.path.isfile(cand_c):
         return cand_c
-    # Also check if filename has [vid] pattern like "[YT] Title [GllEDACUbNo].m4a"
-    m_vid = re.search(r"\[([A-Za-z0-9_-]{11})\]\.(m4a|webm|mp3|mp4)$", bn)
+    # Also check if filename has [vid] pattern like "[YT] Title [GllEDACUbNo].webm"
+    m_vid = re.search(r"\[([A-Za-z0-9_-]{11})\]\.(m4a|webm|opus|wav|mp3|mp4)$", bn)
     if m_vid:
         vid_m, ext_m = m_vid.group(1), m_vid.group(2)
-        cand_aud = os.path.join(cache_dir, f"yt_aud_{vid_m}.{ext_m}")
-        if os.path.isfile(cand_aud):
-            return cand_aud
+        for cand_fn in (f"yt_aud_{vid_m}_251.{ext_m}", f"yt_aud_{vid_m}_140.{ext_m}", f"yt_aud_{vid_m}_48k.wav", f"yt_aud_{vid_m}.{ext_m}"):
+            cand_aud = os.path.join(cache_dir, cand_fn)
+            if os.path.isfile(cand_aud):
+                return cand_aud
     return _ORIG_RESOLVE_TRACK_V253(filename)
 
 
@@ -16095,7 +16158,8 @@ def api_youtube_range_proxy_v253():
         meta = _extract_yt_full_v252(vid)
         stream_info = None
         if kind == "audio":
-            stream_info = meta.get("best_audio") or meta.get("best_combined")
+            audio_pref = str(request.query.get("audio_pref") or _YT_AUDIO_STREAM_PREF_V255 or "opus_251").strip().lower()
+            stream_info = _pick_yt_audio_by_pref_v255(meta, audio_pref)
         elif kind == "combined":
             stream_info = meta.get("best_combined")
             if not stream_info:
@@ -16183,29 +16247,28 @@ def api_youtube_prepare_deck_a_v253():
     except Exception:
         limit_mb = 300.0
 
+    audio_pref = str(body.get("audio_pref") or request.query.get("audio_pref") or _YT_AUDIO_STREAM_PREF_V255 or "opus_251").strip().lower()
+    if audio_pref in ("opus_251", "abr_max", "aac_140", "wav_pcm"):
+        globals()["_YT_AUDIO_STREAM_PREF_V255"] = audio_pref
+
     try:
         meta = _extract_yt_full_v252(vid)
-        ba = meta.get("best_audio") or meta.get("best_combined")
+        ba = _pick_yt_audio_by_pref_v255(meta, audio_pref)
         if not ba:
             return json.dumps({"status": "error", "error": "Аудиопоток не найден"}, ensure_ascii=False)
 
         title = str(meta.get("title") or f"YouTube_{vid}").strip()
         channel = str(meta.get("channel") or "YouTube").strip()
         dur = int(meta.get("duration") or 0)
-        ext = str(ba.get("ext") or "m4a")
+        ext = "wav" if audio_pref == "wav_pcm" else str(ba.get("ext") or "webm")
         sz_b = _probe_yt_stream_size_v253(ba)
-        sz_mb = round(sz_b / (1024.0 * 1024.0), 2) if sz_b > 0 else round((dur * 16.0) / 1024.0, 2)
+        sz_mb = round(sz_b / (1024.0 * 1024.0), 2) if sz_b > 0 else round((dur * 20.0) / 1024.0, 2)
 
         safe_title = re.sub(r'[\\/*?:"<>|]', "_", title).strip()[:110] or f"YouTube_{vid}"
         virt_fn = f"[YT] {safe_title} [{vid}].{ext}"
 
-        cache_dir = _get_yt_stream_cache_dir_v252()
-        local_raw = os.path.join(cache_dir, f"yt_aud_{vid}.{ext}")
-        already_cached = os.path.isfile(local_raw) and os.path.getsize(local_raw) > 32768
-
-        if already_cached or (limit_mb > 0 and sz_mb <= limit_mb):
-            if not already_cached:
-                _download_yt_url_fast_v252(ba, local_raw, max_workers=6)
+        if limit_mb > 0 and sz_mb <= limit_mb:
+            local_raw, _ = _ensure_yt_audio_cached_v252(vid, audio_pref)
             _register_yt_virtual_file_v253(virt_fn, local_raw)
             return json.dumps({
                 "status": "ok",
@@ -16215,6 +16278,9 @@ def api_youtube_prepare_deck_a_v253():
                 "channel": channel,
                 "duration": dur,
                 "size_mb": sz_mb,
+                "audio_pref": audio_pref,
+                "format_id": ba.get("format_id"),
+                "abr": ba.get("abr"),
                 "filename": virt_fn,
                 "stream_url": "/api/media/" + urllib.parse.quote(virt_fn),
             }, ensure_ascii=False)
@@ -16228,8 +16294,11 @@ def api_youtube_prepare_deck_a_v253():
                 "channel": channel,
                 "duration": dur,
                 "size_mb": sz_mb,
+                "audio_pref": audio_pref,
+                "format_id": ba.get("format_id"),
+                "abr": ba.get("abr"),
                 "filename": f"[YT Поток] {safe_title} [{vid}]",
-                "stream_url": f"/api/youtube/range_proxy?v={vid}&kind=audio",
+                "stream_url": f"/api/youtube/range_proxy?v={vid}&kind=audio&audio_pref={audio_pref}",
             }, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
@@ -16361,8 +16430,15 @@ def api_youtube_live_stream_v252():
         cache_dir = _get_yt_stream_cache_dir_v252()
         ff = find_ffmpeg_binary()
 
-        if seek_sec <= 0.05 and local_raw.endswith((".m4a", ".mp3", ".aac")):
-            mime = "audio/mp4" if local_raw.endswith(".m4a") else "audio/mpeg"
+        if seek_sec <= 0.05 and local_raw.endswith((".m4a", ".mp3", ".aac", ".webm", ".opus", ".wav")):
+            if local_raw.endswith(".m4a"):
+                mime = "audio/mp4"
+            elif local_raw.endswith(".wav"):
+                mime = "audio/wav"
+            elif local_raw.endswith((".webm", ".opus")):
+                mime = "audio/webm"
+            else:
+                mime = "audio/mpeg"
             return static_file(os.path.basename(local_raw), root=os.path.dirname(local_raw), mimetype=mime)
 
         if ff:
@@ -16372,7 +16448,7 @@ def api_youtube_live_stream_v252():
                 cmd = [ff, "-y", "-hide_banner", "-loglevel", "error"]
                 if seek_sec > 0.05:
                     cmd += ["-ss", f"{seek_sec:.2f}"]
-                cmd += ["-i", local_raw, "-vn", "-c:a", "libmp3lame", "-b:a", "192k", out_seek_path]
+                cmd += ["-i", local_raw, "-vn", "-c:a", "libmp3lame", "-b:a", "320k", out_seek_path]
                 subprocess.run(cmd, timeout=45, check=False)
             if os.path.isfile(out_seek_path) and os.path.getsize(out_seek_path) > 4096:
                 return static_file(out_seek_name, root=cache_dir, mimetype="audio/mpeg")

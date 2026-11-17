@@ -676,6 +676,12 @@ window.ensureStudioBufferLoadedV61 = async function() {
         const decoded = await window.audioCtx.decodeAudioData(ab);
         if (window.currentPlayingTrack === trackName) {
             window.studioBuffer = decoded;
+            if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
+                window.computeBufferAutoGain(decoded, window.appConfig.val_autoRms);
+            }
+            if (typeof window.buildAudioGraph === 'function') {
+                window.buildAudioGraph(true);
+            }
             if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
                 window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decoded);
             }

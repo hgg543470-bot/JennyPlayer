@@ -6475,29 +6475,38 @@
             if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
             if (window._vidStateV130) window._vidStateV130.trueDuration = dur;
 
-            var srCandidates = (dur > 5400) ? [24000, 16000] : ((dur > 2400) ? [32000, 24000] : [44100, 32000]);
+            var ctxSrB = (vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000;
+            var srCandidates = [ctxSrB, 48000, 44100];
             var sr = srCandidates[0], totalFrames = 0, audioBuf = null, revAudioBuf = null;
             for (var sIdx = 0; sIdx < srCandidates.length; sIdx++) {
                 try {
                     sr = srCandidates[sIdx];
                     totalFrames = Math.floor(dur * sr);
                     audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                    revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                    if (audioBuf && revAudioBuf) break;
+                    try {
+                        revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                    } catch (eRev) {
+                        revAudioBuf = null;
+                    }
+                    if (audioBuf) break;
                 } catch (e) {
                     audioBuf = null;
                     revAudioBuf = null;
                 }
             }
             if (!audioBuf) {
-                var fallbackSrs = [24000, 16000, 12000];
-                for (var fIdx = 0; fIdx < fallbackSrs.length; fIdx++) {
+                var capListB = [10800, 7200, 5400, 3600, 2400];
+                for (var fIdx = 0; fIdx < capListB.length; fIdx++) {
                     try {
-                        sr = fallbackSrs[fIdx];
-                        totalFrames = Math.floor(dur * sr);
+                        sr = 48000;
+                        totalFrames = Math.floor(Math.min(dur, capListB[fIdx]) * sr);
                         audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                        revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                        if (audioBuf && revAudioBuf) break;
+                        try {
+                            revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                        } catch (eRev2) {
+                            revAudioBuf = null;
+                        }
+                        if (audioBuf) break;
                     } catch (e) {}
                 }
             }

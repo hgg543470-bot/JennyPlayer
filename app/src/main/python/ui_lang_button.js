@@ -41,19 +41,23 @@ window.updateDualLangButtons = function() {
 
 window.applyVideoMasterPresetV35 = function(force) {
     window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
-    if (!force && window.appConfig._videoPresetAppliedV35) return;
+    const curVariant = window.JENNY_AUDIO_APK_VARIANT || 3;
+    const variantChanged = (window.appConfig._lastBakedApkVariantV255 !== curVariant);
+    if (!force && window.appConfig._videoPresetAppliedV35 && !variantChanged) return;
+    const isVar2 = (curVariant === 2);
     Object.assign(window.appConfig, {
         _videoPresetAppliedV35: true, _migratedToRealUnitsV20: true,
+        _lastBakedApkVariantV255: curVariant,
         studioMode: true, phaseFixEnabled: false,
-        opt_midPhase: true, val_midPhase: 4,
+        opt_midPhase: true, val_midPhase: isVar2 ? 1.5 : 4,
         opt_midQ: true, val_midQ: 120,
-        opt_deEsser: true, val_deEsser: -2,
-        opt_cleanFir: true, val_cleanFir: 3,
-        opt_masterCeil: true, val_masterCeil: -1.0,
+        opt_deEsser: true, val_deEsser: isVar2 ? 0 : -2,
+        opt_cleanFir: true, val_cleanFir: isVar2 ? 2 : 3,
+        opt_masterCeil: true, val_masterCeil: isVar2 ? -0.5 : -1.0,
         opt_autoRms: true, val_autoRms: -6,
         opt_monoBass: true, val_monoBass: 79,
-        opt_msWidth: true, val_msWidth: 130,
-        opt_punch: true, val_punch: -1,
+        opt_msWidth: true, val_msWidth: isVar2 ? 125 : 130,
+        opt_punch: true, val_punch: isVar2 ? 2 : -1,
         opt_crossfeed: false, val_crossfeed: 65,
         leftHandedMode: false, pitchLock: true, xNormalSpeed: false,
         normalPlaybackSpeed: 0.97, autoSaveBase: false,
@@ -64,7 +68,7 @@ window.applyVideoMasterPresetV35 = function(force) {
         ],
         formatSlots: JSON.parse(JSON.stringify(window.DEFAULT_FORMAT_SLOTS)),
         amoledMode: true, volSlider: true,
-        firEnabled: true, firSettings: { gain: 1.5, decay: 1.28 },
+        firEnabled: true, firSettings: { gain: isVar2 ? 1.25 : 1.5, decay: 1.28 },
         multiBandEnabled: true, multiBandSettings: { low: 160, high: 2528 },
         limiterEnabled: true, limiterSettings: { threshold: -18, knee: 128, ratio: 4, attack: 192, release: 352 },
         eqEnabled: true, boosterEnabled: true, boosterPower: 5
@@ -82,7 +86,7 @@ window.applyVideoMasterPresetV35 = function(force) {
 
     const valMap = {
         'cfg_normalPlaybackSpeed': 0.97, 'cfg_defaultScrubSpeed': 1.1,
-        'cfg_fir_gain': 1.5, 'cfg_fir_decay': 1.28,
+        'cfg_fir_gain': isVar2 ? 1.25 : 1.5, 'cfg_fir_decay': 1.28,
         'cfg_mb_low': 160, 'cfg_mb_high': 2528,
         'cfg_lim_threshold': -18, 'cfg_lim_knee': 128, 'cfg_lim_ratio': 4,
         'cfg_lim_attack': 192, 'cfg_lim_release': 352, 'cfg_boosterPower': 5
@@ -101,9 +105,12 @@ window.applyVideoMasterPresetV35 = function(force) {
     if (typeof origLoad === 'function' && !window._loadWrappedV35) {
         window._loadWrappedV35 = true;
         window.loadConfigFromDisk = async function() {
-            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV35);
+            const curVariant = window.JENNY_AUDIO_APK_VARIANT || 3;
+            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV35 && window.appConfig._lastBakedApkVariantV255 === curVariant);
             await origLoad();
-            if (!wasApplied) window.applyVideoMasterPresetV35(true);
+            if (!wasApplied || (window.appConfig && window.appConfig._lastBakedApkVariantV255 !== curVariant)) {
+                window.applyVideoMasterPresetV35(true);
+            }
         };
     }
 })();

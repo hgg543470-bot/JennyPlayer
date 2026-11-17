@@ -307,7 +307,7 @@ await new Promise(r => setTimeout(r, 120));
 }
 if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
 
-const srCandidates = (dur > 3600) ? [24000, 16000] : ((dur > 1200) ? [32000, 24000] : [44100, 32000]);
+const srCandidates = [(vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000, 48000, 44100];
 let sr = srCandidates[0], totalFrames = 0, audioBuf = null;
 for (const candSr of srCandidates) {
 try { sr = candSr; totalFrames = Math.floor(dur * sr); audioBuf = vd.ctx.createBuffer(2, totalFrames, sr); if (audioBuf) break; } catch (e) {}
@@ -1448,8 +1448,8 @@ await new Promise(r => setTimeout(r, 120));
 }
 if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
 
-// Выбираем максимальную частоту дискретизации, которая целиком помещается в Float32 AudioBuffer
-const srCandidates = (dur > 5400) ? [32000, 24000] : [44100, 32000, 24000];
+// Всегда держим максимальную частоту дискретизации (48000 / 44100 Гц) в Float32 AudioBuffer
+const srCandidates = [(vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000, 48000, 44100];
 let sr = srCandidates[0], totalFrames = 0, audioBuf = null;
 for (const candSr of srCandidates) {
 try {
@@ -2431,8 +2431,8 @@ setTimeout(() => {
         const dEl = document.getElementById('v130DurTime');
         if (dEl && window.fmtKhSecV90) dEl.innerText = window.fmtKhSecV90(dur);
 
-        // Оптимальная частота для полного помещения 2-3 часового фильма в ОЗУ без переполнения кучи WebView
-        const srCandidates = (dur > 5400) ? [24000, 16000] : ((dur > 2400) ? [32000, 24000] : [44100, 32000]);
+        // Всегда используем максимальную частоту (48000 / 44100 Гц) без снижения качества
+        const srCandidates = [(vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000, 48000, 44100];
         let sr = srCandidates[0], totalFrames = 0, audioBuf = null;
         for (const candSr of srCandidates) {
             try {
@@ -3585,29 +3585,31 @@ setTimeout(() => {
         if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
         if (window._vidStateV130) window._vidStateV130.trueDuration = dur;
 
-        const srCandidates = (dur > 5400) ? [24000, 16000] : ((dur > 2400) ? [32000, 24000] : [44100, 32000]);
+        const srCandidates = [(vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000, 48000, 44100];
         let sr = srCandidates[0], totalFrames = 0, audioBuf = null, revAudioBuf = null;
         for (const candSr of srCandidates) {
             try {
                 sr = candSr;
                 totalFrames = Math.floor(dur * sr);
                 audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                if (audioBuf && revAudioBuf) break;
+                try {
+                    revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                } catch (eRev) {
+                    revAudioBuf = null;
+                }
+                if (audioBuf) break;
             } catch (e) {
                 audioBuf = null;
                 revAudioBuf = null;
             }
         }
         if (!audioBuf) {
-            // Если фильм огромный и 2 полных буфера на 44.1кГц не влезли, берём на ступень ниже для пары FWD+REV
-            for (const candSr of [24000, 16000, 12000]) {
+            for (const capDur of [10800, 7200, 5400, 3600, 2400]) {
                 try {
-                    sr = candSr;
-                    totalFrames = Math.floor(dur * sr);
+                    sr = 48000;
+                    totalFrames = Math.floor(Math.min(dur, capDur) * sr);
                     audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                    revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                    if (audioBuf && revAudioBuf) break;
+                    if (audioBuf) break;
                 } catch (e) {}
             }
         }

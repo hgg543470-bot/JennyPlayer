@@ -4735,10 +4735,54 @@ window.stopAllExternalStreamsV97 = function() {
         }
     };
 
+    window.getYtAudioStreamPrefV255 = function() {
+        var cfg = window.appConfig || {};
+        if (cfg.ytAudioStreamPrefV255) return String(cfg.ytAudioStreamPrefV255);
+        try {
+            var s = localStorage.getItem('jenny_yt_audio_pref_v255');
+            if (s) return s;
+        } catch (e) {}
+        return 'opus_251';
+    };
+
+    window.setYtAudioStreamPrefV255 = function(pref) {
+        var p = String(pref || 'opus_251');
+        window.appConfig = window.appConfig || {};
+        window.appConfig.ytAudioStreamPrefV255 = p;
+        try {
+            localStorage.setItem('jenny_yt_audio_pref_v255', p);
+            localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
+        } catch (e) {}
+        window.refreshYtQualityAndLimitPillsV253();
+        var mapNames = {
+            opus_251: '🔥 Opus 251 (160кбит / 20кГц Студия)',
+            abr_max: '⚡ Макс. битрейт (Авто-выбор)',
+            aac_140: '🎵 AAC 140 (m4a 128кбит)',
+            wav_pcm: '💎 Чистый WAV 48кГц PCM'
+        };
+        if (typeof window.showToast === 'function') {
+            window.showToast('🎧 Поток звука: ' + (mapNames[p] || p));
+        }
+    };
+
     window.refreshYtQualityAndLimitPillsV253 = function() {
         var st = window._ytStudioStateV252;
         var curH = st.selectedHeight || 720;
         var curLim = window.getYtPreloadLimitMbV253();
+        var curAudPref = window.getYtAudioStreamPrefV255();
+
+        ['opus_251', 'abr_max', 'aac_140', 'wav_pcm'].forEach(function(pk) {
+            var bM = document.getElementById('ytAudPrefModalV255_' + pk);
+            var bS = document.getElementById('ytAudPrefSetV255_' + pk);
+            var act = (curAudPref === pk);
+            [bM, bS].forEach(function(btn) {
+                if (btn) {
+                    btn.style.background = act ? 'linear-gradient(135deg,#1f6feb,#3fb950)' : 'rgba(255,255,255,0.06)';
+                    btn.style.color = act ? '#fff' : '#c9d1d9';
+                    btn.style.borderColor = act ? '#58a6ff' : 'rgba(255,255,255,0.16)';
+                }
+            });
+        });
 
         [360, 480, 720, 1080].forEach(function(h) {
             var b = document.getElementById('ytQualPillV253_' + h);
@@ -4793,6 +4837,15 @@ window.stopAllExternalStreamsV97 = function() {
                 '<button type="button" id="ytLimPillSetV253_300" onclick="window.setYtPreloadLimitMbV253(300)" style="flex:1;min-width:64px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">300 МБ</button>' +
                 '<button type="button" id="ytLimPillSetV253_600" onclick="window.setYtPreloadLimitMbV253(600)" style="flex:1;min-width:64px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">600 МБ</button>' +
                 '<button type="button" id="ytLimPillSetV253_99999" onclick="window.setYtPreloadLimitMbV253(99999)" style="flex:1;min-width:78px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">Всегда целиком</button>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);">' +
+                '<span style="color:#58a6ff;font-weight:800;font-size:12px;">🎧 Выбор приоритета аудио-потока (YouTube / Стримы):</span>' +
+            '</div>' +
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
+                '<button type="button" id="ytAudPrefSetV255_opus_251" onclick="window.setYtAudioStreamPrefV255(\'opus_251\')" style="flex:1;min-width:95px;padding:6px 6px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">🔥 Opus 251 (160к 20кГц)</button>' +
+                '<button type="button" id="ytAudPrefSetV255_abr_max" onclick="window.setYtAudioStreamPrefV255(\'abr_max\')" style="flex:1;min-width:85px;padding:6px 6px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">⚡ Макс. битрейт</button>' +
+                '<button type="button" id="ytAudPrefSetV255_aac_140" onclick="window.setYtAudioStreamPrefV255(\'aac_140\')" style="flex:1;min-width:80px;padding:6px 6px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">🎵 AAC 140 (m4a)</button>' +
+                '<button type="button" id="ytAudPrefSetV255_wav_pcm" onclick="window.setYtAudioStreamPrefV255(\'wav_pcm\')" style="flex:1;min-width:90px;padding:6px 6px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">💎 WAV 48кГц PCM</button>' +
             '</div>';
 
         var firstRow = container.querySelector('.setting-row');
@@ -5092,10 +5145,11 @@ window.stopAllExternalStreamsV97 = function() {
         var myReqId = (window._previewReqIdV97 = (window._previewReqIdV97 || 0) + 1);
         try {
             var limitMb = window.getYtPreloadLimitMbV253();
+            var audPref = window.getYtAudioStreamPrefV255();
             var prepRes = await fetch('/api/youtube/prepare_deck_a', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: item.id, limit_mb: limitMb })
+                body: JSON.stringify({ id: item.id, limit_mb: limitMb, audio_pref: audPref })
             });
             var prepJson = await prepRes.json();
             if (myReqId !== window._previewReqIdV97) return;
@@ -5291,6 +5345,14 @@ window.stopAllExternalStreamsV97 = function() {
                     '<button type="button" id="ytLimPillModalV253_300" onclick="window.setYtPreloadLimitMbV253(300)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">≤300МБ</button>' +
                     '<button type="button" id="ytLimPillModalV253_600" onclick="window.setYtPreloadLimitMbV253(600)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">≤600МБ</button>' +
                     '<button type="button" id="ytLimPillModalV253_99999" onclick="window.setYtPreloadLimitMbV253(99999)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">Всегда</button>' +
+                '</div>' +
+                // Audio Stream Priority Pills
+                '<div style="display:flex;align-items:center;gap:5px;padding:0 14px 6px 14px;flex-wrap:wrap;">' +
+                    '<span style="font-size:10.5px;color:#58a6ff;font-weight:700;white-space:nowrap;">Аудио-поток:</span>' +
+                    '<button type="button" id="ytAudPrefModalV255_opus_251" onclick="window.setYtAudioStreamPrefV255(\'opus_251\')" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10px;font-weight:700;cursor:pointer;">🔥Opus 251</button>' +
+                    '<button type="button" id="ytAudPrefModalV255_abr_max" onclick="window.setYtAudioStreamPrefV255(\'abr_max\')" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10px;font-weight:700;cursor:pointer;">⚡Макс.кбит</button>' +
+                    '<button type="button" id="ytAudPrefModalV255_aac_140" onclick="window.setYtAudioStreamPrefV255(\'aac_140\')" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10px;font-weight:700;cursor:pointer;">🎵AAC 140</button>' +
+                    '<button type="button" id="ytAudPrefModalV255_wav_pcm" onclick="window.setYtAudioStreamPrefV255(\'wav_pcm\')" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10px;font-weight:700;cursor:pointer;">💎WAV 48к</button>' +
                 '</div>' +
                 // Search bar
                 '<div style="display:flex;gap:8px;padding:4px 14px 10px 14px;">' +

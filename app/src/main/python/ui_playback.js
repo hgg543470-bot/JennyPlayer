@@ -73,18 +73,23 @@ window.decodeHugeTrackToRamV71 = async function(filename, titleEl, player, preMe
     }
     if (dur <= 0) return null;
 
-    // Подбираем частоту дискретизации так, чтобы 3-4 часовой буфер гарантированно поместился в память Android WebView
-    const srCandidates = (dur > 5400) ? [16000, 12000, 8000] : ((dur > 2400) ? [24000, 16000, 12000] : [44100, 32000, 24000]);
+    // Всегда держим максимальную частоту дискретизации (48000 / 44100 Гц, 32-bit Float) без урезания качества!
+    const ctxSr = (window.audioCtx && window.audioCtx.sampleRate >= 44100) ? window.audioCtx.sampleRate : 48000;
+    const srCandidates = [ctxSr, 48000, 44100];
     let sr = srCandidates[0];
     let totalFrames = Math.floor(dur * sr);
     let audioBuf = null;
     for (const candSr of srCandidates) {
-        try {
-            sr = candSr;
-            totalFrames = Math.floor(dur * sr);
-            audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
-            if (audioBuf) break;
-        } catch (allocErr) {}
+        for (const capDur of [dur, 10800, 7200, 5400, 3600, 2400]) {
+            if (capDur > dur && capDur !== dur) continue;
+            try {
+                sr = candSr;
+                totalFrames = Math.floor(Math.min(dur, capDur) * sr);
+                audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
+                if (audioBuf) break;
+            } catch (allocErr) {}
+        }
+        if (audioBuf) break;
     }
     if (!audioBuf) return null;
     const chL = audioBuf.getChannelData(0);
@@ -444,6 +449,12 @@ window.playTrack = async function(filename, listContext = 'main') {
 
         if (window.currentPlayingTrack === filename) {
             window.studioBuffer = decodedBuffer;
+            if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
+                window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
+            }
+            if (typeof window.buildAudioGraph === 'function') {
+                window.buildAudioGraph(true);
+            }
             if (typeof window.loadTrackReversibleDataV67 === 'function') {
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
             }
