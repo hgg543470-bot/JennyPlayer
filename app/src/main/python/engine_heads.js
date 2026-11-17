@@ -21,7 +21,9 @@ if (!window.appConfig._defaultsV2) {
         amoledMode: true,
         volSlider: true,
         leftHandedMode: false,
-        pitchLock: true,
+        gearKeyV66: 'jbuf-lock',
+        elasticHoseMode: true,
+        pitchLock: false,
         xNormalSpeed: false,
         normalPlaybackSpeed: 0.97,
         autoSaveBase: false,
@@ -57,7 +59,13 @@ if (window.appConfig.eqEnabled === undefined) window.appConfig.eqEnabled = true;
 if (window.appConfig.amoledMode === undefined) window.appConfig.amoledMode = true;
 if (window.appConfig.volSlider === undefined) window.appConfig.volSlider = true;
 
-if (window.appConfig.pitchLock === undefined) window.appConfig.pitchLock = true;
+if (!window.appConfig.gearKeyV66) window.appConfig.gearKeyV66 = 'jbuf-lock';
+if (window.appConfig.gearKeyV66 === 'jbuf-lock') {
+    window.appConfig.elasticHoseMode = true;
+    window.appConfig.pitchLock = false;
+} else if (window.appConfig.pitchLock === undefined) {
+    window.appConfig.pitchLock = true;
+}
 if (window.appConfig.xNormalSpeed === undefined) window.appConfig.xNormalSpeed = false;
 if (window.appConfig.normalPlaybackSpeed === undefined) window.appConfig.normalPlaybackSpeed = 0.97;
 if (window.appConfig.autoSaveBase === undefined) window.appConfig.autoSaveBase = false;

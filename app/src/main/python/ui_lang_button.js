@@ -41,9 +41,9 @@ window.updateDualLangButtons = function() {
 
 window.applyVideoMasterPresetV35 = function(force) {
     window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
-    if (!force && window.appConfig._videoPresetAppliedV35 && window.appConfig._migratedFir35PhaseOnV256) return;
+    if (!force && window.appConfig._videoPresetAppliedV35 && window.appConfig._migratedFir35PhaseOnV256 && window.appConfig._migratedJbufGearSyncV258) return;
     Object.assign(window.appConfig, {
-        _videoPresetAppliedV35: true, _migratedToRealUnitsV20: true, _migratedFir35PhaseOnV256: true,
+        _videoPresetAppliedV35: true, _migratedToRealUnitsV20: true, _migratedFir35PhaseOnV256: true, _migratedJbufGearSyncV258: true,
         studioMode: true, phaseFixEnabled: true,
         opt_midPhase: true, val_midPhase: 4,
         opt_midQ: true, val_midQ: 120,
@@ -55,7 +55,7 @@ window.applyVideoMasterPresetV35 = function(force) {
         opt_msWidth: true, val_msWidth: 130,
         opt_punch: true, val_punch: -1,
         opt_crossfeed: false, val_crossfeed: 65,
-        leftHandedMode: false, pitchLock: true, xNormalSpeed: false,
+        leftHandedMode: false, gearKeyV66: 'jbuf-lock', elasticHoseMode: true, pitchLock: false, xNormalSpeed: false,
         normalPlaybackSpeed: 0.97, autoSaveBase: false,
         defaultScrubSpeed: 1.1, autoSaveScrub: true,
         scrubZones: [
@@ -73,7 +73,7 @@ window.applyVideoMasterPresetV35 = function(force) {
 
     const chkMap = {
         'cfg_studioMode': true, 'cfg_phaseFix': true, 'cfg_leftHandedMode': false,
-        'cfg_pitchLock': true, 'cfg_xNormalSpeed': false, 'cfg_autoSaveBase': false,
+        'cfg_pitchLock': false, 'cfg_elasticHoseV44': true, 'cfg_xNormalSpeed': false, 'cfg_autoSaveBase': false,
         'cfg_autoSaveScrub': true, 'cfg_amoledMode': true, 'cfg_volSlider': true,
         'cfg_firEnabled': true, 'cfg_multiBandEnabled': true, 'cfg_limiterEnabled': true,
         'cfg_eqEnabled': true, 'cfg_boosterEnabled': true
@@ -101,9 +101,9 @@ window.applyVideoMasterPresetV35 = function(force) {
     if (typeof origLoad === 'function' && !window._loadWrappedV35) {
         window._loadWrappedV35 = true;
         window.loadConfigFromDisk = async function() {
-            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV35 && window.appConfig._migratedFir35PhaseOnV256);
+            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV35 && window.appConfig._migratedFir35PhaseOnV256 && window.appConfig._migratedJbufGearSyncV258);
             await origLoad();
-            if (!wasApplied || !(window.appConfig && window.appConfig._migratedFir35PhaseOnV256)) {
+            if (!wasApplied || !(window.appConfig && window.appConfig._migratedFir35PhaseOnV256 && window.appConfig._migratedJbufGearSyncV258)) {
                 window.applyVideoMasterPresetV35(true);
             }
         };

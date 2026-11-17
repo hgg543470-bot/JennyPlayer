@@ -489,6 +489,17 @@ window.initGearboxInteractivityV66 = function() {
     if (!window.appConfig.gearKeyV66) {
         window.appConfig.gearKeyV66 = 'jbuf-lock';
     }
+    if (window.appConfig.gearKeyV66 === 'jbuf-lock') {
+        window.appConfig.elasticHoseMode = true;
+        window.appConfig.pitchLock = false;
+        window.appConfig.studioMode = true;
+        const hoseChk = document.getElementById('cfg_elasticHoseV44');
+        const pitchChk = document.getElementById('cfg_pitchLock');
+        const studioChk = document.getElementById('cfg_studioMode');
+        if (hoseChk) hoseChk.checked = true;
+        if (pitchChk) pitchChk.checked = false;
+        if (studioChk) studioChk.checked = true;
+    }
 
     let isDragging = false;
     let dragOffsetX = 0, dragOffsetY = 0;

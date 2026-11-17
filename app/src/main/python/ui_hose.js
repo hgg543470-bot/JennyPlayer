@@ -328,54 +328,43 @@ window.startHoseWaveScopeV49 = function() {
                 window.currentTrackRevNameV67 === window.currentPlayingTrack
             );
 
+            const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+            const isHoseMode = Boolean(gKey === 'jbuf-lock' || (window.appConfig && window.appConfig.elasticHoseMode));
+
+            if (isHoseMode && Math.abs(targetSpd - 1.0) > 0.002 && window.studioBuffer) {
+                const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+                const baseBuf = isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer;
+                const tensPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined) ? window.appConfig.hoseTensionPct : 100;
+                const cache = window._hoseSplicerCacheV46;
+                if (!cache.splicedBuffer || cache.srcBuffer !== baseBuf || Math.abs((cache.speed || 1.0) - targetSpd) > 0.002) {
+                    window.buildElasticHoseBufferV46(baseBuf, targetSpd, tensPct);
+                }
+            }
+
             const origBufRef = hasXflacRev ? window.reconstructedMasterBufferV67 : window.studioBuffer;
             const origData = origBufRef.getChannelData(0);
-            const splicedBuf = (window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.splicedBuffer && Math.abs(targetSpd - 1.0) > 0.002)
+            const splicedBuf = (isHoseMode && window._hoseSplicerCacheV46.splicedBuffer && Math.abs(targetSpd - 1.0) > 0.002)
                 ? window._hoseSplicerCacheV46.splicedBuffer
                 : window.studioBuffer;
             const hoseData = splicedBuf.getChannelData(0);
 
-            let activeSeams = (window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.seamPointsOut && window._hoseSplicerCacheV46.seamPointsOut.length > 0)
+            let activeSeams = (isHoseMode && window._hoseSplicerCacheV46.seamPointsOut && window._hoseSplicerCacheV46.seamPointsOut.length > 0 && Math.abs(targetSpd - 1.0) > 0.002)
                 ? window._hoseSplicerCacheV46.seamPointsOut
                 : [];
             if (activeSeams.length === 0 && hasXflacRev && Array.isArray(window.currentTrackRevMapV67.seams)) {
                 activeSeams = window.currentTrackRevMapV67.seams.map(cs => cs[0]).filter(n => typeof n === 'number');
             }
 
-            const isHoseActiveNow = Boolean((window.appConfig && window.appConfig.elasticHoseMode && Math.abs(targetSpd - 1.0) > 0.002) || hasXflacRev);
-            const rawHosePlaySample = isHoseActiveNow
-                ? Math.floor(((Math.abs(targetSpd - 1.0) > 0.002) ? (curSec / targetSpd) : curSec) * sr)
-                : Math.floor(curSec * sr);
+            const isHoseActiveNow = Boolean((isHoseMode && window._hoseSplicerCacheV46.splicedBuffer && Math.abs(targetSpd - 1.0) > 0.002) || hasXflacRev);
+            const expSpdRatio = hasXflacRev ? (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) : 1.0;
 
-            // Привязываем центр окна к ближайшему 90° шву, чтобы оранжевый разделитель шва и обе кривые (Ориг vs Шланг/.xFLAC) были чётко видны!
-            let nearestSeamSample = -1;
-            let nearestSeamP1 = -1;
-            if (activeSeams.length > 0) {
-                let bestDist = Infinity;
-                let bestIdx = 0;
-                for (let s = 0; s < activeSeams.length; s++) {
-                    const d = Math.abs(activeSeams[s] - rawHosePlaySample);
-                    if (d < bestDist) {
-                        bestDist = d;
-                        nearestSeamSample = activeSeams[s];
-                        bestIdx = s;
-                    }
-                }
-                if (hasXflacRev && Array.isArray(window.currentTrackRevMapV67.seams) && window.currentTrackRevMapV67.seams[bestIdx]) {
-                    nearestSeamP1 = window.currentTrackRevMapV67.seams[bestIdx][3] || -1;
-                } else if (window._hoseSplicerCacheV46.seamLogs && window._hoseSplicerCacheV46.seamLogs[bestIdx]) {
-                    nearestSeamP1 = window._hoseSplicerCacheV46.seamLogs[bestIdx].p1 || -1;
-                }
-            }
+            const origStart = hasXflacRev
+                ? Math.min(Math.max(0, Math.floor(curSec * expSpdRatio * sr)), Math.max(0, origData.length - winSamples - 1))
+                : Math.min(Math.max(0, Math.floor(curSec * sr)), Math.max(0, origData.length - winSamples - 1));
 
-            const hoseStart = (nearestSeamSample >= 0)
-                ? Math.min(Math.max(0, nearestSeamSample - Math.floor(winSamples * 0.5)), Math.max(0, hoseData.length - winSamples - 1))
-                : Math.min(Math.max(0, rawHosePlaySample), Math.max(0, hoseData.length - winSamples - 1));
-
-            const expSpdRatio = hasXflacRev ? (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) : targetSpd;
-            const origStart = (nearestSeamP1 >= 0)
-                ? Math.min(Math.max(0, nearestSeamP1 - Math.floor(winSamples * 0.5)), Math.max(0, origData.length - winSamples - 1))
-                : Math.min(Math.max(0, Math.floor(hoseStart * expSpdRatio)), Math.max(0, origData.length - winSamples - 1));
+            const hoseStart = isHoseActiveNow
+                ? Math.min(Math.max(0, Math.floor(((Math.abs(targetSpd - 1.0) > 0.002) ? (curSec / targetSpd) : curSec) * sr)), Math.max(0, hoseData.length - winSamples - 1))
+                : origStart;
 
             const plotW = W - 34;
 
@@ -481,7 +470,8 @@ window._hoseArcDebounceTimerV47 = null;
 
 window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
     const player = document.getElementById('audioPlayer');
-    const isHose = Boolean(window.appConfig && window.appConfig.elasticHoseMode);
+    const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+    const isHose = Boolean(gKey === 'jbuf-lock' || (window.appConfig && window.appConfig.elasticHoseMode));
     const badge = document.getElementById('hoseLiveTelemetryV44');
 
     if (!isHose) {
@@ -580,7 +570,8 @@ window.installHosePlayerHooksV46 = function() {
         const orig = player[prop];
         player[prop] = function(ev) {
             const r = (typeof orig === 'function') ? orig.call(this, ev) : undefined;
-            if (window.appConfig && window.appConfig.elasticHoseMode && window.studioBuffer && this.playbackRate !== 10.0) {
+            const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+            if (window.appConfig && (gKey === 'jbuf-lock' || window.appConfig.elasticHoseMode) && window.studioBuffer && this.playbackRate !== 10.0) {
                 window.applyElasticHoseBufferLiveV46(false);
             }
             return r;
@@ -603,8 +594,13 @@ window.onHoseTensionInputV44 = function(val) {
 
     if (window._hoseSliderDebounceV46) clearTimeout(window._hoseSliderDebounceV46);
     window._hoseSliderDebounceV46 = setTimeout(() => {
-        if (window.appConfig.elasticHoseMode) {
-            window.applyElasticHoseBufferLiveV46(false);
+        const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
+        if (gKey === 'jbuf-lock' || window.appConfig.elasticHoseMode) {
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                window.syncMasterPlaybackEngineV59(false);
+            } else {
+                window.applyElasticHoseBufferLiveV46(false);
+            }
         }
         if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
     }, 120);
@@ -618,7 +614,7 @@ window.injectElasticHoseControlsV44 = function() {
     if (!pitchRow) return;
 
     const cfg = window.appConfig || {};
-    const isEn = Boolean(cfg.elasticHoseMode);
+    const isEn = Boolean(((cfg.gearKeyV66 || 'jbuf-lock') === 'jbuf-lock') || cfg.elasticHoseMode);
     const tens = cfg.hoseTensionPct !== undefined ? parseInt(cfg.hoseTensionPct, 10) : 100;
 
     const box = document.createElement('div');
@@ -788,8 +784,9 @@ window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
     const studioChk = document.getElementById('cfg_studioMode');
     const badge = document.getElementById('hoseLiveTelemetryV44');
 
+    const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
     const isStudioRam = Boolean(studioChk ? studioChk.checked : (window.appConfig && window.appConfig.studioMode));
-    const isHose = Boolean(hoseChk ? hoseChk.checked : (window.appConfig && window.appConfig.elasticHoseMode));
+    const isHose = Boolean(gKey === 'jbuf-lock' || (hoseChk ? hoseChk.checked : (window.appConfig && window.appConfig.elasticHoseMode)));
     const isWebApiPitch = Boolean(pitchChk ? pitchChk.checked : (window.appConfig && window.appConfig.pitchLock));
     const targetSpd = window.getActiveTargetSpeedV59();
     const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
