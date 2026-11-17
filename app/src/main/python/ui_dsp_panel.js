@@ -19,7 +19,7 @@ window.updateTopSearchOrMonitorBar = function() {
     const sm = document.getElementById('settingsModal'); const em = document.getElementById('eqModal');
     const isModalOpen = (sm && sm.classList.contains('open')) || (em && em.classList.contains('open'));
     const cfg = window.appConfig || {};
-    const ceilOn = Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled);
+    const ceilOn = Boolean(cfg.opt_masterCeil);
     const totalTxt = (typeof window.lastComputedCeilingDb !== 'undefined') ? window.lastComputedCeilingDb : -0.5;
     const detailsTxt = window.localizeCeilingBreakdown(window.lastCeilingBreakdown);
     const badge = document.getElementById('autoCeilStatusBadge');

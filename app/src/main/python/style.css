@@ -537,12 +537,13 @@ body,
     transform: translateX(-50%) !important;
     z-index: 5000 !important;
 }
-/* Зеркальная эргономика для режима "Левша" */
+/* Зеркальная эргономика для режима "Левша" (Дека А и Дека Б независимо) */
 body[data-lefthanded="true"] #topHeaderCapsule,
 body[data-lefthanded="true"] #subDockBar,
 body[data-lefthanded="true"] #mainTransportBar,
 body[data-lefthanded="true"] #auxControlsGroup,
-body[data-lefthanded="true"] #quickModalsGroup {
+body[data-lefthanded="true"] #quickModalsGroup,
+body[data-lefthanded-deckb="true"] #deckBControlsRowV216 {
     flex-direction: row-reverse !important;
 }
 
@@ -1094,7 +1095,8 @@ body.hide-help-badges .jenny-help-badge {
 
 
 /* === JENNY V70.3: CLEAN GEARBOX PLATE (NO OUTER CIRCLE) & SWIPE PASSTHROUGH === */
-#gearPlateV66.gearbox-knob-plate {
+#gearPlateV66.gearbox-knob-plate,
+#gearPlateDeckB.gearbox-knob-plate {
     border: none !important;
     border-radius: 0 !important;
     background: transparent !important;
@@ -1103,10 +1105,13 @@ body.hide-help-badges .jenny-help-badge {
     touch-action: pan-y !important;
 }
 #gearPlateV66.gearbox-knob-plate::before,
-#gearPlateV66.gearbox-knob-plate::after {
+#gearPlateV66.gearbox-knob-plate::after,
+#gearPlateDeckB.gearbox-knob-plate::before,
+#gearPlateDeckB.gearbox-knob-plate::after {
     display: none !important;
 }
-#gearPlateV66 .gearbox-knob-lever {
+#gearPlateV66 .gearbox-knob-lever,
+#gearPlateDeckB .gearbox-knob-lever {
     touch-action: none !important;
 }
 

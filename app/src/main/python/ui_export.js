@@ -183,8 +183,8 @@ window.executeTrackExportV69 = async function() {
             firNode.normalize = false;
             firNode.buffer = window.createFIRImpulse(offlineCtx, cfg.firSettings.decay);
             let firGain = offlineCtx.createGain();
-            firGain.value = cfg.firSettings.gain || 1.5;
-            firGain.gain.value = cfg.firSettings.gain || 1.5;
+            firGain.value = cfg.firSettings.gain || 3.5;
+            firGain.gain.value = cfg.firSettings.gain || 3.5;
 
             currentNode.connect(preFirPad);
             preFirPad.connect(firNode);

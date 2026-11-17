@@ -85,7 +85,7 @@ window.captureExportDspDnaV76 = function(srcBuf, renderedBuf, cfg) {
         val_punch: parseFloat(cfg.val_punch) || -1.0,
         opt_msWidth: Boolean(cfg.opt_msWidth),
         val_msWidth: parseFloat(cfg.val_msWidth) || 130,
-        opt_masterCeil: Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled),
+        opt_masterCeil: Boolean(cfg.opt_masterCeil),
         padDb: Number(padDb.toFixed(2))
     };
 };

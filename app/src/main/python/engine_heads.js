@@ -36,7 +36,8 @@ if (!window.appConfig._defaultsV2) {
             { val: 0.9, en: true }
         ],
         firEnabled: true,
-        firSettings: { gain: 1.5, decay: 1.28 },
+        firSettings: { gain: 3.5, decay: 1.28 },
+        phaseFixEnabled: true,
         multiBandEnabled: true,
         multiBandSettings: { low: 160, high: 2528 },
         limiterEnabled: true,
@@ -69,7 +70,8 @@ if (window.appConfig.firEnabled === undefined) window.appConfig.firEnabled = fal
 if (window.appConfig.multiBandEnabled === undefined) window.appConfig.multiBandEnabled = false;
 if (window.appConfig.limiterEnabled === undefined) window.appConfig.limiterEnabled = false;
 
-if (window.appConfig.firSettings === undefined) window.appConfig.firSettings = { gain: 2, decay: 4 };
+if (window.appConfig.firSettings === undefined) window.appConfig.firSettings = { gain: 3.5, decay: 1.28 };
+if (window.appConfig.phaseFixEnabled === undefined) window.appConfig.phaseFixEnabled = true;
 if (window.appConfig.multiBandSettings === undefined) window.appConfig.multiBandSettings = { low: 1600, high: 7200 };
 if (window.appConfig.limiterSettings === undefined) window.appConfig.limiterSettings = { threshold: -22, knee: 19, ratio: 22, attack: 26, release: 60 };
 
@@ -202,7 +204,7 @@ window.loadSingle = async function(cat, key, elId) {
     } catch (e) {}
 };
 
-window.resetFIR = function() { document.getElementById('cfg_fir_gain').value = 1.5; document.getElementById('cfg_fir_decay').value = 1.28; if(typeof window.updateSettings === 'function') window.updateSettings(); };
+window.resetFIR = function() { document.getElementById('cfg_fir_gain').value = 3.5; document.getElementById('cfg_fir_decay').value = 1.28; if(typeof window.updateSettings === 'function') window.updateSettings(); };
 window.resetMultiBand = function() { document.getElementById('cfg_mb_low').value = 160; document.getElementById('cfg_mb_high').value = 2528; if(typeof window.updateSettings === 'function') window.updateSettings(); };
 window.resetLimiter = function() { document.getElementById('cfg_lim_threshold').value = -18; document.getElementById('cfg_lim_knee').value = 128; document.getElementById('cfg_lim_ratio').value = 4; document.getElementById('cfg_lim_attack').value = 192; document.getElementById('cfg_lim_release').value = 352; if(typeof window.updateSettings === 'function') window.updateSettings(); };
 
@@ -299,7 +301,7 @@ window.updateSettings = function() {
     const elLimEn = document.getElementById('cfg_limiterEnabled'); if(elLimEn) window.appConfig.limiterEnabled = elLimEn.checked;
     
     if (!window.appConfig.firSettings) window.appConfig.firSettings = {};
-    const elFirGain = document.getElementById('cfg_fir_gain'); if(elFirGain) window.appConfig.firSettings.gain = parseFloat(elFirGain.value) || 2;
+    const elFirGain = document.getElementById('cfg_fir_gain'); if(elFirGain) window.appConfig.firSettings.gain = parseFloat(elFirGain.value) || 3.5;
     const elFirDecay = document.getElementById('cfg_fir_decay'); if(elFirDecay) window.appConfig.firSettings.decay = parseFloat(elFirDecay.value) || 4;
 
     if (!window.appConfig.multiBandSettings) window.appConfig.multiBandSettings = {};

@@ -133,7 +133,7 @@ if (cfg.firEnabled && cfg.firSettings) {
 vd.firNode = window.trackNodeDeckB(vd.ctx.createConvolver(), vd.activeDynamicNodes);
 vd.firNode.normalize = false;
 vd.firNode.buffer = window.createFIRImpulseDeckB(vd.ctx, cfg.firSettings.decay, cfg);
-vd.firGainNode.gain.value = parseFloat(cfg.firSettings.gain) || 1.5;
+vd.firGainNode.gain.value = parseFloat(cfg.firSettings.gain) || 3.5;
 cur.connect(vd.preFirPad); vd.preFirPad.connect(vd.firNode); vd.firNode.connect(vd.firGainNode);
 cur = vd.firGainNode;
 }

@@ -1777,8 +1777,8 @@
     window.getCustomVideoSpeedZonesV217 = function() {
         var list = [];
         for (var i = 1; i <= 6; i++) {
-            var en = document.getElementById('cfg_z' + i + '_en');
-            var val = document.getElementById('cfg_z' + i + '_val');
+            var en = document.getElementById('cfgB_z' + i + '_en');
+            var val = document.getElementById('cfgB_z' + i + '_val');
             if (en && val) {
                 if (en.checked) {
                     var num = parseFloat(String(val.value).replace(',', '.'));
@@ -1789,7 +1789,7 @@
             }
         }
         if (list.length === 0) {
-            var cfg = (window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {};
+            var cfg = (window.videoDeckV131 && window.videoDeckV131.config) || {};
             if (Array.isArray(cfg.scrubZones) && cfg.scrubZones.length > 0) {
                 cfg.scrubZones.forEach(function(z) {
                     if (z && z.en !== false && isFinite(parseFloat(z.val))) {
@@ -1799,18 +1799,18 @@
             }
         }
         if (list.length === 0) {
-            list = [1.1, 1.05, 1.5, 1.0, 0.95, 0.9];
+            list = [1.1, 1.0, 1.05, 0.95, 1.5, 0.9];
         }
         return list;
     };
 
     window.getBaseSpeedDeckB = function() {
-        var chkDom = document.getElementById('cfg_xNormalSpeed');
-        var inpDom = document.getElementById('cfg_normalPlaybackSpeed');
+        var chkDom = document.getElementById('cfgB_xNormalSpeed');
+        var inpDom = document.getElementById('cfgB_normalPlaybackSpeed');
         var vd = window.videoDeckV131;
-        var vdCfg = (vd && vd.config) || window.appConfig || {};
+        var vdCfg = (vd && vd.config) || {};
 
-        // Если в DOM открыты настройки Деки Б или чекбокс отмечен — берём точное значение из поля "🚀 Кастомная скорость (Base)"
+        // Если в DOM открыты настройки Деки Б или чекбокс отмечен — берём точное значение из поля "🚀 Кастомная скорость (Base)" Деки Б
         var isCustomOn = chkDom ? Boolean(chkDom.checked) : Boolean(vdCfg.xNormalSpeed);
         if (isCustomOn) {
             var rawVal = inpDom ? parseFloat(String(inpDom.value).replace(',', '.')) : parseFloat(vdCfg.normalPlaybackSpeed);
@@ -5207,7 +5207,8 @@
                 : [1.1, 1.0, 1.05, 0.95, 1.5, 0.9];
             if (!activeZones || activeZones.length === 0) activeZones = [1.1, 1.0, 1.05, 0.95, 1.5, 0.9];
 
-            var isLeftHanded = Boolean(window.appConfig && window.appConfig.leftHandedMode);
+            var vd = window.videoDeckV131;
+            var isLeftHanded = Boolean(vd && vd.config && vd.config.leftHandedMode);
             var W = window.innerWidth;
             var H = window.innerHeight;
 
@@ -5224,7 +5225,7 @@
 
             // Строгая круговая дуга постоянного радиуса R с центром прямо в currentAnchor (0% спирали, равное расстояние до всех 6 кружков!)
             var curveOriginY = currentAnchor.y;
-            var startDeg = -104, endDeg = -174;
+            var startDeg = -104, endDeg = -168;
             var R = Math.min(W * 0.74, H * 0.34);
             var rTop = R, rMid = R, rBot = R;
 
@@ -5352,7 +5353,7 @@
                             window.syncDeckBSpeedLockIndicatorV227();
                         }, 1020);
                     }
-                }, 220);
+                }, 160);
             } else {
                 pressTimer = setTimeout(function() {
                     pressTimer = null;
@@ -5363,7 +5364,7 @@
                     } else {
                         try { navigator.vibrate(30); } catch (err) {}
                     }
-                    var vdCfg = (window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {};
+                    var vdCfg = (window.videoDeckV131 && window.videoDeckV131.config) || {};
                     var defSpeed = parseFloat(vdCfg.defaultScrubSpeed) || 2.0;
                     currentTempSpeed = defSpeed;
                     window.startScrubDeckB(scrubSide, defSpeed);
@@ -5399,7 +5400,7 @@
                     isPullingDown = true;
                     overlay.style.display = 'block';
                     generateArcDeckB();
-                    var vdCfg = (window.videoDeckV131 && window.videoDeckV131.config) || window.appConfig || {};
+                    var vdCfg = (window.videoDeckV131 && window.videoDeckV131.config) || {};
                     var defSpeed = parseFloat(vdCfg.defaultScrubSpeed) || 2.0;
                     currentTempSpeed = defSpeed;
                     window.startScrubDeckB(scrubSide, defSpeed);
@@ -5440,6 +5441,33 @@
                 if (isPullingDown && currentTempSpeed) {
                     window.scrubStateDeckB.locked = true;
                     window.startScrubDeckB(scrubSide, currentTempSpeed);
+
+                    var vd = window.videoDeckV131;
+                    var vdCfg = (vd && vd.config) || {};
+                    var needSaveB = false;
+
+                    if (vdCfg.autoSaveScrub) {
+                        vdCfg.defaultScrubSpeed = currentTempSpeed;
+                        var elScrub = document.getElementById('cfgB_defaultScrubSpeed');
+                        if (elScrub) elScrub.value = currentTempSpeed;
+                        needSaveB = true;
+                    }
+                    if (vdCfg.autoSaveBase) {
+                        vdCfg.normalPlaybackSpeed = currentTempSpeed;
+                        vdCfg.xNormalSpeed = true;
+                        var elBase = document.getElementById('cfgB_normalPlaybackSpeed');
+                        if (elBase) elBase.value = currentTempSpeed;
+                        var elX = document.getElementById('cfgB_xNormalSpeed');
+                        if (elX) elX.checked = true;
+                        needSaveB = true;
+                    }
+                    if (needSaveB) {
+                        if (typeof window.persistDeckBConfigToStorageV359 === 'function') {
+                            window.persistDeckBConfigToStorageV359();
+                        } else {
+                            try { localStorage.setItem('jenny_video_deck_b_cfg_v131', JSON.stringify(vdCfg)); } catch (err) {}
+                        }
+                    }
                 } else if (!window.scrubStateDeckB.locked) {
                     window.stopScrubDeckB(false);
                 }
@@ -6968,7 +6996,7 @@
                 dspMs += cfDelay;
                 activeDspTags.push('Бинаурал ' + cfDelay.toFixed(1) + 'мс');
             }
-            if (cfg.opt_masterCeil || cfg.phaseFixEnabled) {
+            if (cfg.opt_masterCeil) {
                 dspMs += 0.5;
             }
         }

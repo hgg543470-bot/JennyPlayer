@@ -45,7 +45,7 @@
         if (!cfg._defaultsClonedV359) {
             cfg._defaultsClonedV359 = true;
             if (cfg.studioMode === undefined) cfg.studioMode = true;
-            if (cfg.phaseFixEnabled === undefined) cfg.phaseFixEnabled = false;
+            if (cfg.phaseFixEnabled === undefined) cfg.phaseFixEnabled = true;
             if (cfg.leftHandedMode === undefined) cfg.leftHandedMode = false;
             if (cfg.xNormalSpeed === undefined) cfg.xNormalSpeed = false;
             if (cfg.normalPlaybackSpeed === undefined) cfg.normalPlaybackSpeed = 0.97;
@@ -59,7 +59,7 @@
                 cfg.scrubZones = [1.1, 1, 1.05, 0.95, 1.5, 0.9].map(function(v) { return { val: v, en: true }; });
             }
             if (cfg.firEnabled === undefined) cfg.firEnabled = true;
-            if (!cfg.firSettings) cfg.firSettings = { gain: 1.5, decay: 1.28 };
+            if (!cfg.firSettings) cfg.firSettings = { gain: 3.5, decay: 1.28 };
             if (cfg.multiBandEnabled === undefined) cfg.multiBandEnabled = true;
             if (!cfg.multiBandSettings) cfg.multiBandSettings = { low: 160, high: 2528 };
             if (cfg.limiterEnabled === undefined) cfg.limiterEnabled = true;
@@ -73,6 +73,13 @@
                 if (cfg['opt_' + k] === undefined) cfg['opt_' + k] = DSP_DEFAULTS_B['opt_' + k];
                 if (cfg['val_' + k] === undefined) cfg['val_' + k] = DSP_DEFAULTS_B['val_' + k];
             });
+        }
+        if (!cfg._migratedFir35PhaseOnV256) {
+            cfg._migratedFir35PhaseOnV256 = true;
+            cfg.phaseFixEnabled = true;
+            cfg.firSettings = cfg.firSettings || { gain: 3.5, decay: 1.28 };
+            cfg.firSettings.gain = 3.5;
+            try { localStorage.setItem('ytm_video_deck_config_v131', JSON.stringify(cfg)); } catch (e) {}
         }
         return cfg;
     }
@@ -160,7 +167,7 @@
             window.videoDeckV131.lastComputedCeilingDb = rounded;
             window.videoDeckV131.lastCeilingBreakdown = breakdown;
         }
-        return { db: rounded, breakdown: breakdown, enabled: Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled) };
+        return { db: rounded, breakdown: breakdown, enabled: Boolean(cfg.opt_masterCeil) };
     };
 
     var _deckBRebuildTimer = null;
@@ -477,7 +484,9 @@
             ['midPhase',   trB('🎯 Фаза СЧ Вокал (dB):', '🎯 Vocal Mid Gain (dB):'), '1', 'mod_midPhase'],
             ['midQ',       trB('📐 Ширина СЧ купола (%):', '📐 Mid Dome Width (%):'), '10', 'mod_midQ'],
             ['deEsser',    trB('🐍 Де-эссер ВЧ (dB):', '🐍 HF De-Esser (dB):'), '1', 'mod_deEsser'],
-            ['cleanFir',   trB('✨ Драйв Чистый FIR (dB):', '✨ Clean FIR Drive (dB):'), '1', 'mod_cleanFir'],
+            ['cleanFir',   trB('✨ Драйв Чистый FIR (dB):', '✨ Clean FIR Drive (dB):'), '1', 'mod_cleanFir']
+        ];
+        var rowMasterCeilB = [
             ['masterCeil', trB('🛡️ Мастер-потолок (dB):', '🛡️ Master Ceiling (dB):'), '1', 'mod_masterCeil']
         ];
 
@@ -539,14 +548,19 @@
                             '<span class="jenny-help-badge" onclick="if(window.showHelpTopic) window.showHelpTopic(\'mod_block\', event)" style="display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#1f242d;border:1px solid #58a6ff;color:#58a6ff;font-size:11px;cursor:pointer;">❓</span>' +
                         '</span>' +
                     '</summary>' +
-                    '<div class="group-content" style="position:relative;">' +
-                        '<div id="dspModLockShieldDeckB" onclick="try{navigator.vibrate(40);}catch(e){}; if(window.showToast) window.showToast(\'🔒 Блок управления отключён! Для включения выключите «Фазовый фокус»\', event);" style="display:none;position:absolute;inset:0;z-index:20;cursor:not-allowed;"></div>' +
-                        '<div id="dspModBodyWrapDeckB" style="transition:opacity 0.2s ease;">' +
-                            '<div class="setting-row" style="border:none;padding:2px 0 8px 0;">' +
-                                '<span style="color:#8b949e;font-size:12px;">Модули кроссовера и сатурации:</span>' +
-                                '<button type="button" onclick="window.resetDeckBDspGroupV359([\'midPhase\',\'midQ\',\'deEsser\',\'cleanFir\',\'masterCeil\'], \'🔄 5 опций тракта Деки Б сброшены!\', event)" style="font-size:11px;padding:3px 8px;">🔄 Сброс</button>' +
+                    '<div class="group-content">' +
+                        '<div style="position:relative;">' +
+                            '<div id="dspModLockShieldDeckB" onclick="try{navigator.vibrate(40);}catch(e){}; if(window.showToast) window.showToast(\'🔒 Блок управления отключён! Для включения выключите «Фазовый фокус»\', event);" style="display:none;position:absolute;inset:0;z-index:20;cursor:not-allowed;"></div>' +
+                            '<div id="dspModBodyWrapDeckB" style="transition:opacity 0.2s ease;">' +
+                                '<div class="setting-row" style="border:none;padding:2px 0 8px 0;">' +
+                                    '<span style="color:#8b949e;font-size:12px;">Модули кроссовера и сатурации:</span>' +
+                                    '<button type="button" onclick="window.resetDeckBDspGroupV359([\'midPhase\',\'midQ\',\'deEsser\',\'cleanFir\',\'masterCeil\'], \'🔄 5 опций тракта Деки Б сброшены!\', event)" style="font-size:11px;padding:3px 8px;">🔄 Сброс</button>' +
+                                '</div>' +
+                                buildDspRowsB(rowsModB) +
                             '</div>' +
-                            buildDspRowsB(rowsModB) +
+                        '</div>' +
+                        '<div id="dspMasterCeilUnlockedWrapDeckB" style="border-top:1px solid rgba(48,54,61,0.55);margin-top:4px;padding-top:4px;">' +
+                            buildDspRowsB(rowMasterCeilB) +
                         '</div>' +
                     '</div>' +
                 '</details>' +
@@ -570,7 +584,7 @@
                 '</details>' +
 
                 '<!-- 5. ИНТЕЛЛЕКТУАЛЬНЫЙ СКРАББИНГ + МЕХАНИЧЕСКАЯ 5-СТУПЕНЧАТАЯ РКПП ДЕКИ Б -->' +
-                '<details class="setting-group" open data-ab-sec="sec_scrub">' +
+                '<details class="setting-group" open data-ab-sec="sec_scrub" style="border-left: 3px solid #e3b341;">' +
                     '<summary style="display:flex;align-items:center;justify-content:space-between;">' +
                         '<span>⚡ Интеллектуальный Скраббинг</span>' +
                         '<span style="display:inline-flex;align-items:center;gap:4px;">' +
@@ -953,12 +967,24 @@
         };
 
         var clamp = function(v, a, b) { return Math.max(a, Math.min(b, v)); };
+
+        // 1:1 как в Деке А: захват только за сам шарик ползунка + окантовка 3% ширины экрана (чтобы скролл по шахтам не блокировался)
+        var isPointNearKnobB = function(clientX, clientY) {
+            var rect = knob.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            var cx = rect.left + rect.width * 0.5;
+            var cy = rect.top + rect.height * 0.5;
+            var knobRad = Math.max(rect.width, rect.height) * 0.5;
+            var marginPx = (window.innerWidth || document.documentElement.clientWidth || 360) * 0.03;
+            return Math.hypot(clientX - cx, clientY - cy) <= (knobRad + marginPx);
+        };
+
         var onStart = function(e) {
             var pt = e.touches ? e.touches[0] : e;
-            var rect = knob.getBoundingClientRect();
-            if (!pt || rect.width <= 0) return;
-            var cx = rect.left + rect.width * 0.5, cy = rect.top + rect.height * 0.5;
-            if (Math.hypot(pt.clientX - cx, pt.clientY - cy) > rect.width * 0.85) return;
+            if (!pt || !isPointNearKnobB(pt.clientX, pt.clientY)) {
+                isDragging = false;
+                return;
+            }
             if (e.cancelable) e.preventDefault();
             e.stopPropagation();
             isDragging = true;
@@ -966,72 +992,85 @@
             dragOffsetX = pt.clientX - currentX;
             dragOffsetY = pt.clientY - currentY;
         };
+
         var onMove = function(e) {
             if (!isDragging) return;
             if (e.cancelable) e.preventDefault();
             var pt = e.touches ? e.touches[0] : e;
-            var wantX = pt.clientX - dragOffsetX, wantY = pt.clientY - dragOffsetY;
-            var inNeutral = Math.abs(currentY - NEUTRAL_Y) <= 18 && Math.abs(wantY - NEUTRAL_Y) <= 22;
-            if (inNeutral) {
+            var wantX = pt.clientX - dragOffsetX;
+            var wantY = pt.clientY - dragOffsetY;
+
+            var inNeutralCorridor = Math.abs(currentY - NEUTRAL_Y) <= 18 && Math.abs(wantY - NEUTRAL_Y) <= 22;
+
+            if (inNeutralCorridor) {
                 currentX = clamp(wantX, COL_X.left, COL_X.right);
                 if (Math.abs(currentX - COL_X.left) > 10 && Math.abs(currentX - COL_X.mid) > 10 && Math.abs(currentX - COL_X.right) > 10) {
                     currentY = NEUTRAL_Y;
-                } else if (Math.abs(currentX - COL_X.right) <= 10) {
+                } else {
+                    if (Math.abs(currentX - COL_X.right) <= 10) {
+                        currentY = clamp(wantY, NEUTRAL_Y, BOT_Y);
+                    } else {
+                        currentY = clamp(wantY, TOP_Y, BOT_Y);
+                    }
+                }
+            } else {
+                var lockedColX = COL_X.mid;
+                if (Math.abs(currentX - COL_X.left) < 22) lockedColX = COL_X.left;
+                else if (Math.abs(currentX - COL_X.right) < 22) lockedColX = COL_X.right;
+
+                currentX = lockedColX;
+                if (lockedColX === COL_X.right) {
                     currentY = clamp(wantY, NEUTRAL_Y, BOT_Y);
                 } else {
                     currentY = clamp(wantY, TOP_Y, BOT_Y);
                 }
-            } else {
-                var nearCol = COL_X.left;
-                if (Math.abs(currentX - COL_X.mid) < Math.abs(currentX - nearCol)) nearCol = COL_X.mid;
-                if (Math.abs(currentX - COL_X.right) < Math.abs(currentX - nearCol)) nearCol = COL_X.right;
-                currentX = nearCol;
-                currentY = (nearCol === COL_X.right) ? clamp(wantY, NEUTRAL_Y, BOT_Y) : clamp(wantY, TOP_Y, BOT_Y);
             }
+
             knob.style.left = currentX + 'px';
             knob.style.top = currentY + 'px';
         };
+
         var onEnd = function(e) {
             if (!isDragging) return;
             isDragging = false;
             knob.classList.remove('dragging');
-            var colKey = 'left';
-            if (Math.abs(currentX - COL_X.mid) < Math.abs(currentX - COL_X.left)) colKey = 'mid';
-            if (Math.abs(currentX - COL_X.right) < Math.abs(currentX - COL_X[colKey])) colKey = 'right';
-            var chosen = 'neutral';
-            if (colKey === 'left') {
-                if (currentY <= TOP_Y + END_STOP_TOLERANCE) chosen = 'jbuf-lock';
-                else if (currentY >= BOT_Y - END_STOP_TOLERANCE) chosen = 'jbuf-shift';
-            } else if (colKey === 'mid') {
-                if (currentY <= TOP_Y + END_STOP_TOLERANCE) chosen = 'web-lock';
-                else if (currentY >= BOT_Y - END_STOP_TOLERANCE) chosen = 'web-shift';
-            } else if (colKey === 'right') {
-                if (currentY >= BOT_Y - END_STOP_TOLERANCE) chosen = 'vinyl-shift';
+
+            var lockedGearKey = 'neutral';
+            var atLeftCol  = Math.abs(currentX - COL_X.left) <= 14;
+            var atMidCol   = Math.abs(currentX - COL_X.mid) <= 14;
+            var atRightCol = Math.abs(currentX - COL_X.right) <= 14;
+
+            var atTopEnd = (currentY <= TOP_Y + END_STOP_TOLERANCE);
+            var atBotEnd = (currentY >= BOT_Y - END_STOP_TOLERANCE);
+
+            if (atLeftCol && atTopEnd) {
+                lockedGearKey = 'jbuf-lock';
+            } else if (atLeftCol && atBotEnd) {
+                lockedGearKey = 'jbuf-shift';
+            } else if (atMidCol && atTopEnd) {
+                lockedGearKey = 'web-lock';
+            } else if (atMidCol && atBotEnd) {
+                lockedGearKey = 'web-shift';
+            } else if (atRightCol && atBotEnd) {
+                lockedGearKey = 'vinyl-shift';
+            } else {
+                lockedGearKey = 'neutral';
             }
-            window.setDeckBGearboxStateV359(chosen, e);
+
+            if (typeof navigator.vibrate === 'function') {
+                navigator.vibrate(lockedGearKey === 'neutral' ? [12, 30, 12] : 28);
+            }
+
+            window.setDeckBGearboxStateV359(lockedGearKey, e);
         };
 
-        plate.addEventListener('touchstart', onStart, { passive: false });
-        window.addEventListener('touchmove', onMove, { passive: false });
-        window.addEventListener('touchend', onEnd);
         plate.addEventListener('mousedown', onStart);
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onEnd);
-
-        // Тап по шахте КПП Деки Б также мгновенно включает нужную передачу
-        plate.addEventListener('click', function(e) {
-            if (isDragging) return;
-            var r = plate.getBoundingClientRect();
-            var x = e.clientX - r.left, y = e.clientY - r.top;
-            if (x < 92) {
-                window.setDeckBGearboxStateV359(y < 128 ? 'jbuf-lock' : 'jbuf-shift', e);
-            } else if (x < 160) {
-                if (Math.abs(y - 128) < 22) window.setDeckBGearboxStateV359('neutral', e);
-                else window.setDeckBGearboxStateV359(y < 128 ? 'web-lock' : 'web-shift', e);
-            } else {
-                window.setDeckBGearboxStateV359('vinyl-shift', e);
-            }
-        });
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onEnd);
+        plate.addEventListener('touchstart', onStart, { passive: false });
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onEnd, { passive: true });
+        document.addEventListener('touchcancel', onEnd, { passive: true });
     }
 
     // Обработчики всех контролов #settingsModalDeckB
@@ -1119,14 +1158,28 @@
         if (typeof window.showToast === 'function') window.showToast(msg, ev);
     };
 
+    window.applyLeftHandedModeDeckB = function() {
+        var cfg = getDeckBConfig();
+        if (cfg && cfg.leftHandedMode) {
+            document.body.setAttribute('data-lefthanded-deckb', 'true');
+        } else {
+            document.body.removeAttribute('data-lefthanded-deckb');
+        }
+    };
+    setTimeout(function() { window.applyLeftHandedModeDeckB(); }, 120);
+
     window.onDeckBHoseTensionInputV359 = function(val) {
         var v = Math.max(20, Math.min(200, parseInt(val, 10) || 100));
         var cfg = getDeckBConfig();
         cfg.hoseTensionPct = v;
         var badge = document.getElementById('val_hoseTensionDeckB');
         if (badge) badge.innerText = String(v);
+        if (window.videoDeckV131 && window.videoDeckV131.hoseCache) {
+            window.videoDeckV131.hoseCache.srcBuffer = null;
+            window.videoDeckV131.hoseCache.splicedBuffer = null;
+        }
         saveAndRebuildDeckB(false);
-        if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false);
+        if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false, true);
     };
 
     window.updateDeckBSettingsFromDOMV359 = function() {
@@ -1148,6 +1201,7 @@
             var el = document.getElementById(id);
             if (el) cfg[bools[id]] = Boolean(el.checked);
         });
+        window.applyLeftHandedModeDeckB();
 
         var getNum = function(id, defVal) {
             var el = document.getElementById(id);
@@ -1160,7 +1214,7 @@
         cfg.defaultScrubSpeed = getNum('cfgB_defaultScrubSpeed', cfg.defaultScrubSpeed || 1.1);
         cfg.boosterPower = Math.max(1, Math.min(20, Math.round(getNum('cfgB_boosterPower', cfg.boosterPower || 5))));
 
-        cfg.firSettings = cfg.firSettings || { gain: 1.5, decay: 1.28 };
+        cfg.firSettings = cfg.firSettings || { gain: 3.5, decay: 1.28 };
         cfg.firSettings.gain = getNum('cfgB_fir_gain', cfg.firSettings.gain);
         cfg.firSettings.decay = getNum('cfgB_fir_decay', cfg.firSettings.decay);
 
@@ -1241,7 +1295,7 @@
     window.resetDeckBFIRV359 = function() {
         var g = document.getElementById('cfgB_fir_gain');
         var d = document.getElementById('cfgB_fir_decay');
-        if (g) g.value = '1.5';
+        if (g) g.value = '3.5';
         if (d) d.value = '1.28';
         window.updateDeckBSettingsFromDOMV359();
     };
@@ -1368,7 +1422,7 @@
 
         setChk('cfgB_firEnabled', cfg.firEnabled);
         if (cfg.firSettings) {
-            setVal('cfgB_fir_gain', cfg.firSettings.gain !== undefined ? cfg.firSettings.gain : 1.5);
+            setVal('cfgB_fir_gain', cfg.firSettings.gain !== undefined ? cfg.firSettings.gain : 3.5);
             setVal('cfgB_fir_decay', cfg.firSettings.decay !== undefined ? cfg.firSettings.decay : 1.28);
         }
         setChk('cfgB_multiBandEnabled', cfg.multiBandEnabled);

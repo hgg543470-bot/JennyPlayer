@@ -402,7 +402,7 @@
         cur.connect(dcBlocker);
         cur = dcBlocker;
 
-        if (cfg.opt_masterCeil || cfg.phaseFixEnabled) {
+        if (cfg.opt_masterCeil) {
             var autoPad = reg(ctx.createGain());
             autoPad.gain.value = window.dbToLinearDeckB(padDb);
             var softClipper = window.createSoftClipWaveShaperDeckB(ctx, bucket);
@@ -458,8 +458,9 @@
             chOut.push(outBuffer.getChannelData(c));
         }
 
-        var baseStep = Math.max(512, Math.round(0.018 * sr));
-        var searchRad = Math.max(256, Math.round(0.012 * sr));
+        var stepSec = Math.max(0.0105, Math.min(0.027, 0.028 - tension * 0.0088));
+        var baseStep = Math.max(384, Math.round(stepSec * sr));
+        var searchRad = Math.max(256, Math.round(stepSec * 0.65 * sr));
         var filletLen = Math.max(128, Math.round(0.0045 * sr));
 
         var blendCurve = new Float32Array(filletLen);
@@ -486,7 +487,7 @@
 
         var isFast = spd > 1.0;
         var speedDelta = Math.abs(spd - 1.0);
-        var vertFactor = Math.min(0.28, speedDelta * tension * 0.30);
+        var vertFactor = Math.min(0.48, Math.max(0.08, speedDelta) * tension * 0.42);
         var smoothGain = 1.0;
 
         while (outPos + baseStep + filletLen + 256 < outLen) {
@@ -561,9 +562,9 @@
                 if (a > segPeak) segPeak = a;
             }
             var targetGain = 1.0;
-            if (segPeak > 0.25) {
-                if (isFast) targetGain = 1.0 - vertFactor * (segPeak - 0.25);
-                else targetGain = 1.0 + vertFactor * 0.70 * (segPeak - 0.25);
+            if (segPeak > 0.16) {
+                if (isFast) targetGain = 1.0 - vertFactor * (segPeak - 0.16);
+                else targetGain = 1.0 + vertFactor * 0.75 * (segPeak - 0.16);
             }
 
             for (var ch = 0; ch < numCh; ch++) {
@@ -571,7 +572,7 @@
                 var out = chOut[ch];
                 var localGain = smoothGain;
                 for (var sIdx = 0; sIdx < stepOut; sIdx++) {
-                    localGain = localGain * 0.997 + targetGain * 0.003;
+                    localGain = localGain * 0.994 + targetGain * 0.006;
                     var v = inp[bestP2 + sIdx];
                     if (sIdx < filletLen) {
                         var b = blendCurve[sIdx];

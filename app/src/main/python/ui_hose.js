@@ -75,9 +75,10 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
         chOut.push(outBuffer.getChannelData(c));
     }
 
-    // Базовый шаг 18 мс с анти-резонансной модуляцией шага (чтобы не возникал монотонный гул на одной частоте!)
-    const baseStep = Math.max(512, Math.round(0.018 * sr));
-    const searchRad = Math.max(256, Math.round(0.012 * sr));
+    // Упругость петель (20%..200% -> tension 0.2..2.0) управляет шагом петли во времени (26.2 мс при 20% -> 18.5 мс при 100% -> 10.5 мс при 200%)
+    const stepSec = Math.max(0.0105, Math.min(0.027, 0.028 - tension * 0.0088));
+    const baseStep = Math.max(384, Math.round(stepSec * sr));
+    const searchRad = Math.max(256, Math.round(stepSec * 0.65 * sr));
     // Широкое 4.5 мс C2-скругление вдоль склона (216 сэмплов) — полностью убирает любые щелчки и гул на басу
     const filletLen = Math.max(128, Math.round(0.0045 * sr));
 
@@ -109,7 +110,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
 
     const isFast = spd > 1.0;
     const speedDelta = Math.abs(spd - 1.0);
-    const vertFactor = Math.min(0.28, speedDelta * tension * 0.30);
+    const vertFactor = Math.min(0.48, Math.max(0.08, speedDelta) * tension * 0.42);
     let smoothGain = 1.0;
 
     while (outPos + baseStep + filletLen + 256 < outLen) {
@@ -196,11 +197,11 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
             if (a > segPeak) segPeak = a;
         }
         let targetGain = 1.0;
-        if (segPeak > 0.25) {
+        if (segPeak > 0.16) {
             if (isFast) {
-                targetGain = 1.0 - vertFactor * (segPeak - 0.25);
+                targetGain = 1.0 - vertFactor * (segPeak - 0.16);
             } else {
-                targetGain = 1.0 + vertFactor * 0.70 * (segPeak - 0.25);
+                targetGain = 1.0 + vertFactor * 0.75 * (segPeak - 0.16);
             }
         }
         cache.seamLogs.push({
@@ -226,7 +227,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
             let localGain = smoothGain;
 
             for (let i = 0; i < stepOut; i++) {
-                localGain = localGain * 0.997 + targetGain * 0.003;
+                localGain = localGain * 0.994 + targetGain * 0.006;
                 let v = inp[bestP2 + i];
 
                 if (i < filletLen) {

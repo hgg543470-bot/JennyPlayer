@@ -489,7 +489,7 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
     cur.connect(dcBlocker);
     cur = dcBlocker;
 
-    if (cfg.opt_masterCeil || cfg.phaseFixEnabled) {
+    if (cfg.opt_masterCeil) {
         let autoPad = reg(ctx.createGain());
         autoPad.gain.value = window.dbToLinear(padDb);
         let softClipper = window.createSoftClipWaveShaper(ctx, bucket);
@@ -625,7 +625,7 @@ window._buildAudioGraphCore = function() {
         window.firNode = window.trackNode(window.audioCtx.createConvolver(), window.activeDynamicNodes);
         window.firNode.normalize = false;
         window.firNode.buffer = window.createFIRImpulse(window.audioCtx, cfg.firSettings.decay);
-        window.firGainNode.gain.value = cfg.firSettings.gain;
+        window.firGainNode.gain.value = parseFloat(cfg.firSettings.gain) || 3.5;
         currentNode.connect(window.preFirPad);
         window.preFirPad.connect(window.firNode);
         window.firNode.connect(window.firGainNode);
