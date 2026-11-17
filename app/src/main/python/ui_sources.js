@@ -5252,7 +5252,7 @@ window.stopAllExternalStreamsV97 = function() {
 
         var modal = document.createElement('div');
         modal.id = 'jennyYoutubeStudioModalV230';
-        modal.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(8,10,16,0.92);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:10px;';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(8,10,16,0.92);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:10px;';
 
         modal.innerHTML =
             '<div style="width:100%;max-width:560px;max-height:92vh;background:linear-gradient(180deg,#180c12 0%,#0d1117 100%);border:1.5px solid #ff5555;border-radius:18px;box-shadow:0 0 32px rgba(255,60,60,0.28);display:flex;flex-direction:column;overflow:hidden;color:#f0f6fc;">' +

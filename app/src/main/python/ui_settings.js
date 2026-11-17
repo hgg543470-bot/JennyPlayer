@@ -494,7 +494,7 @@ window.addNewFormatSlotV85 = function(ev) {
             "display:none",
             "position:fixed",
             "inset:0",
-            "z-index:1000040",
+            "z-index:2147483400",
             "background:radial-gradient(circle at 50% 0%, #131c2e 0%, #070a10 70%)",
             "color:#e6edf3",
             "flex-direction:column",

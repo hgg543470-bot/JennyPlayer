@@ -5138,14 +5138,14 @@
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.id = 'scrubOverlayDeckB';
-            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:5999;display:none;touch-action:none;';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483646 !important;display:none;touch-action:none;';
             document.body.appendChild(overlay);
         }
         var arcContainer = document.getElementById('speedArcContainerDeckB');
         if (!arcContainer) {
             arcContainer = document.createElement('div');
             arcContainer.id = 'speedArcContainerDeckB';
-            arcContainer.style.cssText = 'position:fixed;inset:0;z-index:6000;pointer-events:none;transition:opacity 0.1s ease-out;opacity:0;display:none;';
+            arcContainer.style.cssText = 'position:fixed;inset:0;z-index:2147483647 !important;pointer-events:none;transition:opacity 0.1s ease-out;opacity:0;display:none;';
             document.body.appendChild(arcContainer);
         }
         var debugCanvas = document.getElementById('debugZoneCanvasDeckB');
@@ -5270,6 +5270,14 @@
                 arcItems.push(el);
             });
 
+            if (overlay.parentNode !== document.body || overlay.nextSibling !== arcContainer || arcContainer.nextSibling !== null) {
+                try {
+                    document.body.appendChild(overlay);
+                    document.body.appendChild(arcContainer);
+                } catch (e) {}
+            }
+            overlay.style.setProperty('z-index', '2147483646', 'important');
+            arcContainer.style.setProperty('z-index', '2147483647', 'important');
             arcContainer.style.display = 'block';
             setTimeout(function() { arcContainer.style.opacity = '1'; }, 10);
 

@@ -1611,7 +1611,7 @@ window.openTrackersManagerWindowV110 = async function(ev) {
 
     m = document.createElement('div');
     m.id = 'jennyTrackersModalV110';
-    m.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;background:rgba(4,6,10,0.86);z-index:2147483646;display:flex;align-items:center;justify-content:center;box-sizing:border-box;';
+    m.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;background:rgba(4,6,10,0.86);z-index:2147483200;display:flex;align-items:center;justify-content:center;box-sizing:border-box;';
     m.onclick = (e) => { if (e.target === m) m.remove(); };
 
     m.innerHTML = `
@@ -3205,7 +3205,7 @@ if (!pop) {
 pop = document.createElement('div');
 pop.id = 'jennyTorInspectorModalV128';
 pop.className = 'jenny-modal-backdrop-v71';
-pop.style.zIndex = '2147483646';
+pop.style.zIndex = '2147483200';
 pop.onclick = (e) => { if (e.target === pop) pop.remove(); };
 // Создаем каркас модалки ОДИН РАЗ, чтобы скролл никогда не сбрасывался при ежесекундном обновлении!
 pop.innerHTML = `<div class="jenny-modal-card-v71" onclick="event.stopPropagation()" style="max-width:460px;max-height:86vh;display:flex;flex-direction:column;border:1.5px solid #d2a8ff;">
@@ -3612,7 +3612,7 @@ let box = document.getElementById('jennyOmniLogViewerV139');
 if (!box) {
 box = document.createElement('div');
 box.id = 'jennyOmniLogViewerV139';
-box.style.cssText = 'position:fixed;inset:12px;z-index:99999;background:#090d14;border:1.5px solid #58a6ff;border-radius:14px;display:flex;flex-direction:column;padding:12px;box-shadow:0 0 35px rgba(0,0,0,0.95);';
+box.style.cssText = 'position:fixed;inset:12px;z-index:2147483200;background:#090d14;border:1.5px solid #58a6ff;border-radius:14px;display:flex;flex-direction:column;padding:12px;box-shadow:0 0 35px rgba(0,0,0,0.95);';
 document.body.appendChild(box);
 }
 box.innerHTML = `

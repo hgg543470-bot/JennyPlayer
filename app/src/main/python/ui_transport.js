@@ -701,6 +701,14 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 arcItems.push(el);
             });
 
+            if ( overlay.parentNode !== document.body || overlay.nextSibling !== arcContainer || arcContainer.nextSibling !== null ) {
+                try {
+                    document.body.appendChild(overlay);
+                    document.body.appendChild(arcContainer);
+                } catch (e) {}
+            }
+            overlay.style.setProperty('z-index', '2147483646', 'important');
+            arcContainer.style.setProperty('z-index', '2147483647', 'important');
             arcContainer.style.display = 'block';
             setTimeout(function() { arcContainer.style.opacity = '1'; }, 10);
 

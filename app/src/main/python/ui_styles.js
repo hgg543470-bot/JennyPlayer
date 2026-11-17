@@ -1416,7 +1416,7 @@ if (!document.getElementById(pipStyleId)) {
     stModalZ.textContent = [
         '#settingsModal.open, #eqModal.open, #specModal.open, #favModal.open, #themeModal.open,',
         '#settingsModalDeckB.open, #eqModalDeckB.open, #specModalDeckB.open {',
-        '  z-index: 2147483646 !important;',
+        '  z-index: 2147482000 !important;',
         '  opacity: 1 !important;',
         '  pointer-events: auto !important;',
         '}',
@@ -1496,3 +1496,69 @@ if (!document.getElementById(pipStyleId)) {
     ].join('\n');
     document.head.appendChild(stV369);
 })();
+
+/* ================= [FIX-GLOBAL-Z-HIERARCHY-V254] ЕДИНАЯ СТРОГАЯ ИЕРАРХИЯ СЛОЁВ БЕЗ ПЕРЕКРЫТИЙ ================= */
+;(function() {
+    if (document.getElementById('jennyGlobalZHierarchyV254')) return;
+    var stZ = document.createElement('style');
+    stZ.id = 'jennyGlobalZHierarchyV254';
+    stZ.textContent = [
+        /* 1. Открытые основные вкладки Деки А и Деки Б (Настройки, Эквалайзер, Спектр, Избранное, Темы) */
+        '#settingsModal.open, #eqModal.open, #specModal.open, #favModal.open, #themeModal.open,',
+        '#settingsModalDeckB.open, #eqModalDeckB.open, #specModalDeckB.open {',
+        '  z-index: 2147482000 !important;',
+        '}',
+        /* 2. Нижний док при открытых вкладках (выше вкладок 2147482000, но строго ниже модалок студий и дуг скоростей) */
+        'body.jenny-any-modal-open-v360 #bottomPlayerDock {',
+        '  z-index: 2147482500 !important;',
+        '}',
+        /* 3. Всплывающие ползунки громкости Деки А и Деки Б */
+        '#volumePopup, #volumePopupDeckBV216, .vol-popup {',
+        '  z-index: 2147482600 !important;',
+        '}',
+        /* 4. Полноэкранные окна внешних источников, плейлистов, менеджера папок и YouTube Studio */
+        '.jenny-modal-backdrop-v71, #jennyYoutubeStudioModalV230, #jennyFolderManagerModal {',
+        '  z-index: 2147483000 !important;',
+        '}',
+        /* 5. Выпадающее меню кнопки «🌐 Источники» */
+        '#jennySourcesDropMenuV91 {',
+        '  z-index: 2147483100 !important;',
+        '}',
+        /* 6. Дочерние модальные окна 2-го уровня (вызываемые изнутри Настроек, Тем, Избранного, Торрентов, КПП, Экспорта) */
+        '#jennyQuickColorModal, #jennyThemeFilesModal,',
+        '#trackInfoModal, .coreplayer-modal-backdrop,',
+        '#webApiRevConflictModalV70, .webapi-rev-modal-backdrop-v70,',
+        '#jennyIslandImagePickerModalV250,',
+        '#jennyTrackersModalV110, #jennyTorInspectorModalV128, #jennyOmniLogViewerV139,',
+        '#exportModalV69, .exp-modal-backdrop-v69 {',
+        '  z-index: 2147483200 !important;',
+        '}',
+        /* 7. Полноэкранный Видеоплеер Деки Б */
+        '#jennyVideoStudioRootV130:not(.mode-pip-v130) {',
+        '  z-index: 2147483300 !important;',
+        '}',
+        /* 8. Стартовый гид, окно Справки (❓) и анимация кнопки языка RU/EN */
+        '#jennyOnboardingModalV165 {',
+        '  z-index: 2147483400 !important;',
+        '}',
+        '#jennyHelpModal {',
+        '  z-index: 2147483450 !important;',
+        '}',
+        '.runaway-actor, .crawler-actor {',
+        '  z-index: 2147483480 !important;',
+        '}',
+        /* 9. Всплывающие тосты-уведомления (всегда видны поверх любых модалок и видеоплеера) */
+        '.custom-toast {',
+        '  z-index: 2147483550 !important;',
+        '}',
+        /* 10. ВЫСШИЙ ПРИОРИТЕТ ВСЕГДА И ВЕЗДЕ: Оверлеи и полукруглые Дуги скорости Деки А и Деки Б */
+        '#scrubOverlay, #scrubOverlayDeckB {',
+        '  z-index: 2147483646 !important;',
+        '}',
+        '#speedArcContainer, #speedArcContainerDeckB {',
+        '  z-index: 2147483647 !important;',
+        '}'
+    ].join('\n');
+    document.head.appendChild(stZ);
+})();
+/* ================= END [FIX-GLOBAL-Z-HIERARCHY-V254] ================= */

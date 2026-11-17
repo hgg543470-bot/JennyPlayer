@@ -104,7 +104,7 @@ window.JENNY_HELP_DB = window.JENNY_HELP_DB_RU;
 window.ensureHelpModal = function() {
     let m = document.getElementById('jennyHelpModal'); if (m) m.remove();
     m = document.createElement('div'); m.id = 'jennyHelpModal';
-    m.style.cssText = "display:none;position:fixed;inset:0;z-index:1000090;background:rgba(0,0,0,0.82);backdrop-filter:blur(5px);align-items:center;justify-content:center;padding:16px;box-sizing:border-box;";
+    m.style.cssText = "display:none;position:fixed;inset:0;z-index:2147483450;background:rgba(0,0,0,0.82);backdrop-filter:blur(5px);align-items:center;justify-content:center;padding:16px;box-sizing:border-box;";
     m.onclick = (e) => { if (e.target === m) m.style.display = 'none'; };
     m.innerHTML = `<div onclick="event.stopPropagation()" style="background:#0d1117;border:1px solid #7341be;border-radius:14px;max-width:440px;width:100%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.95);overflow:hidden;">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#161b22;border-bottom:1px solid #30363d;">

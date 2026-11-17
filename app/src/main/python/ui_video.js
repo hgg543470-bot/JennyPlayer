@@ -495,7 +495,7 @@ if (root) return root;
 const st = document.createElement('style');
 st.id = 'jennyVideoStudioStyleV130';
 st.textContent = `
-#jennyVideoStudioRootV130 { position:fixed; z-index:2147483647; background:#000; display:none; flex-direction:column; justify-content:center; align-items:center; overflow:hidden; user-select:none; -webkit-user-select:none; touch-action:none; box-shadow:0 18px 50px rgba(0,0,0,0.96); }
+#jennyVideoStudioRootV130 { position:fixed; z-index:2147483300; background:#000; display:none; flex-direction:column; justify-content:center; align-items:center; overflow:hidden; user-select:none; -webkit-user-select:none; touch-action:none; box-shadow:0 18px 50px rgba(0,0,0,0.96); }
 #jennyVideoStudioRootV130.mode-full-v130 { inset:0 !important; width:100vw !important; height:100vh !important; border-radius:0 !important; border:none !important; }
 #jennyVideoStudioRootV130.mode-pip-v130 { width:280px !important; height:168px !important; border-radius:14px !important; border:1.5px solid #58a6ff !important; box-shadow:0 12px 34px rgba(0,0,0,0.95), 0 0 16px rgba(88,166,255,0.35) !important; }
 #jennyVideoStageV130 { position:relative; width:100%; height:100%; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:#000; overflow:hidden; }
@@ -4149,14 +4149,14 @@ setTimeout(() => {
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.id = 'scrubOverlayDeckB';
-            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:5999;display:none;touch-action:none;';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483646 !important;display:none;touch-action:none;';
             document.body.appendChild(overlay);
         }
         var arcContainer = document.getElementById('speedArcContainerDeckB');
         if (!arcContainer) {
             arcContainer = document.createElement('div');
             arcContainer.id = 'speedArcContainerDeckB';
-            arcContainer.style.cssText = 'position:fixed;inset:0;z-index:6000;pointer-events:none;transition:opacity 0.1s ease-out;opacity:0;display:none;';
+            arcContainer.style.cssText = 'position:fixed;inset:0;z-index:2147483647 !important;pointer-events:none;transition:opacity 0.1s ease-out;opacity:0;display:none;';
             document.body.appendChild(arcContainer);
         }
         var debugCanvas = document.getElementById('debugZoneCanvasDeckB');

@@ -740,7 +740,7 @@
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'jennyIslandImagePickerModalV250';
-            modal.style.cssText = 'position:fixed;inset:0;background:rgba(3,5,9,0.88);backdrop-filter:blur(8px);z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:12px;';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(3,5,9,0.88);backdrop-filter:blur(8px);z-index:2147483200;display:flex;align-items:center;justify-content:center;padding:12px;';
             modal.innerHTML =
                 '<div style="width:100%;max-width:460px;max-height:86vh;background:#090d14;border:1.5px solid #a371f7;border-radius:14px;box-shadow:0 0 28px rgba(163,113,247,0.35);display:flex;flex-direction:column;overflow:hidden;">' +
                     '<div style="padding:11px 13px;background:linear-gradient(90deg,rgba(163,113,247,0.22),rgba(88,166,255,0.16));border-bottom:1px solid #262c36;display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
