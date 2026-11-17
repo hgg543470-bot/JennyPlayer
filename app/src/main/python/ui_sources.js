@@ -5298,33 +5298,219 @@ window.stopAllExternalStreamsV97 = function() {
         }
     };
 
-    // Живой поллер прогресса скачивания YouTube (.xFLAC / MP4 / Дека Б), видимый даже когда окно YouTube закрыто!
-    window.ensureYtGlobalProgressBarV256 = function() {
-        var bar = document.getElementById('jennyYtGlobalProgressBarV256');
-        if (!bar) {
-            bar = document.createElement('div');
-            bar.id = 'jennyYtGlobalProgressBarV256';
-            bar.onclick = function() {
-                if (typeof window.openYoutubeStudioModalV230 === 'function') {
-                    window.openYoutubeStudioModalV230();
-                }
-            };
-            bar.style.cssText = 'display:none;position:fixed;left:8px;right:8px;top:52px;z-index:2147483150;padding:6px 10px;border-radius:9px;background:rgba(18,10,16,0.96);border:1.5px solid #ff5555;box-shadow:0 4px 16px rgba(0,0,0,0.85);cursor:pointer;flex-direction:column;gap:4px;';
-            bar.innerHTML =
-                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;font-weight:800;color:#fff;">' +
-                    '<span id="jennyYtGlobalProgTitleV256" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">📥 YouTube закачка...</span>' +
-                    '<span id="jennyYtGlobalProgPctV256" style="color:#ff9999;font-family:monospace;flex-shrink:0;">0%</span>' +
-                '</div>' +
-                '<div style="width:100%;height:5px;background:#21262d;border-radius:3px;overflow:hidden;">' +
-                    '<div id="jennyYtGlobalProgFillV256" style="width:0%;height:100%;background:linear-gradient(90deg,#ff3b3b,#a371f7,#3fb950);transition:width 0.25s ease;"></div>' +
-                '</div>';
-            document.body.appendChild(bar);
+    // === V259: КНОПКА ИНФО МЕЖДУ ПОИСКОМ И КОЛИЧЕСТВОМ ТРЕКОВ + РАЗВОРАЧИВАЕМЫЙ СПИСОК ЗАКАЧЕК YOUTUBE С 3-Й СТРОКОЙ КОДИРОВЩИКА ===
+    window._ytLastTasksListV259 = [];
+    window._ytDropdownExpandedV259 = false;
+    window._ytMinimizedHasSessionV259 = false;
+
+    window.ensureYtSearchSlotButtonV259 = function() {
+        var sInp = document.getElementById('trackSearchInput');
+        if (!sInp || !sInp.parentElement) return null;
+        var outerWrap = sInp.parentElement;
+        var rightSlot = document.getElementById('searchRightSlotV235');
+        if (!rightSlot && typeof window.ensureSearchRightSlotAndLangBtnV235 === 'function') {
+            rightSlot = window.ensureSearchRightSlotAndLangBtnV235();
         }
-        return bar;
+        var btn = document.getElementById('jennyYtSearchSlotBtnV259');
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'jennyYtSearchSlotBtnV259';
+            btn.type = 'button';
+            btn.title = 'Список скачиваний и кодирования YouTube';
+            btn.onclick = function(ev) {
+                if (ev && ev.stopPropagation) ev.stopPropagation();
+                window.toggleYtDownloadsDropdownV259();
+            };
+            btn.style.cssText = 'display:none;height:34px;padding:0 9px;border-radius:8px;align-items:center;justify-content:center;gap:5px;font-size:11px;font-weight:800;font-family:monospace;cursor:pointer;user-select:none;white-space:nowrap;box-sizing:border-box;flex:0 0 auto;background:rgba(38,12,20,0.95);border:1.4px solid #ff5555;color:#ffd2d2;box-shadow:0 2px 8px rgba(255,60,60,0.35);';
+            btn.innerHTML = '<span>📥</span><span id="jennyYtSearchSlotBtnTxtV259">YT</span>';
+        }
+        // Помещаем СТРОГО между поиском (#trackSearchInput) и количеством треков (#btnRefreshDeckBV216 / #btnRefreshDeckAV235 внутри #searchRightSlotV235)
+        if (rightSlot) {
+            if (btn.parentElement !== rightSlot || rightSlot.firstElementChild !== btn) {
+                rightSlot.insertBefore(btn, rightSlot.firstElementChild);
+            }
+        } else if (btn.parentElement !== outerWrap) {
+            outerWrap.appendChild(btn);
+        }
+
+        // Разворачиваемый список скачиваний YouTube прямо под строкой поиска
+        var drop = document.getElementById('jennyYtDownloadsDropdownV259');
+        if (!drop) {
+            drop = document.createElement('div');
+            drop.id = 'jennyYtDownloadsDropdownV259';
+            drop.style.cssText = 'display:none;margin-top:6px;margin-bottom:4px;padding:8px 10px;border-radius:10px;background:linear-gradient(180deg,#160d14 0%,#0b0f17 100%);border:1.5px solid #ff5555;box-shadow:0 10px 28px rgba(0,0,0,0.92);color:#f0f6fc;z-index:2147482900;position:relative;';
+            if (outerWrap.parentElement) {
+                outerWrap.insertAdjacentElement('afterend', drop);
+            } else {
+                document.body.appendChild(drop);
+            }
+        }
+        return btn;
+    };
+
+    window.toggleYtDownloadsDropdownV259 = function(forceState) {
+        window.ensureYtSearchSlotButtonV259();
+        var drop = document.getElementById('jennyYtDownloadsDropdownV259');
+        if (!drop) return;
+        window._ytDropdownExpandedV259 = (typeof forceState === 'boolean') ? forceState : !window._ytDropdownExpandedV259;
+        drop.style.display = window._ytDropdownExpandedV259 ? 'block' : 'none';
+        if (window._ytDropdownExpandedV259) {
+            window.fetchAndRenderYtProgressStateV259();
+        }
+    };
+
+    window.clearYtFinishedTasksV259 = async function(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        try {
+            var r = await fetch('/api/youtube/clear_tasks', { method: 'POST' });
+            var j = await r.json();
+            window._ytLastTasksListV259 = (j && j.tasks) || [];
+            window.renderYtDownloadsListUIV259(null, window._ytLastTasksListV259);
+        } catch (e) {}
+    };
+
+    window.minimizeYoutubeStudioToSearchSlotV259 = function() {
+        var m = document.getElementById('jennyYoutubeStudioModalV230');
+        if (m) m.style.setProperty('display', 'none', 'important');
+        window._ytMinimizedHasSessionV259 = true;
+        var btn = window.ensureYtSearchSlotButtonV259();
+        if (btn) btn.style.display = 'inline-flex';
+        window.fetchAndRenderYtProgressStateV259();
+    };
+
+    window.renderYtSingleTaskCardHtmlV259 = function(t) {
+        if (!t) return '';
+        var phase = String(t.phase || 'download');
+        var pct = Math.max(0, Math.min(100, parseInt(t.pct, 10) || 0));
+        var dlPct = Math.max(0, Math.min(100, parseInt(t.dl_pct !== undefined ? t.dl_pct : pct, 10)));
+        var encPct = Math.max(0, Math.min(100, parseInt(t.enc_pct || 0, 10)));
+        var safeTitle = String(t.title || t.vid || 'YouTube').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var stageStr = String(t.stage || (phase === 'transcode' ? ('Перекодирование ' + pct + '%') : ('Скачивание ' + pct + '%'))).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var subStr = String(t.sub_info || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (!subStr) {
+            var mbPart = (t.total_mb > 0) ? (t.done_mb + ' / ' + t.total_mb + ' МБ') : (t.done_mb > 0 ? (t.done_mb + ' МБ') : '');
+            subStr = (mbPart ? ('Скачано: ' + mbPart + ' • ') : '') + 'Закачка: ' + dlPct + '% | Перекодирование: ' + encPct + '%';
+        }
+        var encInfoStr = String(t.encoder_info || 'Ожидание данных кодировщика...').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        var barColor = (phase === 'crashed' || phase === 'error')
+            ? 'linear-gradient(90deg,#ff3b3b,#da3633)'
+            : (phase === 'transcode'
+                ? 'linear-gradient(90deg,#a371f7,#58a6ff,#3fb950)'
+                : (phase === 'done' ? '#3fb950' : 'linear-gradient(90deg,#ff5555,#f0883e)'));
+        var borderCol = (phase === 'crashed' || phase === 'error')
+            ? 'rgba(255,85,85,0.75)'
+            : (phase === 'transcode' ? 'rgba(163,113,247,0.65)' : (phase === 'done' ? 'rgba(63,185,80,0.55)' : 'rgba(255,120,85,0.45)'));
+
+        return '<div style="padding:7px 9px;border-radius:8px;background:rgba(13,17,23,0.92);border:1px solid ' + borderCol + ';margin-bottom:6px;display:flex;flex-direction:column;gap:4px;">' +
+            // СТРОКА 1: Название + Этап (Закачка 0..100% / Перекодирование 0..100%) + Полоса прогресса
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;font-weight:800;color:#fff;">' +
+                '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">' + safeTitle + '</span>' +
+                '<span style="color:#79c0ff;font-family:monospace;font-size:11px;flex-shrink:0;">' + stageStr + '</span>' +
+            '</div>' +
+            '<div style="width:100%;height:5px;background:#21262d;border-radius:3px;overflow:hidden;">' +
+                '<div style="width:' + pct + '%;height:100%;background:' + barColor + ';transition:width 0.22s ease;"></div>' +
+            '</div>' +
+            // СТРОКА 2: Объём скачивания, скорость, выходной размер, проценты фаз
+            '<div style="font-size:10.5px;color:#c9d1d9;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                subStr +
+            '</div>' +
+            // СТРОКА 3 (под двумя предыдущими строчками): Живая сводка кодировщика (FFmpeg / XFC3 / RAM)
+            '<div style="font-size:10px;color:#f0883e;font-family:monospace;background:rgba(240,136,62,0.08);border:1px solid rgba(240,136,62,0.28);border-radius:5px;padding:3px 6px;white-space:pre-wrap;word-break:break-word;line-height:1.35;">' +
+                encInfoStr +
+            '</div>' +
+        '</div>';
+    };
+
+    window.renderYtDownloadsListUIV259 = function(prog, tasksList) {
+        var btn = window.ensureYtSearchSlotButtonV259();
+        var btnTxt = document.getElementById('jennyYtSearchSlotBtnTxtV259');
+        var drop = document.getElementById('jennyYtDownloadsDropdownV259');
+        var mProg = document.getElementById('ytModalLiveProgressBoxV256');
+
+        var tasks = Array.isArray(tasksList) ? tasksList : (window._ytLastTasksListV259 || []);
+        var activeTask = (prog && prog.active) ? prog : tasks.find(function(x) { return x && x.active; });
+        var latestTask = activeTask || (prog && prog.vid ? prog : tasks[0]);
+
+        var shouldShowSlotBtn = Boolean(activeTask || tasks.length > 0 || window._ytMinimizedHasSessionV259 || window._ytDlActiveV256);
+        if (btn) {
+            btn.style.display = shouldShowSlotBtn ? 'inline-flex' : 'none';
+            if (activeTask) {
+                var ph = String(activeTask.phase || 'download');
+                var pVal = Math.max(0, Math.min(100, parseInt(activeTask.pct, 10) || 0));
+                btn.style.borderColor = (ph === 'transcode') ? '#a371f7' : '#ff5555';
+                btn.style.color = (ph === 'transcode') ? '#e2c5ff' : '#ffd2d2';
+                if (btnTxt) {
+                    btnTxt.innerText = (ph === 'transcode' ? ('⚙️ Код ' + pVal + '%') : ('⬇️ YT ' + pVal + '%'));
+                }
+            } else if (latestTask && (latestTask.phase === 'crashed' || latestTask.phase === 'error')) {
+                btn.style.borderColor = '#ff3b3b';
+                btn.style.color = '#ffa198';
+                if (btnTxt) btnTxt.innerText = '💥 Сбой YT';
+            } else if (tasks.length > 0) {
+                btn.style.borderColor = '#3fb950';
+                btn.style.color = '#7ee787';
+                if (btnTxt) btnTxt.innerText = 'YT (' + tasks.length + ')';
+            } else {
+                btn.style.borderColor = '#ff5555';
+                btn.style.color = '#ffd2d2';
+                if (btnTxt) btnTxt.innerText = 'YT';
+            }
+        }
+
+        // Обновляем 3-строчный блок прямо внутри открытого окна YouTube
+        if (mProg) {
+            if (latestTask && (latestTask.active || latestTask.phase === 'crashed' || latestTask.phase === 'error' || window._ytDlActiveV256)) {
+                mProg.style.display = 'block';
+                mProg.innerHTML = window.renderYtSingleTaskCardHtmlV259(latestTask);
+            } else {
+                mProg.style.display = 'none';
+            }
+        }
+
+        // Обновляем разворачиваемый список скачиваний с YouTube под строкой поиска
+        if (drop) {
+            var cardsHtml = '';
+            if (tasks.length > 0) {
+                for (var i = 0; i < tasks.length; i++) {
+                    cardsHtml += window.renderYtSingleTaskCardHtmlV259(tasks[i]);
+                }
+            } else if (latestTask) {
+                cardsHtml = window.renderYtSingleTaskCardHtmlV259(latestTask);
+            } else {
+                cardsHtml = '<div style="padding:10px;text-align:center;color:#8b949e;font-size:11.5px;">Активных скачиваний с YouTube сейчас нет</div>';
+            }
+
+            drop.innerHTML =
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:6px;">' +
+                    '<span style="font-size:11.5px;font-weight:800;color:#ff8888;">📥 Список скачиваний и кодирования YouTube</span>' +
+                    '<div style="display:flex;gap:5px;align-items:center;">' +
+                        '<button type="button" onclick="window.openYoutubeStudioModalV230()" style="padding:3px 8px;border-radius:6px;border:1px solid #ff5555;background:rgba(255,60,60,0.2);color:#fff;font-size:10.5px;font-weight:700;cursor:pointer;">▶ Модуль YT</button>' +
+                        '<button type="button" onclick="window.clearYtFinishedTasksV259(event)" style="padding:3px 7px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#8b949e;font-size:10.5px;cursor:pointer;">🗑</button>' +
+                        '<button type="button" onclick="window.toggleYtDownloadsDropdownV259(false)" style="padding:3px 7px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;font-size:10.5px;cursor:pointer;">✕</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="max-height:42vh;overflow-y:auto;">' + cardsHtml + '</div>';
+        }
+    };
+
+    window.fetchAndRenderYtProgressStateV259 = async function() {
+        try {
+            var r = await fetch('/api/youtube/progress');
+            var j = await r.json();
+            var p = (j && j.progress) || {};
+            var tasks = (j && Array.isArray(j.tasks)) ? j.tasks : [];
+            window._ytLastTasksListV259 = tasks;
+            window.renderYtDownloadsListUIV259(p, tasks);
+            return { progress: p, tasks: tasks };
+        } catch (e) {
+            return null;
+        }
     };
 
     window.startYtDownloadProgressPollV256 = function(btnId, defaultLabel, titleText) {
         window._ytDlActiveV256 = true;
+        window._ytMinimizedHasSessionV259 = true;
         window._ytActiveBtnIdV256 = btnId || '';
         window._ytActiveBtnDefaultV256 = defaultLabel || '💾 В .xFLAC';
         if (typeof window.applyHeaderIconBadgeV99 === 'function') {
@@ -5333,14 +5519,18 @@ window.stopAllExternalStreamsV97 = function() {
         if (typeof window.updateKillAllSourcesButtonStatusV237 === 'function') {
             window.updateKillAllSourcesButtonStatusV237();
         }
-        var gBar = window.ensureYtGlobalProgressBarV256();
-        var gTitle = document.getElementById('jennyYtGlobalProgTitleV256');
-        var gPct = document.getElementById('jennyYtGlobalProgPctV256');
-        var gFill = document.getElementById('jennyYtGlobalProgFillV256');
-        if (gBar) gBar.style.display = 'flex';
-        if (gTitle) gTitle.innerText = '📥 YouTube: ' + (titleText || 'Подготовка потока...');
-        if (gPct) gPct.innerText = '1%';
-        if (gFill) gFill.style.width = '2%';
+        window.ensureYtSearchSlotButtonV259();
+        window.renderYtDownloadsListUIV259({
+            active: true,
+            title: titleText || 'YouTube',
+            phase: 'download',
+            pct: 0,
+            dl_pct: 0,
+            enc_pct: 0,
+            stage: '⬇️ Подготовка закачки: 0%',
+            sub_info: 'Запрос потоков YouTube...',
+            encoder_info: '🔧 Ожидание завершения закачки (100%) для старта кодировщика...'
+        }, window._ytLastTasksListV259);
 
         if (window._ytDlPollTimerV256) clearInterval(window._ytDlPollTimerV256);
         window._ytDlPollTimerV256 = setInterval(async function() {
@@ -5349,37 +5539,23 @@ window.stopAllExternalStreamsV97 = function() {
                 window._ytDlPollTimerV256 = null;
                 return;
             }
-            try {
-                var r = await fetch('/api/youtube/progress');
-                var j = await r.json();
-                var p = (j && j.progress) || {};
-                var pct = Math.max(1, Math.min(99, parseInt(p.pct, 10) || 1));
-                var mbStr = (p.total_mb > 0)
-                    ? (p.done_mb + ' / ' + p.total_mb + ' МБ')
-                    : (p.done_mb > 0 ? (p.done_mb + ' МБ') : '');
-                var stageStr = p.stage || ('Скачивание ' + pct + '%');
-                if (gBar) gBar.style.display = 'flex';
-                if (gTitle) gTitle.innerText = '📥 ' + (p.title || titleText || 'YouTube') + ' • ' + stageStr;
-                if (gPct) gPct.innerText = pct + '%' + (mbStr ? (' (' + mbStr + ')') : '');
-                if (gFill) gFill.style.width = pct + '%';
-
-                if (window._ytActiveBtnIdV256) {
-                    var liveBtn = document.getElementById(window._ytActiveBtnIdV256);
-                    if (liveBtn) {
-                        liveBtn.disabled = true;
-                        liveBtn.innerText = '⏳ ' + pct + '%' + (p.done_mb > 0 ? (' • ' + p.done_mb + 'МБ') : '');
-                    }
+            var data = await window.fetchAndRenderYtProgressStateV259();
+            if (!data) return;
+            var p = data.progress || {};
+            var pct = Math.max(0, Math.min(100, parseInt(p.pct, 10) || 0));
+            var phase = String(p.phase || 'download');
+            var prefIcon = (phase === 'transcode') ? '⚙️ ' : '⬇️ ';
+            if (window._ytActiveBtnIdV256) {
+                var liveBtn = document.getElementById(window._ytActiveBtnIdV256);
+                if (liveBtn) {
+                    liveBtn.disabled = true;
+                    liveBtn.innerText = prefIcon + pct + '%' + (phase === 'download' && p.done_mb > 0 ? (' • ' + p.done_mb + 'МБ') : '');
                 }
-                var mProg = document.getElementById('ytModalLiveProgressBoxV256');
-                if (mProg) {
-                    mProg.style.display = 'block';
-                    mProg.innerText = '📥 ' + stageStr + (mbStr ? (' • ' + mbStr) : '');
-                }
-                if (typeof window.applyHeaderIconBadgeV99 === 'function') {
-                    window.applyHeaderIconBadgeV99('youtube', pct + '%');
-                }
-            } catch (e) {}
-        }, 420);
+            }
+            if (typeof window.applyHeaderIconBadgeV99 === 'function') {
+                window.applyHeaderIconBadgeV99('youtube', pct + '%');
+            }
+        }, 380);
     };
 
     window.stopYtDownloadProgressPollV256 = function() {
@@ -5396,10 +5572,7 @@ window.stopAllExternalStreamsV97 = function() {
             }
             window._ytActiveBtnIdV256 = '';
         }
-        var gBar = document.getElementById('jennyYtGlobalProgressBarV256');
-        if (gBar) gBar.style.display = 'none';
-        var mProg = document.getElementById('ytModalLiveProgressBoxV256');
-        if (mProg) mProg.style.display = 'none';
+        window.fetchAndRenderYtProgressStateV259();
         if (typeof window.applyHeaderIconBadgeV99 === 'function') {
             window.applyHeaderIconBadgeV99('youtube', window._isYoutubeDeckAActiveV253 ? '▶' : '');
         }
@@ -5407,6 +5580,12 @@ window.stopAllExternalStreamsV97 = function() {
             window.updateKillAllSourcesButtonStatusV237();
         }
     };
+
+    // При старте приложения подтягиваем сохранённый список задач с диска (включая сводку перед вылетом, если он был!)
+    setTimeout(function() {
+        window.ensureYtSearchSlotButtonV259();
+        window.fetchAndRenderYtProgressStateV259();
+    }, 900);
 
     window.saveYtItemAsXflacV252 = async function(idx, btnEl) {
         var st = window._ytStudioStateV252;
@@ -5524,10 +5703,10 @@ window.stopAllExternalStreamsV97 = function() {
                     '</div>' +
                     '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">' +
                         '<button type="button" onclick="window.triggerOneClickYtEngineUpdateV252(this)" style="padding:5px 8px;border-radius:7px;border:1px solid rgba(255,136,136,0.5);background:rgba(255,60,60,0.2);color:#ffd2d2;font-size:10.5px;font-weight:700;cursor:pointer;">🔄 Ядро</button>' +
-                        '<button type="button" onclick="document.getElementById(\'jennyYoutubeStudioModalV230\').style.setProperty(\'display\',\'none\',\'important\')" style="padding:5px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.08);color:#fff;font-size:12px;font-weight:800;cursor:pointer;">✕</button>' +
+                        '<button type="button" onclick="window.minimizeYoutubeStudioToSearchSlotV259()" title="Свернуть в главное окно (между поиском и кол-вом треков)" style="padding:5px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.08);color:#fff;font-size:12px;font-weight:800;cursor:pointer;">✕</button>' +
                     '</div>' +
                 '</div>' +
-                '<div id="ytModalLiveProgressBoxV256" style="display:none;padding:5px 12px;background:rgba(63,185,80,0.16);border-bottom:1px solid rgba(63,185,80,0.4);color:#7ee787;font-size:11px;font-weight:800;font-family:monospace;text-align:center;flex-shrink:0;"></div>' +
+                '<div id="ytModalLiveProgressBoxV256" style="display:none;padding:6px 10px;background:rgba(13,17,23,0.95);border-bottom:1px solid rgba(255,85,85,0.35);flex-shrink:0;"></div>' +
                 // Mode tabs
                 '<div style="display:flex;gap:8px;padding:6px 12px 4px 12px;align-items:center;flex-shrink:0;">' +
                     '<button type="button" id="ytModeBtnMusicV252" onclick="window.switchYtStudioModeV252(\'music\')" style="flex:1;padding:6px 10px;border-radius:9px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#b91c1c);color:#fff;font-weight:700;font-size:11.5px;cursor:pointer;">🎵 YouTube Music (Только звук)</button>' +

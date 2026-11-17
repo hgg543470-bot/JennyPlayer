@@ -15865,36 +15865,324 @@ _YT_RANGE_CHUNK_CACHE_V253 = {}
 _YT_RANGE_CHUNK_LOCK_V253 = threading.Lock()
 _YT_ABORT_SEQ_V256 = 0
 _YT_ACTIVE_SUBPROCS_V256 = set()
+_YT_TASKS_LOCK_V259 = threading.Lock()
+_YT_DOWNLOAD_TASKS_V259 = []
+_YT_LAST_DISK_SAVE_TS_V259 = 0.0
+
 _YT_DOWNLOAD_PROGRESS_V256 = {
     "active": False,
     "vid": "",
     "title": "",
     "kind": "",
+    "phase": "idle",
     "pct": 0,
+    "dl_pct": 0,
+    "enc_pct": 0,
     "done_mb": 0.0,
     "total_mb": 0.0,
+    "speed_mbs": 0.0,
     "stage": "",
+    "sub_info": "",
+    "encoder_info": "",
     "updated_ts": 0.0,
 }
 
 
-def _update_yt_progress_v256(active: bool, vid: str = "", title: str = "", kind: str = "", pct: int = 0, done_mb: float = 0.0, total_mb: float = 0.0, stage: str = ""):
-    _YT_DOWNLOAD_PROGRESS_V256.update({
-        "active": bool(active),
-        "vid": str(vid or _YT_DOWNLOAD_PROGRESS_V256.get("vid") or ""),
-        "title": str(title or _YT_DOWNLOAD_PROGRESS_V256.get("title") or ""),
-        "kind": str(kind or _YT_DOWNLOAD_PROGRESS_V256.get("kind") or ""),
-        "pct": max(0, min(100, int(pct))),
-        "done_mb": round(float(done_mb), 2),
-        "total_mb": round(float(total_mb), 2),
-        "stage": str(stage or ""),
-        "updated_ts": time.time(),
-    })
+def _get_process_ram_str_v259() -> str:
+    try:
+        rss_mb = 0.0
+        peak_mb = 0.0
+        hwm_mb = 0.0
+        if os.path.isfile("/proc/self/status"):
+            with open("/proc/self/status", "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        rss_mb = int(line.split()[1]) / 1024.0
+                    elif line.startswith("VmHWM:"):
+                        hwm_mb = int(line.split()[1]) / 1024.0
+                    elif line.startswith("VmSize:"):
+                        peak_mb = int(line.split()[1]) / 1024.0
+        if rss_mb > 0:
+            return f"{rss_mb:.0f} МБ (пик {max(rss_mb, hwm_mb):.0f} МБ, вирт {peak_mb:.0f} МБ)"
+    except Exception:
+        pass
+    return "—"
+
+
+def _get_yt_tasks_state_file_v259() -> str:
+    return os.path.join(_get_yt_engine_dir_v252(), "yt_downloads_state_v259.json")
+
+
+def _save_yt_tasks_disk_v259(force: bool = False):
+    global _YT_LAST_DISK_SAVE_TS_V259
+    now = time.time()
+    if not force and (now - _YT_LAST_DISK_SAVE_TS_V259) < 0.6:
+        return
+    _YT_LAST_DISK_SAVE_TS_V259 = now
+    try:
+        p = _get_yt_tasks_state_file_v259()
+        tmp_p = p + ".tmp"
+        with open(tmp_p, "w", encoding="utf-8") as f:
+            json.dump({"tasks": _YT_DOWNLOAD_TASKS_V259[-15:], "last": _YT_DOWNLOAD_PROGRESS_V256}, f, ensure_ascii=False)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(tmp_p, p)
+    except Exception:
+        pass
+
+
+def _load_yt_tasks_disk_v259():
+    global _YT_DOWNLOAD_TASKS_V259
+    try:
+        p = _get_yt_tasks_state_file_v259()
+        if not os.path.isfile(p):
+            return
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        tasks = data.get("tasks") or []
+        for t in tasks:
+            if t.get("active"):
+                t["active"] = False
+                t["phase"] = "crashed"
+                old_stage = t.get("stage") or "Кодирование"
+                old_enc = t.get("encoder_info") or "нет данных"
+                t["stage"] = f"💥 Вылет процесса на этапе: {old_stage}"
+                t["encoder_info"] = f"💥 ВЫЛЕТ! Последняя сводка перед падением: {old_enc}"
+        _YT_DOWNLOAD_TASKS_V259 = tasks[-15:]
+        if _YT_DOWNLOAD_TASKS_V259:
+            _YT_DOWNLOAD_PROGRESS_V256.update(_YT_DOWNLOAD_TASKS_V259[-1])
+        _save_yt_tasks_disk_v259(force=True)
+    except Exception:
+        pass
+
+
+def _update_yt_progress_v256(
+    active: bool,
+    vid: str = "",
+    title: str = "",
+    kind: str = "",
+     pct: int = 0,
+    done_mb: float = None,
+    total_mb: float = None,
+    stage: str = "",
+    phase: str = "",
+    dl_pct: int = None,
+    enc_pct: int = None,
+    speed_mbs: float = None,
+    sub_info: str = None,
+    encoder_info: str = None,
+    force_disk: bool = False,
+):
+    with _YT_TASKS_LOCK_V259:
+        cur_vid = str(vid or _YT_DOWNLOAD_PROGRESS_V256.get("vid") or "")
+        cur_title = str(title or _YT_DOWNLOAD_PROGRESS_V256.get("title") or cur_vid or "YouTube")
+        cur_kind = str(kind or _YT_DOWNLOAD_PROGRESS_V256.get("kind") or "xflac")
+        cur_pct = max(0, min(100, int(pct)))
+        cur_done_mb = round(float(done_mb if done_mb is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("done_mb") or 0.0)), 2)
+        cur_tot_mb = round(float(total_mb if total_mb is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("total_mb") or 0.0)), 2)
+        cur_spd = round(float(speed_mbs if speed_mbs is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("speed_mbs") or 0.0)), 2)
+        cur_phase = str(phase or _YT_DOWNLOAD_PROGRESS_V256.get("phase") or ("download" if active else "done"))
+        cur_dl_pct = max(0, min(100, int(dl_pct if dl_pct is not None else (cur_pct if cur_phase == "download" else (_YT_DOWNLOAD_PROGRESS_V256.get("dl_pct") or 100)))))
+        cur_enc_pct = max(0, min(100, int(enc_pct if enc_pct is not None else (cur_pct if cur_phase == "transcode" else (_YT_DOWNLOAD_PROGRESS_V256.get("enc_pct") or 0)))))
+        cur_stage = str(stage or _YT_DOWNLOAD_PROGRESS_V256.get("stage") or "")
+        cur_sub = str(sub_info if sub_info is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("sub_info") or ""))
+        if not cur_sub:
+            mb_part = f"{cur_done_mb} / {cur_tot_mb} МБ" if cur_tot_mb > 0 else (f"{cur_done_mb} МБ" if cur_done_mb > 0 else "")
+            spd_part = f" • {cur_spd:.1f} МБ/с" if cur_spd > 0 else ""
+            cur_sub = f"Скачано: {mb_part}{spd_part} (Закачка: {cur_dl_pct}% | Код: {cur_enc_pct}%)" if mb_part else f"Закачка: {cur_dl_pct}% | Перекодирование: {cur_enc_pct}%"
+        cur_enc_info = str(encoder_info if encoder_info is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("encoder_info") or ""))
+
+        entry = {
+            "active": bool(active),
+            "vid": cur_vid,
+            "title": cur_title,
+            "kind": cur_kind,
+            "phase": cur_phase,
+            "pct": cur_pct,
+            "dl_pct": cur_dl_pct,
+            "enc_pct": cur_enc_pct,
+            "done_mb": cur_done_mb,
+            "total_mb": cur_tot_mb,
+            "speed_mbs": cur_spd,
+            "stage": cur_stage,
+            "sub_info": cur_sub,
+            "encoder_info": cur_enc_info,
+            "updated_ts": time.time(),
+        }
+        _YT_DOWNLOAD_PROGRESS_V256.update(entry)
+
+        if cur_vid:
+            found = False
+            for idx in range(len(_YT_DOWNLOAD_TASKS_V259) - 1, -1, -1):
+                if _YT_DOWNLOAD_TASKS_V259[idx].get("vid") == cur_vid and _YT_DOWNLOAD_TASKS_V259[idx].get("kind") == cur_kind:
+                    _YT_DOWNLOAD_TASKS_V259[idx].update(entry)
+                    found = True
+                    break
+            if not found:
+                _YT_DOWNLOAD_TASKS_V259.append(dict(entry))
+                if len(_YT_DOWNLOAD_TASKS_V259) > 15:
+                    _YT_DOWNLOAD_TASKS_V259.pop(0)
+        _save_yt_tasks_disk_v259(force=force_disk or (not active) or cur_phase in ("transcode", "error", "crashed"))
+
+
+_load_yt_tasks_disk_v259()
 
 
 def api_youtube_progress_v256():
     response.content_type = "application/json; charset=utf-8"
-    return json.dumps({"status": "ok", "progress": _YT_DOWNLOAD_PROGRESS_V256}, ensure_ascii=False)
+    return json.dumps({
+        "status": "ok",
+        "progress": _YT_DOWNLOAD_PROGRESS_V256,
+        "tasks": list(reversed(_YT_DOWNLOAD_TASKS_V259)),
+    }, ensure_ascii=False)
+
+
+def api_youtube_clear_tasks_v259():
+    response.content_type = "application/json; charset=utf-8"
+    with _YT_TASKS_LOCK_V259:
+        _YT_DOWNLOAD_TASKS_V259[:] = [t for t in _YT_DOWNLOAD_TASKS_V259 if t.get("active")]
+        _save_yt_tasks_disk_v259(force=True)
+    return json.dumps({"status": "ok", "tasks": list(reversed(_YT_DOWNLOAD_TASKS_V259))}, ensure_ascii=False)
+
+
+def _fmt_sec_hms_v259(sec: float) -> str:
+    s = max(0, int(sec or 0))
+    h = s // 3600
+    m = (s % 3600) // 60
+    r = s % 60
+    return f"{h:02d}:{m:02d}:{r:02d}" if h > 0 else f"{m:02d}:{r:02d}"
+
+
+def _run_ffmpeg_with_live_progress_v259(
+    cmd_base: list,
+    out_file_path: str,
+    total_dur_sec: float,
+    vid: str,
+    title: str,
+    kind: str,
+    stage_prefix: str,
+    timeout_sec: int = 900,
+) -> tuple:
+    """Runs FFmpeg with -progress pipe:1 and streams live encoding progress (0..100%) + encoder telemetry to _update_yt_progress_v256."""
+    my_abort_seq = _YT_ABORT_SEQ_V256
+    full_cmd = [cmd_base[0], "-y", "-hide_banner", "-progress", "pipe:1", "-stats_period", "0.35"] + cmd_base[1:]
+    _update_yt_progress_v256(
+        True,
+        vid=vid,
+        title=title,
+        kind=kind,
+        phase="transcode",
+        pct=1,
+        dl_pct=100,
+        enc_pct=1,
+        stage=f"⚙️ {stage_prefix}: 0%",
+        encoder_info=f"🔧 Запуск FFmpeg: {' '.join(os.path.basename(x) if '/' in x else x for x in cmd_base[:8])}... | RAM: {_get_process_ram_str_v259()}",
+        force_disk=True,
+    )
+    proc = subprocess.Popen(
+        full_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        universal_newlines=True,
+    )
+    _YT_ACTIVE_SUBPROCS_V256.add(proc)
+    stderr_lines = []
+
+    def _read_stderr():
+        try:
+            for line in proc.stderr:
+                s_ln = line.strip()
+                if s_ln:
+                    stderr_lines.append(s_ln)
+                    if len(stderr_lines) > 30:
+                        stderr_lines.pop(0)
+        except Exception:
+            pass
+
+    t_err = threading.Thread(target=_read_stderr, daemon=True)
+    t_err.start()
+
+    cur_props = {}
+    t_start = time.time()
+    try:
+        for raw_line in proc.stdout:
+            if _YT_ABORT_SEQ_V256 != my_abort_seq:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                raise RuntimeError("Остановлено пользователем")
+            if (time.time() - t_start) > timeout_sec:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                raise RuntimeError(f"Таймаут кодировщика ({timeout_sec} сек)")
+            line = raw_line.strip()
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            cur_props[k.strip()] = v.strip()
+            if k.strip() == "progress":
+                out_us = 0
+                try:
+                    out_us = int(cur_props.get("out_time_us") or cur_props.get("out_time_ms") or 0)
+                except Exception:
+                    out_us = 0
+                out_sec = max(0.0, out_us / 1000000.0)
+                out_time_str = cur_props.get("out_time") or _fmt_sec_hms_v259(out_sec)
+                if "." in out_time_str:
+                    out_time_str = out_time_str.split(".")[0]
+                spd_str = cur_props.get("speed") or "—"
+                br_str = cur_props.get("bitrate") or "—"
+                tot_sz_b = 0
+                try:
+                    tot_sz_b = int(cur_props.get("total_size") or 0)
+                except Exception:
+                    tot_sz_b = 0
+                if tot_sz_b <= 0 and out_file_path and os.path.exists(out_file_path):
+                    try:
+                        tot_sz_b = os.path.getsize(out_file_path)
+                    except Exception:
+                        pass
+                out_mb = round(tot_sz_b / (1024.0 * 1024.0), 2)
+                if total_dur_sec > 0.5:
+                    enc_pct = min(99, max(1, int((out_sec * 100.0) / total_dur_sec)))
+                    dur_str = f"{_fmt_sec_hms_v259(out_sec)} / {_fmt_sec_hms_v259(total_dur_sec)}"
+                else:
+                    enc_pct = min(95, max(5, int((time.time() - t_start) * 4)))
+                    dur_str = out_time_str
+                if v.strip() == "end":
+                    enc_pct = 100
+                dl_mb = _YT_DOWNLOAD_PROGRESS_V256.get("done_mb") or _YT_DOWNLOAD_PROGRESS_V256.get("total_mb") or 0.0
+                sub_txt = f"Закачка: 100% ({dl_mb} МБ) • Перекодировано: {dur_str} • Выход: {out_mb} МБ"
+                enc_txt = f"🔧 Кодировщик FFmpeg: time={out_time_str} | speed={spd_str} | bitrate={br_str} | выход={out_mb} МБ | RAM: {_get_process_ram_str_v259()}"
+                if stderr_lines:
+                    enc_txt += f" | лог: {stderr_lines[-1][:90]}"
+                _update_yt_progress_v256(
+                    True,
+                    vid=vid,
+                    title=title,
+                    kind=kind,
+                    phase="transcode",
+                    pct=enc_pct,
+                    dl_pct=100,
+                    enc_pct=enc_pct,
+                    stage=f"⚙️ {stage_prefix}: {enc_pct}%",
+                    sub_info=sub_txt,
+                    encoder_info=enc_txt,
+                )
+        proc.wait(timeout=15)
+    finally:
+        _YT_ACTIVE_SUBPROCS_V256.discard(proc)
+    t_err.join(timeout=1.0)
+    err_tail = " | ".join(stderr_lines[-3:]) if stderr_lines else ""
+    return proc.returncode, err_tail
 
 
 def _probe_yt_stream_size_v253(stream_info: dict) -> int:
@@ -15927,7 +16215,21 @@ def _download_yt_url_fast_v252(stream_info: dict, dest_path: str, max_workers: i
     hdrs = dict(stream_info.get("headers") or {"User-Agent": "Mozilla/5.0"})
     total_size = _probe_yt_stream_size_v253(stream_info)
     tot_mb = round(total_size / (1024.0 * 1024.0), 2) if total_size > 0 else 0.0
-    _update_yt_progress_v256(True, pct=2, done_mb=0.0, total_mb=tot_mb, stage=f"{label_stage} (0%)")
+    t_dl_start = time.time()
+    _update_yt_progress_v256(
+        True,
+        phase="download",
+        pct=0,
+        dl_pct=0,
+        enc_pct=0,
+        done_mb=0.0,
+        total_mb=tot_mb,
+        speed_mbs=0.0,
+        stage=f"⬇️ {label_stage}: 0%",
+        sub_info=f"Скачано: 0.00 / {tot_mb:.2f} МБ • Старт {max_workers} потоков...",
+        encoder_info=f"📡 Загрузка потока (ID={stream_info.get('format_id') or '?'}, {stream_info.get('ext') or '?'}) | Ожидание окончания закачки (100%) перед кодированием | RAM: {_get_process_ram_str_v259()}",
+        force_disk=True,
+    )
 
     os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
     tmp_path = f"{dest_path}.part_{int(time.time() * 1000)}"
@@ -15963,9 +16265,23 @@ def _download_yt_url_fast_v252(stream_info: dict, dest_path: str, max_workers: i
                             with done_lock:
                                 done_bytes[0] += len(data)
                                 cur_b = done_bytes[0]
-                            pct = min(88, max(2, int((cur_b * 88) / max(1, total_size))))
+                            pct = min(100, max(1, int((cur_b * 100) / max(1, total_size))))
                             cur_mb = round(cur_b / (1024.0 * 1024.0), 2)
-                            _update_yt_progress_v256(True, pct=pct, done_mb=cur_mb, total_mb=tot_mb, stage=f"{label_stage} ({pct}%)")
+                            elapsed = max(0.1, time.time() - t_dl_start)
+                            spd_mbs = round(cur_mb / elapsed, 2)
+                            _update_yt_progress_v256(
+                                True,
+                                phase="download",
+                                pct=pct,
+                                dl_pct=pct,
+                                enc_pct=0,
+                                done_mb=cur_mb,
+                                total_mb=tot_mb,
+                                speed_mbs=spd_mbs,
+                                stage=f"⬇️ {label_stage}: {pct}%",
+                                sub_info=f"Скачано: {cur_mb:.2f} / {tot_mb:.2f} МБ • {spd_mbs:.1f} МБ/с • Кодирование: ждёт 100%",
+                                encoder_info=f"📡 Потоков: {max_workers} | Скорость сети: {spd_mbs:.1f} МБ/с | Чанк {s // chunk_sz + 1}/{len(ranges)} | RAM: {_get_process_ram_str_v259()}",
+                            )
                             return len(data)
                     except Exception:
                         if _YT_ABORT_SEQ_V256 != my_abort_seq or attempt == 3:
@@ -15989,10 +16305,40 @@ def _download_yt_url_fast_v252(stream_info: dict, dest_path: str, max_workers: i
                 f.write(buf)
                 done_bytes[0] += len(buf)
                 cur_mb = round(done_bytes[0] / (1024.0 * 1024.0), 2)
-                pct = min(88, max(5, int((done_bytes[0] * 88) / max(1, total_size)))) if total_size > 0 else 50
-                _update_yt_progress_v256(True, pct=pct, done_mb=cur_mb, total_mb=tot_mb, stage=f"{label_stage} ({cur_mb} МБ)")
+                elapsed = max(0.1, time.time() - t_dl_start)
+                spd_mbs = round(cur_mb / elapsed, 2)
+                pct = min(100, max(1, int((done_bytes[0] * 100) / max(1, total_size)))) if total_size > 0 else 50
+                _update_yt_progress_v256(
+                    True,
+                    phase="download",
+                    pct=pct,
+                    dl_pct=pct,
+                    enc_pct=0,
+                    done_mb=cur_mb,
+                    total_mb=tot_mb,
+                    speed_mbs=spd_mbs,
+                    stage=f"⬇️ {label_stage}: {pct}%",
+                    sub_info=f"Скачано: {cur_mb:.2f} МБ • {spd_mbs:.1f} МБ/с",
+                    encoder_info=f"📡 Прямой поток | Скорость: {spd_mbs:.1f} МБ/с | RAM: {_get_process_ram_str_v259()}",
+                )
 
     if os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
+        final_dl_mb = round(os.path.getsize(tmp_path) / (1024.0 * 1024.0), 2)
+        elapsed_tot = max(0.1, time.time() - t_dl_start)
+        _update_yt_progress_v256(
+            True,
+            phase="download",
+            pct=100,
+            dl_pct=100,
+            enc_pct=0,
+            done_mb=final_dl_mb,
+            total_mb=final_dl_mb,
+            speed_mbs=round(final_dl_mb / elapsed_tot, 2),
+            stage=f"✅ {label_stage}: 100% (Докачано {final_dl_mb:.2f} МБ)",
+            sub_info=f"Скачано: {final_dl_mb:.2f} / {final_dl_mb:.2f} МБ (100%) • Переход к перекодированию...",
+            encoder_info=f"✅ Закачка 100% завершена за {elapsed_tot:.1f}с ({final_dl_mb:.2f} МБ) -> передача файла в кодировщик... | RAM: {_get_process_ram_str_v259()}",
+            force_disk=True,
+        )
         return _safe_move_file_v253(tmp_path, dest_path)
     raise RuntimeError("Скачанный файл потока пуст")
 
@@ -16149,13 +16495,13 @@ def _ensure_yt_deckb_mp4_cached_v252(vid: str, preferred_height: int = 2160) -> 
             fa = ex.submit(_download_yt_url_fast_v252, chosen["audio"], a_tmp, 4, "Аудиодорожка")
             fv.result()
             fa.result()
-        _update_yt_progress_v256(True, vid=vid, title=meta.get("title") or vid, kind="video", pct=92, stage=f"Сборка MP4 {h_tag}p...")
+        dur_v = float(meta.get("duration") or 0.0)
         mux_tmp = f"{out_mp4}.muxing.mp4"
         acodec_str = str(chosen["audio"].get("acodec") or "").lower()
         is_aac_compatible = (a_ext in ("m4a", "aac", "mp4") or "mp4a" in acodec_str or "aac" in acodec_str)
         audio_codec_args = ["-c:a", "copy"] if is_aac_compatible else ["-c:a", "aac", "-b:a", "192k"]
         cmd = [
-            ff, "-y", "-hide_banner", "-loglevel", "error",
+            ff,
             "-i", v_tmp, "-i", a_tmp,
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "copy",
@@ -16164,16 +16510,13 @@ def _ensure_yt_deckb_mp4_cached_v252(vid: str, preferred_height: int = 2160) -> 
             "-movflags", "+faststart",
             mux_tmp,
         ]
-        p_mux = subprocess.Popen(cmd)
-        _YT_ACTIVE_SUBPROCS_V256.add(p_mux)
-        try:
-            p_mux.wait(timeout=600)
-        finally:
-            _YT_ACTIVE_SUBPROCS_V256.discard(p_mux)
+        _run_ffmpeg_with_live_progress_v259(
+            cmd, mux_tmp, dur_v, vid, meta.get("title") or vid, "video", f"Сборка MP4 {h_tag}p", timeout_sec=900
+        )
         # If -c:v copy into MP4 failed (e.g. exotic VP9/AV1 container mismatch), transcode cleanly at the exact same resolution!
         if not (os.path.isfile(mux_tmp) and os.path.getsize(mux_tmp) > 65536):
             cmd_fb = [
-                ff, "-y", "-hide_banner", "-loglevel", "error",
+                ff,
                 "-i", v_tmp, "-i", a_tmp,
                 "-map", "0:v:0", "-map", "1:a:0",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20", "-pix_fmt", "yuv420p",
@@ -16181,20 +16524,31 @@ def _ensure_yt_deckb_mp4_cached_v252(vid: str, preferred_height: int = 2160) -> 
                 "-movflags", "+faststart",
                 mux_tmp,
             ]
-            p_fb = subprocess.Popen(cmd_fb)
-            _YT_ACTIVE_SUBPROCS_V256.add(p_fb)
-            try:
-                p_fb.wait(timeout=600)
-            finally:
-                _YT_ACTIVE_SUBPROCS_V256.discard(p_fb)
+            _run_ffmpeg_with_live_progress_v259(
+                cmd_fb, mux_tmp, dur_v, vid, meta.get("title") or vid, "video", f"Перекодирование H.264 {h_tag}p", timeout_sec=1800
+            )
         try:
             os.remove(v_tmp)
         except Exception:
             pass
         if os.path.isfile(mux_tmp) and os.path.getsize(mux_tmp) > 65536:
             _safe_move_file_v253(mux_tmp, out_mp4)
+            out_sz_mb = round(os.path.getsize(out_mp4) / (1024.0 * 1024.0), 2)
             _register_yt_virtual_file_v253(os.path.basename(out_mp4), out_mp4)
-            _update_yt_progress_v256(False, vid=vid, title=meta.get("title") or vid, kind="video", pct=100, stage="Готово")
+            _update_yt_progress_v256(
+                False,
+                vid=vid,
+                title=meta.get("title") or vid,
+                kind="video",
+                phase="done",
+                pct=100,
+                dl_pct=100,
+                enc_pct=100,
+                stage=f"✅ Видео {h_tag}p готово ({out_sz_mb} МБ)",
+                sub_info=f"Закачка: 100% | Сборка MP4: 100% | Итоговый файл: {out_sz_mb} МБ",
+                encoder_info=f"✅ Кодировщик MP4 завершил сборку {h_tag}p ({out_sz_mb} МБ) | RAM: {_get_process_ram_str_v259()}",
+                force_disk=True,
+            )
             return out_mp4, meta, h_tag
 
     if meta.get("best_combined"):
@@ -16665,31 +17019,78 @@ def api_youtube_save_xflac_v252():
             pass
 
         # 1) Decode to 16-bit 44.1kHz stereo WAV and encode genuine XFC3 .xflac via _encode_wav_to_xflac_bytes_v85
-        _update_yt_progress_v256(True, vid=vid, title=title, kind="xflac", pct=90, stage="Кодирование в .xFLAC (90%)...")
+        dur_sec = float(meta.get("duration") or 0.0)
+        raw_sz_mb = round(os.path.getsize(local_raw) / (1024.0 * 1024.0), 2) if os.path.isfile(local_raw) else 0.0
         encoded_xfc_ok = False
+        xfc_err_msg = ""
         tmp_wav = os.path.join(_get_yt_stream_cache_dir_v252(), f"yt_wav_{vid}.wav")
         try:
             cmd_wav = [
-                ff, "-y", "-hide_banner", "-loglevel", "error",
+                ff,
                 "-i", local_raw,
                 "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
                 "-f", "wav", tmp_wav,
             ]
-            p_wav = subprocess.Popen(cmd_wav)
-            _YT_ACTIVE_SUBPROCS_V256.add(p_wav)
-            try:
-                p_wav.wait(timeout=180)
-            finally:
-                _YT_ACTIVE_SUBPROCS_V256.discard(p_wav)
+            rc_wav, err_wav = _run_ffmpeg_with_live_progress_v259(
+                cmd_wav, tmp_wav, dur_sec, vid, title, "xflac", "Декодирование в PCM WAV 44.1кГц", timeout_sec=1200
+            )
             if os.path.isfile(tmp_wav) and os.path.getsize(tmp_wav) > 4096:
-                _update_yt_progress_v256(True, vid=vid, title=title, kind="xflac", pct=95, stage="Упаковка XFC3 .xFLAC (95%)...")
+                wav_mb = round(os.path.getsize(tmp_wav) / (1024.0 * 1024.0), 2)
+                est_cpp_gb = round((wav_mb * 6.2) / 1024.0, 2)
+                _update_yt_progress_v256(
+                    True,
+                    vid=vid,
+                    title=title,
+                    kind="xflac",
+                    phase="transcode",
+                    pct=92,
+                    dl_pct=100,
+                    enc_pct=92,
+                    stage=f"⚙️ Кодирование XFC3 (чтение WAV {wav_mb} МБ в память)...",
+                    sub_info=f"Скачано: {raw_sz_mb} МБ (100%) • WAV: {wav_mb} МБ (100%) • Шаг 1/3 XFC3",
+                    encoder_info=f"🔧 Кодировщик XFC3: чтение {wav_mb} МБ WAV в RAM Python... | RAM процесса: {_get_process_ram_str_v259()}",
+                    force_disk=True,
+                )
                 with open(tmp_wav, "rb") as wf:
                     wav_bytes = wf.read()
+                frames_cnt = max(0, (len(wav_bytes) - 44) // 4)
+                _update_yt_progress_v256(
+                    True,
+                    vid=vid,
+                    title=title,
+                    kind="xflac",
+                    phase="transcode",
+                    pct=95,
+                    dl_pct=100,
+                    enc_pct=95,
+                    stage=f"⚙️ Кодирование XFC3 (libxflac.so C++ OLS, WAV {wav_mb} МБ)...",
+                    sub_info=f"Скачано: {raw_sz_mb} МБ (100%) • WAV в RAM: {wav_mb} МБ ({frames_cnt} фреймов) • Шаг 2/3 XFC3",
+                    encoder_info=f"🔧 Вызов libxflac.so (xflac_encode_wav_mem): WAV={wav_mb} МБ, фреймов={frames_cnt}, буферы C++ ~{est_cpp_gb} ГБ | RAM процесса: {_get_process_ram_str_v259()}",
+                    force_disk=True,
+                )
                 xfc_bytes = _encode_wav_to_xflac_bytes_v85(wav_bytes, 2)
+                xfc_mb = round(len(xfc_bytes) / (1024.0 * 1024.0), 2)
+                _update_yt_progress_v256(
+                    True,
+                    vid=vid,
+                    title=title,
+                    kind="xflac",
+                    phase="transcode",
+                    pct=99,
+                    dl_pct=100,
+                    enc_pct=99,
+                    stage=f"⚙️ Запись .xFLAC ({xfc_mb} МБ) на диск...",
+                    sub_info=f"Скачано: {raw_sz_mb} МБ • WAV: {wav_mb} МБ ➔ XFC3: {xfc_mb} МБ • Шаг 3/3",
+                    encoder_info=f"🔧 XFC3 успешно сжал {wav_mb} МБ ➔ {xfc_mb} МБ | Запись файла... | RAM: {_get_process_ram_str_v259()}",
+                    force_disk=True,
+                )
                 with open(out_xflac, "wb") as xf_out:
                     xf_out.write(xfc_bytes)
                 encoded_xfc_ok = True
-        except Exception:
+            else:
+                xfc_err_msg = f"WAV не создан (rc={rc_wav}): {err_wav}"
+        except Exception as e_xfc:
+            xfc_err_msg = str(e_xfc)
             encoded_xfc_ok = False
         finally:
             try:
@@ -16703,7 +17104,7 @@ def api_youtube_save_xflac_v252():
             out_xflac = os.path.join(target_music_dir, f"{safe_name}.flac")
             tmp_flac = os.path.join(_get_yt_stream_cache_dir_v252(), f"yt_tmp_{vid}.flac")
             cmd_flac = [
-                ff, "-y", "-hide_banner", "-loglevel", "error",
+                ff,
                 "-i", local_raw,
                 "-vn", "-c:a", "flac", "-compression_level", "5",
                 "-metadata", f"title={title}",
@@ -16711,7 +17112,16 @@ def api_youtube_save_xflac_v252():
                 "-metadata", "album=YouTube Studio",
                 tmp_flac,
             ]
-            subprocess.run(cmd_flac, timeout=180, check=False)
+            _run_ffmpeg_with_live_progress_v259(
+                cmd_flac,
+                tmp_flac,
+                dur_sec,
+                vid,
+                title,
+                "xflac",
+                f"Перекодирование в FLAC ({'после сбоя XFC3: ' + xfc_err_msg[:45] if xfc_err_msg else 'прямое'})",
+                timeout_sec=1200,
+            )
             if os.path.isfile(tmp_flac) and os.path.getsize(tmp_flac) > 8192:
                 _safe_move_file_v253(tmp_flac, out_xflac)
             else:
@@ -16733,13 +17143,27 @@ def api_youtube_save_xflac_v252():
         except Exception:
             pass
 
+        sz_mb = 0.0
         try:
             sz_mb = round(os.path.getsize(out_xflac) / (1024.0 * 1024.0), 2)
             record_jenny_hub_item_v242("youtube", final_fn, title=title, subtitle=f"YouTube Audio • {channel}", size_mb=sz_mb)
         except Exception:
             pass
 
-        _update_yt_progress_v256(False, vid=vid, title=title, kind="xflac", pct=100, stage="Сохранено в .xFLAC!")
+        _update_yt_progress_v256(
+            False,
+            vid=vid,
+            title=title,
+            kind="xflac",
+            phase="done",
+            pct=100,
+            dl_pct=100,
+            enc_pct=100,
+            stage=f"✅ Готово: {final_fn} ({sz_mb} МБ)",
+            sub_info=f"Закачка: 100% ({raw_sz_mb} МБ) • Перекодирование: 100% • Итог: {sz_mb} МБ",
+            encoder_info=f"✅ Кодировщик завершил работу успешно: {final_fn} ({sz_mb} МБ) | RAM: {_get_process_ram_str_v259()}",
+            force_disk=True,
+        )
         return json.dumps({
             "status": "ok",
             "path": out_xflac,
@@ -16748,7 +17172,15 @@ def api_youtube_save_xflac_v252():
             "channel": channel,
         }, ensure_ascii=False)
     except Exception as e:
-        _update_yt_progress_v256(False, vid=vid, pct=0, stage="Ошибка")
+        _update_yt_progress_v256(
+            False,
+            vid=vid,
+            phase="error",
+            pct=0,
+            stage=f"❌ Ошибка: {str(e)[:80]}",
+            encoder_info=f"❌ Исключение в кодировщике/загрузчике: {str(e)} | RAM: {_get_process_ram_str_v259()}",
+            force_disk=True,
+        )
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
@@ -16901,6 +17333,7 @@ def api_island_yt_artwork_v252():
 
 _override_bottle_route_v212('/api/youtube/engine_status', 'GET', api_youtube_engine_status_v252)
 _override_bottle_route_v212('/api/youtube/progress', 'GET', api_youtube_progress_v256)
+_override_bottle_route_v212('/api/youtube/clear_tasks', 'POST', api_youtube_clear_tasks_v259)
 _override_bottle_route_v212('/api/youtube/update_engine', 'POST', api_youtube_update_engine_v252)
 _override_bottle_route_v212('/api/youtube/search', 'POST', api_youtube_search_v252)
 _override_bottle_route_v212('/api/youtube/search', 'GET', api_youtube_search_v252)
