@@ -171,7 +171,7 @@ jobs:
         open("app/build.gradle", "w", encoding="utf-8").write(s)
         STAMP_EOF
 
-    - name: Сборка 3 вариантов APK под 64-bit (arm64-v8a): V1 (Ориг.DSP + AutoRMS), V2 (Полный ремастер), V3 (Фиксы движка + Твои настройки и Противофаза)
+    - name: "Сборка 3 вариантов APK под 64-bit (arm64-v8a) — V1, V2, V3"
       env:
         GRADLE_OPTS: "-Dorg.gradle.jvmargs=\"-Xmx4096m -Xms512m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8\""
       run: |
