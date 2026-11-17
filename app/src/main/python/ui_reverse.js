@@ -628,7 +628,8 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
         nodeRate = targetSpd;
     }
 
-    if (!player.paused) {
+    const shouldPlayHorizon = !window._userPausedV75_2 && Boolean(window.isStudioPlaying || window._resumingFromUserPlayV232 || !player.paused);
+    if (shouldPlayHorizon) {
         if (window.studioSourceNode) {
             window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch (e) {}
@@ -642,12 +643,20 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
         window.studioSourceNode.connect(window.inputMixer);
         window.studioSourceNode.start(0, 0);
         window.isStudioPlaying = true;
+        window._studioClockV74_1 = {
+            active: true,
+            startCtxTime: window.audioCtx.currentTime,
+            startTrackSec: Math.max(0, curSec),
+            lastKnownSec: Math.max(0, curSec),
+            trackName: window.currentPlayingTrack || '',
+            speed: targetSpd
+        };
 
         const realDurSec = (gearKey === 'jbuf-lock') ? playBuf.duration : (playBuf.duration / Math.max(0.25, nodeRate));
         const nextWaitMs = Math.max(400, (realDurSec - 1.0) * 1000);
         window._horizonSliceTimerV71 = setTimeout(() => {
             const activeG = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
-            if (!player.paused && (activeG === 'jbuf-lock' || activeG === 'jbuf-shift' || activeG === 'vinyl-shift')) {
+            if (!window._userPausedV75_2 && (activeG === 'jbuf-lock' || activeG === 'jbuf-shift' || activeG === 'vinyl-shift')) {
                 window.engageHorizonRamEngineV71_5(activeG, false);
             }
         }, nextWaitMs);
@@ -846,9 +855,14 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
 
             window.studioSourceNode.start(0, offset);
             window.isStudioPlaying = true;
-            window._studioClockV74_1.active = true;
-            window._studioClockV74_1.startCtxTime = window.audioCtx.currentTime;
-            window._studioClockV74_1.startTrackSec = offset;
+            window._studioClockV74_1 = {
+                active: true,
+                startCtxTime: window.audioCtx.currentTime,
+                startTrackSec: Math.max(0, offset),
+                lastKnownSec: Math.max(0, offset),
+                trackName: window.currentPlayingTrack || '',
+                speed: effSpd
+            };
         } else if (window.studioSourceNode && window.studioSourceNode.playbackRate) {
             const now = window.audioCtx.currentTime;
             if (isVinyl) {
@@ -856,6 +870,14 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
             } else {
                 window.studioSourceNode.playbackRate.setValueAtTime(effSpd, now);
             }
+            window._studioClockV74_1 = {
+                active: true,
+                startCtxTime: now,
+                startTrackSec: Math.max(0, trueSec),
+                lastKnownSec: Math.max(0, trueSec),
+                trackName: window.currentPlayingTrack || '',
+                speed: effSpd
+            };
         }
     }
 
@@ -1845,10 +1867,13 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         var baseSec = (typeof trackSecOverride === 'number' && isFinite(trackSecOverride))
             ? trackSecOverride
             : ((typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0));
+        var cleanBaseSec = Math.max(0, baseSec);
         window._studioClockV74_1 = {
             active: Boolean(window.isStudioPlaying && window.studioSourceNode),
             startCtxTime: window.audioCtx.currentTime,
-            startTrackSec: Math.max(0, baseSec),
+            startTrackSec: cleanBaseSec,
+            lastKnownSec: cleanBaseSec,
+            trackName: window.currentPlayingTrack || '',
             speed: spd
         };
     }
@@ -1935,11 +1960,13 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                     : ((player && player.currentTime) || 0);
 
                 if (player && shouldPlay && !isDraggingArc) {
+                    window._internalSeekSyncGuardV370 = true;
                     try {
-                        if (Math.abs((player.currentTime || 0) - trueSec) > 0.25) {
+                        if (isFinite(trueSec) && trueSec >= 0 && Math.abs((player.currentTime || 0) - trueSec) > 0.35) {
                             player.currentTime = trueSec;
                         }
                     } catch (e) {}
+                    setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 60);
                 }
 
                 // Перед перестроением графа/передачи всегда останавливаем прежний studioSourceNode,

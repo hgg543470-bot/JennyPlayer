@@ -132,9 +132,50 @@
                 setStylePropIfChangedV363(m, 'top', isOpen ? '104px' : targetTopPx, 'important');
                 setStylePropIfChangedV363(m, 'bottom', targetBotPx, 'important');
             });
+            if (typeof window.syncAllSourceModalsBoundsV256 === 'function') {
+                window.syncAllSourceModalsBoundsV256(botH);
+            }
         } finally {
             window._inLayoutSyncGuardV363 = false;
         }
+    };
+
+    window.syncAllSourceModalsBoundsV256 = function(knownBotH) {
+        var hdrCap = document.getElementById('topHeaderCapsule');
+        var botEl = document.getElementById('bottomPlayerDock') || document.querySelector('.sticky-bottom');
+        var topPx = 50;
+        if (hdrCap) {
+            var r = hdrCap.getBoundingClientRect();
+            if (r && r.bottom > 24 && r.bottom < 160) {
+                topPx = Math.round(r.bottom + 2);
+            }
+        }
+        var botPx = (typeof knownBotH === 'number' && knownBotH > 0)
+            ? knownBotH
+            : ((botEl && getComputedStyle(botEl).display !== 'none') ? (botEl.offsetHeight || 96) : 96);
+
+        var topStr = topPx + 'px';
+        var botStr = botPx + 'px';
+        if (document.documentElement) {
+            setStylePropIfChangedV363(document.documentElement, '--jenny-module-top', topStr, '');
+            setStylePropIfChangedV363(document.documentElement, '--jenny-module-bottom', botStr, '');
+        }
+        [
+            'jennyKhinsiderModalV88',
+            'jennyFlacRadioModalV91',
+            'jennySoundCloudModalV93',
+            'jennyTorrentModalV91',
+            'jennyTorInspectorModalV128',
+            'jennyYoutubeStudioModalV230',
+            'jennyFolderManagerModal'
+        ].forEach(function(id) {
+            var m = document.getElementById(id);
+            if (m) {
+                setStylePropIfChangedV363(m, 'top', topStr, 'important');
+                setStylePropIfChangedV363(m, 'bottom', botStr, 'important');
+                setStylePropIfChangedV363(m, 'height', 'auto', 'important');
+            }
+        });
     };
 
     window.syncEdgeToEdgeLayoutBoundsV242 = function() {

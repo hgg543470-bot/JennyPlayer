@@ -119,6 +119,7 @@ window.ensureSpectrumModalDOMV62 = function() {
                 const dbgBlock = ta.parentElement;
                 const det = document.createElement('details');
                 det.id = 'seamLabCollapsibleV62';
+                det.open = true;
                 det.style.cssText = 'margin-top:8px;border-top:1px solid #21262d;padding-top:6px;';
                 det.innerHTML = `<summary style="font-size:11px;color:#f0883e;font-weight:bold;cursor:pointer;outline:none;">🔬 Инженерная лаборатория 90° швов и Сэмпл-Резак</summary><div id="seamLabInnerV62" style="margin-top:6px;"></div>`;
                 waveCard.appendChild(det);

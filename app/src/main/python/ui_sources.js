@@ -24,7 +24,7 @@ window.getKhPreviewVolumeV90 = function() {
     const vb = document.getElementById('volumeBar');
     const raw = vb ? parseFloat(vb.value) : ((window.appConfig && window.appConfig.defaultVolume) || 10);
     const mainVol = Math.max(0, Math.min(1, (isNaN(raw) ? 10 : raw) / 10.0));
-    return Math.max(0.02, Math.min(1.0, mainVol * 0.70));
+    return Math.max(0.02, Math.min(1.0, mainVol));
 };
 
 window.pauseMainPlayerForOstV90 = function() {
@@ -736,7 +736,7 @@ window.playFlacRadioStationV91 = async function(idx, btnEl) {
     window._radioStateV91.currentStation = st;
     if (btnEl) btnEl.innerText = '⏳';
     const aud = new Audio(st.url);
-    aud.volume = (typeof window.getKhPreviewVolumeV90 === 'function') ? window.getKhPreviewVolumeV90() : 0.7;
+    aud.volume = (typeof window.getKhPreviewVolumeV90 === 'function') ? window.getKhPreviewVolumeV90() : 1.0;
     window._radioStateV91.audio = aud;
     const infoEl = document.getElementById('radNowPlayingTitleV91');
     const recBtn = document.getElementById('btnRadioRecV91');
@@ -2145,16 +2145,54 @@ window.stopAllExternalStreamsV97 = function() {
 
     var _origTriggerSourceV230 = window.triggerSourceActionV91;
     window.triggerSourceActionV91 = function(srcId, ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var menu = document.getElementById('jennySourcesDropMenuV91');
+        if (menu) menu.style.display = 'none';
+
+        var modalMap = {
+            ost: 'jennyKhinsiderModalV88',
+            archive: 'jennyKhinsiderModalV88',
+            radio: 'jennyFlacRadioModalV91',
+            soundcloud: 'jennySoundCloudModalV93',
+            torrent: 'jennyTorrentModalV91',
+            youtube: 'jennyYoutubeStudioModalV230'
+        };
+        var targetModalId = modalMap[srcId] || '';
+        [
+            'jennyKhinsiderModalV88',
+            'jennyFlacRadioModalV91',
+            'jennySoundCloudModalV93',
+            'jennyTorrentModalV91',
+            'jennyTorInspectorModalV128',
+            'jennyYoutubeStudioModalV230',
+            'jennyFolderManagerModal'
+        ].forEach(function(id) {
+            if (id !== targetModalId) {
+                var m = document.getElementById(id);
+                if (m) m.style.setProperty('display', 'none', 'important');
+            }
+        });
+
         if (srcId === 'youtube') {
-            if (ev && ev.stopPropagation) ev.stopPropagation();
-            var menu = document.getElementById('jennySourcesDropMenuV91');
-            if (menu) menu.style.display = 'none';
+            var ytM = document.getElementById('jennyYoutubeStudioModalV230');
+            if (ytM && getComputedStyle(ytM).display !== 'none') {
+                ytM.style.setProperty('display', 'none', 'important');
+                return;
+            }
             window.openYoutubeStudioModalV230(ev);
+            if (typeof window.syncAllSourceModalsBoundsV256 === 'function') {
+                setTimeout(window.syncAllSourceModalsBoundsV256, 20);
+            }
             return;
         }
+        var res;
         if (typeof _origTriggerSourceV230 === 'function') {
-            return _origTriggerSourceV230.apply(this, arguments);
+            res = _origTriggerSourceV230.apply(this, arguments);
         }
+        if (typeof window.syncAllSourceModalsBoundsV256 === 'function') {
+            setTimeout(window.syncAllSourceModalsBoundsV256, 20);
+        }
+        return res;
     };
 
     window.YT_QUALITY_OPTIONS_V230 = [
@@ -2909,12 +2947,19 @@ window.stopAllExternalStreamsV97 = function() {
             'jennySoundCloudModalV93',
             'jennyTorrentModalV91',
             'jennyTorInspectorModalV128',
-            'jennyYoutubeModalV230'
+            'jennyYoutubeModalV230',
+            'jennyYoutubeStudioModalV230'
         ].filter(function(id) { return Boolean(document.getElementById(id)); }).length;
 
         var anyTorDl = Object.values(window._torMapV112 || {}).some(function(j) { return Boolean(j && j.dlActive); });
+        var ytActiveNow = Boolean(
+            window._isYoutubeDeckAActiveV253 ||
+            window._ytDlActiveV256 ||
+            (window._vidStateV130 && window._vidStateV130.active && String(window._vidStateV130.currentUrl || '').indexOf('youtube') !== -1)
+        );
         var isPlayingStream = Boolean(
             anyTorDl ||
+            ytActiveNow ||
             (window._khStateV88 && window._khStateV88.previewAudio && !window._khStateV88.previewAudio.paused) ||
             (window._radioStateV91 && window._radioStateV91.audio && !window._radioStateV91.audio.paused) ||
             (window._khStateV88 && window._khStateV88.isDownloading) ||
@@ -2940,6 +2985,28 @@ window.stopAllExternalStreamsV97 = function() {
         if (typeof window.stopFlacRadioStreamV91 === 'function') { try { window.stopFlacRadioStreamV91(); } catch (e) {} }
         if (typeof window.stopKhProgressPollV89 === 'function') { try { window.stopKhProgressPollV89(); } catch (e) {} }
         if (typeof window.stopAllExternalStreamsV97 === 'function') { try { window.stopAllExternalStreamsV97(); } catch (e) {} }
+
+        // Жёстко останавливаем YouTube в Деке А, Деке Б и фоновые закачки YouTube
+        if (window._isYoutubeDeckAActiveV253 || String(window.currentPlayingTrack || '').indexOf('[YT') === 0) {
+            window._isYoutubeDeckAActiveV253 = false;
+            window._islandActiveModeV245 = 'music';
+            window._forcedIslandModeV245 = '';
+            if (typeof window.forceStopPauseDeckAAudioV232 === 'function') {
+                try { window.forceStopPauseDeckAAudioV232(true); } catch (e) {}
+            }
+        }
+        if (window._vidStateV130 && window._vidStateV130.active && String(window._vidStateV130.currentUrl || '').indexOf('youtube') !== -1) {
+            if (typeof window.closeVideoPlayerV130 === 'function') {
+                try { window.closeVideoPlayerV130(); } catch (e) {}
+            }
+        }
+        window._ytDlActiveV256 = false;
+        if (window._ytDlPollTimerV256) {
+            clearInterval(window._ytDlPollTimerV256);
+            window._ytDlPollTimerV256 = null;
+        }
+        var ytProgBar = document.getElementById('jennyYtGlobalProgressBarV256');
+        if (ytProgBar) ytProgBar.style.display = 'none';
 
         if (window._khStateV88) {
             window._khStateV88.abortDownload = true;
@@ -2973,7 +3040,8 @@ window.stopAllExternalStreamsV97 = function() {
             'jennySoundCloudModalV93',
             'jennyTorrentModalV91',
             'jennyTorInspectorModalV128',
-            'jennyYoutubeModalV230'
+            'jennyYoutubeModalV230',
+            'jennyYoutubeStudioModalV230'
         ].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.remove();
@@ -3684,7 +3752,7 @@ window.stopAllExternalStreamsV97 = function() {
         var bufStreamUrl = '/api/radio/buffered_stream_v242?url=' + encodeURIComponent(st.url) + '&lossless=' + (st.lossless ? '1' : '0') + '&_ts=' + Date.now();
         var aud = new Audio(bufStreamUrl);
         aud.preload = 'auto';
-        aud.volume = (typeof window.getKhPreviewVolumeV90 === 'function') ? window.getKhPreviewVolumeV90() : 0.7;
+        aud.volume = (typeof window.getKhPreviewVolumeV90 === 'function') ? window.getKhPreviewVolumeV90() : 1.0;
         window._radioStateV91.audio = aud;
 
         try {
@@ -4675,11 +4743,7 @@ window.stopAllExternalStreamsV97 = function() {
 /* ================= [FIX-YOUTUBE-COMPLETE-V252] YOUTUBE STUDIO + YOUTUBE MUSIC + 1-CLICK ENGINE UPDATER ================= */
 (function() {
     function loadSavedYtHeightV253() {
-        try {
-            var v = parseInt(localStorage.getItem('jenny_yt_quality_h_v253') || '720', 10);
-            if ([360, 480, 720, 1080].indexOf(v) !== -1) return v;
-        } catch (e) {}
-        return 720;
+        return 2160; // Авто-Видео: всегда максимальное лучшее качество (1080p/2K/4K)
     }
 
     function loadSavedYtPreloadLimitMbV253() {
@@ -4839,13 +4903,13 @@ window.stopAllExternalStreamsV97 = function() {
                 '<button type="button" id="ytLimPillSetV253_99999" onclick="window.setYtPreloadLimitMbV253(99999)" style="flex:1;min-width:78px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11px;font-weight:700;cursor:pointer;">Всегда целиком</button>' +
             '</div>' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);">' +
-                '<span style="color:#58a6ff;font-weight:800;font-size:12px;">🎧 Выбор приоритета аудио-потока (YouTube / Стримы):</span>' +
+                '<span style="color:#3fb950;font-weight:800;font-size:11.5px;">⚡ Авто-Видео: Лучшее (до 4K/1080p) • 🎧 Авто-Звук: Лучшее (Opus 251)</span>' +
             '</div>' +
-            '<div style="display:flex;gap:5px;flex-wrap:wrap;">' +
-                '<button type="button" id="ytAudPrefSetV255_opus_251" onclick="window.setYtAudioStreamPrefV255(\'opus_251\')" style="flex:1;min-width:95px;padding:6px 6px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">🔥 Opus 251 (160к 20кГц)</button>' +
-                '<button type="button" id="ytAudPrefSetV255_abr_max" onclick="window.setYtAudioStreamPrefV255(\'abr_max\')" style="flex:1;min-width:85px;padding:6px 6px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">⚡ Макс. битрейт</button>' +
-                '<button type="button" id="ytAudPrefSetV255_aac_140" onclick="window.setYtAudioStreamPrefV255(\'aac_140\')" style="flex:1;min-width:80px;padding:6px 6px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">🎵 AAC 140 (m4a)</button>' +
-                '<button type="button" id="ytAudPrefSetV255_wav_pcm" onclick="window.setYtAudioStreamPrefV255(\'wav_pcm\')" style="flex:1;min-width:90px;padding:6px 6px;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">💎 WAV 48кГц PCM</button>' +
+            '<div style="display:none;gap:5px;flex-wrap:wrap;">' +
+                '<button type="button" id="ytAudPrefSetV255_opus_251" onclick="window.setYtAudioStreamPrefV255(\'opus_251\')">🔥 Opus 251 (160к 20кГц)</button>' +
+                '<button type="button" id="ytAudPrefSetV255_abr_max" onclick="window.setYtAudioStreamPrefV255(\'abr_max\')">⚡ Макс. битрейт</button>' +
+                '<button type="button" id="ytAudPrefSetV255_aac_140" onclick="window.setYtAudioStreamPrefV255(\'aac_140\')">🎵 AAC 140 (m4a)</button>' +
+                '<button type="button" id="ytAudPrefSetV255_wav_pcm" onclick="window.setYtAudioStreamPrefV255(\'wav_pcm\')">💎 WAV 48кГц PCM</button>' +
             '</div>';
 
         var firstRow = container.querySelector('.setting-row');
@@ -5058,9 +5122,9 @@ window.stopAllExternalStreamsV97 = function() {
                 '</div>' +
                 '<div style="display:flex;flex-wrap:wrap;gap:6px;">' +
                 '<button id="ytPlayBtnV252_' + i + '" onclick="window.playYtStudioItemByIndexV252(' + i + ', this)" style="flex:1;min-width:95px;padding:7px 10px;border-radius:8px;border:1px solid #ff5555;background:linear-gradient(135deg,#ff3b3b,#b91c1c);color:#fff;font-weight:700;font-size:12px;cursor:pointer;">▶ Слушать</button>' +
-                '<button onclick="window.saveYtItemAsXflacV252(' + i + ', this)" style="flex:1;min-width:110px;padding:7px 10px;border-radius:8px;border:1px solid rgba(163,113,247,0.55);background:rgba(110,56,197,0.28);color:#e2c5ff;font-weight:700;font-size:12px;cursor:pointer;">💾 В .xFLAC</button>' +
-                '<button onclick="window.openYtItemInDeckBV252(' + i + ', this)" style="flex:1;min-width:105px;padding:7px 10px;border-radius:8px;border:1px solid rgba(88,166,255,0.55);background:rgba(31,111,235,0.28);color:#9ecbff;font-weight:700;font-size:12px;cursor:pointer;">🎬 В Деку Б</button>' +
-                '<button onclick="window.downloadYtItemMp4V252(' + i + ', this)" style="flex:1;min-width:95px;padding:7px 10px;border-radius:8px;border:1px solid rgba(46,160,67,0.55);background:rgba(35,134,54,0.28);color:#7ee787;font-weight:700;font-size:12px;cursor:pointer;">📹 MP4</button>' +
+                '<button id="ytXflacBtnV252_' + i + '" onclick="window.saveYtItemAsXflacV252(' + i + ', this)" style="flex:1;min-width:110px;padding:7px 10px;border-radius:8px;border:1px solid rgba(163,113,247,0.55);background:rgba(110,56,197,0.28);color:#e2c5ff;font-weight:700;font-size:12px;cursor:pointer;">💾 В .xFLAC</button>' +
+                '<button id="ytDeckBBtnV252_' + i + '" onclick="window.openYtItemInDeckBV252(' + i + ', this)" style="flex:1;min-width:105px;padding:7px 10px;border-radius:8px;border:1px solid rgba(88,166,255,0.55);background:rgba(31,111,235,0.28);color:#9ecbff;font-weight:700;font-size:12px;cursor:pointer;">🎬 В Деку Б</button>' +
+                '<button id="ytMp4BtnV252_' + i + '" onclick="window.downloadYtItemMp4V252(' + i + ', this)" style="flex:1;min-width:95px;padding:7px 10px;border-radius:8px;border:1px solid rgba(46,160,67,0.55);background:rgba(35,134,54,0.28);color:#7ee787;font-weight:700;font-size:12px;cursor:pointer;">📹 MP4</button>' +
                 '</div>' +
                 '</div>';
         }
@@ -5234,6 +5298,116 @@ window.stopAllExternalStreamsV97 = function() {
         }
     };
 
+    // Живой поллер прогресса скачивания YouTube (.xFLAC / MP4 / Дека Б), видимый даже когда окно YouTube закрыто!
+    window.ensureYtGlobalProgressBarV256 = function() {
+        var bar = document.getElementById('jennyYtGlobalProgressBarV256');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'jennyYtGlobalProgressBarV256';
+            bar.onclick = function() {
+                if (typeof window.openYoutubeStudioModalV230 === 'function') {
+                    window.openYoutubeStudioModalV230();
+                }
+            };
+            bar.style.cssText = 'display:none;position:fixed;left:8px;right:8px;top:52px;z-index:2147483150;padding:6px 10px;border-radius:9px;background:rgba(18,10,16,0.96);border:1.5px solid #ff5555;box-shadow:0 4px 16px rgba(0,0,0,0.85);cursor:pointer;flex-direction:column;gap:4px;';
+            bar.innerHTML =
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;font-weight:800;color:#fff;">' +
+                    '<span id="jennyYtGlobalProgTitleV256" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">📥 YouTube закачка...</span>' +
+                    '<span id="jennyYtGlobalProgPctV256" style="color:#ff9999;font-family:monospace;flex-shrink:0;">0%</span>' +
+                '</div>' +
+                '<div style="width:100%;height:5px;background:#21262d;border-radius:3px;overflow:hidden;">' +
+                    '<div id="jennyYtGlobalProgFillV256" style="width:0%;height:100%;background:linear-gradient(90deg,#ff3b3b,#a371f7,#3fb950);transition:width 0.25s ease;"></div>' +
+                '</div>';
+            document.body.appendChild(bar);
+        }
+        return bar;
+    };
+
+    window.startYtDownloadProgressPollV256 = function(btnId, defaultLabel, titleText) {
+        window._ytDlActiveV256 = true;
+        window._ytActiveBtnIdV256 = btnId || '';
+        window._ytActiveBtnDefaultV256 = defaultLabel || '💾 В .xFLAC';
+        if (typeof window.applyHeaderIconBadgeV99 === 'function') {
+            window.applyHeaderIconBadgeV99('youtube', '⏳');
+        }
+        if (typeof window.updateKillAllSourcesButtonStatusV237 === 'function') {
+            window.updateKillAllSourcesButtonStatusV237();
+        }
+        var gBar = window.ensureYtGlobalProgressBarV256();
+        var gTitle = document.getElementById('jennyYtGlobalProgTitleV256');
+        var gPct = document.getElementById('jennyYtGlobalProgPctV256');
+        var gFill = document.getElementById('jennyYtGlobalProgFillV256');
+        if (gBar) gBar.style.display = 'flex';
+        if (gTitle) gTitle.innerText = '📥 YouTube: ' + (titleText || 'Подготовка потока...');
+        if (gPct) gPct.innerText = '1%';
+        if (gFill) gFill.style.width = '2%';
+
+        if (window._ytDlPollTimerV256) clearInterval(window._ytDlPollTimerV256);
+        window._ytDlPollTimerV256 = setInterval(async function() {
+            if (!window._ytDlActiveV256) {
+                clearInterval(window._ytDlPollTimerV256);
+                window._ytDlPollTimerV256 = null;
+                return;
+            }
+            try {
+                var r = await fetch('/api/youtube/progress');
+                var j = await r.json();
+                var p = (j && j.progress) || {};
+                var pct = Math.max(1, Math.min(99, parseInt(p.pct, 10) || 1));
+                var mbStr = (p.total_mb > 0)
+                    ? (p.done_mb + ' / ' + p.total_mb + ' МБ')
+                    : (p.done_mb > 0 ? (p.done_mb + ' МБ') : '');
+                var stageStr = p.stage || ('Скачивание ' + pct + '%');
+                if (gBar) gBar.style.display = 'flex';
+                if (gTitle) gTitle.innerText = '📥 ' + (p.title || titleText || 'YouTube') + ' • ' + stageStr;
+                if (gPct) gPct.innerText = pct + '%' + (mbStr ? (' (' + mbStr + ')') : '');
+                if (gFill) gFill.style.width = pct + '%';
+
+                if (window._ytActiveBtnIdV256) {
+                    var liveBtn = document.getElementById(window._ytActiveBtnIdV256);
+                    if (liveBtn) {
+                        liveBtn.disabled = true;
+                        liveBtn.innerText = '⏳ ' + pct + '%' + (p.done_mb > 0 ? (' • ' + p.done_mb + 'МБ') : '');
+                    }
+                }
+                var mProg = document.getElementById('ytModalLiveProgressBoxV256');
+                if (mProg) {
+                    mProg.style.display = 'block';
+                    mProg.innerText = '📥 ' + stageStr + (mbStr ? (' • ' + mbStr) : '');
+                }
+                if (typeof window.applyHeaderIconBadgeV99 === 'function') {
+                    window.applyHeaderIconBadgeV99('youtube', pct + '%');
+                }
+            } catch (e) {}
+        }, 420);
+    };
+
+    window.stopYtDownloadProgressPollV256 = function() {
+        window._ytDlActiveV256 = false;
+        if (window._ytDlPollTimerV256) {
+            clearInterval(window._ytDlPollTimerV256);
+            window._ytDlPollTimerV256 = null;
+        }
+        if (window._ytActiveBtnIdV256) {
+            var liveBtn = document.getElementById(window._ytActiveBtnIdV256);
+            if (liveBtn) {
+                liveBtn.disabled = false;
+                liveBtn.innerText = window._ytActiveBtnDefaultV256 || '💾 В .xFLAC';
+            }
+            window._ytActiveBtnIdV256 = '';
+        }
+        var gBar = document.getElementById('jennyYtGlobalProgressBarV256');
+        if (gBar) gBar.style.display = 'none';
+        var mProg = document.getElementById('ytModalLiveProgressBoxV256');
+        if (mProg) mProg.style.display = 'none';
+        if (typeof window.applyHeaderIconBadgeV99 === 'function') {
+            window.applyHeaderIconBadgeV99('youtube', window._isYoutubeDeckAActiveV253 ? '▶' : '');
+        }
+        if (typeof window.updateKillAllSourcesButtonStatusV237 === 'function') {
+            window.updateKillAllSourcesButtonStatusV237();
+        }
+    };
+
     window.saveYtItemAsXflacV252 = async function(idx, btnEl) {
         var st = window._ytStudioStateV252;
         var item = (st.results || [])[idx] || window._lastYtTrackMetaV252;
@@ -5241,12 +5415,15 @@ window.stopAllExternalStreamsV97 = function() {
             if (typeof window.showToast === 'function') window.showToast('Сначала выберите трек YouTube');
             return;
         }
+        var bId = 'ytXflacBtnV252_' + idx;
         if (btnEl) {
+            btnEl.id = bId;
             btnEl.disabled = true;
-            btnEl.innerText = '⏳ В .xFLAC...';
+            btnEl.innerText = '⏳ 1%...';
         }
+        window.startYtDownloadProgressPollV256(bId, '💾 В .xFLAC', item.title || item.id);
         if (typeof window.showToast === 'function') {
-            window.showToast('⏳ Скачивание и упаковка в .xFLAC с обложкой: ' + (item.title || item.id));
+            window.showToast('⏳ Скачивание и упаковка в .xFLAC: ' + (item.title || item.id));
         }
         try {
             var r = await fetch('/api/youtube/save_xflac', {
@@ -5261,6 +5438,8 @@ window.stopAllExternalStreamsV97 = function() {
                 }
                 if (typeof window.loadTracks === 'function') {
                     window.loadTracks();
+                } else if (typeof window.fetchData === 'function') {
+                    window.fetchData();
                 }
             } else {
                 if (typeof window.showToast === 'function') window.showToast('❌ Ошибка .xFLAC: ' + (j.error || 'неизвестно'));
@@ -5268,6 +5447,7 @@ window.stopAllExternalStreamsV97 = function() {
         } catch (e) {
             if (typeof window.showToast === 'function') window.showToast('❌ Ошибка: ' + (e.message || e));
         } finally {
+            window.stopYtDownloadProgressPollV256();
             if (btnEl) {
                 btnEl.disabled = false;
                 btnEl.innerText = '💾 В .xFLAC';
@@ -5279,9 +5459,16 @@ window.stopAllExternalStreamsV97 = function() {
         var st = window._ytStudioStateV252;
         var item = (st.results || [])[idx];
         if (!item || !item.id) return;
-        var prefH = st.selectedHeight || 720;
-        if (typeof window.playYoutubeVideoInDeckBV230 === 'function') {
-            await window.playYoutubeVideoInDeckBV230(item.id, item.title, prefH, btnEl);
+        var prefH = 2160; // Авто-Видео: лучшее доступное качество
+        var bId = 'ytDeckBBtnV252_' + idx;
+        if (btnEl) btnEl.id = bId;
+        window.startYtDownloadProgressPollV256(bId, '🎬 В Деку Б', item.title || item.id);
+        try {
+            if (typeof window.playYoutubeVideoInDeckBV230 === 'function') {
+                await window.playYoutubeVideoInDeckBV230(item.id, item.title, prefH, btnEl);
+            }
+        } finally {
+            window.stopYtDownloadProgressPollV256();
         }
     };
 
@@ -5289,83 +5476,101 @@ window.stopAllExternalStreamsV97 = function() {
         var st = window._ytStudioStateV252;
         var item = (st.results || [])[idx];
         if (!item || !item.id) return;
-        var prefH = st.selectedHeight || 720;
-        if (typeof window.downloadYoutubeVideoV230 === 'function') {
-            await window.downloadYoutubeVideoV230(item.id, item.title, prefH, btnEl);
+        var prefH = 2160; // Авто-Видео: лучшее доступное качество
+        var bId = 'ytMp4BtnV252_' + idx;
+        if (btnEl) btnEl.id = bId;
+        window.startYtDownloadProgressPollV256(bId, '📹 MP4', item.title || item.id);
+        try {
+            if (typeof window.downloadYoutubeVideoV230 === 'function') {
+                await window.downloadYoutubeVideoV230(item.id, item.title, prefH, btnEl);
+            }
+        } finally {
+            window.stopYtDownloadProgressPollV256();
         }
     };
 
     window.openYoutubeStudioModalV230 = function(initialMode) {
-        var existing = document.getElementById('jennyYoutubeStudioModalV230');
-        if (existing) existing.remove();
-
         var st = window._ytStudioStateV252;
         if (initialMode === 'video' || initialMode === 'music') {
             st.mode = initialMode;
         }
+        var existing = document.getElementById('jennyYoutubeStudioModalV230');
+        if (existing) {
+            existing.style.setProperty('display', 'flex', 'important');
+            window.switchYtStudioModeV252(st.mode);
+            window.refreshYtQualityAndLimitPillsV253();
+            window.refreshYtEngineStatusBadgeV252();
+            if (typeof window.syncAllSourceModalsBoundsV256 === 'function') {
+                window.syncAllSourceModalsBoundsV256();
+            }
+            return;
+        }
 
         var modal = document.createElement('div');
         modal.id = 'jennyYoutubeStudioModalV230';
-        modal.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(8,10,16,0.92);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:10px;';
+        modal.className = 'jenny-modal-backdrop-v71';
+        modal.style.cssText = 'position:fixed;left:0;right:0;z-index:2147483000;background:rgba(8,10,16,0.92);display:flex;align-items:stretch;justify-content:center;padding:4px 6px;box-sizing:border-box;';
 
         modal.innerHTML =
-            '<div style="width:100%;max-width:560px;max-height:92vh;background:linear-gradient(180deg,#180c12 0%,#0d1117 100%);border:1.5px solid #ff5555;border-radius:18px;box-shadow:0 0 32px rgba(255,60,60,0.28);display:flex;flex-direction:column;overflow:hidden;color:#f0f6fc;">' +
+            '<div class="jenny-modal-card-v71" style="width:100%;max-width:560px;height:100%;max-height:100%;background:linear-gradient(180deg,#180c12 0%,#0d1117 100%);border:1.5px solid #ff5555;border-radius:12px;box-shadow:0 0 24px rgba(255,60,60,0.28);display:flex;flex-direction:column;overflow:hidden;color:#f0f6fc;">' +
                 // Header
-                '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid rgba(255,85,85,0.25);background:rgba(255,50,50,0.08);">' +
-                    '<div style="display:flex;align-items:center;gap:8px;">' +
-                        '<span style="font-size:18px;">▶</span>' +
-                        '<div>' +
-                            '<div style="font-size:15px;font-weight:800;color:#fff;letter-spacing:0.3px;">YouTube Studio &amp; Music</div>' +
-                            '<div id="ytEngineStatusBadgeV252" style="font-size:10.5px;color:#ff9999;">Проверка встроенного JS-ядра...</div>' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid rgba(255,85,85,0.25);background:rgba(255,50,50,0.08);flex-shrink:0;">' +
+                    '<div style="display:flex;align-items:center;gap:8px;min-width:0;">' +
+                        '<span style="font-size:16px;">▶</span>' +
+                        '<div style="min-width:0;">' +
+                            '<div style="font-size:13.5px;font-weight:800;color:#fff;letter-spacing:0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">YouTube Studio &amp; Music</div>' +
+                            '<div id="ytEngineStatusBadgeV252" style="font-size:10px;color:#ff9999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Авто-Видео: МАКС • Авто-Звук: МАКС (Opus 251)</div>' +
                         '</div>' +
                     '</div>' +
-                    '<div style="display:flex;align-items:center;gap:6px;">' +
-                        '<button type="button" onclick="window.triggerOneClickYtEngineUpdateV252(this)" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(255,136,136,0.5);background:rgba(255,60,60,0.2);color:#ffd2d2;font-size:11px;font-weight:700;cursor:pointer;">🔄 Обновить ядро (1 клик)</button>' +
-                        '<button type="button" onclick="document.getElementById(\'jennyYoutubeStudioModalV230\').remove()" style="width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#fff;font-size:16px;cursor:pointer;">✕</button>' +
+                    '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">' +
+                        '<button type="button" onclick="window.triggerOneClickYtEngineUpdateV252(this)" style="padding:5px 8px;border-radius:7px;border:1px solid rgba(255,136,136,0.5);background:rgba(255,60,60,0.2);color:#ffd2d2;font-size:10.5px;font-weight:700;cursor:pointer;">🔄 Ядро</button>' +
+                        '<button type="button" onclick="document.getElementById(\'jennyYoutubeStudioModalV230\').style.setProperty(\'display\',\'none\',\'important\')" style="padding:5px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.08);color:#fff;font-size:12px;font-weight:800;cursor:pointer;">✕</button>' +
                     '</div>' +
                 '</div>' +
+                '<div id="ytModalLiveProgressBoxV256" style="display:none;padding:5px 12px;background:rgba(63,185,80,0.16);border-bottom:1px solid rgba(63,185,80,0.4);color:#7ee787;font-size:11px;font-weight:800;font-family:monospace;text-align:center;flex-shrink:0;"></div>' +
                 // Mode tabs
-                '<div style="display:flex;gap:8px;padding:8px 14px 4px 14px;align-items:center;">' +
-                    '<button type="button" id="ytModeBtnMusicV252" onclick="window.switchYtStudioModeV252(\'music\')" style="flex:1;padding:7px 10px;border-radius:10px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#b91c1c);color:#fff;font-weight:700;font-size:12px;cursor:pointer;">🎵 YouTube Music</button>' +
-                    '<button type="button" id="ytModeBtnVideoV252" onclick="window.switchYtStudioModeV252(\'video\')" style="flex:1;padding:7px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:#aaa;font-weight:700;font-size:12px;cursor:pointer;">🎬 YouTube Видео</button>' +
+                '<div style="display:flex;gap:8px;padding:6px 12px 4px 12px;align-items:center;flex-shrink:0;">' +
+                    '<button type="button" id="ytModeBtnMusicV252" onclick="window.switchYtStudioModeV252(\'music\')" style="flex:1;padding:6px 10px;border-radius:9px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#b91c1c);color:#fff;font-weight:700;font-size:11.5px;cursor:pointer;">🎵 YouTube Music (Только звук)</button>' +
+                    '<button type="button" id="ytModeBtnVideoV252" onclick="window.switchYtStudioModeV252(\'video\')" style="flex:1;padding:6px 10px;border-radius:9px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:#aaa;font-weight:700;font-size:11.5px;cursor:pointer;">🎬 YouTube Видео</button>' +
                 '</div>' +
-                // Direct clickable Quality Pills (360p / 480p / 720p / 1080p)
-                '<div style="display:flex;align-items:center;gap:6px;padding:4px 14px;">' +
+                // Direct clickable Quality Pills (Temporarily hidden — locked to Auto Max Quality!)
+                '<div style="display:none;align-items:center;gap:6px;padding:4px 14px;">' +
                     '<span style="font-size:11px;color:#ff9999;font-weight:700;white-space:nowrap;">Качество видео:</span>' +
-                    '<button type="button" id="ytQualPillV253_360" onclick="window.setYtStudioQualityV253(360)" style="flex:1;padding:5px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11.5px;font-weight:800;cursor:pointer;">360p</button>' +
-                    '<button type="button" id="ytQualPillV253_480" onclick="window.setYtStudioQualityV253(480)" style="flex:1;padding:5px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11.5px;font-weight:800;cursor:pointer;">480p</button>' +
-                    '<button type="button" id="ytQualPillV253_720" onclick="window.setYtStudioQualityV253(720)" style="flex:1;padding:5px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11.5px;font-weight:800;cursor:pointer;">720p</button>' +
-                    '<button type="button" id="ytQualPillV253_1080" onclick="window.setYtStudioQualityV253(1080)" style="flex:1;padding:5px 0;border-radius:8px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:11.5px;font-weight:800;cursor:pointer;">1080p</button>' +
+                    '<button type="button" id="ytQualPillV253_360" onclick="window.setYtStudioQualityV253(360)">360p</button>' +
+                    '<button type="button" id="ytQualPillV253_480" onclick="window.setYtStudioQualityV253(480)">480p</button>' +
+                    '<button type="button" id="ytQualPillV253_720" onclick="window.setYtStudioQualityV253(720)">720p</button>' +
+                    '<button type="button" id="ytQualPillV253_1080" onclick="window.setYtStudioQualityV253(1080)">1080p</button>' +
                 '</div>' +
-                // Preload Limit Pills (0 Поток / 100 МБ / 300 МБ / 600 МБ / Всегда целиком)
-                '<div style="display:flex;align-items:center;gap:5px;padding:2px 14px 6px 14px;flex-wrap:wrap;">' +
-                    '<span style="font-size:10.5px;color:#d2a8ff;font-weight:700;white-space:nowrap;">В ОЗУ целиком:</span>' +
-                    '<button type="button" id="ytLimPillModalV253_0" onclick="window.setYtPreloadLimitMbV253(0)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">Поток</button>' +
-                    '<button type="button" id="ytLimPillModalV253_100" onclick="window.setYtPreloadLimitMbV253(100)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">≤100МБ</button>' +
-                    '<button type="button" id="ytLimPillModalV253_300" onclick="window.setYtPreloadLimitMbV253(300)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">≤300МБ</button>' +
-                    '<button type="button" id="ytLimPillModalV253_600" onclick="window.setYtPreloadLimitMbV253(600)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">≤600МБ</button>' +
-                    '<button type="button" id="ytLimPillModalV253_99999" onclick="window.setYtPreloadLimitMbV253(99999)" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10.5px;font-weight:700;cursor:pointer;">Всегда</button>' +
+                // Preload Limit Pills (Temporarily hidden — auto-managed for instant audio start!)
+                '<div style="display:none;align-items:center;gap:5px;padding:2px 14px 6px 14px;flex-wrap:wrap;">' +
+                    '<button type="button" id="ytLimPillModalV253_0" onclick="window.setYtPreloadLimitMbV253(0)">Поток</button>' +
+                    '<button type="button" id="ytLimPillModalV253_100" onclick="window.setYtPreloadLimitMbV253(100)">≤100МБ</button>' +
+                    '<button type="button" id="ytLimPillModalV253_300" onclick="window.setYtPreloadLimitMbV253(300)">≤300МБ</button>' +
+                    '<button type="button" id="ytLimPillModalV253_600" onclick="window.setYtPreloadLimitMbV253(600)">≤600МБ</button>' +
+                    '<button type="button" id="ytLimPillModalV253_99999" onclick="window.setYtPreloadLimitMbV253(99999)">Всегда</button>' +
                 '</div>' +
-                // Audio Stream Priority Pills
-                '<div style="display:flex;align-items:center;gap:5px;padding:0 14px 6px 14px;flex-wrap:wrap;">' +
-                    '<span style="font-size:10.5px;color:#58a6ff;font-weight:700;white-space:nowrap;">Аудио-поток:</span>' +
-                    '<button type="button" id="ytAudPrefModalV255_opus_251" onclick="window.setYtAudioStreamPrefV255(\'opus_251\')" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10px;font-weight:700;cursor:pointer;">🔥Opus 251</button>' +
-                    '<button type="button" id="ytAudPrefModalV255_abr_max" onclick="window.setYtAudioStreamPrefV255(\'abr_max\')" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10px;font-weight:700;cursor:pointer;">⚡Макс.кбит</button>' +
-                    '<button type="button" id="ytAudPrefModalV255_aac_140" onclick="window.setYtAudioStreamPrefV255(\'aac_140\')" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10px;font-weight:700;cursor:pointer;">🎵AAC 140</button>' +
-                    '<button type="button" id="ytAudPrefModalV255_wav_pcm" onclick="window.setYtAudioStreamPrefV255(\'wav_pcm\')" style="flex:1;padding:4px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.16);background:rgba(255,255,255,0.06);color:#c9d1d9;font-size:10px;font-weight:700;cursor:pointer;">💎WAV 48к</button>' +
+                // Audio Stream Priority Pills (Temporarily hidden — locked to Auto Best Opus 251!)
+                '<div style="display:none;align-items:center;gap:5px;padding:0 14px 6px 14px;flex-wrap:wrap;">' +
+                    '<button type="button" id="ytAudPrefModalV255_opus_251" onclick="window.setYtAudioStreamPrefV255(\'opus_251\')">🔥Opus 251</button>' +
+                    '<button type="button" id="ytAudPrefModalV255_abr_max" onclick="window.setYtAudioStreamPrefV255(\'abr_max\')">⚡Макс.кбит</button>' +
+                    '<button type="button" id="ytAudPrefModalV255_aac_140" onclick="window.setYtAudioStreamPrefV255(\'aac_140\')">🎵AAC 140</button>' +
+                    '<button type="button" id="ytAudPrefModalV255_wav_pcm" onclick="window.setYtAudioStreamPrefV255(\'wav_pcm\')">💎WAV 48к</button>' +
                 '</div>' +
                 // Search bar
-                '<div style="display:flex;gap:8px;padding:4px 14px 10px 14px;">' +
-                    '<input id="ytSearchInputV252" type="text" placeholder="Поиск трека, клипа или ссылка YouTube..." style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,100,100,0.35);background:#0d1117;color:#fff;font-size:13px;outline:none;" onkeydown="if(event.key===\'Enter\') window.runYtStudioSearchV252()">' +
-                    '<button type="button" onclick="window.runYtStudioSearchV252()" style="padding:10px 16px;border-radius:10px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#c91c1c);color:#fff;font-weight:800;font-size:13px;cursor:pointer;">Найти</button>' +
+                '<div style="display:flex;gap:8px;padding:4px 12px 8px 12px;flex-shrink:0;">' +
+                    '<input id="ytSearchInputV252" type="text" placeholder="Поиск трека, клипа или ссылка YouTube..." style="flex:1;padding:8px 11px;border-radius:9px;border:1px solid rgba(255,100,100,0.35);background:#0d1117;color:#fff;font-size:12.5px;outline:none;" onkeydown="if(event.key===\'Enter\') window.runYtStudioSearchV252()">' +
+                    '<button type="button" onclick="window.runYtStudioSearchV252()" style="padding:8px 14px;border-radius:9px;border:1px solid #ff6b6b;background:linear-gradient(135deg,#ff3b3b,#c91c1c);color:#fff;font-weight:800;font-size:12.5px;cursor:pointer;">Найти</button>' +
                 '</div>' +
                 // Results list
-                '<div id="ytResultsListV252" style="flex:1;overflow-y:auto;padding:4px 14px 12px 14px;min-height:180px;"></div>' +
+                '<div id="ytResultsListV252" style="flex:1;overflow-y:auto;padding:4px 12px 10px 12px;min-height:120px;"></div>' +
                 // Mini-player container
-                '<div id="ytMiniPlayerHostV252" style="padding:0 12px 10px 12px;"></div>' +
+                '<div id="ytMiniPlayerHostV252" style="padding:0 12px 8px 12px;flex-shrink:0;"></div>' +
             '</div>';
 
         document.body.appendChild(modal);
+        if (typeof window.syncAllSourceModalsBoundsV256 === 'function') {
+            window.syncAllSourceModalsBoundsV256();
+        }
 
         if (typeof window.ensureUniversalMiniPlayerInModalV241 === 'function') {
             window.ensureUniversalMiniPlayerInModalV241('jennyYoutubeStudioModalV230');

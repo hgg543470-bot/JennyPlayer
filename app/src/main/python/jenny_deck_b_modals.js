@@ -1619,7 +1619,7 @@
                 }
             }
 
-            // 2) Живой осциллограф волны Деки Б
+            // 2) Живой осциллограф волны Деки Б (Серый=Ориг, Зел=Шланг, Оранж=Шов 90°)
             var wCv = document.getElementById('hoseWaveScopeCanvasDeckB');
             if (wCv && !specStateDeckB.scopeFrozen) {
                 var wCtx = wCv.getContext('2d');
@@ -1628,7 +1628,69 @@
                 wCtx.fillRect(0, 0, wW, wH);
                 wCtx.strokeStyle = 'rgba(88,166,255,0.18)';
                 wCtx.beginPath(); wCtx.moveTo(0, wH / 2); wCtx.lineTo(wW, wH / 2); wCtx.stroke();
-                if (an) {
+                var hc = (vd && vd.hoseCache) || {};
+                if (vd && vd.studioBuffer && hc.splicedBuffer && hc.seamPointsOut && hc.seamPointsOut.length > 0) {
+                    var srB = vd.studioBuffer.sampleRate || 48000;
+                    var winSB = Math.max(64, Math.round((specStateDeckB.scopeWindowMs / 1000) * srB));
+                    var vidElB = document.getElementById('jennyVideoElV130');
+                    var curSecB = (window.getEffectiveVideoCurrentTimeV167 && vidElB) ? window.getEffectiveVideoCurrentTimeV167(vidElB) : ((vidElB && vidElB.currentTime) || 0);
+                    var spdB = hc.speed || 1.0;
+                    var rawSampleB = Math.floor((curSecB / Math.max(0.05, spdB)) * srB);
+                    var nearSeamB = hc.seamPointsOut[0];
+                    var bestDB = Infinity;
+                    for (var si = 0; si < hc.seamPointsOut.length; si++) {
+                        var dB = Math.abs(hc.seamPointsOut[si] - rawSampleB);
+                        if (dB < bestDB) { bestDB = dB; nearSeamB = hc.seamPointsOut[si]; }
+                    }
+                    var origChB = vd.studioBuffer.getChannelData(0);
+                    var hoseChB = hc.splicedBuffer.getChannelData(0);
+                    var hStartB = Math.min(Math.max(0, nearSeamB - Math.floor(winSB * 0.5)), Math.max(0, hoseChB.length - winSB - 1));
+                    var oStartB = Math.min(Math.max(0, Math.floor(hStartB * spdB)), Math.max(0, origChB.length - winSB - 1));
+
+                    wCtx.strokeStyle = 'rgba(180,196,216,0.72)';
+                    wCtx.lineWidth = 1.5;
+                    wCtx.setLineDash([4, 3]);
+                    wCtx.beginPath();
+                    for (var xB = 0; xB < wW; xB++) {
+                        var vOB = origChB[oStartB + Math.floor((xB / wW) * winSB)] || 0;
+                        var pyOB = (wH * 0.5) - vOB * (wH * 0.44);
+                        if (xB === 0) wCtx.moveTo(xB, pyOB); else wCtx.lineTo(xB, pyOB);
+                    }
+                    wCtx.stroke();
+                    wCtx.setLineDash([]);
+
+                    var peakB = 0, sqB = 0;
+                    wCtx.strokeStyle = '#3fb950';
+                    wCtx.lineWidth = 1.8;
+                    wCtx.beginPath();
+                    for (var xH = 0; xH < wW; xH++) {
+                        var vHB = hoseChB[hStartB + Math.floor((xH / wW) * winSB)] || 0;
+                        var absHB = Math.abs(vHB);
+                        if (absHB > peakB) peakB = absHB;
+                        sqB += vHB * vHB;
+                        var pyHB = (wH * 0.5) - vHB * (wH * 0.44);
+                        if (xH === 0) wCtx.moveTo(xH, pyHB); else wCtx.lineTo(xH, pyHB);
+                    }
+                    wCtx.stroke();
+
+                    var sxB = ((nearSeamB - hStartB) / winSB) * wW;
+                    wCtx.strokeStyle = '#f0883e';
+                    wCtx.lineWidth = 2.0;
+                    wCtx.beginPath(); wCtx.moveTo(sxB, 2); wCtx.lineTo(sxB, wH - 2); wCtx.stroke();
+                    wCtx.fillStyle = 'rgba(240,136,62,0.92)';
+                    wCtx.fillRect(Math.max(4, Math.min(wW - 52, sxB - 24)), 3, 48, 12);
+                    wCtx.fillStyle = '#070a0f';
+                    wCtx.font = 'bold 8.5px monospace';
+                    wCtx.fillText('90° ШОВ', Math.max(6, Math.min(wW - 50, sxB - 21)), 12);
+
+                    var rmsB = Math.sqrt(sqB / Math.max(1, wW));
+                    var stElB = document.getElementById('hoseScopeStatsDeckB');
+                    if (stElB) {
+                        stElB.innerText = 'Peak: ±' + peakB.toFixed(3) + ' | RMS: ' + rmsB.toFixed(3) +
+                            ' | Швов 90°: ' + hc.seamPointsOut.length +
+                            ' | Сборка: ' + (hc.lastBuildMs || 0) + ' мс';
+                    }
+                } else if (an) {
                     an.getByteTimeDomainData(timeData);
                     wCtx.strokeStyle = '#60a5fa';
                     wCtx.lineWidth = 1.6;
@@ -1648,7 +1710,6 @@
                     wCtx.stroke();
                     var rms = Math.sqrt(sq / Math.max(1, nPts));
                     var stEl = document.getElementById('hoseScopeStatsDeckB');
-                    var hc = (vd && vd.hoseCache) || {};
                     if (stEl) {
                         stEl.innerText = 'Peak: ±' + peak.toFixed(3) + ' | RMS: ' + rms.toFixed(3) +
                             ' | Швов 90°: ' + ((hc.seamPointsOut && hc.seamPointsOut.length) || 0) +

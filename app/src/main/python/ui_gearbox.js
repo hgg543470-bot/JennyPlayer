@@ -709,7 +709,11 @@ setTimeout(() => { window.upgradeToThreeWayTumblerV62(); }, 800);
                 try { player.playbackRate = targetSpd; } catch (e) {}
             }
 
-            if (!player.paused) {
+            const shouldPlayHose = !window._userPausedV75_2 && Boolean(window.isStudioPlaying || window._resumingFromUserPlayV232 || !player.paused);
+            if (shouldPlayHose) {
+                const curTrueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+                    ? window.getTruePlaybackTimeV74_2()
+                    : (player.currentTime || 0);
                 if (window.studioSourceNode) {
                     window.studioSourceNode.onended = null;
                     try { window.studioSourceNode.stop(); } catch (e) {}
@@ -721,12 +725,20 @@ setTimeout(() => { window.upgradeToThreeWayTumblerV62(); }, 800);
                 window.studioSourceNode.playbackRate.value = 1.0;
                 window.studioSourceNode.connect(window.inputMixer);
 
-                let scaledOffset = (player.currentTime || 0) / targetSpd;
+                let scaledOffset = curTrueSec / Math.max(0.05, targetSpd);
                 if (!isFinite(scaledOffset) || scaledOffset < 0) scaledOffset = 0;
                 if (scaledOffset >= activeBuf.duration) scaledOffset = Math.max(0, activeBuf.duration - 0.05);
 
                 window.studioSourceNode.start(0, scaledOffset);
                 window.isStudioPlaying = true;
+                window._studioClockV74_1 = {
+                    active: true,
+                    startCtxTime: window.audioCtx.currentTime,
+                    startTrackSec: Math.max(0, curTrueSec),
+                    lastKnownSec: Math.max(0, curTrueSec),
+                    trackName: window.currentPlayingTrack || '',
+                    speed: targetSpd
+                };
             }
 
             const badge = document.getElementById('hoseLiveTelemetryV44');

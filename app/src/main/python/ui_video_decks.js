@@ -6160,11 +6160,35 @@
                     if (info.audio_tracks) {
                         st.audioStreamsCountV218 = info.audio_tracks;
                     }
+                    if (typeof info.best_audio_idx === 'number' && info.best_audio_idx > 0 && !st.audioTrackIdxV216) {
+                        st.audioTrackIdxV216 = info.best_audio_idx;
+                    }
                     if (info.needs_remux && !st.usingRemux) {
                         _activateSeamlessLiveRemuxV240(rawBaseUrl, Boolean(info.needs_transcode), info.audio_tracks || 0);
                     }
                 })
                 .catch(function() {});
+
+            // Железный сторож авто-подтягивания реальной дорожки (1.6 сек):
+            // если видео на старте зависло (readyState < 2 или videoWidth === 0 или кадры стоят),
+            // автоматически делаем ровно то, что раньше делал ручной клик по «🔊 Дорожка #1»!
+            setTimeout(function() {
+                if (!st.active || st._v240OpenSessionTs !== openSessionTs || st.userPaused) return;
+                var isStuck = Boolean(
+                    vid.error ||
+                    vid.readyState < 2 ||
+                    (vid.videoWidth === 0 && st.videoStreamModeV217 !== 'a_only') ||
+                    (vid.paused && window._vidPlayIntentV132)
+                );
+                if (isStuck) {
+                    if (!st.usingRemux) {
+                        _activateSeamlessLiveRemuxV240(rawBaseUrl, false, st.audioStreamsCountV218 || 1);
+                    } else if (!st._autoTranscodeRetriedV256) {
+                        st._autoTranscodeRetriedV256 = true;
+                        window.switchVideoToFfmpegRemuxV130(null, true);
+                    }
+                }
+            }, 1650);
 
             return res;
         };
@@ -8120,7 +8144,7 @@
     window.playYoutubeVideoInDeckBV230 = async function(videoId, title, preferredHeight, btnEl) {
         var vid = String(videoId || '').trim();
         if (!vid) return;
-        var prefH = parseInt(preferredHeight, 10) || (window._ytStudioStateV252 && window._ytStudioStateV252.selectedHeight) || 720;
+        var prefH = parseInt(preferredHeight, 10) || (window._ytStudioStateV252 && window._ytStudioStateV252.selectedHeight) || 2160;
         var limitMb = (typeof window.getYtPreloadLimitMbV253 === 'function') ? window.getYtPreloadLimitMbV253() : 300;
 
         if (typeof window.stopAllExternalPreviewsAndMainDecksV241 === 'function') {
@@ -8132,7 +8156,7 @@
             btnEl.innerText = '⏳ Подготовка Деки Б...';
         }
         if (typeof window.showToast === 'function') {
-            window.showToast('⏳ Подготовка видео (' + prefH + 'p) для Деки Б...');
+            window.showToast('⏳ Подготовка видео (Авто-Макс) для Деки Б...');
         }
 
         try {
@@ -8158,7 +8182,7 @@
             if (ytModal) ytModal.style.setProperty('display', 'none', 'important');
 
             var modeTag = (j.mode === 'chunked_stream') ? ' [Поток 1.5МБ • ' : ' [';
-            var dispName = (j.title || title || ('YouTube_' + vid)) + modeTag + (j.height || prefH) + 'p].mp4';
+            var dispName = (j.title || title || ('YouTube_' + vid)) + modeTag + (j.height || 1080) + 'p].mp4';
             if (typeof window.openJennyVideoPlayerV130 === 'function') {
                 await window.openJennyVideoPlayerV130(j.stream_url, dispName, {});
             }
@@ -8177,7 +8201,7 @@
     window.downloadYoutubeVideoV230 = async function(videoId, title, preferredHeight, btnEl) {
         var vid = String(videoId || '').trim();
         if (!vid) return;
-        var prefH = parseInt(preferredHeight, 10) || (window._ytStudioStateV252 && window._ytStudioStateV252.selectedHeight) || 720;
+        var prefH = parseInt(preferredHeight, 10) || (window._ytStudioStateV252 && window._ytStudioStateV252.selectedHeight) || 2160;
 
         var oldTxt = btnEl ? btnEl.innerText : '';
         if (btnEl) {
@@ -8185,7 +8209,7 @@
             btnEl.innerText = '⏳ Скачивание MP4...';
         }
         if (typeof window.showToast === 'function') {
-            window.showToast('⏳ Скачивание видео MP4 (' + prefH + 'p): ' + (title || vid));
+            window.showToast('⏳ Скачивание видео MP4 (Авто-Макс): ' + (title || vid));
         }
 
         try {

@@ -309,7 +309,9 @@ window.startHoseWaveScopeV49 = function() {
 
             const sr = window.studioBuffer.sampleRate;
             const winSamples = Math.max(64, Math.round((st.windowMs / 1000) * sr));
-            const curSec = player.currentTime || 0;
+            const curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+                ? window.getTruePlaybackTimeV74_2()
+                : (player.currentTime || 0);
 
             let targetSpd = 1.0;
             if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
@@ -320,21 +322,67 @@ window.startHoseWaveScopeV49 = function() {
                 targetSpd = window.getTargetPlaybackSpeed();
             }
 
-            const origData = window.studioBuffer.getChannelData(0);
-            const splicedBuf = (window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.splicedBuffer)
+            const hasXflacRev = Boolean(
+                window.reconstructedMasterBufferV67 &&
+                window.currentTrackRevMapV67 &&
+                window.currentTrackRevNameV67 === window.currentPlayingTrack
+            );
+
+            const origBufRef = hasXflacRev ? window.reconstructedMasterBufferV67 : window.studioBuffer;
+            const origData = origBufRef.getChannelData(0);
+            const splicedBuf = (window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.splicedBuffer && Math.abs(targetSpd - 1.0) > 0.002)
                 ? window._hoseSplicerCacheV46.splicedBuffer
                 : window.studioBuffer;
             const hoseData = splicedBuf.getChannelData(0);
 
-            const origStart = Math.min( Math.max(0, Math.floor(curSec * sr)), Math.max(0, origData.length - winSamples - 1) );
-            const isHoseActiveNow = Boolean(window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.splicedBuffer);
-            const hoseStart = isHoseActiveNow ? Math.min(Math.max(0, Math.floor((curSec / targetSpd) * sr)), Math.max(0, hoseData.length - winSamples - 1)) : origStart;
+            let activeSeams = (window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.seamPointsOut && window._hoseSplicerCacheV46.seamPointsOut.length > 0)
+                ? window._hoseSplicerCacheV46.seamPointsOut
+                : [];
+            if (activeSeams.length === 0 && hasXflacRev && Array.isArray(window.currentTrackRevMapV67.seams)) {
+                activeSeams = window.currentTrackRevMapV67.seams.map(cs => cs[0]).filter(n => typeof n === 'number');
+            }
+
+            const isHoseActiveNow = Boolean((window.appConfig && window.appConfig.elasticHoseMode && Math.abs(targetSpd - 1.0) > 0.002) || hasXflacRev);
+            const rawHosePlaySample = isHoseActiveNow
+                ? Math.floor(((Math.abs(targetSpd - 1.0) > 0.002) ? (curSec / targetSpd) : curSec) * sr)
+                : Math.floor(curSec * sr);
+
+            // Привязываем центр окна к ближайшему 90° шву, чтобы оранжевый разделитель шва и обе кривые (Ориг vs Шланг/.xFLAC) были чётко видны!
+            let nearestSeamSample = -1;
+            let nearestSeamP1 = -1;
+            if (activeSeams.length > 0) {
+                let bestDist = Infinity;
+                let bestIdx = 0;
+                for (let s = 0; s < activeSeams.length; s++) {
+                    const d = Math.abs(activeSeams[s] - rawHosePlaySample);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        nearestSeamSample = activeSeams[s];
+                        bestIdx = s;
+                    }
+                }
+                if (hasXflacRev && Array.isArray(window.currentTrackRevMapV67.seams) && window.currentTrackRevMapV67.seams[bestIdx]) {
+                    nearestSeamP1 = window.currentTrackRevMapV67.seams[bestIdx][3] || -1;
+                } else if (window._hoseSplicerCacheV46.seamLogs && window._hoseSplicerCacheV46.seamLogs[bestIdx]) {
+                    nearestSeamP1 = window._hoseSplicerCacheV46.seamLogs[bestIdx].p1 || -1;
+                }
+            }
+
+            const hoseStart = (nearestSeamSample >= 0)
+                ? Math.min(Math.max(0, nearestSeamSample - Math.floor(winSamples * 0.5)), Math.max(0, hoseData.length - winSamples - 1))
+                : Math.min(Math.max(0, rawHosePlaySample), Math.max(0, hoseData.length - winSamples - 1));
+
+            const expSpdRatio = hasXflacRev ? (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) : targetSpd;
+            const origStart = (nearestSeamP1 >= 0)
+                ? Math.min(Math.max(0, nearestSeamP1 - Math.floor(winSamples * 0.5)), Math.max(0, origData.length - winSamples - 1))
+                : Math.min(Math.max(0, Math.floor(hoseStart * expSpdRatio)), Math.max(0, origData.length - winSamples - 1));
 
             const plotW = W - 34;
 
-            // 1. Рисуем СЕРЫМ пунктиром исходную волну (Оригинал в этой точке времени)
-            ctx.strokeStyle = 'rgba(139,148,158,0.45)';
-            ctx.lineWidth = 1.2;
+            // 1. Рисуем КОНТРАСТНЫМ СЕРЫМ ПУНКТИРОМ исходную волну (Оригинал 1.0x / Восстановленный из .xFLAC)
+            ctx.strokeStyle = 'rgba(180,196,216,0.72)';
+            ctx.lineWidth = 1.6;
+            ctx.setLineDash([4, 3]);
             ctx.beginPath();
             for (let x = 0; x < plotW; x++) {
                 const idx = origStart + Math.floor((x / plotW) * winSamples);
@@ -344,15 +392,16 @@ window.startHoseWaveScopeV49 = function() {
                 else ctx.lineTo(34 + x, py);
             }
             ctx.stroke();
+            ctx.setLineDash([]);
 
-            // 2. Рисуем ЯРКО-ЗЕЛЁНЫМ реальную волну после 90° Резака + измеряем её истинные параметры
+            // 2. Рисуем ЯРКО-ЗЕЛЁНЫМ реальную волну после 90° Резака / .xFLAC + измеряем её истинные параметры
             let peak = 0.0;
             let sumSq = 0.0;
             let maxSlope = 0.0;
             let zeroCrossings = 0;
 
             ctx.strokeStyle = '#3fb950';
-            ctx.lineWidth = 1.8;
+            ctx.lineWidth = 1.9;
             ctx.beginPath();
             for (let x = 0; x < plotW; x++) {
                 const idx = hoseStart + Math.floor((x / plotW) * winSamples);
@@ -371,18 +420,26 @@ window.startHoseWaveScopeV49 = function() {
             }
             ctx.stroke();
 
-            // 3. Отмечаем оранжевыми вертикальными метками точки 90° разреза, если они попали в окно экрана
-            const seams = (window.appConfig && window.appConfig.elasticHoseMode) ? (window._hoseSplicerCacheV46.seamPointsOut || []) : [];
-            ctx.strokeStyle = 'rgba(240,136,62,0.75)';
-            ctx.lineWidth = 1;
-            for (let s = 0; s < seams.length; s++) {
-                const sp = seams[s];
+            // 3. Отмечаем ЯРКИМ ОРАНЖЕВЫМ РАЗДЕЛИТЕЛЕМ (#f0883e) точки 90° разреза (Шланга или капсулы .xFLAC)
+            ctx.strokeStyle = '#f0883e';
+            ctx.lineWidth = 2.0;
+            let drawnSeamsInWin = 0;
+            for (let s = 0; s < activeSeams.length; s++) {
+                const sp = activeSeams[s];
                 if (sp >= hoseStart && sp <= hoseStart + winSamples) {
                     const sx = 34 + ((sp - hoseStart) / winSamples) * plotW;
                     ctx.beginPath();
-                    ctx.moveTo(sx, 4);
-                    ctx.lineTo(sx, H - 4);
+                    ctx.moveTo(sx, 2);
+                    ctx.lineTo(sx, H - 2);
                     ctx.stroke();
+                    if (drawnSeamsInWin === 0) {
+                        ctx.fillStyle = 'rgba(240,136,62,0.92)';
+                        ctx.fillRect(Math.max(36, Math.min(W - 56, sx - 24)), 3, 48, 12);
+                        ctx.fillStyle = '#070a0f';
+                        ctx.font = 'bold 8.5px monospace';
+                        ctx.fillText('90° ШОВ', Math.max(38, Math.min(W - 54, sx - 21)), 12);
+                    }
+                    drawnSeamsInWin++;
                 }
             }
 
@@ -476,7 +533,11 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
     }
     player.preservesPitch = false;
 
-    if (!player.paused) {
+    const shouldPlayHose = !window._userPausedV75_2 && Boolean(window.isStudioPlaying || window._resumingFromUserPlayV232 || !player.paused);
+    if (shouldPlayHose) {
+        const curTrueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+            ? window.getTruePlaybackTimeV74_2()
+            : (player.currentTime || 0);
         if (window.studioSourceNode) {
             window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch (e) {}
@@ -488,12 +549,20 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
         window.studioSourceNode.playbackRate.value = 1.0;
         window.studioSourceNode.connect(window.inputMixer);
 
-        let scaledOffset = (player.currentTime || 0) / targetSpd;
+        let scaledOffset = curTrueSec / Math.max(0.05, targetSpd);
         if (!isFinite(scaledOffset) || scaledOffset < 0) scaledOffset = 0;
         if (scaledOffset >= activeBuf.duration) scaledOffset = Math.max(0, activeBuf.duration - 0.05);
 
         window.studioSourceNode.start(0, scaledOffset);
         window.isStudioPlaying = true;
+        window._studioClockV74_1 = {
+            active: true,
+            startCtxTime: window.audioCtx.currentTime,
+            startTrackSec: Math.max(0, curTrueSec),
+            lastKnownSec: Math.max(0, curTrueSec),
+            trackName: window.currentPlayingTrack || '',
+            speed: targetSpd
+        };
     }
 
     if (badge) {

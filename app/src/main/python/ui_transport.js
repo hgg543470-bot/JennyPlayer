@@ -997,8 +997,15 @@ return _origHandleTrackPlayV130.apply(this, arguments);
     window._lastTogglePlayWallTsV232 = 0;
 
     window.togglePlayV75_2 = function(ev) {
+        var isSyntheticClickAfterPointer = Boolean(
+            ev && ev.type === 'click' &&
+            (performance.now() - (window._lastPointerUpPlayPauseTsV256 || 0) < 480)
+        );
+        if (isSyntheticClickAfterPointer) {
+            return;
+        }
         var nowMs = performance.now();
-        if (nowMs - (window._lastTogglePlayWallTsV232 || 0) < 140) {
+        if (nowMs - (window._lastTogglePlayWallTsV232 || 0) < 75) {
             return;
         }
         window._lastTogglePlayWallTsV232 = nowMs;
@@ -1017,7 +1024,7 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         var isPlayingNow = window.isDeckAActuallyPlayingV232();
 
         if (isPlayingNow) {
-            // СТОП / ПАУЗА: гарантированно глушим и HTML5 <audio>, и все RAM-буферы!
+            // СТОП / ПАУЗА: гарантированно глушим и HTML5 <audio>, и все RAM-буферы, сохраняя текущую секунду и декодированный буфер!
             window.forceStopPauseDeckAAudioV232(false);
             return;
         }
@@ -1028,14 +1035,26 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             try { window.stopAllExternalStreamsV97(); } catch (e) {}
         }
 
+        var savedResumeSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+            ? window.getTruePlaybackTimeV74_2()
+            : ((player && isFinite(player.currentTime)) ? player.currentTime : 0);
+
         window._userPausedV75_2 = false;
         window._resumingFromUserPlayV232 = true;
+        window._loadingStudioBufV61 = false;
 
-        window.studioBuffer = null;
-        window.reversedStudioBuffer = null;
-        window.reconstructedMasterBufferV67 = null;
-        window.reconstructedReversedBufferV67 = null;
-        window.currentTrackRevMapV67 = null;
+        // Восстанавливаем буфер из кэша истории, если он был сброшен при прерывании начальной загрузки
+        if (!window.studioBuffer && window.currentPlayingTrack) {
+            if (Array.isArray(window._ramTrackHistoryV71)) {
+                var cachedRam = window._ramTrackHistoryV71.find(function(x) { return x && x.name === window.currentPlayingTrack && x.buf; });
+                if (cachedRam && cachedRam.buf) {
+                    window.studioBuffer = cachedRam.buf;
+                }
+            }
+            if (!window.studioBuffer && window._hugeRamCacheV71 && window._hugeRamCacheV71.name === window.currentPlayingTrack && window._hugeRamCacheV71.buf) {
+                window.studioBuffer = window._hugeRamCacheV71.buf;
+            }
+        }
 
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
         if (window.audioCtx && window.audioCtx.state === 'suspended') {
@@ -1050,12 +1069,37 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             } catch (e) {}
         }
 
-        // Если трек был выгружен из player.src, но имя сохранено в currentPlayingTrack — перезапускаем его через playTrack
-        if (!player.src && window.currentPlayingTrack && typeof window.playTrack === 'function') {
+        // Если трек был выгружен из player.src (или это .xflac, который был остановлен до окончания первичной загрузки), перезапускаем через playTrack
+        if ((!player.src || (!window.studioBuffer && /\.xflac$/i.test(window.currentPlayingTrack || ''))) && window.currentPlayingTrack && typeof window.playTrack === 'function') {
             window._resumingFromUserPlayV232 = false;
             window.playTrack(window.currentPlayingTrack, window.currentListContext || 'main');
             return;
         }
+
+        // Если RAM-буфер ещё не готов, обязательно открываем htmlGain, чтобы HTML5 <audio> заиграл мгновенно без тишины
+        if (!window.studioBuffer && window.htmlGain && window.htmlGain.gain) {
+            window.htmlGain.gain.value = 1.0;
+        }
+
+        if (savedResumeSec > 0.05 && player) {
+            window._internalSeekSyncGuardV370 = true;
+            try {
+                if (Math.abs((player.currentTime || 0) - savedResumeSec) > 0.2) {
+                    player.currentTime = savedResumeSec;
+                }
+            } catch (e) {}
+            setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 60);
+        }
+
+        var activeSpd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
+        window._studioClockV74_1 = {
+            active: true,
+            startCtxTime: window.audioCtx ? window.audioCtx.currentTime : 0,
+            startTrackSec: Math.max(0, savedResumeSec),
+            lastKnownSec: Math.max(0, savedResumeSec),
+            trackName: window.currentPlayingTrack || '',
+            speed: activeSpd
+        };
 
         var btn = document.getElementById('playPauseBtn');
         if (btn) {
@@ -1068,10 +1112,18 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
             }
+            if (!window.studioBuffer && window.currentPlayingTrack && typeof window.ensureStudioBufferLoadedV61 === 'function') {
+                window.ensureStudioBufferLoadedV61();
+            }
             if (typeof window.updateTrackListPlayIcons === 'function') {
                 window.updateTrackListPlayIcons();
             }
         };
+
+        // Если в RAM уже лежит готовый буфер, запускаем WebAudio мгновенно (0 мс), не дожидаясь промиса player.play()!
+        if (window.studioBuffer && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            window.syncMasterPlaybackEngineV59(false);
+        }
 
         try {
             var p = player.play();
@@ -1154,6 +1206,7 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             var rect = btn.getBoundingClientRect();
             var inside = (rect.width > 0 && e.clientX >= rect.left - 4 && e.clientX <= rect.right + 4 && e.clientY >= rect.top - 4 && e.clientY <= rect.bottom + 4);
             if (byTarget || inside) {
+                window._lastPointerUpPlayPauseTsV256 = performance.now();
                 window.togglePlayV75_2(e);
             }
         }, true);
