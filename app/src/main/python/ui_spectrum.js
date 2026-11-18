@@ -119,7 +119,6 @@ window.ensureSpectrumModalDOMV62 = function() {
                 const dbgBlock = ta.parentElement;
                 const det = document.createElement('details');
                 det.id = 'seamLabCollapsibleV62';
-                det.open = true;
                 det.style.cssText = 'margin-top:8px;border-top:1px solid #21262d;padding-top:6px;';
                 det.innerHTML = `<summary style="font-size:11px;color:#f0883e;font-weight:bold;cursor:pointer;outline:none;">🔬 Инженерная лаборатория 90° швов и Сэмпл-Резак</summary><div id="seamLabInnerV62" style="margin-top:6px;"></div>`;
                 waveCard.appendChild(det);
@@ -184,13 +183,7 @@ window.startSpectrumLoopV62 = function() {
     const draw = () => {
         const sm = document.getElementById('specModal');
         const cv = document.getElementById('jennyFftCanvasV62');
-        const isBg = (typeof window.isJennyAppBackgroundedV264 === 'function') ? window.isJennyAppBackgroundedV264() : document.hidden;
-        const isSpecOpen = Boolean(!isBg && sm && sm.classList.contains('open') && cv && cv.offsetParent !== null);
-        if (!isSpecOpen || st.frozen) {
-            st.rafId = setTimeout(draw, 450);
-            return;
-        }
-        if (isSpecOpen) {
+        if (sm && sm.classList.contains('open') && cv && !st.frozen) {
             const ctx = cv.getContext('2d');
             const W = cv.width;
             const H = cv.height;

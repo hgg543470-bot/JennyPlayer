@@ -317,12 +317,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             ? window.playingQueueListV73.slice()
             : null;
 
-        window.studioBuffer = null;
-        window.reversedStudioBuffer = null;
-        window.reconstructedMasterBufferV67 = null;
-        window.reconstructedReversedBufferV67 = null;
-        window.currentTrackRevMapV67 = null;
-
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
         if (window.audioCtx && window.audioCtx.state === 'suspended') {
             try { window.audioCtx.resume(); } catch (e) {}
@@ -357,12 +351,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window.reconstructedMasterBufferV67 = null;
         window.reconstructedReversedBufferV67 = null;
         window.currentTrackRevMapV67 = null;
-        window._ramTrackHistoryV71 = [];
-        window._hugeRamCacheV71 = null;
-        if (window._hoseSplicerCacheV46) {
-            window._hoseSplicerCacheV46.srcBuffer = null;
-            window._hoseSplicerCacheV46.splicedBuffer = null;
-        }
         window._userPausedV75_2 = false;
 
         if (keepLocked && window.scrubState) {
@@ -460,17 +448,16 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 if (titleEl) titleEl.innerText = '🎵 ' + filename;
                 return;
             }
+
+            // Даём сжатому потоку ("⏳ RAM (пока играет сжатый...)") спокойно отыграть ~1.8 секунды,
+            // чтобы пользователь видел индикацию внутри шкалы прогресса и старт шёл без микро-щелчка на первой секунде!
+            var elapsedMs = performance.now() - startPlayWallMs;
+            if (elapsedMs < 1800 && !isRevMode) {
+                await new Promise(function(r) { setTimeout(r, 1800 - elapsedMs); });
+            }
             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
             window.studioBuffer = decodedBuffer;
-            if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
-                window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
-            }
-            if (typeof window.updateAutoRmsGainsSmoothV264 === 'function') {
-                window.updateAutoRmsGainsSmoothV264(decodedBuffer);
-            } else if (typeof window.buildAudioGraph === 'function') {
-                window.buildAudioGraph(false);
-            }
             if (typeof window.loadTrackReversibleDataV67 === 'function') {
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
             }
@@ -714,14 +701,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 arcItems.push(el);
             });
 
-            if ( overlay.parentNode !== document.body || overlay.nextSibling !== arcContainer || arcContainer.nextSibling !== null ) {
-                try {
-                    document.body.appendChild(overlay);
-                    document.body.appendChild(arcContainer);
-                } catch (e) {}
-            }
-            overlay.style.setProperty('z-index', '2147483646', 'important');
-            arcContainer.style.setProperty('z-index', '2147483647', 'important');
             arcContainer.style.display = 'block';
             setTimeout(function() { arcContainer.style.opacity = '1'; }, 10);
 
@@ -998,15 +977,8 @@ return _origHandleTrackPlayV130.apply(this, arguments);
     window._lastTogglePlayWallTsV232 = 0;
 
     window.togglePlayV75_2 = function(ev) {
-        var isSyntheticClickAfterPointer = Boolean(
-            ev && ev.type === 'click' &&
-            (performance.now() - (window._lastPointerUpPlayPauseTsV256 || 0) < 480)
-        );
-        if (isSyntheticClickAfterPointer) {
-            return;
-        }
         var nowMs = performance.now();
-        if (nowMs - (window._lastTogglePlayWallTsV232 || 0) < 75) {
+        if (nowMs - (window._lastTogglePlayWallTsV232 || 0) < 140) {
             return;
         }
         window._lastTogglePlayWallTsV232 = nowMs;
@@ -1025,7 +997,7 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         var isPlayingNow = window.isDeckAActuallyPlayingV232();
 
         if (isPlayingNow) {
-            // СТОП / ПАУЗА: гарантированно глушим и HTML5 <audio>, и все RAM-буферы, сохраняя текущую секунду и декодированный буфер!
+            // СТОП / ПАУЗА: гарантированно глушим и HTML5 <audio>, и все RAM-буферы!
             window.forceStopPauseDeckAAudioV232(false);
             return;
         }
@@ -1036,26 +1008,8 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             try { window.stopAllExternalStreamsV97(); } catch (e) {}
         }
 
-        var savedResumeSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
-            ? window.getTruePlaybackTimeV74_2()
-            : ((player && isFinite(player.currentTime)) ? player.currentTime : 0);
-
         window._userPausedV75_2 = false;
         window._resumingFromUserPlayV232 = true;
-        window._loadingStudioBufV61 = false;
-
-        // Восстанавливаем буфер из кэша истории, если он был сброшен при прерывании начальной загрузки
-        if (!window.studioBuffer && window.currentPlayingTrack) {
-            if (Array.isArray(window._ramTrackHistoryV71)) {
-                var cachedRam = window._ramTrackHistoryV71.find(function(x) { return x && x.name === window.currentPlayingTrack && x.buf; });
-                if (cachedRam && cachedRam.buf) {
-                    window.studioBuffer = cachedRam.buf;
-                }
-            }
-            if (!window.studioBuffer && window._hugeRamCacheV71 && window._hugeRamCacheV71.name === window.currentPlayingTrack && window._hugeRamCacheV71.buf) {
-                window.studioBuffer = window._hugeRamCacheV71.buf;
-            }
-        }
 
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
         if (window.audioCtx && window.audioCtx.state === 'suspended') {
@@ -1070,37 +1024,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             } catch (e) {}
         }
 
-        // Если трек был выгружен из player.src (или это .xflac, который был остановлен до окончания первичной загрузки), перезапускаем через playTrack
-        if ((!player.src || (!window.studioBuffer && /\.xflac$/i.test(window.currentPlayingTrack || ''))) && window.currentPlayingTrack && typeof window.playTrack === 'function') {
+        // Если трек был выгружен из player.src, но имя сохранено в currentPlayingTrack — перезапускаем его через playTrack
+        if (!player.src && window.currentPlayingTrack && typeof window.playTrack === 'function') {
             window._resumingFromUserPlayV232 = false;
             window.playTrack(window.currentPlayingTrack, window.currentListContext || 'main');
             return;
         }
-
-        // Если RAM-буфер ещё не готов, обязательно открываем htmlGain, чтобы HTML5 <audio> заиграл мгновенно без тишины
-        if (!window.studioBuffer && window.htmlGain && window.htmlGain.gain) {
-            window.htmlGain.gain.value = 1.0;
-        }
-
-        if (savedResumeSec > 0.05 && player) {
-            window._internalSeekSyncGuardV370 = true;
-            try {
-                if (Math.abs((player.currentTime || 0) - savedResumeSec) > 0.2) {
-                    player.currentTime = savedResumeSec;
-                }
-            } catch (e) {}
-            setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 60);
-        }
-
-        var activeSpd = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
-        window._studioClockV74_1 = {
-            active: true,
-            startCtxTime: window.audioCtx ? window.audioCtx.currentTime : 0,
-            startTrackSec: Math.max(0, savedResumeSec),
-            lastKnownSec: Math.max(0, savedResumeSec),
-            trackName: window.currentPlayingTrack || '',
-            speed: activeSpd
-        };
 
         var btn = document.getElementById('playPauseBtn');
         if (btn) {
@@ -1110,21 +1039,13 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         var finishResume = function() {
             window._resumingFromUserPlayV232 = false;
             if (window._userPausedV75_2) return;
-            if (!(window.isStudioPlaying && window.studioSourceNode && !window.studioSourceNode._isStoppedV265) && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
-            }
-            if (!window.studioBuffer && window.currentPlayingTrack && typeof window.ensureStudioBufferLoadedV61 === 'function') {
-                window.ensureStudioBufferLoadedV61();
             }
             if (typeof window.updateTrackListPlayIcons === 'function') {
                 window.updateTrackListPlayIcons();
             }
         };
-
-        // Если в RAM уже лежит готовый буфер, запускаем WebAudio мгновенно (0 мс), не дожидаясь промиса player.play()!
-        if (window.studioBuffer && typeof window.syncMasterPlaybackEngineV59 === 'function') {
-            window.syncMasterPlaybackEngineV59(false);
-        }
 
         try {
             var p = player.play();
@@ -1207,7 +1128,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             var rect = btn.getBoundingClientRect();
             var inside = (rect.width > 0 && e.clientX >= rect.left - 4 && e.clientX <= rect.right + 4 && e.clientY >= rect.top - 4 && e.clientY <= rect.bottom + 4);
             if (byTarget || inside) {
-                window._lastPointerUpPlayPauseTsV256 = performance.now();
                 window.togglePlayV75_2(e);
             }
         }, true);
@@ -1417,12 +1337,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             ? window.playingQueueListV73.slice()
             : null;
 
-        window.studioBuffer = null;
-        window.reversedStudioBuffer = null;
-        window.reconstructedMasterBufferV67 = null;
-        window.reconstructedReversedBufferV67 = null;
-        window.currentTrackRevMapV67 = null;
-
         if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
         if (window.audioCtx && window.audioCtx.state === 'suspended') {
             try { window.audioCtx.resume(); } catch (e) {}
@@ -1470,12 +1384,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window.reconstructedMasterBufferV67 = null;
         window.reconstructedReversedBufferV67 = null;
         window.currentTrackRevMapV67 = null;
-        window._ramTrackHistoryV71 = [];
-        window._hugeRamCacheV71 = null;
-        if (window._hoseSplicerCacheV46) {
-            window._hoseSplicerCacheV46.srcBuffer = null;
-            window._hoseSplicerCacheV46.splicedBuffer = null;
-        }
         window._userPausedV75_2 = false;
         window._resumingFromUserPlayV232 = true;
 
@@ -1503,17 +1411,13 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window._ramTrackHistoryV71 = window._ramTrackHistoryV71 || [];
         var cachedEntry = window._ramTrackHistoryV71.find(function(x) { return x.name === filename && x.buf; });
         var isXflac = /\.xflac$/i.test(filename);
-        var isFastLocalOrYtRam = Boolean((cachedEntry && cachedEntry.buf) || isXflac || String(filename || '').indexOf('[YT]') === 0 || (knownMeta.size && knownMeta.size <= 30 * 1024 * 1024));
         var mediaUrl = (cachedEntry && cachedEntry.blobUrl) ? cachedEntry.blobUrl : ('/api/media/' + encodeURIComponent(filename));
-        var useStudioRam = Boolean(!window.appConfig || window.appConfig.studioMode !== false);
 
-        if (window.htmlGain && window.htmlGain.gain) {
-            window.htmlGain.gain.value = (useStudioRam && isFastLocalOrYtRam) ? 0.0 : 1.0;
-        }
+        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
 
-        // Запускаем <audio> сразу в рамках пользовательского жеста (и для обычных файлов, и для .xflac —
-        // на сервере работает пофайловый кэш _ensure_xflac_wav_cache_v87, поэтому второй запрос мгновенно берёт готовый WAV!)
-        if (player) {
+        // For non-.xflac files (or cached blobUrl), start <audio> immediately;
+        // for .xflac files without cached blobUrl, we fetch /api/media/<filename> once below and feed both <audio> blobUrl and decodeAudioData so we don't double-lock _XFLAC_CACHE_LOCK_V87!
+        if (player && (!isXflac || (cachedEntry && cachedEntry.blobUrl))) {
             player.loop = false;
             player.src = mediaUrl;
             player.currentTime = 0;
@@ -1526,12 +1430,13 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         }
 
         var startPlayWallMs = performance.now();
+        var useStudioRam = Boolean(!window.appConfig || window.appConfig.studioMode !== false);
         if (titleEl) {
             titleEl.innerText = (useStudioRam ? '⏳ RAM (пока играет сжатый...): ' : '🎵 ') + filename;
         }
         if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
 
-        if (!useStudioRam) {
+        if (!useStudioRam && !isXflac) {
             window._resumingFromUserPlayV232 = false;
             window._trackActivelyLoadingToRamV237 = false;
             return;
@@ -1540,161 +1445,48 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         var abortCtrl = new AbortController();
         window._audioRamAbortCtrlV216 = abortCtrl;
 
-        // Цельный потоковый декодер готового WAV из .xflac в единый AudioBuffer (0% кусков FFmpeg, без лимита decodeAudioData!)
-        async function decodeWholeXflacWavResponseV262(resp, ctx) {
-            if (resp.body && typeof resp.body.getReader === 'function') {
-                var reader = resp.body.getReader();
-                var headerBuf = new Uint8Array(0);
-                while (headerBuf.length < 128) {
-                    var step = await reader.read();
-                    if (step.done) break;
-                    if (step.value && step.value.length > 0) {
-                        var merged = new Uint8Array(headerBuf.length + step.value.length);
-                        merged.set(headerBuf, 0);
-                        merged.set(step.value, headerBuf.length);
-                        headerBuf = merged;
-                    }
-                }
-                if (headerBuf.length >= 44 && headerBuf[0] === 0x52 && headerBuf[1] === 0x49 && headerBuf[2] === 0x46 && headerBuf[3] === 0x46) {
-                    var dv = new DataView(headerBuf.buffer, headerBuf.byteOffset, headerBuf.byteLength);
-                    var pos = 12, fmtTag = 1, numCh = 2, sRate = 44100, bits = 16, dataOff = 44, dataBytes = 0;
-                    while (pos + 8 <= headerBuf.length) {
-                        var id0 = headerBuf[pos], id1 = headerBuf[pos + 1], id2 = headerBuf[pos + 2], id3 = headerBuf[pos + 3];
-                        var cSize = dv.getUint32(pos + 4, true);
-                        if (id0 === 0x66 && id1 === 0x6d && id2 === 0x74 && id3 === 0x20 && pos + 24 <= headerBuf.length) {
-                            fmtTag = dv.getUint16(pos + 8, true);
-                            numCh = Math.max(1, Math.min(2, dv.getUint16(pos + 10, true)));
-                            sRate = dv.getUint32(pos + 12, true) || 44100;
-                            bits = dv.getUint16(pos + 22, true) || 16;
-                        } else if (id0 === 0x64 && id1 === 0x61 && id2 === 0x74 && id3 === 0x61) {
-                            dataOff = pos + 8;
-                            dataBytes = cSize;
-                            break;
-                        }
-                        pos += 8 + cSize + (cSize & 1);
-                    }
-                    if (bits === 16 && dataOff <= headerBuf.length) {
-                        var clHdr = Number(resp.headers.get('Content-Length') || 0);
-                        var totalPcmBytes = (clHdr > dataOff) ? (clHdr - dataOff) : dataBytes;
-                        var bytesPerFrame = numCh * 2;
-                        var totalFrames = Math.floor(totalPcmBytes / bytesPerFrame);
-                        if (totalFrames > 0) {
-                            var stride = 1;
-                            var outFrames = totalFrames;
-                            var outRate = sRate;
-                            var audioBuf = null;
-                            try {
-                                audioBuf = ctx.createBuffer(numCh, outFrames, outRate);
-                            } catch (eAlloc1) {
-                                stride = 2;
-                                outFrames = Math.floor(totalFrames / 2);
-                                outRate = Math.max(8000, Math.floor(sRate / 2));
-                                audioBuf = ctx.createBuffer(numCh, outFrames, outRate);
-                            }
-                            var chL = audioBuf.getChannelData(0);
-                            var chR = numCh > 1 ? audioBuf.getChannelData(1) : chL;
-                            var inv16 = 1.0 / 32768.0;
-                            var frameIdx = 0;
-                            var outIdx = 0;
-                            var leftover = headerBuf.subarray(dataOff);
-
-                            var processPcmChunk = function(chunkBytes) {
-                                var usableLen = chunkBytes.length - (chunkBytes.length % bytesPerFrame);
-                                if (usableLen <= 0) return chunkBytes;
-                                var i16 = new Int16Array(chunkBytes.buffer, chunkBytes.byteOffset, usableLen >> 1);
-                                var nSamples = i16.length;
-                                if (numCh === 2) {
-                                    for (var s = 0; s < nSamples; s += 2) {
-                                        if (stride === 1 || (frameIdx & 1) === 0) {
-                                            if (outIdx < outFrames) {
-                                                chL[outIdx] = i16[s] * inv16;
-                                                chR[outIdx] = i16[s + 1] * inv16;
-                                                outIdx++;
-                                            }
-                                        }
-                                        frameIdx++;
-                                    }
-                                } else {
-                                    for (var s1 = 0; s1 < nSamples; s1++) {
-                                        if (stride === 1 || (frameIdx & 1) === 0) {
-                                            if (outIdx < outFrames) {
-                                                chL[outIdx++] = i16[s1] * inv16;
-                                            }
-                                        }
-                                        frameIdx++;
-                                    }
-                                }
-                                return chunkBytes.subarray(usableLen);
-                            };
-
-                            leftover = processPcmChunk(leftover);
-                            while (true) {
-                                var rd = await reader.read();
-                                if (rd.done) break;
-                                if (rd.value && rd.value.length > 0) {
-                                    if (leftover.length > 0) {
-                                        var comb = new Uint8Array(leftover.length + rd.value.length);
-                                        comb.set(leftover, 0);
-                                        comb.set(rd.value, leftover.length);
-                                        leftover = processPcmChunk(comb);
-                                    } else {
-                                        leftover = processPcmChunk(rd.value);
-                                    }
-                                }
-                            }
-                            return audioBuf;
-                        }
-                    }
-                }
-            }
-            var ab = await resp.arrayBuffer();
-            return await ctx.decodeAudioData(ab);
-        }
-
         try {
             var decodedBuffer = null;
             if (cachedEntry && cachedEntry.buf) {
                 decodedBuffer = cachedEntry.buf;
             } else {
                 var metaCheck = { duration: initDur, size: Number(knownMeta.size || 0) };
+                if (!metaCheck.size && !isXflac) {
+                    try {
+                        var mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
+                        if (mr.ok) metaCheck = await mr.json();
+                    } catch (e) {
+                        if (abortCtrl.signal.aborted || mySeq !== window._audioTrackLoadSeqV216) return;
+                    }
+                }
                 if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
-                if (isXflac) {
-                    var xResp = await fetch('/api/media/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
-                    if (xResp.ok) {
-                        decodedBuffer = await decodeWholeXflacWavResponseV262(xResp, window.audioCtx);
-                        if (decodedBuffer && mySeq === window._audioTrackLoadSeqV216) {
-                            window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(function(x) { return x.name !== filename; }).slice(0, 1);
-                            window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: null });
-                        }
-                    } else {
-                        throw new Error('HTTP ' + xResp.status);
-                    }
-                } else if (!metaCheck.size || metaCheck.size <= 95 * 1024 * 1024) {
+                if (!metaCheck.size || metaCheck.size <= 95 * 1024 * 1024 || isXflac) {
                     try {
                         var response = await fetch('/api/media/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
                         if (response.ok) {
-                            var clBytes = Number(response.headers.get('Content-Length') || 0);
-                            if (clBytes > 95 * 1024 * 1024) {
-                                try { if (response.body && response.body.cancel) response.body.cancel(); } catch (e) {}
-                                metaCheck.size = clBytes;
-                                throw new Error('HUGE_FILE_CHUNK_DECODE');
-                            }
                             var arrayBuffer = await response.arrayBuffer();
                             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
                             var blobUrl = null;
                             try {
-                                var mime = response.headers.get('Content-Type') || 'audio/mpeg';
+                                var mime = isXflac ? 'audio/wav' : (response.headers.get('Content-Type') || 'audio/mpeg');
                                 blobUrl = URL.createObjectURL(new Blob([arrayBuffer], { type: mime }));
                             } catch (e) {}
+
+                            if (isXflac && player && blobUrl && !window._userPausedV75_2) {
+                                player.loop = false;
+                                player.src = blobUrl;
+                                player.currentTime = 0;
+                                try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch (e) {}
+                                player.preservesPitch = true;
+                                player.play().catch(function() {});
+                            }
 
                             decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
                             if (decodedBuffer) {
                                 window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(function(x) { return x.name !== filename; }).slice(0, 1);
                                 window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: blobUrl });
                             }
-                        } else {
-                            throw new Error('HTTP ' + response.status);
                         }
                     } catch (decErr) {
                         if (abortCtrl.signal.aborted || mySeq !== window._audioTrackLoadSeqV216) return;
@@ -1715,33 +1507,16 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 if (titleEl) titleEl.innerText = '🎵 ' + filename;
                 return;
             }
+
+            var elapsedMs = performance.now() - startPlayWallMs;
+            if (elapsedMs < 1100 && !isRevMode && !isXflac) {
+                await new Promise(function(r) { setTimeout(r, 1100 - elapsedMs); });
+            }
             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
             window.studioBuffer = decodedBuffer;
-            if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
-                window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
-            }
-            if (typeof window.updateAutoRmsGainsSmoothV264 === 'function') {
-                window.updateAutoRmsGainsSmoothV264(decodedBuffer);
-            } else if (typeof window.buildAudioGraph === 'function') {
-                window.buildAudioGraph(false);
-            }
             if (typeof window.loadTrackReversibleDataV67 === 'function') {
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
-            }
-
-            if (!window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
-                if (window.htmlGain && window.htmlGain.gain && window.htmlGain.gain.value < 0.01 && player && player.currentTime < 1.5 && !isRevMode) {
-                    window._internalSeekSyncGuardV370 = true;
-                    try { player.currentTime = 0; } catch (e) {}
-                    setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 250);
-                    if (window._studioClockV74_1 && window.audioCtx) {
-                        window._studioClockV74_1.startCtxTime = window.audioCtx.currentTime;
-                        window._studioClockV74_1.startTrackSec = 0;
-                        window._studioClockV74_1.lastKnownSec = 0;
-                    }
-                }
-                window.syncMasterPlaybackEngineV59(false);
             }
 
             var isHugeTrack = (decodedBuffer.duration > 900);
@@ -1750,7 +1525,7 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             }
             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
-            if (isRevMode && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            if (!window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
             }
             if (titleEl) {
@@ -1783,13 +1558,9 @@ return _origHandleTrackPlayV130.apply(this, arguments);
 
     var _origPlayTrackV243 = window.playTrack;
     if (typeof _origPlayTrackV243 === 'function' && !_origPlayTrackV243._v243Wrapped) {
-        window.playTrack = function(filename, ctxArg) {
+        window.playTrack = function(filename) {
             if (filename && !(window.isVideoFileNameV130 && window.isVideoFileNameV130(filename))) {
-                var isYtTrk = Boolean(ctxArg === 'youtube' || (window.isYtTaggedNameV262 ? window.isYtTaggedNameV262(filename) : String(filename).indexOf('[YT') === 0));
-                window._isYoutubeDeckAActiveV253 = isYtTrk;
-                window._lastActiveMediaSourceV243 = isYtTrk ? 'youtube' : 'deckA';
-                window._islandActiveModeV245 = isYtTrk ? 'youtube' : 'music';
-                window._islandExplicitModeTsV245 = Date.now();
+                window._lastActiveMediaSourceV243 = 'deckA';
             }
             return _origPlayTrackV243.apply(this, arguments);
         };
@@ -1801,15 +1572,10 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window._origTogglePlayV243 = window.togglePlay;
         window.togglePlay = function() {
             var touchAge = performance.now() - (window._lastPhysicalTouchInAppTsV243 || 0);
-            if (touchAge > 650 && window._lastActiveMediaSourceV243 !== 'deckA' && window._lastActiveMediaSourceV243 !== 'youtube') {
+            if (touchAge > 650 && window._lastActiveMediaSourceV243 !== 'deckA') {
                 return window.handleNativeMediaControlV243('toggle');
             }
-            var isCurYt = Boolean(window._isYoutubeDeckAActiveV253 || (window.isYtTaggedNameV262 ? window.isYtTaggedNameV262(window.currentPlayingTrack) : String(window.currentPlayingTrack || '').indexOf('[YT') === 0));
-            window._lastActiveMediaSourceV243 = isCurYt ? 'youtube' : 'deckA';
-            if (isCurYt) {
-                window._islandActiveModeV245 = 'youtube';
-                window._islandExplicitModeTsV245 = Date.now();
-            }
+            window._lastActiveMediaSourceV243 = 'deckA';
             var r = window._origTogglePlayV243.apply(this, arguments);
             setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
             return r;

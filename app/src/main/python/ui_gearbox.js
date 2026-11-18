@@ -489,17 +489,6 @@ window.initGearboxInteractivityV66 = function() {
     if (!window.appConfig.gearKeyV66) {
         window.appConfig.gearKeyV66 = 'jbuf-lock';
     }
-    if (window.appConfig.gearKeyV66 === 'jbuf-lock') {
-        window.appConfig.elasticHoseMode = true;
-        window.appConfig.pitchLock = false;
-        window.appConfig.studioMode = true;
-        const hoseChk = document.getElementById('cfg_elasticHoseV44');
-        const pitchChk = document.getElementById('cfg_pitchLock');
-        const studioChk = document.getElementById('cfg_studioMode');
-        if (hoseChk) hoseChk.checked = true;
-        if (pitchChk) pitchChk.checked = false;
-        if (studioChk) studioChk.checked = true;
-    }
 
     let isDragging = false;
     let dragOffsetX = 0, dragOffsetY = 0;
@@ -720,11 +709,7 @@ setTimeout(() => { window.upgradeToThreeWayTumblerV62(); }, 800);
                 try { player.playbackRate = targetSpd; } catch (e) {}
             }
 
-            const shouldPlayHose = !window._userPausedV75_2 && Boolean(window.isStudioPlaying || window._resumingFromUserPlayV232 || !player.paused);
-            if (shouldPlayHose) {
-                const curTrueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
-                    ? window.getTruePlaybackTimeV74_2()
-                    : (player.currentTime || 0);
+            if (!player.paused) {
                 if (window.studioSourceNode) {
                     window.studioSourceNode.onended = null;
                     try { window.studioSourceNode.stop(); } catch (e) {}
@@ -736,20 +721,12 @@ setTimeout(() => { window.upgradeToThreeWayTumblerV62(); }, 800);
                 window.studioSourceNode.playbackRate.value = 1.0;
                 window.studioSourceNode.connect(window.inputMixer);
 
-                let scaledOffset = curTrueSec / Math.max(0.05, targetSpd);
+                let scaledOffset = (player.currentTime || 0) / targetSpd;
                 if (!isFinite(scaledOffset) || scaledOffset < 0) scaledOffset = 0;
                 if (scaledOffset >= activeBuf.duration) scaledOffset = Math.max(0, activeBuf.duration - 0.05);
 
                 window.studioSourceNode.start(0, scaledOffset);
                 window.isStudioPlaying = true;
-                window._studioClockV74_1 = {
-                    active: true,
-                    startCtxTime: window.audioCtx.currentTime,
-                    startTrackSec: Math.max(0, curTrueSec),
-                    lastKnownSec: Math.max(0, curTrueSec),
-                    trackName: window.currentPlayingTrack || '',
-                    speed: targetSpd
-                };
             }
 
             const badge = document.getElementById('hoseLiveTelemetryV44');
@@ -1035,9 +1012,6 @@ window.showWebApiReverseConflictModalV70 = function(requestedWebGear) {
         player._hasRamSeekHookV70 = true;
 
         player.addEventListener('seeked', () => {
-            if (window._internalSeekSyncGuardV370 || (window.isStudioPlaying && window.studioSourceNode && !window.studioSourceNode._isStoppedV265)) {
-                return;
-            }
             const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
             if (window.studioSourceNode || gKey === 'jbuf-shift' || gKey === 'vinyl-shift' || gKey === 'jbuf-lock') {
                 if (window.studioSourceNode) {

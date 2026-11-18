@@ -794,7 +794,7 @@ window.openCustomColorSwatchesV39 = function(propKey, btnEl) {
     const curHex = (window.appConfig && window.appConfig[propKey]) ? window.appConfig[propKey] : '#7341be';
     m = document.createElement('div');
     m.id = 'jennyQuickColorModal';
-    m.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(0,0,0,0.8);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.8);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;';
     m.onclick = (e) => { if (e.target === m) m.remove(); };
 
     const swatchesHTML = window.STANDARD_PALETTE_V39.map(p => `
@@ -1229,7 +1229,7 @@ window.openSavedThemesModalV39 = async function(ev) {
 
     m = document.createElement('div');
     m.id = 'jennyThemeFilesModal';
-    m.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:15px;box-sizing:border-box;';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:15px;box-sizing:border-box;';
     m.onclick = (e) => { if (e.target === m) m.remove(); };
 
     m.innerHTML = `

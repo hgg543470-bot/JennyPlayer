@@ -38,7 +38,7 @@ window.openFolderManagerModalV62 = function(ev) {
 
     m = document.createElement('div');
     m.id = 'jennyFolderManagerModal';
-    m.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:15px;box-sizing:border-box;';
+    m.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:15px;box-sizing:border-box;';
     m.onclick = (e) => { if (e.target === m) m.remove(); };
 
     const rowsHtml = folders.map((p, idx) => {

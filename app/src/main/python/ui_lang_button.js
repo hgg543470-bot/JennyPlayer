@@ -41,10 +41,10 @@ window.updateDualLangButtons = function() {
 
 window.applyVideoMasterPresetV35 = function(force) {
     window.appConfig = window.appConfig || JSON.parse(localStorage.getItem('ytm_config') || '{}');
-    if (!force && window.appConfig._videoPresetAppliedV35 && window.appConfig._migratedFir35PhaseOnV256 && window.appConfig._migratedJbufGearSyncV258) return;
+    if (!force && window.appConfig._videoPresetAppliedV35) return;
     Object.assign(window.appConfig, {
-        _videoPresetAppliedV35: true, _migratedToRealUnitsV20: true, _migratedFir35PhaseOnV256: true, _migratedJbufGearSyncV258: true,
-        studioMode: true, phaseFixEnabled: true,
+        _videoPresetAppliedV35: true, _migratedToRealUnitsV20: true,
+        studioMode: true, phaseFixEnabled: false,
         opt_midPhase: true, val_midPhase: 4,
         opt_midQ: true, val_midQ: 120,
         opt_deEsser: true, val_deEsser: -2,
@@ -55,7 +55,7 @@ window.applyVideoMasterPresetV35 = function(force) {
         opt_msWidth: true, val_msWidth: 130,
         opt_punch: true, val_punch: -1,
         opt_crossfeed: false, val_crossfeed: 65,
-        leftHandedMode: false, gearKeyV66: 'jbuf-lock', elasticHoseMode: true, pitchLock: false, xNormalSpeed: false,
+        leftHandedMode: false, pitchLock: true, xNormalSpeed: false,
         normalPlaybackSpeed: 0.97, autoSaveBase: false,
         defaultScrubSpeed: 1.1, autoSaveScrub: true,
         scrubZones: [
@@ -64,7 +64,7 @@ window.applyVideoMasterPresetV35 = function(force) {
         ],
         formatSlots: JSON.parse(JSON.stringify(window.DEFAULT_FORMAT_SLOTS)),
         amoledMode: true, volSlider: true,
-        firEnabled: true, firSettings: { gain: 3.5, decay: 1.28 },
+        firEnabled: true, firSettings: { gain: 1.5, decay: 1.28 },
         multiBandEnabled: true, multiBandSettings: { low: 160, high: 2528 },
         limiterEnabled: true, limiterSettings: { threshold: -18, knee: 128, ratio: 4, attack: 192, release: 352 },
         eqEnabled: true, boosterEnabled: true, boosterPower: 5
@@ -72,8 +72,8 @@ window.applyVideoMasterPresetV35 = function(force) {
     localStorage.setItem('ytm_config', JSON.stringify(window.appConfig));
 
     const chkMap = {
-        'cfg_studioMode': true, 'cfg_phaseFix': true, 'cfg_leftHandedMode': false,
-        'cfg_pitchLock': false, 'cfg_elasticHoseV44': true, 'cfg_xNormalSpeed': false, 'cfg_autoSaveBase': false,
+        'cfg_studioMode': true, 'cfg_phaseFix': false, 'cfg_leftHandedMode': false,
+        'cfg_pitchLock': true, 'cfg_xNormalSpeed': false, 'cfg_autoSaveBase': false,
         'cfg_autoSaveScrub': true, 'cfg_amoledMode': true, 'cfg_volSlider': true,
         'cfg_firEnabled': true, 'cfg_multiBandEnabled': true, 'cfg_limiterEnabled': true,
         'cfg_eqEnabled': true, 'cfg_boosterEnabled': true
@@ -82,7 +82,7 @@ window.applyVideoMasterPresetV35 = function(force) {
 
     const valMap = {
         'cfg_normalPlaybackSpeed': 0.97, 'cfg_defaultScrubSpeed': 1.1,
-        'cfg_fir_gain': 3.5, 'cfg_fir_decay': 1.28,
+        'cfg_fir_gain': 1.5, 'cfg_fir_decay': 1.28,
         'cfg_mb_low': 160, 'cfg_mb_high': 2528,
         'cfg_lim_threshold': -18, 'cfg_lim_knee': 128, 'cfg_lim_ratio': 4,
         'cfg_lim_attack': 192, 'cfg_lim_release': 352, 'cfg_boosterPower': 5
@@ -101,11 +101,9 @@ window.applyVideoMasterPresetV35 = function(force) {
     if (typeof origLoad === 'function' && !window._loadWrappedV35) {
         window._loadWrappedV35 = true;
         window.loadConfigFromDisk = async function() {
-            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV35 && window.appConfig._migratedFir35PhaseOnV256 && window.appConfig._migratedJbufGearSyncV258);
+            const wasApplied = Boolean(window.appConfig && window.appConfig._videoPresetAppliedV35);
             await origLoad();
-            if (!wasApplied || !(window.appConfig && window.appConfig._migratedFir35PhaseOnV256 && window.appConfig._migratedJbufGearSyncV258)) {
-                window.applyVideoMasterPresetV35(true);
-            }
+            if (!wasApplied) window.applyVideoMasterPresetV35(true);
         };
     }
 })();

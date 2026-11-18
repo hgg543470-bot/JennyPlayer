@@ -31,18 +31,15 @@
         var half = 32768;
         var samples = half * 2 + 1;
         var curve = new Float32Array(samples);
+        var k = 1.25;
+        var norm = Math.tanh(k);
         for (var i = 0; i < samples; i++) {
             var x = (i - half) / half;
-            var realX = x * 4.0;
-            var ax = Math.abs(realX);
-            var y = (ax <= 0.55)
-                ? ax
-                : (0.55 + 0.37 * Math.tanh((ax - 0.55) / 0.37));
-            curve[i] = (realX < 0) ? -y : y;
+            curve[i] = Math.tanh(x * k) / norm * 0.98;
         }
         curve[half] = 0.0;
         shaper.curve = curve;
-        try { shaper.oversample = '2x'; } catch (e) { shaper.oversample = 'none'; }
+        shaper.oversample = 'none';
         return shaper;
     };
 
@@ -53,20 +50,12 @@
         if (cfg.firEnabled && cfg.firSettings) {
             var fg = parseFloat(cfg.firSettings.gain) || 2.0;
             var firHot = 0.0;
-            if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.85;
+            if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.45;
             if (cfg.opt_cleanFir) {
                 var cfDb = parseFloat(cfg.val_cleanFir) || 0;
-                if (cfDb > 0) firHot += cfDb * 0.45;
+                if (cfDb > 0) firHot += cfDb * 0.4;
             }
             if (firHot > 0.05) hotDb += firHot;
-        }
-        if (cfg.eqEnabled && cfg.eq) {
-            var maxEqPos = 0.0;
-            [60, 230, 910, 3600, 14000].forEach(function(f) {
-                var v = parseFloat(cfg.eq['b' + f]) || 0;
-                if (v > maxEqPos) maxEqPos = v;
-            });
-            if (maxEqPos > 0.5) hotDb += maxEqPos * 0.55;
         }
         if (cfg.opt_midPhase) {
             var mpDb = Math.min(15, parseFloat(cfg.val_midPhase) || 0);
@@ -78,13 +67,13 @@
         }
         if (cfg.opt_punch) {
             var pDb = Math.min(24, parseFloat(cfg.val_punch) || 0);
-            if (pDb > 0) hotDb += pDb * 0.25;
+            if (pDb > 0) hotDb += pDb * 0.18;
         }
         if (cfg.opt_msWidth) {
             var wPct = parseFloat(cfg.val_msWidth);
             if (isNaN(wPct)) wPct = 160;
             if (wPct > 100) {
-                var v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.75);
+                var v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.68);
                 if (v > 0.05) hotDb += v;
             }
         }
@@ -98,16 +87,13 @@
         if (cfg.opt_autoRms) {
             var tRms = parseFloat(cfg.val_autoRms);
             if (isNaN(tRms)) tRms = -10;
-            var vd = window.videoDeckV131;
-            var fullGain = (vd && vd.studioBuffer)
-                ? window.computeBufferAutoGainDeckB(vd.studioBuffer, tRms)
-                : window.dbToLinearDeckB(tRms + 10);
-            var actualRmsBoostDb = 20 * Math.log10(Math.max(1.0, fullGain));
-            var vr = Math.max(0, actualRmsBoostDb * 0.92);
-            if (vr > 0.05) hotDb += vr;
+            if (tRms > -12) {
+                var vr = (tRms + 12) * 0.75;
+                if (vr > 0.05) hotDb += vr;
+            }
         }
 
-        var padDb = -Math.max(0.8, hotDb);
+        var padDb = -Math.max(0.5, hotDb);
         if (window.videoDeckV131) {
             window.videoDeckV131.lastComputedCeilingDb = Math.round(padDb * 10) / 10;
         }
@@ -161,28 +147,18 @@
 
         for (var channel = 0; channel < 2; channel++) {
             var data = impulse.getChannelData(channel);
-            var energySum = 0.0;
             for (var i = 0; i < length; i++) {
                 var tailWindow = 0.5 * (1 + Math.cos(Math.PI * i / length));
-                var val = 0.0;
                 if (i === 0) {
-                    val = 1.0;
+                    data[i] = 1.0;
                 } else if (cfg.phaseFixEnabled) {
-                    val = Math.exp(-i / (length / 2.5)) * tailWindow * 0.055 * lengthNorm * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
+                    data[i] = Math.exp(-i / (length / 2.5)) * tailWindow * 0.055 * lengthNorm * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
                 } else if (cfg.opt_cleanFir) {
                     var a = Math.exp(-i / (length / 6.0));
                     var b = Math.exp(-i / (length / 2.1));
-                    val = (a - 0.46 * b) * tailWindow * 0.08 * lengthNorm * cleanLinear;
+                    data[i] = (a - 0.46 * b) * tailWindow * 0.08 * lengthNorm * cleanLinear;
                 } else {
-                    val = Math.exp(-i / (length / 3)) * tailWindow * 0.05 * lengthNorm;
-                }
-                data[i] = val;
-                energySum += val * val;
-            }
-            if (energySum > 1.0001) {
-                var norm = 1.0 / Math.sqrt(energySum);
-                for (var j = 0; j < length; j++) {
-                    data[j] *= norm;
+                    data[i] = Math.exp(-i / (length / 3)) * tailWindow * 0.05 * lengthNorm;
                 }
             }
         }
@@ -423,19 +399,12 @@
         cur.connect(dcBlocker);
         cur = dcBlocker;
 
-        if (cfg.opt_masterCeil) {
+        if (cfg.opt_masterCeil || cfg.phaseFixEnabled) {
             var autoPad = reg(ctx.createGain());
-            autoPad.gain.value = window.dbToLinearDeckB(padDb) * 0.25;
-            var safeLim = reg(ctx.createDynamicsCompressor());
-            safeLim.threshold.value = -14.2;
-            safeLim.knee.value = 6.0;
-            safeLim.ratio.value = 14.0;
-            safeLim.attack.value = 0.0015;
-            safeLim.release.value = 0.055;
+            autoPad.gain.value = window.dbToLinearDeckB(padDb);
             var softClipper = window.createSoftClipWaveShaperDeckB(ctx, bucket);
             cur.connect(autoPad);
-            autoPad.connect(safeLim);
-            safeLim.connect(softClipper);
+            autoPad.connect(softClipper);
             cur = softClipper;
         }
 
@@ -486,9 +455,8 @@
             chOut.push(outBuffer.getChannelData(c));
         }
 
-        var stepSec = Math.max(0.0105, Math.min(0.027, 0.028 - tension * 0.0088));
-        var baseStep = Math.max(384, Math.round(stepSec * sr));
-        var searchRad = Math.max(256, Math.round(stepSec * 0.65 * sr));
+        var baseStep = Math.max(512, Math.round(0.018 * sr));
+        var searchRad = Math.max(256, Math.round(0.012 * sr));
         var filletLen = Math.max(128, Math.round(0.0045 * sr));
 
         var blendCurve = new Float32Array(filletLen);
@@ -515,7 +483,7 @@
 
         var isFast = spd > 1.0;
         var speedDelta = Math.abs(spd - 1.0);
-        var vertFactor = Math.min(0.48, Math.max(0.08, speedDelta) * tension * 0.42);
+        var vertFactor = Math.min(0.28, speedDelta * tension * 0.30);
         var smoothGain = 1.0;
 
         while (outPos + baseStep + filletLen + 256 < outLen) {
@@ -590,9 +558,9 @@
                 if (a > segPeak) segPeak = a;
             }
             var targetGain = 1.0;
-            if (segPeak > 0.16) {
-                if (isFast) targetGain = 1.0 - vertFactor * (segPeak - 0.16);
-                else targetGain = 1.0 + vertFactor * 0.75 * (segPeak - 0.16);
+            if (segPeak > 0.25) {
+                if (isFast) targetGain = 1.0 - vertFactor * (segPeak - 0.25);
+                else targetGain = 1.0 + vertFactor * 0.70 * (segPeak - 0.25);
             }
 
             for (var ch = 0; ch < numCh; ch++) {
@@ -600,7 +568,7 @@
                 var out = chOut[ch];
                 var localGain = smoothGain;
                 for (var sIdx = 0; sIdx < stepOut; sIdx++) {
-                    localGain = localGain * 0.994 + targetGain * 0.006;
+                    localGain = localGain * 0.997 + targetGain * 0.003;
                     var v = inp[bestP2 + sIdx];
                     if (sIdx < filletLen) {
                         var b = blendCurve[sIdx];

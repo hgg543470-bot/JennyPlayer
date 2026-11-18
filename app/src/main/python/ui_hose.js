@@ -75,10 +75,9 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
         chOut.push(outBuffer.getChannelData(c));
     }
 
-    // Упругость петель (20%..200% -> tension 0.2..2.0) управляет шагом петли во времени (26.2 мс при 20% -> 18.5 мс при 100% -> 10.5 мс при 200%)
-    const stepSec = Math.max(0.0105, Math.min(0.027, 0.028 - tension * 0.0088));
-    const baseStep = Math.max(384, Math.round(stepSec * sr));
-    const searchRad = Math.max(256, Math.round(stepSec * 0.65 * sr));
+    // Базовый шаг 18 мс с анти-резонансной модуляцией шага (чтобы не возникал монотонный гул на одной частоте!)
+    const baseStep = Math.max(512, Math.round(0.018 * sr));
+    const searchRad = Math.max(256, Math.round(0.012 * sr));
     // Широкое 4.5 мс C2-скругление вдоль склона (216 сэмплов) — полностью убирает любые щелчки и гул на басу
     const filletLen = Math.max(128, Math.round(0.0045 * sr));
 
@@ -110,7 +109,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
 
     const isFast = spd > 1.0;
     const speedDelta = Math.abs(spd - 1.0);
-    const vertFactor = Math.min(0.48, Math.max(0.08, speedDelta) * tension * 0.42);
+    const vertFactor = Math.min(0.28, speedDelta * tension * 0.30);
     let smoothGain = 1.0;
 
     while (outPos + baseStep + filletLen + 256 < outLen) {
@@ -197,11 +196,11 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
             if (a > segPeak) segPeak = a;
         }
         let targetGain = 1.0;
-        if (segPeak > 0.16) {
+        if (segPeak > 0.25) {
             if (isFast) {
-                targetGain = 1.0 - vertFactor * (segPeak - 0.16);
+                targetGain = 1.0 - vertFactor * (segPeak - 0.25);
             } else {
-                targetGain = 1.0 + vertFactor * 0.75 * (segPeak - 0.16);
+                targetGain = 1.0 + vertFactor * 0.70 * (segPeak - 0.25);
             }
         }
         cache.seamLogs.push({
@@ -227,7 +226,7 @@ window.buildElasticHoseBufferV46 = function(srcBuffer, speed, tensionPct) {
             let localGain = smoothGain;
 
             for (let i = 0; i < stepOut; i++) {
-                localGain = localGain * 0.994 + targetGain * 0.006;
+                localGain = localGain * 0.997 + targetGain * 0.003;
                 let v = inp[bestP2 + i];
 
                 if (i < filletLen) {
@@ -271,14 +270,7 @@ window.startHoseWaveScopeV49 = function() {
     if (st.rafId) cancelAnimationFrame(st.rafId);
 
     const renderFrame = () => {
-        const sm = document.getElementById('specModal');
         const cv = document.getElementById('hoseWaveScopeCanvasV49');
-        const isBg = (typeof window.isJennyAppBackgroundedV264 === 'function') ? window.isJennyAppBackgroundedV264() : document.hidden;
-        const isScopeVisible = Boolean(!isBg && sm && sm.classList.contains('open') && cv && cv.offsetParent !== null);
-        if (!isScopeVisible || st.frozen || !window.studioBuffer) {
-            st.rafId = setTimeout(renderFrame, 450);
-            return;
-        }
         const player = document.getElementById('audioPlayer');
         if (cv && player && window.studioBuffer && !st.frozen) {
             const ctx = cv.getContext('2d');
@@ -316,9 +308,7 @@ window.startHoseWaveScopeV49 = function() {
 
             const sr = window.studioBuffer.sampleRate;
             const winSamples = Math.max(64, Math.round((st.windowMs / 1000) * sr));
-            const curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
-                ? window.getTruePlaybackTimeV74_2()
-                : (player.currentTime || 0);
+            const curSec = player.currentTime || 0;
 
             let targetSpd = 1.0;
             if (window.scrubState && (window.scrubState.active || window.scrubState.locked) && window.scrubState.speed) {
@@ -329,56 +319,21 @@ window.startHoseWaveScopeV49 = function() {
                 targetSpd = window.getTargetPlaybackSpeed();
             }
 
-            const hasXflacRev = Boolean(
-                window.reconstructedMasterBufferV67 &&
-                window.currentTrackRevMapV67 &&
-                window.currentTrackRevNameV67 === window.currentPlayingTrack
-            );
-
-            const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
-            const isHoseMode = Boolean(gKey === 'jbuf-lock' || (window.appConfig && window.appConfig.elasticHoseMode));
-
-            if (isHoseMode && Math.abs(targetSpd - 1.0) > 0.002 && window.studioBuffer) {
-                const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
-                const baseBuf = isRev ? (window.reversedStudioBuffer || window.studioBuffer) : window.studioBuffer;
-                const tensPct = (window.appConfig && window.appConfig.hoseTensionPct !== undefined) ? window.appConfig.hoseTensionPct : 100;
-                const cache = window._hoseSplicerCacheV46;
-                if (!cache.splicedBuffer || cache.srcBuffer !== baseBuf || Math.abs((cache.speed || 1.0) - targetSpd) > 0.002) {
-                    window.buildElasticHoseBufferV46(baseBuf, targetSpd, tensPct);
-                }
-            }
-
-            const origBufRef = hasXflacRev ? window.reconstructedMasterBufferV67 : window.studioBuffer;
-            const origData = origBufRef.getChannelData(0);
-            const splicedBuf = (isHoseMode && window._hoseSplicerCacheV46.splicedBuffer && Math.abs(targetSpd - 1.0) > 0.002)
+            const origData = window.studioBuffer.getChannelData(0);
+            const splicedBuf = (window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.splicedBuffer)
                 ? window._hoseSplicerCacheV46.splicedBuffer
                 : window.studioBuffer;
             const hoseData = splicedBuf.getChannelData(0);
 
-            let activeSeams = (isHoseMode && window._hoseSplicerCacheV46.seamPointsOut && window._hoseSplicerCacheV46.seamPointsOut.length > 0 && Math.abs(targetSpd - 1.0) > 0.002)
-                ? window._hoseSplicerCacheV46.seamPointsOut
-                : [];
-            if (activeSeams.length === 0 && hasXflacRev && Array.isArray(window.currentTrackRevMapV67.seams)) {
-                activeSeams = window.currentTrackRevMapV67.seams.map(cs => cs[0]).filter(n => typeof n === 'number');
-            }
-
-            const isHoseActiveNow = Boolean((isHoseMode && window._hoseSplicerCacheV46.splicedBuffer && Math.abs(targetSpd - 1.0) > 0.002) || hasXflacRev);
-            const expSpdRatio = hasXflacRev ? (parseFloat(window.currentTrackRevMapV67.spd) || 1.0) : 1.0;
-
-            const origStart = hasXflacRev
-                ? Math.min(Math.max(0, Math.floor(curSec * expSpdRatio * sr)), Math.max(0, origData.length - winSamples - 1))
-                : Math.min(Math.max(0, Math.floor(curSec * sr)), Math.max(0, origData.length - winSamples - 1));
-
-            const hoseStart = isHoseActiveNow
-                ? Math.min(Math.max(0, Math.floor(((Math.abs(targetSpd - 1.0) > 0.002) ? (curSec / targetSpd) : curSec) * sr)), Math.max(0, hoseData.length - winSamples - 1))
-                : origStart;
+            const origStart = Math.min( Math.max(0, Math.floor(curSec * sr)), Math.max(0, origData.length - winSamples - 1) );
+            const isHoseActiveNow = Boolean(window.appConfig && window.appConfig.elasticHoseMode && window._hoseSplicerCacheV46.splicedBuffer);
+            const hoseStart = isHoseActiveNow ? Math.min(Math.max(0, Math.floor((curSec / targetSpd) * sr)), Math.max(0, hoseData.length - winSamples - 1)) : origStart;
 
             const plotW = W - 34;
 
-            // 1. Рисуем КОНТРАСТНЫМ СЕРЫМ ПУНКТИРОМ исходную волну (Оригинал 1.0x / Восстановленный из .xFLAC)
-            ctx.strokeStyle = 'rgba(180,196,216,0.72)';
-            ctx.lineWidth = 1.6;
-            ctx.setLineDash([4, 3]);
+            // 1. Рисуем СЕРЫМ пунктиром исходную волну (Оригинал в этой точке времени)
+            ctx.strokeStyle = 'rgba(139,148,158,0.45)';
+            ctx.lineWidth = 1.2;
             ctx.beginPath();
             for (let x = 0; x < plotW; x++) {
                 const idx = origStart + Math.floor((x / plotW) * winSamples);
@@ -388,16 +343,15 @@ window.startHoseWaveScopeV49 = function() {
                 else ctx.lineTo(34 + x, py);
             }
             ctx.stroke();
-            ctx.setLineDash([]);
 
-            // 2. Рисуем ЯРКО-ЗЕЛЁНЫМ реальную волну после 90° Резака / .xFLAC + измеряем её истинные параметры
+            // 2. Рисуем ЯРКО-ЗЕЛЁНЫМ реальную волну после 90° Резака + измеряем её истинные параметры
             let peak = 0.0;
             let sumSq = 0.0;
             let maxSlope = 0.0;
             let zeroCrossings = 0;
 
             ctx.strokeStyle = '#3fb950';
-            ctx.lineWidth = 1.9;
+            ctx.lineWidth = 1.8;
             ctx.beginPath();
             for (let x = 0; x < plotW; x++) {
                 const idx = hoseStart + Math.floor((x / plotW) * winSamples);
@@ -416,26 +370,18 @@ window.startHoseWaveScopeV49 = function() {
             }
             ctx.stroke();
 
-            // 3. Отмечаем ЯРКИМ ОРАНЖЕВЫМ РАЗДЕЛИТЕЛЕМ (#f0883e) точки 90° разреза (Шланга или капсулы .xFLAC)
-            ctx.strokeStyle = '#f0883e';
-            ctx.lineWidth = 2.0;
-            let drawnSeamsInWin = 0;
-            for (let s = 0; s < activeSeams.length; s++) {
-                const sp = activeSeams[s];
+            // 3. Отмечаем оранжевыми вертикальными метками точки 90° разреза, если они попали в окно экрана
+            const seams = (window.appConfig && window.appConfig.elasticHoseMode) ? (window._hoseSplicerCacheV46.seamPointsOut || []) : [];
+            ctx.strokeStyle = 'rgba(240,136,62,0.75)';
+            ctx.lineWidth = 1;
+            for (let s = 0; s < seams.length; s++) {
+                const sp = seams[s];
                 if (sp >= hoseStart && sp <= hoseStart + winSamples) {
                     const sx = 34 + ((sp - hoseStart) / winSamples) * plotW;
                     ctx.beginPath();
-                    ctx.moveTo(sx, 2);
-                    ctx.lineTo(sx, H - 2);
+                    ctx.moveTo(sx, 4);
+                    ctx.lineTo(sx, H - 4);
                     ctx.stroke();
-                    if (drawnSeamsInWin === 0) {
-                        ctx.fillStyle = 'rgba(240,136,62,0.92)';
-                        ctx.fillRect(Math.max(36, Math.min(W - 56, sx - 24)), 3, 48, 12);
-                        ctx.fillStyle = '#070a0f';
-                        ctx.font = 'bold 8.5px monospace';
-                        ctx.fillText('90° ШОВ', Math.max(38, Math.min(W - 54, sx - 21)), 12);
-                    }
-                    drawnSeamsInWin++;
                 }
             }
 
@@ -477,8 +423,7 @@ window._hoseArcDebounceTimerV47 = null;
 
 window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
     const player = document.getElementById('audioPlayer');
-    const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
-    const isHose = Boolean(gKey === 'jbuf-lock' || (window.appConfig && window.appConfig.elasticHoseMode));
+    const isHose = Boolean(window.appConfig && window.appConfig.elasticHoseMode);
     const badge = document.getElementById('hoseLiveTelemetryV44');
 
     if (!isHose) {
@@ -530,24 +475,11 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
     }
     player.preservesPitch = false;
 
-    const shouldPlayHose = !window._userPausedV75_2 && Boolean(window.isStudioPlaying || window._resumingFromUserPlayV232 || !player.paused);
-    if (shouldPlayHose) {
-        if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
-            try {
-                const nowM = window.audioCtx.currentTime;
-                window.inputMixer.gain.cancelScheduledValues(nowM);
-                window.inputMixer.gain.setValueAtTime(1.0, nowM);
-                window.inputMixer.gain.value = 1.0;
-            } catch (e) {}
-        }
-        const curTrueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
-            ? window.getTruePlaybackTimeV74_2()
-            : (player.currentTime || 0);
+    if (!player.paused) {
         if (window.studioSourceNode) {
             window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch (e) {}
             try { window.studioSourceNode.disconnect(); } catch (e) {}
-            window.studioSourceNode = null;
         }
         window.studioSourceNode = window.audioCtx.createBufferSource();
         window.studioSourceNode._isHoseSpliced = true;
@@ -555,20 +487,12 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
         window.studioSourceNode.playbackRate.value = 1.0;
         window.studioSourceNode.connect(window.inputMixer);
 
-        let scaledOffset = curTrueSec / Math.max(0.05, targetSpd);
+        let scaledOffset = (player.currentTime || 0) / targetSpd;
         if (!isFinite(scaledOffset) || scaledOffset < 0) scaledOffset = 0;
         if (scaledOffset >= activeBuf.duration) scaledOffset = Math.max(0, activeBuf.duration - 0.05);
 
         window.studioSourceNode.start(0, scaledOffset);
         window.isStudioPlaying = true;
-        window._studioClockV74_1 = {
-            active: true,
-            startCtxTime: window.audioCtx.currentTime,
-            startTrackSec: Math.max(0, curTrueSec),
-            lastKnownSec: Math.max(0, curTrueSec),
-            trackName: window.currentPlayingTrack || '',
-            speed: targetSpd
-        };
     }
 
     if (badge) {
@@ -586,11 +510,7 @@ window.installHosePlayerHooksV46 = function() {
         const orig = player[prop];
         player[prop] = function(ev) {
             const r = (typeof orig === 'function') ? orig.call(this, ev) : undefined;
-            if (window._internalSeekSyncGuardV370 || (window.isStudioPlaying && window.studioSourceNode)) {
-                return r;
-            }
-            const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
-            if (window.appConfig && (gKey === 'jbuf-lock' || window.appConfig.elasticHoseMode) && window.studioBuffer && this.playbackRate !== 10.0) {
+            if (window.appConfig && window.appConfig.elasticHoseMode && window.studioBuffer && this.playbackRate !== 10.0) {
                 window.applyElasticHoseBufferLiveV46(false);
             }
             return r;
@@ -613,13 +533,8 @@ window.onHoseTensionInputV44 = function(val) {
 
     if (window._hoseSliderDebounceV46) clearTimeout(window._hoseSliderDebounceV46);
     window._hoseSliderDebounceV46 = setTimeout(() => {
-        const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
-        if (gKey === 'jbuf-lock' || window.appConfig.elasticHoseMode) {
-            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
-                window.syncMasterPlaybackEngineV59(false);
-            } else {
-                window.applyElasticHoseBufferLiveV46(false);
-            }
+        if (window.appConfig.elasticHoseMode) {
+            window.applyElasticHoseBufferLiveV46(false);
         }
         if (typeof window.saveThemeOnlyQuietlyV40 === 'function') window.saveThemeOnlyQuietlyV40();
     }, 120);
@@ -633,7 +548,7 @@ window.injectElasticHoseControlsV44 = function() {
     if (!pitchRow) return;
 
     const cfg = window.appConfig || {};
-    const isEn = Boolean(((cfg.gearKeyV66 || 'jbuf-lock') === 'jbuf-lock') || cfg.elasticHoseMode);
+    const isEn = Boolean(cfg.elasticHoseMode);
     const tens = cfg.hoseTensionPct !== undefined ? parseInt(cfg.hoseTensionPct, 10) : 100;
 
     const box = document.createElement('div');
@@ -743,8 +658,7 @@ setTimeout(() => {
 // Если по любой причине studioBuffer ещё не декодирован, подгружает его на лету из кэша или сети!
 window._loadingStudioBufV61 = false;
 window.ensureStudioBufferLoadedV61 = async function() {
-    if (window.studioBuffer || window._loadingStudioBufV61 || window._trackActivelyLoadingToRamV237 || !window.currentPlayingTrack || window._userPausedV75_2) return;
-    if (String(window.currentPlayingTrack || '').indexOf('[YT Поток]') === 0 || /\.xflac$/i.test(window.currentPlayingTrack || '')) return;
+    if (window.studioBuffer || window._loadingStudioBufV61 || !window.currentPlayingTrack) return;
     if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
     if (!window.audioCtx) return;
 
@@ -762,21 +676,11 @@ window.ensureStudioBufferLoadedV61 = async function() {
         const decoded = await window.audioCtx.decodeAudioData(ab);
         if (window.currentPlayingTrack === trackName) {
             window.studioBuffer = decoded;
-            if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
-                window.computeBufferAutoGain(decoded, window.appConfig.val_autoRms);
-            }
-            if (typeof window.updateAutoRmsGainsSmoothV264 === 'function') {
-                window.updateAutoRmsGainsSmoothV264(decoded);
-            } else if (typeof window.buildAudioGraph === 'function') {
-                window.buildAudioGraph(false);
-            }
             if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
                 window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decoded);
             }
             window._loadingStudioBufV61 = false;
-            if (!window._userPausedV75_2) {
-                window.syncMasterPlaybackEngineV59(false);
-            }
+            window.syncMasterPlaybackEngineV59(false);
             return;
         }
     } catch (e) {}
@@ -808,9 +712,8 @@ window.syncMasterPlaybackEngineV59 = function(isDraggingArc) {
     const studioChk = document.getElementById('cfg_studioMode');
     const badge = document.getElementById('hoseLiveTelemetryV44');
 
-    const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
     const isStudioRam = Boolean(studioChk ? studioChk.checked : (window.appConfig && window.appConfig.studioMode));
-    const isHose = Boolean(gKey === 'jbuf-lock' || (hoseChk ? hoseChk.checked : (window.appConfig && window.appConfig.elasticHoseMode)));
+    const isHose = Boolean(hoseChk ? hoseChk.checked : (window.appConfig && window.appConfig.elasticHoseMode));
     const isWebApiPitch = Boolean(pitchChk ? pitchChk.checked : (window.appConfig && window.appConfig.pitchLock));
     const targetSpd = window.getActiveTargetSpeedV59();
     const isRev = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));

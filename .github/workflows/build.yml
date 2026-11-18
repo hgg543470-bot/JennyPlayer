@@ -59,11 +59,9 @@ jobs:
         cp -f /tmp/jenny_native_cache/arm64-v8a/libffmpeg.so /tmp/jni_stage/arm64-v8a/libffmpeg.so
         cp -f /tmp/jenny_native_cache/armeabi-v7a/libffmpeg.so /tmp/jni_stage/armeabi-v7a/libffmpeg.so
 
-        # 2) C/C++ ядра (libjenny_vcore, libjenny_yt_core, libhose_dsp, libxflac, libc++_shared, libjenny_qjs, libnode, libqjs)
+        # 2) C/C++ ядра (libjenny_vcore, libjenny_yt_core, libhose_dsp, libxflac, libc++_shared)
         NDK_CLANG64=$(find $ANDROID_HOME/ndk $ANDROID_NDK_LATEST_HOME -name "aarch64-linux-android24-clang++" 2>/dev/null | head -n 1)
         NDK_CLANG32=$(find $ANDROID_HOME/ndk $ANDROID_NDK_LATEST_HOME -name "armv7a-linux-androideabi24-clang++" 2>/dev/null | head -n 1)
-        NDK_CC64=$(find $ANDROID_HOME/ndk $ANDROID_NDK_LATEST_HOME -name "aarch64-linux-android24-clang" 2>/dev/null | head -n 1)
-        NDK_CC32=$(find $ANDROID_HOME/ndk $ANDROID_NDK_LATEST_HOME -name "armv7a-linux-androideabi24-clang" 2>/dev/null | head -n 1)
         NDK_SYSROOT=$(dirname $(dirname "$NDK_CLANG64"))/sysroot
 
         if [ -f "$NDK_SYSROOT/usr/lib/aarch64-linux-android/libc++_shared.so" ]; then
@@ -77,40 +75,14 @@ jobs:
           "$NDK_CLANG64" -O3 -march=armv8-a+simd -ffast-math -fPIC -shared app/src/main/python/jenny_vcore.cpp -o /tmp/jni_stage/arm64-v8a/libjenny_vcore.so -lm -ldl
           cp -f /tmp/jni_stage/arm64-v8a/libjenny_vcore.so /tmp/jni_stage/arm64-v8a/libjenny_yt_core.so
           "$NDK_CLANG64" -O3 -ffast-math -fPIC -shared app/src/main/python/hose_splicer.cpp -o /tmp/jni_stage/arm64-v8a/libhose_dsp.so -lm
-          "$NDK_CLANG64" -x c++ -O3 -march=armv8-a+simd -ffast-math -fPIC -shared app/src/main/jniLibs/xflac.hpp -o /tmp/jni_stage/arm64-v8a/libxflac.so -lm -pthread
+          "$NDK_CLANG64" -x c++ -O3 -ffast-math -fPIC -shared app/src/main/jniLibs/xflac.hpp -o /tmp/jni_stage/arm64-v8a/libxflac.so -lm
         fi
 
         if [ -n "$NDK_CLANG32" ]; then
           "$NDK_CLANG32" -O3 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -ffast-math -fPIC -shared app/src/main/python/jenny_vcore.cpp -o /tmp/jni_stage/armeabi-v7a/libjenny_vcore.so -lm -ldl
           cp -f /tmp/jni_stage/armeabi-v7a/libjenny_vcore.so /tmp/jni_stage/armeabi-v7a/libjenny_yt_core.so
           "$NDK_CLANG32" -O3 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -ffast-math -fPIC -shared app/src/main/python/hose_splicer.cpp -o /tmp/jni_stage/armeabi-v7a/libhose_dsp.so -lm
-          "$NDK_CLANG32" -x c++ -O3 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -ffast-math -fPIC -shared app/src/main/jniLibs/xflac.hpp -o /tmp/jni_stage/armeabi-v7a/libxflac.so -lm -pthread
-        fi
-
-        # 2b) Встроенное нативное JS-ядро (libjenny_qjs.so / libnode.so / libqjs.so) под ARM64 (64-bit) и ARMv7 (32-bit)
-        rm -rf /tmp/qjs_src
-        git clone --depth 1 https://github.com/bellard/quickjs.git /tmp/qjs_src
-        QJS_SRCS="/tmp/qjs_src/quickjs.c /tmp/qjs_src/libregexp.c /tmp/qjs_src/libunicode.c /tmp/qjs_src/cutils.c /tmp/qjs_src/dtoa.c"
-        if [ -f /tmp/qjs_src/libbf.c ]; then
-          QJS_SRCS="$QJS_SRCS /tmp/qjs_src/libbf.c"
-        fi
-        if [ -n "$NDK_CC64" ]; then
-          "$NDK_CC64" -O2 -fPIC -shared -I/tmp/qjs_src -D_GNU_SOURCE -DCONFIG_VERSION=\"2025-04-26\" \
-            app/src/main/python/jenny_qjs_bridge.c $QJS_SRCS \
-            -o /tmp/jni_stage/arm64-v8a/libjenny_qjs.so -lm -ldl -pthread
-          "$NDK_CC64" -O2 -fPIE -pie -I/tmp/qjs_src -D_GNU_SOURCE -DCONFIG_VERSION=\"2025-04-26\" \
-            app/src/main/python/jenny_qjs_bridge.c $QJS_SRCS \
-            -o /tmp/jni_stage/arm64-v8a/libnode.so -lm -ldl -pthread
-          cp -f /tmp/jni_stage/arm64-v8a/libnode.so /tmp/jni_stage/arm64-v8a/libqjs.so
-        fi
-        if [ -n "$NDK_CC32" ]; then
-          "$NDK_CC32" -O2 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -fPIC -shared -I/tmp/qjs_src -D_GNU_SOURCE -DCONFIG_VERSION=\"2025-04-26\" \
-            app/src/main/python/jenny_qjs_bridge.c $QJS_SRCS \
-            -o /tmp/jni_stage/armeabi-v7a/libjenny_qjs.so -lm -ldl -pthread
-          "$NDK_CC32" -O2 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -fPIE -pie -I/tmp/qjs_src -D_GNU_SOURCE -DCONFIG_VERSION=\"2025-04-26\" \
-            app/src/main/python/jenny_qjs_bridge.c $QJS_SRCS \
-            -o /tmp/jni_stage/armeabi-v7a/libnode.so -lm -ldl -pthread
-          cp -f /tmp/jni_stage/armeabi-v7a/libnode.so /tmp/jni_stage/armeabi-v7a/libqjs.so
+          "$NDK_CLANG32" -x c++ -O3 -march=armv7-a -mfloat-abi=softfp -mfpu=neon -ffast-math -fPIC -shared app/src/main/jniLibs/xflac.hpp -o /tmp/jni_stage/armeabi-v7a/libxflac.so -lm
         fi
 
         # 3) Go торрент-ядра (libomnitorrent.so и libjtorrent.so)
@@ -144,13 +116,7 @@ jobs:
         cp -f /tmp/jenny_native_cache/armeabi-v7a/libjtorrent.so /tmp/jni_stage/armeabi-v7a/libjtorrent.so
 
         chmod 755 /tmp/jni_stage/arm64-v8a/*.so /tmp/jni_stage/armeabi-v7a/*.so
-        rm -rf /tmp/ytdlp_apk_pkg
-        python3 -m pip install --upgrade --target /tmp/ytdlp_apk_pkg --no-deps yt-dlp yt-dlp-ejs
-        rm -rf app/src/main/python/yt_dlp app/src/main/python/yt_dlp_ejs
-        mv /tmp/ytdlp_apk_pkg/yt_dlp app/src/main/python/yt_dlp
-        if [ -d /tmp/ytdlp_apk_pkg/yt_dlp_ejs ]; then
-          mv /tmp/ytdlp_apk_pkg/yt_dlp_ejs app/src/main/python/yt_dlp_ejs
-        fi
+        python3 -m pip install --upgrade --target /tmp/ytdlp_apk_pkg --no-deps yt-dlp && rm -rf app/src/main/python/yt_dlp && mv /tmp/ytdlp_apk_pkg/yt_dlp app/src/main/python/yt_dlp
         rm -f icon_raw.jpg
 
     - name: Подготовка Gradle с кэшем

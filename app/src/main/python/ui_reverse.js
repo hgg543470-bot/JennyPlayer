@@ -23,26 +23,7 @@ window._activeBufferSourcesV71 = new Set();
             const ctxRef = this;
             const node = origCreate.apply(this, arguments);
             const origStart = node.start;
-            const origStop = node.stop;
-            node.stop = function() {
-                node._isStoppedV265 = true;
-                if (window.videoDeckV131 && ctxRef === window.videoDeckV131.ctx) {
-                    if (window.videoDeckV131.activeSources) window.videoDeckV131.activeSources.delete(node);
-                    if (window.videoDeckV131.studioSourceNode === node) {
-                        window.videoDeckV131.studioSourceNode = null;
-                        window.videoDeckV131.isStudioPlaying = false;
-                    }
-                } else {
-                    if (window._activeBufferSourcesV71) window._activeBufferSourcesV71.delete(node);
-                    if (window.studioSourceNode === node) {
-                        window.studioSourceNode = null;
-                        window.isStudioPlaying = false;
-                    }
-                }
-                return origStop.apply(this, arguments);
-            };
             node.start = function() {
-                node._isStoppedV265 = false;
                 if (window.videoDeckV131 && ctxRef === window.videoDeckV131.ctx) {
                     window.videoDeckV131.activeSources.forEach(oldNode => {
                         if (oldNode !== node) { oldNode.onended = null; try { oldNode.stop(); } catch (e) {} try { oldNode.disconnect(); } catch (e) {} }
@@ -63,14 +44,6 @@ window._activeBufferSourcesV71 = new Set();
                 window._activeBufferSourcesV71.add(node);
                 if (window.htmlGain && window.htmlGain.gain) {
                     window.htmlGain.gain.value = 0.0;
-                }
-                if (window.audioCtx && window.inputMixer && window.inputMixer.gain && !window._userPausedV75_2) {
-                    try {
-                        const nowM = window.audioCtx.currentTime;
-                        window.inputMixer.gain.cancelScheduledValues(nowM);
-                        window.inputMixer.gain.setValueAtTime(1.0, nowM);
-                        window.inputMixer.gain.value = 1.0;
-                    } catch (e) {}
                 }
                 return origStart.apply(this, arguments);
             };
@@ -655,8 +628,7 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
         nodeRate = targetSpd;
     }
 
-    const shouldPlayHorizon = !window._userPausedV75_2 && Boolean(window.isStudioPlaying || window._resumingFromUserPlayV232 || !player.paused);
-    if (shouldPlayHorizon) {
+    if (!player.paused) {
         if (window.studioSourceNode) {
             window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch (e) {}
@@ -670,20 +642,12 @@ window.engageHorizonRamEngineV71_5 = function(gearKey, isDraggingArc) {
         window.studioSourceNode.connect(window.inputMixer);
         window.studioSourceNode.start(0, 0);
         window.isStudioPlaying = true;
-        window._studioClockV74_1 = {
-            active: true,
-            startCtxTime: window.audioCtx.currentTime,
-            startTrackSec: Math.max(0, curSec),
-            lastKnownSec: Math.max(0, curSec),
-            trackName: window.currentPlayingTrack || '',
-            speed: targetSpd
-        };
 
         const realDurSec = (gearKey === 'jbuf-lock') ? playBuf.duration : (playBuf.duration / Math.max(0.25, nodeRate));
         const nextWaitMs = Math.max(400, (realDurSec - 1.0) * 1000);
         window._horizonSliceTimerV71 = setTimeout(() => {
             const activeG = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
-            if (!window._userPausedV75_2 && (activeG === 'jbuf-lock' || activeG === 'jbuf-shift' || activeG === 'vinyl-shift')) {
+            if (!player.paused && (activeG === 'jbuf-lock' || activeG === 'jbuf-shift' || activeG === 'vinyl-shift')) {
                 window.engageHorizonRamEngineV71_5(activeG, false);
             }
         }, nextWaitMs);
@@ -882,14 +846,9 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
 
             window.studioSourceNode.start(0, offset);
             window.isStudioPlaying = true;
-            window._studioClockV74_1 = {
-                active: true,
-                startCtxTime: window.audioCtx.currentTime,
-                startTrackSec: Math.max(0, offset),
-                lastKnownSec: Math.max(0, offset),
-                trackName: window.currentPlayingTrack || '',
-                speed: effSpd
-            };
+            window._studioClockV74_1.active = true;
+            window._studioClockV74_1.startCtxTime = window.audioCtx.currentTime;
+            window._studioClockV74_1.startTrackSec = offset;
         } else if (window.studioSourceNode && window.studioSourceNode.playbackRate) {
             const now = window.audioCtx.currentTime;
             if (isVinyl) {
@@ -897,14 +856,6 @@ window.engageDirectRamPitchShiftV70 = function(gearKey, targetSpd) {
             } else {
                 window.studioSourceNode.playbackRate.setValueAtTime(effSpd, now);
             }
-            window._studioClockV74_1 = {
-                active: true,
-                startCtxTime: now,
-                startTrackSec: Math.max(0, trueSec),
-                lastKnownSec: Math.max(0, trueSec),
-                trackName: window.currentPlayingTrack || '',
-                speed: effSpd
-            };
         }
     }
 
@@ -1774,7 +1725,6 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
     var bindSingleTrackEndStopGuardV232 = function() {
         var player = document.getElementById('audioPlayer');
         if (!player) return;
-        player._v232EndGuardBound = true;
         player.onended = function() {
             // Если пользователь уже поставил на паузу — ничего не переключаем
             if (window._userPausedV75_2) {
@@ -1812,7 +1762,6 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         };
     };
     bindSingleTrackEndStopGuardV232();
-    document.addEventListener('DOMContentLoaded', bindSingleTrackEndStopGuardV232);
     setTimeout(bindSingleTrackEndStopGuardV232, 300);
 })();
 
@@ -1896,13 +1845,10 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         var baseSec = (typeof trackSecOverride === 'number' && isFinite(trackSecOverride))
             ? trackSecOverride
             : ((typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0));
-        var cleanBaseSec = Math.max(0, baseSec);
         window._studioClockV74_1 = {
             active: Boolean(window.isStudioPlaying && window.studioSourceNode),
             startCtxTime: window.audioCtx.currentTime,
-            startTrackSec: cleanBaseSec,
-            lastKnownSec: cleanBaseSec,
-            trackName: window.currentPlayingTrack || '',
+            startTrackSec: Math.max(0, baseSec),
             speed: spd
         };
     }
@@ -1941,15 +1887,6 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             ? window.buildElasticHoseBufferV46(baseBuf, targetSpd, tensionPct)
             : baseBuf;
         if (!activeBuf) return false;
-
-        if (window.audioCtx && window.inputMixer && window.inputMixer.gain && !window._userPausedV75_2) {
-            try {
-                var nowM = window.audioCtx.currentTime;
-                window.inputMixer.gain.cancelScheduledValues(nowM);
-                window.inputMixer.gain.setValueAtTime(1.0, nowM);
-                window.inputMixer.gain.value = 1.0;
-            } catch (e) {}
-        }
 
         if (window.htmlGain && window.htmlGain.gain) {
             window.htmlGain.gain.value = 0;
@@ -1997,14 +1934,12 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                     ? window.getTruePlaybackTimeV74_2()
                     : ((player && player.currentTime) || 0);
 
-                if (player && shouldPlay && !isDraggingArc && !window.isStudioPlaying) {
-                    window._internalSeekSyncGuardV370 = true;
+                if (player && shouldPlay && !isDraggingArc) {
                     try {
-                        if (isFinite(trueSec) && trueSec >= 0 && Math.abs((player.currentTime || 0) - trueSec) > 0.35) {
+                        if (Math.abs((player.currentTime || 0) - trueSec) > 0.25) {
                             player.currentTime = trueSec;
                         }
                     } catch (e) {}
-                    setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 180);
                 }
 
                 // Перед перестроением графа/передачи всегда останавливаем прежний studioSourceNode,
@@ -2168,31 +2103,24 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         }
         if (dur <= 0) return null;
 
-        var ctxSr = (window.audioCtx && window.audioCtx.sampleRate >= 44100) ? window.audioCtx.sampleRate : 48000;
-        var srCandidates = [ctxSr, 48000, 44100];
+        var srCandidates = (dur > 5400) ? [16000, 12000, 8000] : ((dur > 2400) ? [24000, 16000, 12000] : [44100, 32000, 24000]);
         var sr = srCandidates[0];
         var totalFrames = Math.floor(dur * sr);
         var audioBuf = null;
         for (var sIdx = 0; sIdx < srCandidates.length; sIdx++) {
-            var capList = [dur, 10800, 7200, 5400, 3600, 2400];
-            for (var cIdx = 0; cIdx < capList.length; cIdx++) {
-                var capDur = capList[cIdx];
-                if (capDur > dur && cIdx > 0) continue;
-                try {
-                    sr = srCandidates[sIdx];
-                    totalFrames = Math.floor(Math.min(dur, capDur) * sr);
-                    audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
-                    if (audioBuf) break;
-                } catch (allocErr) {}
-            }
-            if (audioBuf) break;
+            try {
+                sr = srCandidates[sIdx];
+                totalFrames = Math.floor(dur * sr);
+                audioBuf = window.audioCtx.createBuffer(2, totalFrames, sr);
+                if (audioBuf) break;
+            } catch (allocErr) {}
         }
         if (!audioBuf) return null;
 
         var chL = audioBuf.getChannelData(0);
         var chR = audioBuf.getChannelData(1);
 
-        var PIECE_SEC = 30;
+        var PIECE_SEC = (dur <= 600) ? 60 : 45;
         var numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
         var pieceMap = new Uint8Array(numPieces); // 0 = пусто, 1 = качается, 2 = готов в RAM
 
@@ -2232,11 +2160,7 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                 invalidateDeckAHoseCacheV370();
                 if (audioBuf._loadedCountV72 === 1 && window.appConfig && window.appConfig.opt_autoRms) {
                     window.computeBufferAutoGain(audioBuf, window.appConfig.val_autoRms);
-                    if (typeof window.updateAutoRmsGainsSmoothV264 === 'function') {
-                        window.updateAutoRmsGainsSmoothV264(audioBuf);
-                    } else if (typeof window.buildAudioGraph === 'function') {
-                        window.buildAudioGraph(false);
-                    }
+                    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph(true);
                 }
                 return true;
             } catch (err) {
@@ -2245,7 +2169,7 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             }
         };
 
-        // 1) Сначала мгновенно загружаем стартовый кусок под курсором,
+        // 1) Сначала мгновенно загружаем стартовый кусок под курсором (обычно Piece 0: 0..60 сек),
         //    чтобы музыка заиграла в первые же мгновения!
         var initCurSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0);
         var firstPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(initCurSec / PIECE_SEC)));
@@ -2254,78 +2178,50 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
 
         if (pieceMap[firstPiece] === 2) {
             window.studioBuffer = audioBuf;
-            if (titleEl && window.currentPlayingTrack === filename) {
-                titleEl.innerText = 'RAM 🚀 (' + audioBuf._loadedCountV72 + '/' + numPieces + '): ' + filename;
-            }
             if (!window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
             }
         }
 
-        // 2) V263: Скользящее окно подгрузки: берёт текущую позицию и сразу загружает 1 минуту вперёд (+60с) и 1 минуту назад (-60с)!
-        var piecesPerMin = Math.max(2, Math.ceil(60.0 / PIECE_SEC));
+        // 2) Докачиваем все остальные куски параллельно в 3 воркера!
         var workerLoop = async function() {
             while (audioBuf._loadedCountV72 < numPieces) {
                 if (window.currentPlayingTrack !== filename) return;
                 var curSecNow = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0);
-                var curP = Math.max(0, Math.min(numPieces - 1, Math.floor(Math.max(0, curSecNow) / PIECE_SEC)));
-                var isRevNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
-                var stepDir = isRevNow ? -1 : 1;
+                var curP = Math.max(0, Math.min(numPieces - 1, Math.floor(curSecNow / PIECE_SEC)));
                 var pick = -1;
-
-                // +1 минута вперёд по направлению воспроизведения
-                for (var fwd = 0; fwd <= piecesPerMin; fwd++) {
-                    var candFwd = curP + fwd * stepDir;
-                    if (candFwd >= 0 && candFwd < numPieces && pieceMap[candFwd] === 0 && pieceFailCounts[candFwd] < 3) {
-                        pick = candFwd;
+                for (var off = 0; off < numPieces; off++) {
+                    var cand = (curP + off) % numPieces;
+                    if (pieceMap[cand] === 0 && pieceFailCounts[cand] < 3) {
+                        pick = cand;
                         break;
                     }
                 }
-                // -1 минута назад от текущей позиции
                 if (pick === -1) {
-                    for (var bwd = 1; bwd <= piecesPerMin; bwd++) {
-                        var candBwd = curP - bwd * stepDir;
-                        if (candBwd >= 0 && candBwd < numPieces && pieceMap[candBwd] === 0 && pieceFailCounts[candBwd] < 3) {
-                            pick = candBwd;
-                            break;
-                        }
+                    var anyInFlight = false;
+                    for (var k = 0; k < numPieces; k++) {
+                        if (pieceMap[k] === 1) { anyInFlight = true; break; }
                     }
-                }
-                // Если окно ±1 минута вокруг курсора уже загружено, в фоне спокойно докачиваем остальные куски трека
-                if (pick === -1) {
-                    for (var ext = 0; ext < numPieces; ext++) {
-                        var candExt = (curP + ext * stepDir + numPieces * 4) % numPieces;
-                        if (pieceMap[candExt] === 0 && pieceFailCounts[candExt] < 3) {
-                            pick = candExt;
-                            break;
-                        }
-                    }
-                }
-                if (pick === -1) {
-                    break;
+                    if (!anyInFlight) break;
+                    await new Promise(function(r) { setTimeout(r, 80); });
+                    continue;
                 }
                 var ok = await fetchPiece(pick);
                 if (!ok) {
                     pieceFailCounts[pick] = (pieceFailCounts[pick] || 0) + 1;
-                    await new Promise(function(r) { setTimeout(r, 200); });
+                    await new Promise(function(r) { setTimeout(r, 150); });
                 } else if (window.currentPlayingTrack === filename) {
                     window.studioBuffer = audioBuf;
-                    if (titleEl) {
-                        titleEl.innerText = (audioBuf._loadedCountV72 >= numPieces)
-                            ? ('RAM 🚀: ' + filename)
-                            : ('RAM 🚀 (' + audioBuf._loadedCountV72 + '/' + numPieces + '): ' + filename);
-                    }
-                    // Пересобираем буфер только если подгрузился кусок прямо под курсором и скорость != 1.0x
+                    // Если узел играет со скоростью != 1.0 (или был собран из неполного буфера), бесшовно обновляем буфер!
                     var spdNow = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
-                    if (pick === curP && Math.abs(spdNow - 1.0) > 0.003 && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    if (Math.abs(spdNow - 1.0) > 0.003 && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                         window.syncMasterPlaybackEngineV59(false);
                     }
-                    await new Promise(function(r) { setTimeout(r, 25); });
                 }
             }
         };
 
-        await workerLoop();
+        await Promise.all([workerLoop(), workerLoop(), workerLoop()]);
         if (window.currentPlayingTrack !== filename) return null;
 
         audioBuf._allPiecesLoadedV72 = true;

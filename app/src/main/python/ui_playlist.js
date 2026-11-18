@@ -4065,7 +4065,7 @@ window.removeFolderFromPoolV71 = async function(fp) {
                 } else {
                     // Deck A modal open (#settingsModal / #eqModal / #specModal / #themeModal / #favModal)
                     var cfg = window.appConfig || {};
-                    var ceilOn = Boolean(cfg.opt_masterCeil);
+                    var ceilOn = Boolean(cfg.opt_masterCeil || cfg.phaseFixEnabled);
                     var totalTxt = (typeof window.lastComputedCeilingDb !== 'undefined') ? window.lastComputedCeilingDb : -0.5;
                     var detailsTxt = (typeof window.localizeCeilingBreakdown === 'function')
                         ? window.localizeCeilingBreakdown(window.lastCeilingBreakdown)

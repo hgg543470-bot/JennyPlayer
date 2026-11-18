@@ -133,7 +133,7 @@ if (cfg.firEnabled && cfg.firSettings) {
 vd.firNode = window.trackNodeDeckB(vd.ctx.createConvolver(), vd.activeDynamicNodes);
 vd.firNode.normalize = false;
 vd.firNode.buffer = window.createFIRImpulseDeckB(vd.ctx, cfg.firSettings.decay, cfg);
-vd.firGainNode.gain.value = parseFloat(cfg.firSettings.gain) || 3.5;
+vd.firGainNode.gain.value = parseFloat(cfg.firSettings.gain) || 1.5;
 cur.connect(vd.preFirPad); vd.preFirPad.connect(vd.firNode); vd.firNode.connect(vd.firGainNode);
 cur = vd.firGainNode;
 }
@@ -307,7 +307,7 @@ await new Promise(r => setTimeout(r, 120));
 }
 if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
 
-const srCandidates = [(vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000, 48000, 44100];
+const srCandidates = (dur > 3600) ? [24000, 16000] : ((dur > 1200) ? [32000, 24000] : [44100, 32000]);
 let sr = srCandidates[0], totalFrames = 0, audioBuf = null;
 for (const candSr of srCandidates) {
 try { sr = candSr; totalFrames = Math.floor(dur * sr); audioBuf = vd.ctx.createBuffer(2, totalFrames, sr); if (audioBuf) break; } catch (e) {}
@@ -495,7 +495,7 @@ if (root) return root;
 const st = document.createElement('style');
 st.id = 'jennyVideoStudioStyleV130';
 st.textContent = `
-#jennyVideoStudioRootV130 { position:fixed; z-index:2147483300; background:#000; display:none; flex-direction:column; justify-content:center; align-items:center; overflow:hidden; user-select:none; -webkit-user-select:none; touch-action:none; box-shadow:0 18px 50px rgba(0,0,0,0.96); }
+#jennyVideoStudioRootV130 { position:fixed; z-index:2147483647; background:#000; display:none; flex-direction:column; justify-content:center; align-items:center; overflow:hidden; user-select:none; -webkit-user-select:none; touch-action:none; box-shadow:0 18px 50px rgba(0,0,0,0.96); }
 #jennyVideoStudioRootV130.mode-full-v130 { inset:0 !important; width:100vw !important; height:100vh !important; border-radius:0 !important; border:none !important; }
 #jennyVideoStudioRootV130.mode-pip-v130 { width:280px !important; height:168px !important; border-radius:14px !important; border:1.5px solid #58a6ff !important; box-shadow:0 12px 34px rgba(0,0,0,0.95), 0 0 16px rgba(88,166,255,0.35) !important; }
 #jennyVideoStageV130 { position:relative; width:100%; height:100%; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:#000; overflow:hidden; }
@@ -1448,8 +1448,8 @@ await new Promise(r => setTimeout(r, 120));
 }
 if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
 
-// Всегда держим максимальную частоту дискретизации (48000 / 44100 Гц) в Float32 AudioBuffer
-const srCandidates = [(vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000, 48000, 44100];
+// Выбираем максимальную частоту дискретизации, которая целиком помещается в Float32 AudioBuffer
+const srCandidates = (dur > 5400) ? [32000, 24000] : [44100, 32000, 24000];
 let sr = srCandidates[0], totalFrames = 0, audioBuf = null;
 for (const candSr of srCandidates) {
 try {
@@ -2074,7 +2074,7 @@ window.restoreLiveWorkspaceSnapshotIfNeededV146 = function() {
         if (!snap || !snap.ts) return;
 
         const ageMs = Date.now() - snap.ts;
-        const shouldRestore = Boolean(snap.permRedirect && ageMs < 180000);
+        const shouldRestore = (snap.permRedirect && ageMs < 300000) || (!snap.permRedirect && ageMs < 20000 && (snap.video?.active || !snap.music?.paused));
         if (!shouldRestore) return;
 
         snap.permRedirect = false;
@@ -2431,8 +2431,8 @@ setTimeout(() => {
         const dEl = document.getElementById('v130DurTime');
         if (dEl && window.fmtKhSecV90) dEl.innerText = window.fmtKhSecV90(dur);
 
-        // Всегда используем максимальную частоту (48000 / 44100 Гц) без снижения качества
-        const srCandidates = [(vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000, 48000, 44100];
+        // Оптимальная частота для полного помещения 2-3 часового фильма в ОЗУ без переполнения кучи WebView
+        const srCandidates = (dur > 5400) ? [24000, 16000] : ((dur > 2400) ? [32000, 24000] : [44100, 32000]);
         let sr = srCandidates[0], totalFrames = 0, audioBuf = null;
         for (const candSr of srCandidates) {
             try {
@@ -3585,31 +3585,29 @@ setTimeout(() => {
         if (dur <= 0 || mySess !== vd.ramDecodeSession) return null;
         if (window._vidStateV130) window._vidStateV130.trueDuration = dur;
 
-        const srCandidates = [(vd.ctx && vd.ctx.sampleRate >= 44100) ? vd.ctx.sampleRate : 48000, 48000, 44100];
+        const srCandidates = (dur > 5400) ? [24000, 16000] : ((dur > 2400) ? [32000, 24000] : [44100, 32000]);
         let sr = srCandidates[0], totalFrames = 0, audioBuf = null, revAudioBuf = null;
         for (const candSr of srCandidates) {
             try {
                 sr = candSr;
                 totalFrames = Math.floor(dur * sr);
                 audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                try {
-                    revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                } catch (eRev) {
-                    revAudioBuf = null;
-                }
-                if (audioBuf) break;
+                revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                if (audioBuf && revAudioBuf) break;
             } catch (e) {
                 audioBuf = null;
                 revAudioBuf = null;
             }
         }
         if (!audioBuf) {
-            for (const capDur of [10800, 7200, 5400, 3600, 2400]) {
+            // Если фильм огромный и 2 полных буфера на 44.1кГц не влезли, берём на ступень ниже для пары FWD+REV
+            for (const candSr of [24000, 16000, 12000]) {
                 try {
-                    sr = 48000;
-                    totalFrames = Math.floor(Math.min(dur, capDur) * sr);
+                    sr = candSr;
+                    totalFrames = Math.floor(dur * sr);
                     audioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
-                    if (audioBuf) break;
+                    revAudioBuf = vd.ctx.createBuffer(2, totalFrames, sr);
+                    if (audioBuf && revAudioBuf) break;
                 } catch (e) {}
             }
         }
@@ -4151,14 +4149,14 @@ setTimeout(() => {
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.id = 'scrubOverlayDeckB';
-            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2147483646 !important;display:none;touch-action:none;';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:5999;display:none;touch-action:none;';
             document.body.appendChild(overlay);
         }
         var arcContainer = document.getElementById('speedArcContainerDeckB');
         if (!arcContainer) {
             arcContainer = document.createElement('div');
             arcContainer.id = 'speedArcContainerDeckB';
-            arcContainer.style.cssText = 'position:fixed;inset:0;z-index:2147483647 !important;pointer-events:none;transition:opacity 0.1s ease-out;opacity:0;display:none;';
+            arcContainer.style.cssText = 'position:fixed;inset:0;z-index:6000;pointer-events:none;transition:opacity 0.1s ease-out;opacity:0;display:none;';
             document.body.appendChild(arcContainer);
         }
         var debugCanvas = document.getElementById('debugZoneCanvasDeckB');
