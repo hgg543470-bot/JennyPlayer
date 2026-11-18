@@ -1530,15 +1530,126 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         var abortCtrl = new AbortController();
         window._audioRamAbortCtrlV216 = abortCtrl;
 
+        // Цельный потоковый декодер готового WAV из .xflac в единый AudioBuffer (0% кусков FFmpeg, без лимита decodeAudioData!)
+        async function decodeWholeXflacWavResponseV262(resp, ctx) {
+            if (resp.body && typeof resp.body.getReader === 'function') {
+                var reader = resp.body.getReader();
+                var headerBuf = new Uint8Array(0);
+                while (headerBuf.length < 128) {
+                    var step = await reader.read();
+                    if (step.done) break;
+                    if (step.value && step.value.length > 0) {
+                        var merged = new Uint8Array(headerBuf.length + step.value.length);
+                        merged.set(headerBuf, 0);
+                        merged.set(step.value, headerBuf.length);
+                        headerBuf = merged;
+                    }
+                }
+                if (headerBuf.length >= 44 && headerBuf[0] === 0x52 && headerBuf[1] === 0x49 && headerBuf[2] === 0x46 && headerBuf[3] === 0x46) {
+                    var dv = new DataView(headerBuf.buffer, headerBuf.byteOffset, headerBuf.byteLength);
+                    var pos = 12, fmtTag = 1, numCh = 2, sRate = 44100, bits = 16, dataOff = 44, dataBytes = 0;
+                    while (pos + 8 <= headerBuf.length) {
+                        var id0 = headerBuf[pos], id1 = headerBuf[pos + 1], id2 = headerBuf[pos + 2], id3 = headerBuf[pos + 3];
+                        var cSize = dv.getUint32(pos + 4, true);
+                        if (id0 === 0x66 && id1 === 0x6d && id2 === 0x74 && id3 === 0x20 && pos + 24 <= headerBuf.length) {
+                            fmtTag = dv.getUint16(pos + 8, true);
+                            numCh = Math.max(1, Math.min(2, dv.getUint16(pos + 10, true)));
+                            sRate = dv.getUint32(pos + 12, true) || 44100;
+                            bits = dv.getUint16(pos + 22, true) || 16;
+                        } else if (id0 === 0x64 && id1 === 0x61 && id2 === 0x74 && id3 === 0x61) {
+                            dataOff = pos + 8;
+                            dataBytes = cSize;
+                            break;
+                        }
+                        pos += 8 + cSize + (cSize & 1);
+                    }
+                    if (bits === 16 && dataOff <= headerBuf.length) {
+                        var clHdr = Number(resp.headers.get('Content-Length') || 0);
+                        var totalPcmBytes = (clHdr > dataOff) ? (clHdr - dataOff) : dataBytes;
+                        var bytesPerFrame = numCh * 2;
+                        var totalFrames = Math.floor(totalPcmBytes / bytesPerFrame);
+                        if (totalFrames > 0) {
+                            var stride = 1;
+                            var outFrames = totalFrames;
+                            var outRate = sRate;
+                            var audioBuf = null;
+                            try {
+                                audioBuf = ctx.createBuffer(numCh, outFrames, outRate);
+                            } catch (eAlloc1) {
+                                stride = 2;
+                                outFrames = Math.floor(totalFrames / 2);
+                                outRate = Math.max(8000, Math.floor(sRate / 2));
+                                audioBuf = ctx.createBuffer(numCh, outFrames, outRate);
+                            }
+                            var chL = audioBuf.getChannelData(0);
+                            var chR = numCh > 1 ? audioBuf.getChannelData(1) : chL;
+                            var inv16 = 1.0 / 32768.0;
+                            var frameIdx = 0;
+                            var outIdx = 0;
+                            var leftover = headerBuf.subarray(dataOff);
+
+                            var processPcmChunk = function(chunkBytes) {
+                                var usableLen = chunkBytes.length - (chunkBytes.length % bytesPerFrame);
+                                if (usableLen <= 0) return chunkBytes;
+                                var i16 = new Int16Array(chunkBytes.buffer, chunkBytes.byteOffset, usableLen >> 1);
+                                var nSamples = i16.length;
+                                if (numCh === 2) {
+                                    for (var s = 0; s < nSamples; s += 2) {
+                                        if (stride === 1 || (frameIdx & 1) === 0) {
+                                            if (outIdx < outFrames) {
+                                                chL[outIdx] = i16[s] * inv16;
+                                                chR[outIdx] = i16[s + 1] * inv16;
+                                                outIdx++;
+                                            }
+                                        }
+                                        frameIdx++;
+                                    }
+                                } else {
+                                    for (var s1 = 0; s1 < nSamples; s1++) {
+                                        if (stride === 1 || (frameIdx & 1) === 0) {
+                                            if (outIdx < outFrames) {
+                                                chL[outIdx++] = i16[s1] * inv16;
+                                            }
+                                        }
+                                        frameIdx++;
+                                    }
+                                }
+                                return chunkBytes.subarray(usableLen);
+                            };
+
+                            leftover = processPcmChunk(leftover);
+                            while (true) {
+                                var rd = await reader.read();
+                                if (rd.done) break;
+                                if (rd.value && rd.value.length > 0) {
+                                    if (leftover.length > 0) {
+                                        var comb = new Uint8Array(leftover.length + rd.value.length);
+                                        comb.set(leftover, 0);
+                                        comb.set(rd.value, leftover.length);
+                                        leftover = processPcmChunk(comb);
+                                    } else {
+                                        leftover = processPcmChunk(rd.value);
+                                    }
+                                }
+                            }
+                            return audioBuf;
+                        }
+                    }
+                }
+            }
+            var ab = await resp.arrayBuffer();
+            return await ctx.decodeAudioData(ab);
+        }
+
         try {
             var decodedBuffer = null;
             if (cachedEntry && cachedEntry.buf) {
                 decodedBuffer = cachedEntry.buf;
             } else {
                 var metaCheck = { duration: initDur, size: Number(knownMeta.size || 0) };
-                // Всегда запрашиваем быстрый 25-байтный заголовок /api/pcm_meta_v71/ (включая .xflac!),
-                // чтобы знать точный WAV-размер (например, 315 МБ для 30-минутного .xflac) и не пытаться декодировать 315 МБ одним куском в WebAudio!
-                if (!metaCheck.size || isXflac) {
+                // Для обычных файлов без известного размера запрашиваем /api/pcm_meta_v71/;
+                // для готовых локальных .xflac сразу грузим файл целиком без кусковой нарезки!
+                if (!metaCheck.size && !isXflac) {
                     try {
                         var mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
                         if (mr.ok) metaCheck = await mr.json();
@@ -1548,7 +1659,18 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 }
                 if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
-                if (!metaCheck.size || metaCheck.size <= 95 * 1024 * 1024) {
+                if (isXflac) {
+                    var xResp = await fetch('/api/media/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
+                    if (xResp.ok) {
+                        decodedBuffer = await decodeWholeXflacWavResponseV262(xResp, window.audioCtx);
+                        if (decodedBuffer && mySeq === window._audioTrackLoadSeqV216) {
+                            window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(function(x) { return x.name !== filename; }).slice(0, 1);
+                            window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: null });
+                        }
+                    } else {
+                        throw new Error('HTTP ' + xResp.status);
+                    }
+                } else if (!metaCheck.size || metaCheck.size <= 95 * 1024 * 1024) {
                     try {
                         var response = await fetch('/api/media/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
                         if (response.ok) {
@@ -1556,18 +1678,9 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
                             var blobUrl = null;
                             try {
-                                var mime = isXflac ? 'audio/wav' : (response.headers.get('Content-Type') || 'audio/mpeg');
+                                var mime = response.headers.get('Content-Type') || 'audio/mpeg';
                                 blobUrl = URL.createObjectURL(new Blob([arrayBuffer], { type: mime }));
                             } catch (e) {}
-
-                            if (isXflac && player && player.paused && blobUrl && !window._userPausedV75_2) {
-                                player.loop = false;
-                                player.src = blobUrl;
-                                player.currentTime = 0;
-                                try { player.playbackRate = Math.max(0.1, Math.min(16.0, targetSpeed)); } catch (e) {}
-                                player.preservesPitch = true;
-                                player.play().catch(function() {});
-                            }
 
                             decodedBuffer = await window.audioCtx.decodeAudioData(arrayBuffer);
                             if (decodedBuffer) {
@@ -1653,9 +1766,13 @@ return _origHandleTrackPlayV130.apply(this, arguments);
 
     var _origPlayTrackV243 = window.playTrack;
     if (typeof _origPlayTrackV243 === 'function' && !_origPlayTrackV243._v243Wrapped) {
-        window.playTrack = function(filename) {
+        window.playTrack = function(filename, ctxArg) {
             if (filename && !(window.isVideoFileNameV130 && window.isVideoFileNameV130(filename))) {
-                window._lastActiveMediaSourceV243 = 'deckA';
+                var isYtTrk = Boolean(ctxArg === 'youtube' || (window.isYtTaggedNameV262 ? window.isYtTaggedNameV262(filename) : String(filename).indexOf('[YT') === 0));
+                window._isYoutubeDeckAActiveV253 = isYtTrk;
+                window._lastActiveMediaSourceV243 = isYtTrk ? 'youtube' : 'deckA';
+                window._islandActiveModeV245 = isYtTrk ? 'youtube' : 'music';
+                window._islandExplicitModeTsV245 = Date.now();
             }
             return _origPlayTrackV243.apply(this, arguments);
         };
@@ -1667,10 +1784,15 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window._origTogglePlayV243 = window.togglePlay;
         window.togglePlay = function() {
             var touchAge = performance.now() - (window._lastPhysicalTouchInAppTsV243 || 0);
-            if (touchAge > 650 && window._lastActiveMediaSourceV243 !== 'deckA') {
+            if (touchAge > 650 && window._lastActiveMediaSourceV243 !== 'deckA' && window._lastActiveMediaSourceV243 !== 'youtube') {
                 return window.handleNativeMediaControlV243('toggle');
             }
-            window._lastActiveMediaSourceV243 = 'deckA';
+            var isCurYt = Boolean(window._isYoutubeDeckAActiveV253 || (window.isYtTaggedNameV262 ? window.isYtTaggedNameV262(window.currentPlayingTrack) : String(window.currentPlayingTrack || '').indexOf('[YT') === 0));
+            window._lastActiveMediaSourceV243 = isCurYt ? 'youtube' : 'deckA';
+            if (isCurYt) {
+                window._islandActiveModeV245 = 'youtube';
+                window._islandExplicitModeTsV245 = Date.now();
+            }
             var r = window._origTogglePlayV243.apply(this, arguments);
             setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
             return r;

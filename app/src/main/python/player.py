@@ -374,6 +374,9 @@ def _get_xflac_lib_v84():
                 ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_size_t)
             ]
             lib.xflac_decode_wav_mem.restype = ctypes.c_int
+            if hasattr(lib, "xflac_decode_to_wav_file"):
+                lib.xflac_decode_to_wav_file.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p]
+                lib.xflac_decode_to_wav_file.restype = ctypes.c_int
             lib.xflac_free.argtypes = [ctypes.c_void_p]
             lib.xflac_free.restype = None
             _XFLAC_LIB_V84 = lib
@@ -7240,6 +7243,23 @@ def api_video_live_remux_v214():
                     kept.append((ts_started, p_same))
                 _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
 
+    # Если в live_remux попал потоковый YouTube-муксер (/api/youtube/live_mux_v253),
+    # НИКОГДА не оборачиваем его во второй внешний FFmpeg (иначе труба pipe:1 читается с 0:00!),
+    # а вызываем api_youtube_live_mux_v253 напрямую с переданным start_sec!
+    if '/api/youtube/live_mux_v253' in str(src):
+        try:
+            q_part = str(src).split('?', 1)[1] if '?' in str(src) else ''
+            q_map = urllib.parse.parse_qs(q_part)
+            yt_v = (q_map.get('v') or q_map.get('id') or [''])[0]
+            yt_h = int((q_map.get('h') or ['1080'])[0] or 1080)
+            if yt_v and 'api_youtube_live_mux_v253' in globals():
+                request.query['v'] = yt_v
+                request.query['h'] = str(yt_h)
+                request.query['start'] = f"{start_sec:.2f}"
+                return api_youtube_live_mux_v253()
+        except Exception:
+            pass
+
     is_tor_stream = src.startswith('/api/torrent/stream/')
     if is_tor_stream:
         parts = src.strip('/').split('/')
@@ -7586,6 +7606,23 @@ def _ensure_xflac_wav_cache_v87(full_xf: str) -> str:
                 raw_data = b""
 
         if hdr4 == b"XFC3":
+            lib = _get_xflac_lib_v84()
+            if st.st_size > 12 * 1024 * 1024 and lib and hasattr(lib, "xflac_decode_to_wav_file"):
+                raw_data = _strip_jrev_trailer_from_bytes_v88(raw_data)
+                flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", raw_data[4:25])
+                if flags & 2:
+                    comp_meta = raw_data[25:25 + cm_sz]
+                    rem_tail = raw_data[25 + cm_sz:25 + cm_sz + rl_sz + rr_sz]
+                    raw_meta = lzma.decompress(comp_meta)
+                    raw_data = b"XFC3" + struct.pack("<BIIIII", flags & ~2, nf, len(raw_meta), len(raw_meta), rl_sz, rr_sz) + raw_meta + rem_tail
+                    del comp_meta, rem_tail, raw_meta
+                tmp_write = cache_path + f".tmp_{os.getpid()}"
+                rc_f = lib.xflac_decode_to_wav_file(raw_data, len(raw_data), tmp_write.encode("utf-8"))
+                del raw_data
+                if rc_f == 0 and os.path.isfile(tmp_write) and os.path.getsize(tmp_write) > 44:
+                    os.replace(tmp_write, cache_path)
+                    return cache_path
+                raise RuntimeError(f"xflac_decode_to_wav_file error {rc_f}")
             wav_bytes = _decode_xflac_bytes_to_wav_v85(raw_data)
             del raw_data
         else:
@@ -8091,6 +8128,23 @@ def api_video_live_remux_v216():
                     kept.append((ts_started, p_same))
                 _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
 
+    # Если в live_remux попал потоковый YouTube-муксер (/api/youtube/live_mux_v253),
+    # НИКОГДА не оборачиваем его во второй внешний FFmpeg (иначе труба pipe:1 читается с 0:00!),
+    # а вызываем api_youtube_live_mux_v253 напрямую с переданным start_sec!
+    if '/api/youtube/live_mux_v253' in str(src):
+        try:
+            q_part = str(src).split('?', 1)[1] if '?' in str(src) else ''
+            q_map = urllib.parse.parse_qs(q_part)
+            yt_v = (q_map.get('v') or q_map.get('id') or [''])[0]
+            yt_h = int((q_map.get('h') or ['1080'])[0] or 1080)
+            if yt_v and 'api_youtube_live_mux_v253' in globals():
+                request.query['v'] = yt_v
+                request.query['h'] = str(yt_h)
+                request.query['start'] = f"{start_sec:.2f}"
+                return api_youtube_live_mux_v253()
+        except Exception:
+            pass
+
     is_tor_stream = src.startswith('/api/torrent/stream/')
     if is_tor_stream:
         parts = src.strip('/').split('/')
@@ -8220,6 +8274,23 @@ def api_video_live_remux_v217():
                         continue
                     kept.append((ts_started, p_same))
                 _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    # Если в live_remux попал потоковый YouTube-муксер (/api/youtube/live_mux_v253),
+    # НИКОГДА не оборачиваем его во второй внешний FFmpeg (иначе труба pipe:1 читается с 0:00!),
+    # а вызываем api_youtube_live_mux_v253 напрямую с переданным start_sec!
+    if '/api/youtube/live_mux_v253' in str(src):
+        try:
+            q_part = str(src).split('?', 1)[1] if '?' in str(src) else ''
+            q_map = urllib.parse.parse_qs(q_part)
+            yt_v = (q_map.get('v') or q_map.get('id') or [''])[0]
+            yt_h = int((q_map.get('h') or ['1080'])[0] or 1080)
+            if yt_v and 'api_youtube_live_mux_v253' in globals():
+                request.query['v'] = yt_v
+                request.query['h'] = str(yt_h)
+                request.query['start'] = f"{start_sec:.2f}"
+                return api_youtube_live_mux_v253()
+        except Exception:
+            pass
 
     is_tor_stream = src.startswith('/api/torrent/stream/')
     if is_tor_stream:
@@ -8964,6 +9035,23 @@ def api_video_live_remux_v218():
                     kept.append((ts_started, p_same))
                 _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
 
+    # Если в live_remux попал потоковый YouTube-муксер (/api/youtube/live_mux_v253),
+    # НИКОГДА не оборачиваем его во второй внешний FFmpeg (иначе труба pipe:1 читается с 0:00!),
+    # а вызываем api_youtube_live_mux_v253 напрямую с переданным start_sec!
+    if '/api/youtube/live_mux_v253' in str(src):
+        try:
+            q_part = str(src).split('?', 1)[1] if '?' in str(src) else ''
+            q_map = urllib.parse.parse_qs(q_part)
+            yt_v = (q_map.get('v') or q_map.get('id') or [''])[0]
+            yt_h = int((q_map.get('h') or ['1080'])[0] or 1080)
+            if yt_v and 'api_youtube_live_mux_v253' in globals():
+                request.query['v'] = yt_v
+                request.query['h'] = str(yt_h)
+                request.query['start'] = f"{start_sec:.2f}"
+                return api_youtube_live_mux_v253()
+        except Exception:
+            pass
+
     is_tor_stream = src.startswith('/api/torrent/stream/')
     src_input = ""
     if is_tor_stream:
@@ -9168,6 +9256,23 @@ def api_video_live_remux_v219():
                     kept.append((ts_started, p_same))
                 _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
 
+    # Если в live_remux попал потоковый YouTube-муксер (/api/youtube/live_mux_v253),
+    # НИКОГДА не оборачиваем его во второй внешний FFmpeg (иначе труба pipe:1 читается с 0:00!),
+    # а вызываем api_youtube_live_mux_v253 напрямую с переданным start_sec!
+    if '/api/youtube/live_mux_v253' in str(src):
+        try:
+            q_part = str(src).split('?', 1)[1] if '?' in str(src) else ''
+            q_map = urllib.parse.parse_qs(q_part)
+            yt_v = (q_map.get('v') or q_map.get('id') or [''])[0]
+            yt_h = int((q_map.get('h') or ['1080'])[0] or 1080)
+            if yt_v and 'api_youtube_live_mux_v253' in globals():
+                request.query['v'] = yt_v
+                request.query['h'] = str(yt_h)
+                request.query['start'] = f"{start_sec:.2f}"
+                return api_youtube_live_mux_v253()
+        except Exception:
+            pass
+
     is_tor_stream = src.startswith('/api/torrent/stream/')
     src_input = ""
     if is_tor_stream:
@@ -9359,6 +9464,23 @@ def api_video_reverse_remux_v219():
                         pass
                 _ACTIVE_REMUX_PROCS_BY_KEY_V214.pop(k_existing, None)
 
+    # Если в live_remux попал потоковый YouTube-муксер (/api/youtube/live_mux_v253),
+    # НИКОГДА не оборачиваем его во второй внешний FFmpeg (иначе труба pipe:1 читается с 0:00!),
+    # а вызываем api_youtube_live_mux_v253 напрямую с переданным start_sec!
+    if '/api/youtube/live_mux_v253' in str(src):
+        try:
+            q_part = str(src).split('?', 1)[1] if '?' in str(src) else ''
+            q_map = urllib.parse.parse_qs(q_part)
+            yt_v = (q_map.get('v') or q_map.get('id') or [''])[0]
+            yt_h = int((q_map.get('h') or ['1080'])[0] or 1080)
+            if yt_v and 'api_youtube_live_mux_v253' in globals():
+                request.query['v'] = yt_v
+                request.query['h'] = str(yt_h)
+                request.query['start'] = f"{start_sec:.2f}"
+                return api_youtube_live_mux_v253()
+        except Exception:
+            pass
+
     is_tor_stream = src.startswith('/api/torrent/stream/')
     src_input = ""
     if is_tor_stream:
@@ -9498,6 +9620,23 @@ def _prune_rev_ram_cache_v223(keep_src=None, keep_aidx=None, max_completed_items
 
 
 def _resolve_rev_src_input_v223(src, seg_start):
+    # Если в live_remux попал потоковый YouTube-муксер (/api/youtube/live_mux_v253),
+    # НИКОГДА не оборачиваем его во второй внешний FFmpeg (иначе труба pipe:1 читается с 0:00!),
+    # а вызываем api_youtube_live_mux_v253 напрямую с переданным start_sec!
+    if '/api/youtube/live_mux_v253' in str(src):
+        try:
+            q_part = str(src).split('?', 1)[1] if '?' in str(src) else ''
+            q_map = urllib.parse.parse_qs(q_part)
+            yt_v = (q_map.get('v') or q_map.get('id') or [''])[0]
+            yt_h = int((q_map.get('h') or ['1080'])[0] or 1080)
+            if yt_v and 'api_youtube_live_mux_v253' in globals():
+                request.query['v'] = yt_v
+                request.query['h'] = str(yt_h)
+                request.query['start'] = f"{start_sec:.2f}"
+                return api_youtube_live_mux_v253()
+        except Exception:
+            pass
+
     is_tor_stream = src.startswith('/api/torrent/stream/')
     src_input = ""
     if is_tor_stream:
@@ -12256,6 +12395,23 @@ def api_video_live_remux_v240():
                         continue
                     kept.append((ts_started, p_same))
                 _ACTIVE_REMUX_PROCS_BY_KEY_V214[k_existing] = kept
+
+    # Если в live_remux попал потоковый YouTube-муксер (/api/youtube/live_mux_v253),
+    # НИКОГДА не оборачиваем его во второй внешний FFmpeg (иначе труба pipe:1 читается с 0:00!),
+    # а вызываем api_youtube_live_mux_v253 напрямую с переданным start_sec!
+    if '/api/youtube/live_mux_v253' in str(src):
+        try:
+            q_part = str(src).split('?', 1)[1] if '?' in str(src) else ''
+            q_map = urllib.parse.parse_qs(q_part)
+            yt_v = (q_map.get('v') or q_map.get('id') or [''])[0]
+            yt_h = int((q_map.get('h') or ['1080'])[0] or 1080)
+            if yt_v and 'api_youtube_live_mux_v253' in globals():
+                request.query['v'] = yt_v
+                request.query['h'] = str(yt_h)
+                request.query['start'] = f"{start_sec:.2f}"
+                return api_youtube_live_mux_v253()
+        except Exception:
+            pass
 
     is_tor_stream = src.startswith('/api/torrent/stream/')
     src_input = ""
@@ -16012,13 +16168,23 @@ def _load_yt_tasks_disk_v259():
             data = json.load(f)
         tasks = data.get("tasks") or []
         for t in tasks:
-            if t.get("active"):
+            sub_s = str(t.get("sub_info") or "")
+            enc_s = str(t.get("encoder_info") or "")
+            if t.get("active") or (t.get("phase") == "crashed" and ("(100%)" in sub_s or "100% завершена" in enc_s)):
                 t["active"] = False
-                t["phase"] = "crashed"
-                old_stage = t.get("stage") or "Кодирование"
-                old_enc = t.get("encoder_info") or "нет данных"
-                t["stage"] = f"💥 Вылет процесса на этапе: {old_stage}"
-                t["encoder_info"] = f"💥 ВЫЛЕТ! Последняя сводка перед падением: {old_enc}"
+                if "(100%)" in sub_s or "100% завершена" in enc_s or int(t.get("pct") or 0) >= 100:
+                    t["phase"] = "done"
+                    t["pct"] = 100
+                    t["dl_pct"] = 100
+                    t["enc_pct"] = 100
+                    t["stage"] = f"✅ Готово ({t.get('done_mb') or t.get('total_mb') or ''} МБ)".strip()
+                    t["encoder_info"] = enc_s.replace("💥 ВЫЛЕТ! Последняя сводка перед падением: ", "")
+                else:
+                    t["phase"] = "crashed"
+                    old_stage = t.get("stage") or "Кодирование"
+                    old_enc = t.get("encoder_info") or "нет данных"
+                    t["stage"] = f"💥 Вылет процесса на этапе: {old_stage}"
+                    t["encoder_info"] = f"💥 ВЫЛЕТ! Последняя сводка перед падением: {old_enc}"
         _YT_DOWNLOAD_TASKS_V259 = tasks[-15:]
         if _YT_DOWNLOAD_TASKS_V259:
             _YT_DOWNLOAD_PROGRESS_V256.update(_YT_DOWNLOAD_TASKS_V259[-1])
@@ -16032,7 +16198,7 @@ def _update_yt_progress_v256(
     vid: str = "",
     title: str = "",
     kind: str = "",
-     pct: int = 0,
+    pct: int = 0,
     done_mb: float = None,
     total_mb: float = None,
     stage: str = "",
@@ -16045,23 +16211,25 @@ def _update_yt_progress_v256(
     force_disk: bool = False,
 ):
     with _YT_TASKS_LOCK_V259:
-        cur_vid = str(vid or _YT_DOWNLOAD_PROGRESS_V256.get("vid") or "")
-        cur_title = str(title or _YT_DOWNLOAD_PROGRESS_V256.get("title") or cur_vid or "YouTube")
-        cur_kind = str(kind or _YT_DOWNLOAD_PROGRESS_V256.get("kind") or "xflac")
+        prev_vid = str(_YT_DOWNLOAD_PROGRESS_V256.get("vid") or "")
+        cur_vid = str(vid or prev_vid or "")
+        same_vid = bool(cur_vid and cur_vid == prev_vid)
+        cur_title = str(title or (_YT_DOWNLOAD_PROGRESS_V256.get("title") if same_vid else "") or cur_vid or "YouTube")
+        cur_kind = str(kind or (_YT_DOWNLOAD_PROGRESS_V256.get("kind") if same_vid else "") or "xflac")
         cur_pct = max(0, min(100, int(pct)))
-        cur_done_mb = round(float(done_mb if done_mb is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("done_mb") or 0.0)), 2)
-        cur_tot_mb = round(float(total_mb if total_mb is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("total_mb") or 0.0)), 2)
-        cur_spd = round(float(speed_mbs if speed_mbs is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("speed_mbs") or 0.0)), 2)
-        cur_phase = str(phase or _YT_DOWNLOAD_PROGRESS_V256.get("phase") or ("download" if active else "done"))
-        cur_dl_pct = max(0, min(100, int(dl_pct if dl_pct is not None else (cur_pct if cur_phase == "download" else (_YT_DOWNLOAD_PROGRESS_V256.get("dl_pct") or 100)))))
-        cur_enc_pct = max(0, min(100, int(enc_pct if enc_pct is not None else (cur_pct if cur_phase == "transcode" else (_YT_DOWNLOAD_PROGRESS_V256.get("enc_pct") or 0)))))
-        cur_stage = str(stage or _YT_DOWNLOAD_PROGRESS_V256.get("stage") or "")
-        cur_sub = str(sub_info if sub_info is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("sub_info") or ""))
+        cur_done_mb = round(float(done_mb if done_mb is not None else ((_YT_DOWNLOAD_PROGRESS_V256.get("done_mb") or 0.0) if same_vid else 0.0)), 2)
+        cur_tot_mb = round(float(total_mb if total_mb is not None else ((_YT_DOWNLOAD_PROGRESS_V256.get("total_mb") or 0.0) if same_vid else 0.0)), 2)
+        cur_spd = round(float(speed_mbs if speed_mbs is not None else ((_YT_DOWNLOAD_PROGRESS_V256.get("speed_mbs") or 0.0) if same_vid else 0.0)), 2)
+        cur_phase = str(phase or (_YT_DOWNLOAD_PROGRESS_V256.get("phase") if same_vid else "") or ("download" if active else "done"))
+        cur_dl_pct = max(0, min(100, int(dl_pct if dl_pct is not None else (cur_pct if cur_phase == "download" else ((_YT_DOWNLOAD_PROGRESS_V256.get("dl_pct") or 100) if same_vid else 100)))))
+        cur_enc_pct = max(0, min(100, int(enc_pct if enc_pct is not None else (cur_pct if cur_phase == "transcode" else (100 if cur_phase == "done" else ((_YT_DOWNLOAD_PROGRESS_V256.get("enc_pct") or 0) if same_vid else 0))))))
+        cur_stage = str(stage or (_YT_DOWNLOAD_PROGRESS_V256.get("stage") if same_vid else "") or "")
+        cur_sub = str(sub_info if sub_info is not None else ((_YT_DOWNLOAD_PROGRESS_V256.get("sub_info") or "") if same_vid else ""))
         if not cur_sub:
             mb_part = f"{cur_done_mb} / {cur_tot_mb} МБ" if cur_tot_mb > 0 else (f"{cur_done_mb} МБ" if cur_done_mb > 0 else "")
             spd_part = f" • {cur_spd:.1f} МБ/с" if cur_spd > 0 else ""
             cur_sub = f"Скачано: {mb_part}{spd_part} (Закачка: {cur_dl_pct}% | Код: {cur_enc_pct}%)" if mb_part else f"Закачка: {cur_dl_pct}% | Перекодирование: {cur_enc_pct}%"
-        cur_enc_info = str(encoder_info if encoder_info is not None else (_YT_DOWNLOAD_PROGRESS_V256.get("encoder_info") or ""))
+        cur_enc_info = str(encoder_info if encoder_info is not None else ((_YT_DOWNLOAD_PROGRESS_V256.get("encoder_info") or "") if same_vid else ""))
 
         entry = {
             "active": bool(active),
@@ -16084,8 +16252,14 @@ def _update_yt_progress_v256(
 
         if cur_vid:
             found = False
+            # Матч по vid (или по vid + совпадению аудио/xflac), чтобы фаза скачивания аудио (kind="audio")
+            # и фаза перекодирования в .xFLAC (kind="xflac") обновляли ОДНУ И ТУ ЖЕ карточку и не оставляли вечно висящую задачу!
             for idx in range(len(_YT_DOWNLOAD_TASKS_V259) - 1, -1, -1):
-                if _YT_DOWNLOAD_TASKS_V259[idx].get("vid") == cur_vid and _YT_DOWNLOAD_TASKS_V259[idx].get("kind") == cur_kind:
+                t_old = _YT_DOWNLOAD_TASKS_V259[idx]
+                if t_old.get("vid") == cur_vid and (
+                    t_old.get("kind") == cur_kind
+                    or {str(t_old.get("kind")), cur_kind}.issubset({"audio", "xflac"})
+                ):
                     _YT_DOWNLOAD_TASKS_V259[idx].update(entry)
                     found = True
                     break
@@ -16101,6 +16275,25 @@ _load_yt_tasks_disk_v259()
 
 def api_youtube_progress_v256():
     response.content_type = "application/json; charset=utf-8"
+    now_ts = time.time()
+    with _YT_TASKS_LOCK_V259:
+        changed = False
+        for t in _YT_DOWNLOAD_TASKS_V259:
+            if t.get("active"):
+                age = now_ts - float(t.get("updated_ts") or now_ts)
+                sub_s = str(t.get("sub_info") or "")
+                enc_s = str(t.get("encoder_info") or "")
+                # Авто-исправление «зависших» задач, которые уже скачались на 100%, но остались active=True
+                if age > 20.0 and ("(100%)" in sub_s or "100% завершена" in enc_s):
+                    t["active"] = False
+                    t["phase"] = "done"
+                    t["pct"] = 100
+                    t["dl_pct"] = 100
+                    t["enc_pct"] = 100
+                    t["stage"] = f"✅ Готово ({t.get('done_mb') or t.get('total_mb') or ''} МБ)".strip()
+                    changed = True
+        if changed:
+            _save_yt_tasks_disk_v259(force=True)
     return json.dumps({
         "status": "ok",
         "progress": _YT_DOWNLOAD_PROGRESS_V256,
@@ -16449,7 +16642,7 @@ def _pick_yt_audio_by_pref_v255(meta: dict, pref: str = None) -> dict:
     return afmts[0]
 
 
-def _ensure_yt_audio_cached_v252(vid: str, pref: str = None) -> tuple:
+def _ensure_yt_audio_cached_v252(vid: str, pref: str = None, task_kind: str = "audio", will_transcode: bool = False) -> tuple:
     meta = _extract_yt_full_v252(vid)
     eff_pref = str(pref or _YT_AUDIO_STREAM_PREF_V255 or "opus_251").strip().lower()
     ba = _pick_yt_audio_by_pref_v255(meta, eff_pref)
@@ -16459,8 +16652,21 @@ def _ensure_yt_audio_cached_v252(vid: str, pref: str = None) -> tuple:
     fid = ba.get("format_id") or "best"
     cache_dir = _get_yt_stream_cache_dir_v252()
     local_raw = os.path.join(cache_dir, f"yt_aud_{vid}_{fid}.{ext}")
-    _update_yt_progress_v256(True, vid=vid, title=meta.get("title") or vid, kind="audio", pct=1, stage="Скачивание аудио...")
+    t_title = meta.get("title") or vid
     if not (os.path.isfile(local_raw) and os.path.getsize(local_raw) > 32768):
+        _update_yt_progress_v256(
+            True,
+            vid=vid,
+            title=t_title,
+            kind=task_kind,
+            phase="download",
+            pct=1,
+            dl_pct=1,
+            enc_pct=0,
+            stage="⬇️ Скачивание аудио...",
+            sub_info="Старт закачки аудиопотока...",
+            encoder_info=f"📡 Подготовка аудиопотока (ID={fid}, {ext}) | RAM: {_get_process_ram_str_v259()}",
+        )
         _download_yt_url_fast_v252(ba, local_raw, max_workers=8, label_stage="Скачивание аудио")
     # If the fallback stream had video frames (e.g. combined_mp4), strip video (-vn) so Deck A NEVER loads video into RAM!
     if str(ba.get("vcodec") or "none") != "none":
@@ -16484,8 +16690,26 @@ def _ensure_yt_audio_cached_v252(vid: str, pref: str = None) -> tuple:
                 _sanitize_canonical_wav_file_v159(wav_out)
         if os.path.isfile(wav_out) and os.path.getsize(wav_out) > 65536:
             _register_yt_virtual_file_v253(os.path.basename(wav_out), wav_out)
-            return wav_out, meta
+            local_raw = wav_out
     _register_yt_virtual_file_v253(os.path.basename(local_raw), local_raw)
+    if not will_transcode:
+        sz_mb = round(os.path.getsize(local_raw) / (1024.0 * 1024.0), 2) if os.path.isfile(local_raw) else 0.0
+        _update_yt_progress_v256(
+            False,
+            vid=vid,
+            title=t_title,
+            kind=task_kind,
+            phase="done",
+            pct=100,
+            dl_pct=100,
+            enc_pct=100,
+            done_mb=sz_mb,
+            total_mb=sz_mb,
+            stage=f"✅ Аудио готово ({sz_mb} МБ)",
+            sub_info=f"Скачано: {sz_mb} / {sz_mb} МБ (100%) • Готово к воспроизведению в Деке А",
+            encoder_info=f"✅ Аудиопоток в кэше ({sz_mb} МБ) | RAM: {_get_process_ram_str_v259()}",
+            force_disk=True,
+        )
     return local_raw, meta
 
 
@@ -16764,6 +16988,14 @@ def api_youtube_range_proxy_v253():
         ext = str(stream_info.get("ext") or ("mp4" if kind != "audio" else "m4a"))
         mime = "video/mp4" if kind != "audio" else ("audio/mp4" if ext == "m4a" else "audio/webm")
 
+        local_cached_path = ""
+        if kind == "audio":
+            fid = stream_info.get("format_id") or "best"
+            cand_p = os.path.join(_get_yt_stream_cache_dir_v252(), f"yt_aud_{vid}_{fid}.{ext}")
+            if os.path.isfile(cand_p) and os.path.getsize(cand_p) > 1024:
+                local_cached_path = cand_p
+                total_size = os.path.getsize(cand_p)
+
         response.set_header("Content-Type", mime)
         response.set_header("Accept-Ranges", "bytes")
         response.set_header("Cache-Control", "no-store")
@@ -16783,12 +17015,20 @@ def api_youtube_range_proxy_v253():
             s_str, e_str = r_part.split("-", 1)
             if s_str:
                 start_b = int(s_str)
-            if e_str:
-                end_b = int(e_str)
-            elif total_size > 0:
+                if e_str:
+                    end_b = int(e_str)
+                elif total_size > 0:
+                    end_b = total_size - 1
+            elif e_str and total_size > 0:
+                suffix_len = max(1, int(e_str))
+                start_b = max(0, total_size - suffix_len)
                 end_b = total_size - 1
 
         if total_size > 0:
+            if start_b >= total_size:
+                response.status = 416
+                response.set_header("Content-Range", f"bytes */{total_size}")
+                return b""
             start_b = max(0, min(start_b, total_size - 1))
             end_b = max(start_b, min(end_b, total_size - 1))
             content_len = end_b - start_b + 1
@@ -16797,21 +17037,40 @@ def api_youtube_range_proxy_v253():
                 response.status = 206
                 response.set_header("Content-Range", f"bytes {start_b}-{end_b}/{total_size}")
 
+        if local_cached_path:
+            def _local_gen():
+                try:
+                    with open(local_cached_path, "rb") as lf:
+                        lf.seek(start_b)
+                        rem = end_b - start_b + 1
+                        while rem > 0:
+                            blk = lf.read(min(262144, rem))
+                            if not blk:
+                                break
+                            yield blk
+                            rem -= len(blk)
+                except Exception:
+                    return
+            return _local_gen()
+
         url = str(stream_info.get("url") or "")
         hdrs = dict(stream_info.get("headers") or {"User-Agent": "Mozilla/5.0"})
         chunk_sz = 1536 * 1024
 
         def _stream_gen():
-            cur = start_b
-            while cur <= end_b:
-                c_idx = cur // chunk_sz
-                c_off = cur % chunk_sz
-                c_data = _fetch_yt_range_chunk_cached_v253(url, hdrs, c_idx, total_size, chunk_sz)
-                if not c_data or c_off >= len(c_data):
-                    break
-                take = min(len(c_data) - c_off, end_b - cur + 1)
-                yield c_data[c_off:c_off + take]
-                cur += take
+            try:
+                cur = start_b
+                while cur <= end_b:
+                    c_idx = cur // chunk_sz
+                    c_off = cur % chunk_sz
+                    c_data = _fetch_yt_range_chunk_cached_v253(url, hdrs, c_idx, total_size, chunk_sz)
+                    if not c_data or c_off >= len(c_data):
+                        break
+                    take = min(len(c_data) - c_off, end_b - cur + 1)
+                    yield c_data[c_off:c_off + take]
+                    cur += take
+            except Exception:
+                return
 
         return _stream_gen()
     except Exception:
@@ -16861,9 +17120,8 @@ def api_youtube_prepare_deck_a_v253():
         fid = ba.get("format_id") or "best"
         already_cached_aud = os.path.isfile(os.path.join(cache_dir, f"yt_aud_{vid}_{fid}.{ext}"))
 
-        if already_cached_aud or (eff_ram_limit > 0 and sz_mb <= eff_ram_limit and (dur == 0 or dur <= 420)):
-            local_raw, _ = _ensure_yt_audio_cached_v252(vid, audio_pref)
-            _update_yt_progress_v256(False, vid=vid, title=title, kind="audio", pct=100, stage="Готово")
+        if (already_cached_aud and sz_mb <= 25.0 and (dur == 0 or dur <= 900)) or (eff_ram_limit > 0 and sz_mb <= eff_ram_limit and (dur == 0 or dur <= 420)):
+            local_raw, _ = _ensure_yt_audio_cached_v252(vid, audio_pref, task_kind="audio", will_transcode=False)
             _register_yt_virtual_file_v253(virt_fn, local_raw)
             return json.dumps({
                 "status": "ok",
@@ -16881,7 +17139,8 @@ def api_youtube_prepare_deck_a_v253():
             }, ensure_ascii=False)
         else:
             # Chunked streaming mode for tracks > 7 min (or > 8.5 MB) — starts playing pure audio immediately!
-            _update_yt_progress_v256(False, vid=vid, title=title, kind="audio", pct=100, stage="Поток")
+            # If already cached on disk (e.g. a 3–4 hour 177 MB track), range_proxy serves byte ranges from disk in 0.1ms!
+            stream_pref = audio_pref
             return json.dumps({
                 "status": "ok",
                 "mode": "chunked_stream",
@@ -16890,11 +17149,11 @@ def api_youtube_prepare_deck_a_v253():
                 "channel": channel,
                 "duration": dur,
                 "size_mb": sz_mb,
-                "audio_pref": audio_pref,
+                "audio_pref": stream_pref,
                 "format_id": ba.get("format_id"),
                 "abr": ba.get("abr"),
                 "filename": f"[YT Поток] {safe_title} [{vid}]",
-                "stream_url": f"/api/youtube/range_proxy?v={vid}&kind=audio&audio_pref={audio_pref}",
+                "stream_url": f"/api/youtube/range_proxy?v={vid}&kind=audio&audio_pref={stream_pref}",
             }, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
@@ -17065,7 +17324,7 @@ def api_youtube_save_xflac_v252():
     if not vid:
         return json.dumps({"status": "error", "error": "Не указан ID трека YouTube"}, ensure_ascii=False)
     try:
-        local_raw, meta = _ensure_yt_audio_cached_v252(vid)
+        local_raw, meta = _ensure_yt_audio_cached_v252(vid, task_kind="xflac", will_transcode=True)
         title = str(body.get("title") or meta.get("title") or f"YouTube_{vid}").strip()
         channel = str(body.get("channel") or meta.get("channel") or "YouTube").strip()
         thumb_url = str(meta.get("thumbnail") or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")
@@ -17329,6 +17588,9 @@ def api_youtube_resolve_deck_b_v252():
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
+_YT_LIVE_MUX_PROCS_V262 = set()
+
+
 def api_youtube_live_mux_v253():
     """Streams YouTube adaptive Video + Audio on the fly as a fragmented MP4 stream via local FFmpeg."""
     vid = _normalize_yt_video_id_v252(request.query.get("v") or request.query.get("id") or "")
@@ -17344,33 +17606,65 @@ def api_youtube_live_mux_v253():
     if not ff:
         response.status = 500
         return b""
+
+    # Завершаем предыдущие потоковые муксеры при перемотке, чтобы старые процессы не конкурировали за канал
+    for old_p in list(_YT_LIVE_MUX_PROCS_V262):
+        try:
+            old_p.kill()
+        except Exception:
+            pass
+        _YT_LIVE_MUX_PROCS_V262.discard(old_p)
+
     meta = _extract_yt_full_v252(vid)
-    chosen, _ = _select_yt_quality_entry_v253(meta, pref_h)
+    chosen, eff_h = _select_yt_quality_entry_v253(meta, pref_h)
     v_info = (chosen or {}).get("video") or meta.get("best_combined")
+    # Для живого потока и мгновенной перемотки на 3–4 часовых видео предпочитаем H.264 MP4 (avc1 + sidx индекс),
+    # чтобы FFmpeg работал в режиме -c:v copy (0% нагрузки на CPU и перемотка за 0.2 сек)!
+    if v_info:
+        vc_check = str(v_info.get("vcodec") or "").lower()
+        ve_check = str(v_info.get("ext") or "").lower()
+        if not (("avc" in vc_check or "h264" in vc_check) and ve_check == "mp4"):
+            for q_cand in (meta.get("qualities") or []):
+                vf_c = q_cand.get("video") or {}
+                vc_c = str(vf_c.get("vcodec") or "").lower()
+                ve_c = str(vf_c.get("ext") or "").lower()
+                if ("avc" in vc_c or "h264" in vc_c) and ve_c == "mp4" and int(q_cand.get("height") or 0) >= 720:
+                    chosen = q_cand
+                    v_info = vf_c
+                    eff_h = int(q_cand.get("height") or eff_h)
+                    break
+
     a_info = (chosen or {}).get("audio") or meta.get("best_m4a_audio") or meta.get("best_audio")
     if not v_info:
         response.status = 404
         return b""
 
     port = globals().get("_INTERNAL_STREAM_PORT_V238", 8080)
-    v_proxy = f"http://127.0.0.1:{port}/api/youtube/range_proxy?v={vid}&kind=video&h={pref_h}"
-    a_proxy = f"http://127.0.0.1:{port}/api/youtube/range_proxy?v={vid}&kind=audio"
+    v_proxy = f"http://127.0.0.1:{port}/api/youtube/range_proxy?v={vid}&kind=video&h={eff_h}"
+    a_proxy = f"http://127.0.0.1:{port}/api/youtube/range_proxy?v={vid}&kind=audio&audio_pref=aac_140"
 
     vcodec_s = str(v_info.get("vcodec") or "").lower()
     v_ext_s = str(v_info.get("ext") or "mp4").lower()
     can_copy_v = ("avc" in vcodec_s or "h264" in vcodec_s) and v_ext_s == "mp4"
     v_args = ["-c:v", "copy"] if can_copy_v else ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "22", "-pix_fmt", "yuv420p"]
 
-    ss_args = ["-ss", f"{start_sec:.2f}"] if start_sec > 0.5 else []
+    acodec_s = str((a_info or {}).get("acodec") or "").lower()
+    a_ext_s = str((a_info or {}).get("ext") or "m4a").lower()
+    can_copy_a = ("mp4a" in acodec_s or "aac" in acodec_s) and a_ext_s in ("m4a", "mp4", "aac")
+    a_args = ["-c:a", "copy"] if can_copy_a else ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
+
+    ss_v_args = (["-noaccurate_seek", "-ss", f"{start_sec:.2f}"] if can_copy_v else ["-ss", f"{start_sec:.2f}"]) if start_sec > 0.5 else []
+    ss_a_args = (["-noaccurate_seek", "-ss", f"{start_sec:.2f}"] if can_copy_a else ["-ss", f"{start_sec:.2f}"]) if start_sec > 0.5 else []
     cmd = [
         ff, "-hide_banner", "-loglevel", "error",
-        "-reconnect", "1", "-reconnect_streamed", "1",
-        *ss_args, "-i", v_proxy,
-        "-reconnect", "1", "-reconnect_streamed", "1",
-        *ss_args, "-i", a_proxy,
+        "-seekable", "1", "-reconnect", "1", "-reconnect_streamed", "1",
+        *ss_v_args, "-i", v_proxy,
+        "-seekable", "1", "-reconnect", "1", "-reconnect_streamed", "1",
+        *ss_a_args, "-i", a_proxy,
         "-map", "0:v:0", "-map", "1:a:0?",
         *v_args,
-        "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+        *a_args,
+        "-avoid_negative_ts", "make_zero",
         "-f", "mp4",
         "-movflags", "frag_keyframe+empty_moov+default_base_moof",
         "pipe:1",
@@ -17379,6 +17673,7 @@ def api_youtube_live_mux_v253():
     response.set_header("Cache-Control", "no-store")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
     _YT_ACTIVE_SUBPROCS_V256.add(proc)
+    _YT_LIVE_MUX_PROCS_V262.add(proc)
 
     def _gen_mux():
         try:
@@ -17389,6 +17684,7 @@ def api_youtube_live_mux_v253():
                 yield chunk
         finally:
             _YT_ACTIVE_SUBPROCS_V256.discard(proc)
+            _YT_LIVE_MUX_PROCS_V262.discard(proc)
             try:
                 proc.kill()
             except Exception:

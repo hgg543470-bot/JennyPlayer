@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -649,31 +650,70 @@ int xflac_decode_wav_mem(const uint8_t* xd, size_t x_sz, uint8_t** out_w, size_t
     }
     if (bits != 16 && bits != 24 && bits != 32) bits = 16;
 
-    int32_t* mid = (int32_t*)malloc((n + 1) * sizeof(int32_t));
-    int32_t* side = eq ? NULL : (int32_t*)malloc((n + 1) * sizeof(int32_t));
-    if (!mid || (!eq && !side)) { free(mid); free(side); return -2; }
-    decode_channel_pitch_ols(meta_l, ml_len, rl, rl_sz, n, mid);
-    restore_wasted_bits32_inplace(mid, n, sh_l);
-    if (!eq) {
-        uint32_t shr_len = rd_u32(&mp), mr_len = rd_u32(&mp);
-        const uint8_t* sh_r = mp; mp += shr_len; const uint8_t* meta_r = mp; mp += mr_len;
-        decode_channel_pitch_ols(meta_r, mr_len, rr, rr_sz, n, side);
-        restore_wasted_bits32_inplace(side, n, sh_r);
-    }
+    int32_t* ch_buf = (int32_t*)malloc((n + 1) * sizeof(int32_t));
+    if (!ch_buf) return -2;
+
     size_t ch = mono ? 1 : 2, bps = bits / 8, pcm_b = (size_t)n * ch * bps;
-    *out_sz = p_len + pcm_b + s_len; *out_w = (uint8_t*)malloc(*out_sz);
+    *out_sz = p_len + pcm_b + s_len;
+    *out_w = (uint8_t*)malloc(*out_sz);
+    if (!*out_w) { free(ch_buf); *out_sz = 0; return -2; }
+
     memcpy(*out_w, w_pre, p_len);
     uint8_t* dst = *out_w + p_len;
-    for (size_t i = 0; i < n; ++i) {
-        uint8_t* frame_p = dst + i * ch * bps;
-        write_pcm_sample_v157(frame_p, mid[i], bits, ftag);
-        if (ch == 2) {
-            write_pcm_sample_v157(frame_p + bps, eq ? mid[i] : side[i], bits, ftag);
+
+    decode_channel_pitch_ols(meta_l, ml_len, rl, rl_sz, n, ch_buf);
+    restore_wasted_bits32_inplace(ch_buf, n, sh_l);
+    if (ch == 1) {
+        for (size_t i = 0; i < n; ++i) {
+            write_pcm_sample_v157(dst + i * bps, ch_buf[i], bits, ftag);
+        }
+    } else if (eq) {
+        for (size_t i = 0; i < n; ++i) {
+            uint8_t* frame_p = dst + i * 2 * bps;
+            write_pcm_sample_v157(frame_p, ch_buf[i], bits, ftag);
+            write_pcm_sample_v157(frame_p + bps, ch_buf[i], bits, ftag);
+        }
+    } else {
+        for (size_t i = 0; i < n; ++i) {
+            write_pcm_sample_v157(dst + i * 2 * bps, ch_buf[i], bits, ftag);
+        }
+        uint32_t shr_len = rd_u32(&mp), mr_len = rd_u32(&mp);
+        const uint8_t* sh_r = mp; mp += shr_len; const uint8_t* meta_r = mp; mp += mr_len;
+        decode_channel_pitch_ols(meta_r, mr_len, rr, rr_sz, n, ch_buf);
+        restore_wasted_bits32_inplace(ch_buf, n, sh_r);
+        for (size_t i = 0; i < n; ++i) {
+            write_pcm_sample_v157(dst + i * 2 * bps + bps, ch_buf[i], bits, ftag);
         }
     }
+    free(ch_buf);
     if (s_len > 0) memcpy(*out_w + p_len + pcm_b, w_suf, s_len);
-    free(mid); free(side);
     return 0;
+}
+
+int xflac_decode_to_wav_file(const uint8_t* xd, size_t x_sz, const char* out_path) {
+    if (!out_path) return -1;
+    uint8_t* w_buf = NULL;
+    size_t w_sz = 0;
+    int rc = xflac_decode_wav_mem(xd, x_sz, &w_buf, &w_sz);
+    if (rc != 0 || !w_buf || w_sz == 0) {
+        if (w_buf) free(w_buf);
+        return rc != 0 ? rc : -3;
+    }
+    FILE* fp = fopen(out_path, "wb");
+    if (!fp) {
+        free(w_buf);
+        return -4;
+    }
+    size_t written = 0;
+    while (written < w_sz) {
+        size_t chunk = (w_sz - written > (4 * 1024 * 1024)) ? (4 * 1024 * 1024) : (w_sz - written);
+        size_t nw = fwrite(w_buf + written, 1, chunk, fp);
+        if (nw == 0) break;
+        written += nw;
+    }
+    fclose(fp);
+    free(w_buf);
+    return (written == w_sz) ? 0 : -5;
 }
 void xflac_free(void* ptr) { free(ptr); }
 #ifdef __cplusplus
