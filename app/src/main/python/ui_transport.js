@@ -460,13 +460,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 if (titleEl) titleEl.innerText = '🎵 ' + filename;
                 return;
             }
-
-            // Даём сжатому потоку ("⏳ RAM (пока играет сжатый...)") спокойно отыграть ~1.8 секунды,
-            // чтобы пользователь видел индикацию внутри шкалы прогресса и старт шёл без микро-щелчка на первой секунде!
-            var elapsedMs = performance.now() - startPlayWallMs;
-            if (elapsedMs < 1800 && !isRevMode) {
-                await new Promise(function(r) { setTimeout(r, 1800 - elapsedMs); });
-            }
             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
             window.studioBuffer = decodedBuffer;
@@ -1117,7 +1110,7 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         var finishResume = function() {
             window._resumingFromUserPlayV232 = false;
             if (window._userPausedV75_2) return;
-            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            if (!(window.isStudioPlaying && window.studioSourceNode && !window.studioSourceNode._isStoppedV265) && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
             }
             if (!window.studioBuffer && window.currentPlayingTrack && typeof window.ensureStudioBufferLoadedV61 === 'function') {
@@ -1510,9 +1503,13 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window._ramTrackHistoryV71 = window._ramTrackHistoryV71 || [];
         var cachedEntry = window._ramTrackHistoryV71.find(function(x) { return x.name === filename && x.buf; });
         var isXflac = /\.xflac$/i.test(filename);
+        var isFastLocalOrYtRam = Boolean((cachedEntry && cachedEntry.buf) || isXflac || String(filename || '').indexOf('[YT]') === 0 || (knownMeta.size && knownMeta.size <= 30 * 1024 * 1024));
         var mediaUrl = (cachedEntry && cachedEntry.blobUrl) ? cachedEntry.blobUrl : ('/api/media/' + encodeURIComponent(filename));
+        var useStudioRam = Boolean(!window.appConfig || window.appConfig.studioMode !== false);
 
-        if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
+        if (window.htmlGain && window.htmlGain.gain) {
+            window.htmlGain.gain.value = (useStudioRam && isFastLocalOrYtRam) ? 0.0 : 1.0;
+        }
 
         // Запускаем <audio> сразу в рамках пользовательского жеста (и для обычных файлов, и для .xflac —
         // на сервере работает пофайловый кэш _ensure_xflac_wav_cache_v87, поэтому второй запрос мгновенно берёт готовый WAV!)
@@ -1529,7 +1526,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         }
 
         var startPlayWallMs = performance.now();
-        var useStudioRam = Boolean(!window.appConfig || window.appConfig.studioMode !== false);
         if (titleEl) {
             titleEl.innerText = (useStudioRam ? '⏳ RAM (пока играет сжатый...): ' : '🎵 ') + filename;
         }
@@ -1661,16 +1657,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 decodedBuffer = cachedEntry.buf;
             } else {
                 var metaCheck = { duration: initDur, size: Number(knownMeta.size || 0) };
-                // Для обычных файлов без известного размера запрашиваем /api/pcm_meta_v71/;
-                // для готовых локальных .xflac сразу грузим файл целиком без кусковой нарезки!
-                if (!metaCheck.size && !isXflac) {
-                    try {
-                        var mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
-                        if (mr.ok) metaCheck = await mr.json();
-                    } catch (e) {
-                        if (abortCtrl.signal.aborted || mySeq !== window._audioTrackLoadSeqV216) return;
-                    }
-                }
                 if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
                 if (isXflac) {
@@ -1688,6 +1674,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                     try {
                         var response = await fetch('/api/media/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
                         if (response.ok) {
+                            var clBytes = Number(response.headers.get('Content-Length') || 0);
+                            if (clBytes > 95 * 1024 * 1024) {
+                                try { if (response.body && response.body.cancel) response.body.cancel(); } catch (e) {}
+                                metaCheck.size = clBytes;
+                                throw new Error('HUGE_FILE_CHUNK_DECODE');
+                            }
                             var arrayBuffer = await response.arrayBuffer();
                             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
                             var blobUrl = null;
@@ -1723,11 +1715,6 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 if (titleEl) titleEl.innerText = '🎵 ' + filename;
                 return;
             }
-
-            var elapsedMs = performance.now() - startPlayWallMs;
-            if (elapsedMs < 1100 && !isRevMode && !isXflac) {
-                await new Promise(function(r) { setTimeout(r, 1100 - elapsedMs); });
-            }
             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
             window.studioBuffer = decodedBuffer;
@@ -1743,13 +1730,27 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
             }
 
+            if (!window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                if (window.htmlGain && window.htmlGain.gain && window.htmlGain.gain.value < 0.01 && player && player.currentTime < 1.5 && !isRevMode) {
+                    window._internalSeekSyncGuardV370 = true;
+                    try { player.currentTime = 0; } catch (e) {}
+                    setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 250);
+                    if (window._studioClockV74_1 && window.audioCtx) {
+                        window._studioClockV74_1.startCtxTime = window.audioCtx.currentTime;
+                        window._studioClockV74_1.startTrackSec = 0;
+                        window._studioClockV74_1.lastKnownSec = 0;
+                    }
+                }
+                window.syncMasterPlaybackEngineV59(false);
+            }
+
             var isHugeTrack = (decodedBuffer.duration > 900);
             if (!isHugeTrack && !window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
                 window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decodedBuffer);
             }
             if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
-            if (!window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+            if (isRevMode && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
             }
             if (titleEl) {

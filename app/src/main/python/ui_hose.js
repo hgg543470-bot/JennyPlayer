@@ -532,25 +532,22 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
 
     const shouldPlayHose = !window._userPausedV75_2 && Boolean(window.isStudioPlaying || window._resumingFromUserPlayV232 || !player.paused);
     if (shouldPlayHose) {
+        if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
+            try {
+                const nowM = window.audioCtx.currentTime;
+                window.inputMixer.gain.cancelScheduledValues(nowM);
+                window.inputMixer.gain.setValueAtTime(1.0, nowM);
+                window.inputMixer.gain.value = 1.0;
+            } catch (e) {}
+        }
         const curTrueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
             ? window.getTruePlaybackTimeV74_2()
             : (player.currentTime || 0);
-        // Не перезапускаем уже играющий studioSourceNode, если буфер и скорость не менялись!
-        if (
-            window.isStudioPlaying &&
-            window.studioSourceNode &&
-            window.studioSourceNode.buffer === activeBuf &&
-            !window._forceRestartStudioNodeV264 &&
-            window._studioClockV74_1 &&
-            window._studioClockV74_1.active &&
-            Math.abs((window._studioClockV74_1.speed || 1.0) - targetSpd) < 0.003
-        ) {
-            return;
-        }
         if (window.studioSourceNode) {
             window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch (e) {}
             try { window.studioSourceNode.disconnect(); } catch (e) {}
+            window.studioSourceNode = null;
         }
         window.studioSourceNode = window.audioCtx.createBufferSource();
         window.studioSourceNode._isHoseSpliced = true;
@@ -746,8 +743,8 @@ setTimeout(() => {
 // Если по любой причине studioBuffer ещё не декодирован, подгружает его на лету из кэша или сети!
 window._loadingStudioBufV61 = false;
 window.ensureStudioBufferLoadedV61 = async function() {
-    if (window.studioBuffer || window._loadingStudioBufV61 || !window.currentPlayingTrack || window._userPausedV75_2) return;
-    if (String(window.currentPlayingTrack || '').indexOf('[YT Поток]') === 0) return;
+    if (window.studioBuffer || window._loadingStudioBufV61 || window._trackActivelyLoadingToRamV237 || !window.currentPlayingTrack || window._userPausedV75_2) return;
+    if (String(window.currentPlayingTrack || '').indexOf('[YT Поток]') === 0 || /\.xflac$/i.test(window.currentPlayingTrack || '')) return;
     if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
     if (!window.audioCtx) return;
 

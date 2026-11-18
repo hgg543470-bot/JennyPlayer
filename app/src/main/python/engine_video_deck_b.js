@@ -33,11 +33,12 @@
         var curve = new Float32Array(samples);
         for (var i = 0; i < samples; i++) {
             var x = (i - half) / half;
-            var ax = Math.abs(x);
-            var y = (ax <= 0.60)
+            var realX = x * 4.0;
+            var ax = Math.abs(realX);
+            var y = (ax <= 0.55)
                 ? ax
-                : (0.60 + 0.36 * Math.tanh((ax - 0.60) / 0.36));
-            curve[i] = (x < 0) ? -y : y;
+                : (0.55 + 0.37 * Math.tanh((ax - 0.55) / 0.37));
+            curve[i] = (realX < 0) ? -y : y;
         }
         curve[half] = 0.0;
         shaper.curve = curve;
@@ -52,7 +53,7 @@
         if (cfg.firEnabled && cfg.firSettings) {
             var fg = parseFloat(cfg.firSettings.gain) || 2.0;
             var firHot = 0.0;
-            if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.72;
+            if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.85;
             if (cfg.opt_cleanFir) {
                 var cfDb = parseFloat(cfg.val_cleanFir) || 0;
                 if (cfDb > 0) firHot += cfDb * 0.45;
@@ -102,7 +103,7 @@
                 ? window.computeBufferAutoGainDeckB(vd.studioBuffer, tRms)
                 : window.dbToLinearDeckB(tRms + 10);
             var actualRmsBoostDb = 20 * Math.log10(Math.max(1.0, fullGain));
-            var vr = Math.max(0, actualRmsBoostDb * 0.82);
+            var vr = Math.max(0, actualRmsBoostDb * 0.92);
             if (vr > 0.05) hotDb += vr;
         }
 
@@ -160,18 +161,28 @@
 
         for (var channel = 0; channel < 2; channel++) {
             var data = impulse.getChannelData(channel);
+            var energySum = 0.0;
             for (var i = 0; i < length; i++) {
                 var tailWindow = 0.5 * (1 + Math.cos(Math.PI * i / length));
+                var val = 0.0;
                 if (i === 0) {
-                    data[i] = 1.0;
+                    val = 1.0;
                 } else if (cfg.phaseFixEnabled) {
-                    data[i] = Math.exp(-i / (length / 2.5)) * tailWindow * 0.055 * lengthNorm * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
+                    val = Math.exp(-i / (length / 2.5)) * tailWindow * 0.055 * lengthNorm * Math.cos(i * 0.65) * (channel === 0 ? 1 : -1);
                 } else if (cfg.opt_cleanFir) {
                     var a = Math.exp(-i / (length / 6.0));
                     var b = Math.exp(-i / (length / 2.1));
-                    data[i] = (a - 0.46 * b) * tailWindow * 0.08 * lengthNorm * cleanLinear;
+                    val = (a - 0.46 * b) * tailWindow * 0.08 * lengthNorm * cleanLinear;
                 } else {
-                    data[i] = Math.exp(-i / (length / 3)) * tailWindow * 0.05 * lengthNorm;
+                    val = Math.exp(-i / (length / 3)) * tailWindow * 0.05 * lengthNorm;
+                }
+                data[i] = val;
+                energySum += val * val;
+            }
+            if (energySum > 1.0001) {
+                var norm = 1.0 / Math.sqrt(energySum);
+                for (var j = 0; j < length; j++) {
+                    data[j] *= norm;
                 }
             }
         }
@@ -414,9 +425,9 @@
 
         if (cfg.opt_masterCeil) {
             var autoPad = reg(ctx.createGain());
-            autoPad.gain.value = window.dbToLinearDeckB(padDb);
+            autoPad.gain.value = window.dbToLinearDeckB(padDb) * 0.25;
             var safeLim = reg(ctx.createDynamicsCompressor());
-            safeLim.threshold.value = -2.2;
+            safeLim.threshold.value = -14.2;
             safeLim.knee.value = 6.0;
             safeLim.ratio.value = 14.0;
             safeLim.attack.value = 0.0015;

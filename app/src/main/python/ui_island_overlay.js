@@ -682,7 +682,7 @@
         var singleOnly = window.getIslandSingleSourceModeV263();
         var snap = window.getActiveSourcesSnapshotV243 ? window.getActiveSourcesSnapshotV243() : {};
         var isYtDeckA = Boolean(
-            (window._isYoutubeDeckAActiveV253 || isYtTaggedNameV262(window.currentPlayingTrack)) &&
+            isYtTaggedNameV262(window.currentPlayingTrack) &&
             !/\.(xflac|flac)$/i.test(String(window.currentPlayingTrack || ''))
         );
         var isYtDeckB = Boolean(
@@ -1111,7 +1111,7 @@
         var torPct = sumLenB > 0 ? Math.min(99, Math.floor((sumDoneB * 100) / sumLenB)) : 0;
 
         var isYtDeckA = Boolean(
-            (window._isYoutubeDeckAActiveV253 || isYtTaggedNameV262(window.currentPlayingTrack)) &&
+            isYtTaggedNameV262(window.currentPlayingTrack) &&
             !/\.(xflac|flac)$/i.test(String(window.currentPlayingTrack || ''))
         );
         if (!isYtDeckA && window.currentPlayingTrack && !(window.isVideoFileNameV130 && window.isVideoFileNameV130(window.currentPlayingTrack))) {
@@ -1553,13 +1553,14 @@
         }
 
         var isYtDeckACmd = Boolean(
-            (window._isYoutubeDeckAActiveV253 || isYtTaggedNameV262(window.currentPlayingTrack)) &&
+            isYtTaggedNameV262(window.currentPlayingTrack) &&
             !/\.(xflac|flac)$/i.test(String(window.currentPlayingTrack || ''))
         );
         var isYtDeckBCmd = Boolean(
             window._isYoutubeDeckBActiveV262 ||
             (snap.stVid && snap.stVid.active && (isYtTaggedNameV262(snap.stVid.currentTitle) || isYtTaggedNameV262(snap.stVid.currentUrl)))
         );
+        var isYtExtCmd = Boolean(snap.extAud && (snap.extAud._ytVideoIdV252 || snap.extAud._previewOwnerModalV241 === 'jennyYoutubeStudioModalV230' || String(snap.extAud._pagePath || '').indexOf('yt:') === 0));
 
         // Перемотка ползунком (с учётом обратного воспроизведения isReversed и потоков YouTube / SoundCloud!)
         if (c === 'seek') {
@@ -1642,7 +1643,7 @@
             window._lastActiveMediaSourceV243 = 'youtube';
             var ytList = (window._ytStudioStateV252 && window._ytStudioStateV252.results) || [];
             var curYtIdx = (typeof window._lastYtTrackIdxV252 === 'number' && window._lastYtTrackIdxV252 >= 0) ? window._lastYtTrackIdxV252 : 0;
-            var ytPlayingNow = Boolean((snap.extPlaying && ! (window._islandPauseOptimisticUntilV263 && Date.now() < window._islandPauseOptimisticUntilV263)) || (snap.deckAPlaying && isYtDeckACmd) || (snap.deckBPlaying && isYtDeckBCmd));
+            var ytPlayingNow = Boolean((snap.extPlaying && isYtExtCmd && !(window._islandPauseOptimisticUntilV263 && Date.now() < window._islandPauseOptimisticUntilV263)) || (snap.deckAPlaying && isYtDeckACmd) || (snap.deckBPlaying && isYtDeckBCmd));
             var ytStMode = (window._ytStudioStateV252 && window._ytStudioStateV252.mode) || 'music';
             if (c === 'next' || c === 'prev') {
                 window._islandPauseOptimisticUntilV263 = 0;
@@ -1682,14 +1683,21 @@
                     }
                 } else if (isYtDeckACmd && window.currentPlayingTrack) {
                     window.pauseOtherIslandModesV263('youtube', 'deckA');
-                    window._userPausedV75_2 = false;
-                    if (snap.player && snap.player.paused) {
-                        snap.player.play().catch(function() {});
+                    if (typeof window.togglePlayV75_2 === 'function') {
+                        window._lastTogglePlayWallTsV232 = 0;
+                        window.togglePlayV75_2();
+                    } else {
+                        window._userPausedV75_2 = false;
+                        window._resumingFromUserPlayV232 = true;
+                        if (snap.player && snap.player.paused) {
+                            snap.player.play().catch(function() {});
+                        }
+                        if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                            window.syncMasterPlaybackEngineV59(false);
+                        }
+                        window._resumingFromUserPlayV232 = false;
                     }
-                    if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
-                        window.syncMasterPlaybackEngineV59(false);
-                    }
-                } else if (snap.extAud && snap.extAud._ytVideoIdV252) {
+                } else if (snap.extAud && isYtExtCmd) {
                     window.pauseOtherIslandModesV263('youtube');
                     snap.extAud.play().catch(function() {});
                 } else if (ytList.length > 0) {
@@ -1698,6 +1706,10 @@
                     } else if (typeof window.playYtStudioItemByIndexV252 === 'function') {
                         window.playYtStudioItemByIndexV252(curYtIdx, null);
                     }
+                } else if (window._lastYtVideoIdV252 && typeof window.playYtStudioItemByIndexV252 === 'function') {
+                    window._ytStudioStateV252 = window._ytStudioStateV252 || {};
+                    window._ytStudioStateV252.results = [window._lastYtTrackMetaV252 || { id: window._lastYtVideoIdV252, title: 'YouTube' }];
+                    window.playYtStudioItemByIndexV252(0, null);
                 } else if (typeof window.openYoutubeStudioModalV230 === 'function') {
                     window.openYoutubeStudioModalV230('music');
                 }
@@ -1831,12 +1843,19 @@
                 }
             }
             window.pauseOtherIslandModesV263('music', 'deckA');
-            window._userPausedV75_2 = false;
-            if (snap.player && snap.player.paused) {
-                snap.player.play().catch(function() {});
-            }
-            if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
-                window.syncMasterPlaybackEngineV59(false);
+            if (typeof window.togglePlayV75_2 === 'function') {
+                window._lastTogglePlayWallTsV232 = 0;
+                window.togglePlayV75_2();
+            } else {
+                window._userPausedV75_2 = false;
+                window._resumingFromUserPlayV232 = true;
+                if (snap.player && snap.player.paused) {
+                    snap.player.play().catch(function() {});
+                }
+                if (typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    window.syncMasterPlaybackEngineV59(false);
+                }
+                window._resumingFromUserPlayV232 = false;
             }
             setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 120);
             return;

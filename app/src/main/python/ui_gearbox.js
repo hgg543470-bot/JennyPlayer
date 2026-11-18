@@ -1035,6 +1035,9 @@ window.showWebApiReverseConflictModalV70 = function(requestedWebGear) {
         player._hasRamSeekHookV70 = true;
 
         player.addEventListener('seeked', () => {
+            if (window._internalSeekSyncGuardV370 || (window.isStudioPlaying && window.studioSourceNode && !window.studioSourceNode._isStoppedV265)) {
+                return;
+            }
             const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
             if (window.studioSourceNode || gKey === 'jbuf-shift' || gKey === 'vinyl-shift' || gKey === 'jbuf-lock') {
                 if (window.studioSourceNode) {

@@ -40,32 +40,34 @@
     // -------------------------------------------------------------------------
     function installDeckAAudioPlayerPauseShieldV370() {
         var player = document.getElementById('audioPlayer');
-        if (!player || player._v370PauseShieldInstalled) return;
-        player._v370PauseShieldInstalled = true;
+        if (!player) return;
 
-        // Перехватываем событие pause на стадии capture ДО обработчиков engine_audio.js:539 и ui_playback.js:512!
-        player.addEventListener('pause', function(ev) {
-            // Если сейчас активно играет WebAudio RAM-буфер (window.studioSourceNode) и пользователь НЕ нажимал паузу:
-            // это фоновый останов/таймаут беззвучного <audio> элемента (htmlGain = 0).
-            // НИКОГДА не глушим inputMixer и НЕ останавливаем studioSourceNode!
-            if (window.isStudioPlaying && window.studioSourceNode && !window._userPausedV75_2 && !player.ended) {
-                if (ev && typeof ev.stopImmediatePropagation === 'function') {
-                    ev.stopImmediatePropagation();
+        if (!player._v370PauseShieldInstalled) {
+            player._v370PauseShieldInstalled = true;
+            // Перехватываем событие pause на стадии capture ДО обработчиков engine_audio.js и ui_playback.js!
+            player.addEventListener('pause', function(ev) {
+                // Если сейчас активно играет WebAudio RAM-буфер (window.studioSourceNode) и пользователь НЕ нажимал паузу:
+                // это фоновый останов/таймаут беззвучного <audio> элемента (htmlGain = 0).
+                // НИКОГДА не глушим inputMixer и НЕ останавливаем studioSourceNode!
+                if (window.isStudioPlaying && window.studioSourceNode && !window._userPausedV75_2 && !player.ended) {
+                    if (ev && typeof ev.stopImmediatePropagation === 'function') {
+                        ev.stopImmediatePropagation();
+                    }
+                    if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
+                        try {
+                            var now = window.audioCtx.currentTime;
+                            window.inputMixer.gain.cancelScheduledValues(now);
+                            window.inputMixer.gain.setValueAtTime(1.0, now);
+                            window.inputMixer.gain.value = 1.0;
+                        } catch (e) {}
+                    }
+                    if (typeof window.updateTrackListPlayIcons === 'function') {
+                        window.updateTrackListPlayIcons();
+                    }
+                    return;
                 }
-                if (window.audioCtx && window.inputMixer && window.inputMixer.gain) {
-                    try {
-                        var now = window.audioCtx.currentTime;
-                        window.inputMixer.gain.cancelScheduledValues(now);
-                        window.inputMixer.gain.setValueAtTime(1.0, now);
-                        window.inputMixer.gain.value = 1.0;
-                    } catch (e) {}
-                }
-                if (typeof window.updateTrackListPlayIcons === 'function') {
-                    window.updateTrackListPlayIcons();
-                }
-                return;
-            }
-        }, true);
+            }, true);
+        }
 
         // Также переопределяем player.onpause (из ui_playback.js:512), чтобы он:
         // 1) Никогда не убивал живой studioSourceNode, если _userPausedV75_2 === false
@@ -153,6 +155,7 @@
         };
     }
     installDeckAAudioPlayerPauseShieldV370();
+    document.addEventListener('DOMContentLoaded', installDeckAAudioPlayerPauseShieldV370);
     setTimeout(installDeckAAudioPlayerPauseShieldV370, 150);
     setTimeout(installDeckAAudioPlayerPauseShieldV370, 600);
 })();

@@ -7521,7 +7521,8 @@
                 }
             }
         }
-        if ((st && st.active) || document.getElementById('settingsModalDeckB')) {
+        var modalB = document.getElementById('settingsModalDeckB');
+        if ((st && st.active) || (modalB && modalB.classList && modalB.classList.contains('open'))) {
             window.updateVideoAvSyncRadarUIV367();
         }
     }, 220);

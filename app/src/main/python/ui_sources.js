@@ -3673,8 +3673,17 @@ window.stopAllExternalStreamsV97 = function() {
 
     // Sync Play/Pause button across whichever single mini-player is active
     window.toggleKhMiniPlayPauseV90 = function() {
+        var ytModal = document.getElementById('jennyYoutubeStudioModalV230');
+        var isYtModalVisible = Boolean(ytModal && ytModal.style.display !== 'none');
+        if (isYtModalVisible || window._isYoutubeDeckAActiveV253) {
+            if (typeof window.togglePlayV75_2 === 'function') {
+                window._lastTogglePlayWallTsV232 = 0;
+                window.togglePlayV75_2();
+                return;
+            }
+        }
         var aud = window._khStateV88 && window._khStateV88.previewAudio;
-        if (!aud) {
+        if (!aud || !aud.src) {
             window.hideAllStudioMiniPlayersV241();
             return;
         }
@@ -5199,28 +5208,27 @@ window.stopAllExternalStreamsV97 = function() {
             return;
         }
 
+        if (typeof window.stopAllExternalStreamsV97 === 'function') {
+            try { window.stopAllExternalStreamsV97(); } catch (e) {}
+        }
+        if (window._khStateV88 && window._khStateV88.previewAudio) {
+            try {
+                window._khStateV88.previewAudio.pause();
+                window._khStateV88.previewAudio.removeAttribute('src');
+                window._khStateV88.previewAudio.load();
+            } catch (e) {}
+        }
+        if (typeof window.forceStopPauseDeckAAudioV232 === 'function') {
+            try { window.forceStopPauseDeckAAudioV232(false); } catch (e) {}
+        }
         if (typeof window.pauseOtherIslandModesV263 === 'function') {
             try { window.pauseOtherIslandModesV263('youtube', 'deckA'); } catch (e) {}
-        } else {
-            if (typeof window.stopAllExternalStreamsV97 === 'function') {
-                try { window.stopAllExternalStreamsV97(); } catch (e) {}
-            }
-            var stVidCheck = window._vidStateV130 || {};
-            var isDeckBYtNow = Boolean(
-                window._isYoutubeDeckBActiveV262 ||
-                (stVidCheck.active && (String(stVidCheck.currentTitle || '').indexOf('[YT') === 0 || String(stVidCheck.currentUrl || '').indexOf('/api/youtube/') !== -1))
-            );
-            if (isDeckBYtNow && typeof window.closeVideoPlayerV130 === 'function') {
-                window._isYoutubeDeckBActiveV262 = false;
-                try { window.closeVideoPlayerV130(); } catch (e) {}
-            }
         }
 
         st.currentIdx = idx;
         window._lastYtTrackIdxV252 = idx;
         window._lastYtVideoIdV252 = item.id;
         window._lastYtTrackMetaV252 = item;
-        window._isYoutubeDeckAActiveV253 = true;
         window._islandActiveModeV245 = 'youtube';
         window._islandExplicitModeTsV245 = Date.now();
         window._forcedIslandModeV245 = 'youtube';

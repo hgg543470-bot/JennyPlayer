@@ -23,7 +23,26 @@ window._activeBufferSourcesV71 = new Set();
             const ctxRef = this;
             const node = origCreate.apply(this, arguments);
             const origStart = node.start;
+            const origStop = node.stop;
+            node.stop = function() {
+                node._isStoppedV265 = true;
+                if (window.videoDeckV131 && ctxRef === window.videoDeckV131.ctx) {
+                    if (window.videoDeckV131.activeSources) window.videoDeckV131.activeSources.delete(node);
+                    if (window.videoDeckV131.studioSourceNode === node) {
+                        window.videoDeckV131.studioSourceNode = null;
+                        window.videoDeckV131.isStudioPlaying = false;
+                    }
+                } else {
+                    if (window._activeBufferSourcesV71) window._activeBufferSourcesV71.delete(node);
+                    if (window.studioSourceNode === node) {
+                        window.studioSourceNode = null;
+                        window.isStudioPlaying = false;
+                    }
+                }
+                return origStop.apply(this, arguments);
+            };
             node.start = function() {
+                node._isStoppedV265 = false;
                 if (window.videoDeckV131 && ctxRef === window.videoDeckV131.ctx) {
                     window.videoDeckV131.activeSources.forEach(oldNode => {
                         if (oldNode !== node) { oldNode.onended = null; try { oldNode.stop(); } catch (e) {} try { oldNode.disconnect(); } catch (e) {} }
@@ -44,6 +63,14 @@ window._activeBufferSourcesV71 = new Set();
                 window._activeBufferSourcesV71.add(node);
                 if (window.htmlGain && window.htmlGain.gain) {
                     window.htmlGain.gain.value = 0.0;
+                }
+                if (window.audioCtx && window.inputMixer && window.inputMixer.gain && !window._userPausedV75_2) {
+                    try {
+                        const nowM = window.audioCtx.currentTime;
+                        window.inputMixer.gain.cancelScheduledValues(nowM);
+                        window.inputMixer.gain.setValueAtTime(1.0, nowM);
+                        window.inputMixer.gain.value = 1.0;
+                    } catch (e) {}
                 }
                 return origStart.apply(this, arguments);
             };
@@ -1747,6 +1774,7 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
     var bindSingleTrackEndStopGuardV232 = function() {
         var player = document.getElementById('audioPlayer');
         if (!player) return;
+        player._v232EndGuardBound = true;
         player.onended = function() {
             // Если пользователь уже поставил на паузу — ничего не переключаем
             if (window._userPausedV75_2) {
@@ -1784,6 +1812,7 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         };
     };
     bindSingleTrackEndStopGuardV232();
+    document.addEventListener('DOMContentLoaded', bindSingleTrackEndStopGuardV232);
     setTimeout(bindSingleTrackEndStopGuardV232, 300);
 })();
 
@@ -1913,16 +1942,13 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             : baseBuf;
         if (!activeBuf) return false;
 
-        if (
-            window.isStudioPlaying &&
-            window.studioSourceNode &&
-            window.studioSourceNode.buffer === activeBuf &&
-            !window._forceRestartStudioNodeV264 &&
-            window._studioClockV74_1 &&
-            window._studioClockV74_1.active &&
-            Math.abs((window._studioClockV74_1.speed || 1.0) - targetSpd) < 0.003
-        ) {
-            return true;
+        if (window.audioCtx && window.inputMixer && window.inputMixer.gain && !window._userPausedV75_2) {
+            try {
+                var nowM = window.audioCtx.currentTime;
+                window.inputMixer.gain.cancelScheduledValues(nowM);
+                window.inputMixer.gain.setValueAtTime(1.0, nowM);
+                window.inputMixer.gain.value = 1.0;
+            } catch (e) {}
         }
 
         if (window.htmlGain && window.htmlGain.gain) {
@@ -2265,9 +2291,18 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                         }
                     }
                 }
+                // Если окно ±1 минута вокруг курсора уже загружено, в фоне спокойно докачиваем остальные куски трека
                 if (pick === -1) {
-                    await new Promise(function(r) { setTimeout(r, 350); });
-                    continue;
+                    for (var ext = 0; ext < numPieces; ext++) {
+                        var candExt = (curP + ext * stepDir + numPieces * 4) % numPieces;
+                        if (pieceMap[candExt] === 0 && pieceFailCounts[candExt] < 3) {
+                            pick = candExt;
+                            break;
+                        }
+                    }
+                }
+                if (pick === -1) {
+                    break;
                 }
                 var ok = await fetchPiece(pick);
                 if (!ok) {

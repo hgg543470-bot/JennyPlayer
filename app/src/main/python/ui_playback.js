@@ -292,11 +292,15 @@ window.cloneAndReverseBuffer = async function(originalBuffer) {
         originalBuffer.length,
         originalBuffer.sampleRate
     );
+    const len = originalBuffer.length;
     for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
         let oldData = originalBuffer.getChannelData(channel);
         let newData = newBuffer.getChannelData(channel);
-        for (let i = 0; i < originalBuffer.length; i++) {
-            newData[i] = oldData[originalBuffer.length - 1 - i];
+        for (let i = 0; i < len; i++) {
+            newData[i] = oldData[len - 1 - i];
+            if ((i & 524287) === 524287) {
+                await new Promise(r => setTimeout(r, 6));
+            }
         }
     }
     return newBuffer;
@@ -505,45 +509,68 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if(player) {
-        player.onplay = () => {
-            let btn = document.getElementById('playPauseBtn');
-            if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
-            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
+        if (!player._v370PauseShieldInstalled) {
+            player.onplay = () => {
+                let btn = document.getElementById('playPauseBtn');
+                if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "playing";
 
-            let targetSpd = window.getTargetPlaybackSpeed();
-            if (Math.abs(player.playbackRate - targetSpd) > 0.001 && player.playbackRate !== 10.0) {
-                player.playbackRate = targetSpd;
-            }
+                let targetSpd = window.getTargetPlaybackSpeed();
+                if (Math.abs(player.playbackRate - targetSpd) > 0.001 && player.playbackRate !== 10.0) {
+                    player.playbackRate = targetSpd;
+                }
 
-            if (window.studioSourceNode) { window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){} window.studioSourceNode.disconnect(); }
+                if (window.isStudioPlaying && window.studioSourceNode && !window.studioSourceNode._isStoppedV265) {
+                    if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 0.0;
+                    if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+                    return;
+                }
 
-            if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0 && !(window.appConfig && window.appConfig.elasticHoseMode)) {
-                let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-                window.studioSourceNode = window.audioCtx.createBufferSource();
-                window.studioSourceNode.buffer = isVisualReverse ? window.reversedStudioBuffer : window.studioBuffer;
-                window.studioSourceNode.playbackRate.value = player.playbackRate;
-                window.studioSourceNode.connect(window.inputMixer);
-                window.studioSourceNode.start(0, player.currentTime);
-                window.isStudioPlaying = true;
-            }
-            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
-        };
+                if (window.studioSourceNode) {
+                    window.studioSourceNode.onended = null;
+                    try { window.studioSourceNode.stop(); } catch(e){}
+                    try { window.studioSourceNode.disconnect(); } catch(e){}
+                    window.studioSourceNode = null;
+                    window.isStudioPlaying = false;
+                }
 
-        player.onpause = () => {
-            let btn = document.getElementById('playPauseBtn');
-            if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
+                if (window.appConfig.studioMode && window.studioBuffer && window.htmlGain && window.htmlGain.gain.value === 0 && !(window.appConfig && window.appConfig.elasticHoseMode)) {
+                    let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+                    window.studioSourceNode = window.audioCtx.createBufferSource();
+                    window.studioSourceNode.buffer = isVisualReverse ? window.reversedStudioBuffer : window.studioBuffer;
+                    window.studioSourceNode.playbackRate.value = player.playbackRate;
+                    window.studioSourceNode.connect(window.inputMixer);
+                    window.studioSourceNode.start(0, player.currentTime);
+                    window.isStudioPlaying = true;
+                }
+                if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+            };
 
-            if (window.studioSourceNode) {
-                window.studioSourceNode.onended = null; try { window.studioSourceNode.stop(); } catch(e){}
-                window.isStudioPlaying = false;
-            }
-            if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
-        };
+            player.onpause = () => {
+                if (window.isStudioPlaying && window.studioSourceNode && !window._userPausedV75_2 && !player.ended) {
+                    return;
+                }
+                let btn = document.getElementById('playPauseBtn');
+                if(btn) btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = "paused";
+
+                if (window.studioSourceNode) {
+                    window.studioSourceNode.onended = null;
+                    try { window.studioSourceNode.stop(); } catch(e){}
+                    try { window.studioSourceNode.disconnect(); } catch(e){}
+                    window.studioSourceNode = null;
+                    window.isStudioPlaying = false;
+                }
+                if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
+            };
+        }
 
         player.onseeking = () => {};
 
         player.onseeked = () => {
+            if (window._internalSeekSyncGuardV370 || (window.isStudioPlaying && window.studioSourceNode && !window.studioSourceNode._isStoppedV265)) {
+                return;
+            }
             if (!player.paused && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
             }
@@ -560,26 +587,30 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         };
 
-        player.onended = () => {
-            let wasReversed = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
+        if (!player._v232EndGuardBound) {
+            player.onended = () => {
+                if (window._userPausedV75_2) return;
+                let wasReversed = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
 
-            if (window.scrubState && window.scrubState.active && !window.scrubState.locked) {
-                if(typeof window.stopScrub === 'function') window.stopScrub(true);
-            }
+                if (window.scrubState && window.scrubState.active && !window.scrubState.locked) {
+                    if(typeof window.stopScrub === 'function') window.stopScrub(true);
+                }
 
-            if (wasReversed) {
-                window.playPreviousTrack();
-            } else {
-                window.playNextTrack();
-            }
-        };
+                if (wasReversed) {
+                    window.playPreviousTrack();
+                } else {
+                    window.playNextTrack();
+                }
+            };
+        }
 
         player.ontimeupdate = () => {
             let effDur = (isFinite(player.duration) && player.duration > 0) ? player.duration : (window.studioBuffer ? window.studioBuffer.duration : 0);
             if (effDur > 0) {
                 let isVisualReverse = window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed);
-                if(typeof window.updateProgressUI === 'function') window.updateProgressUI(player.currentTime, effDur, isVisualReverse);
-                window.updateCenterCurrentTime(player.currentTime, effDur, isVisualReverse);
+                let curSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : player.currentTime;
+                if(typeof window.updateProgressUI === 'function') window.updateProgressUI(curSec, effDur, isVisualReverse);
+                window.updateCenterCurrentTime(curSec, effDur, isVisualReverse);
             }
         };
     }
