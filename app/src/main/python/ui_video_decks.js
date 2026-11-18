@@ -643,26 +643,48 @@
             }
 
             // V215: Сбрасываем старую длительность (21:22) и позицию (4:14 / 6:32) от прошлого видео ПЕРЕД открытием нового!
+            var isYtOpenV263 = Boolean((opts && opts.isYoutube) || rawInputUrl.indexOf('/api/youtube/') !== -1 || String(titleStr || '').indexOf('[YT') === 0);
+            var preKnownDurV263 = (isYtOpenV263 && Number(window._ytDeckBKnownDurationSecV253 || 0) > 0)
+                ? Number(window._ytDeckBKnownDurationSecV253)
+                : Number((opts && opts.duration) || 0);
+            if (!isYtOpenV263) {
+                window._ytDeckBKnownDurationSecV253 = 0;
+            }
             if (window._vidStateV130) {
-                window._vidStateV130.trueDuration = 0;
-                window._vidStateV130.knownDurationSec = 0;
+                window._vidStateV130.trueDuration = preKnownDurV263 > 0 ? preKnownDurV263 : 0;
+                window._vidStateV130.knownDurationSec = preKnownDurV263 > 0 ? preKnownDurV263 : 0;
                 window._vidStateV130.remuxBaseOffset = 0;
                 window._vidStateV130._pendingSeekSecV167 = undefined;
                 window._vidStateV130.rawTorStreamUrlV214 = rawInputUrl;
             }
-            window._jennyFullMovieDurationSecV210 = 0;
-            if (window._vcoreLastProbeV166) window._vcoreLastProbeV166.duration_sec = 0;
+            window._jennyFullMovieDurationSecV210 = preKnownDurV263 > 0 ? preKnownDurV263 : 0;
+            if (window._vcoreLastProbeV166) window._vcoreLastProbeV166.duration_sec = preKnownDurV263 > 0 ? preKnownDurV263 : 0;
 
             var cElInit = document.getElementById('v130CurTime');
             var dElInit = document.getElementById('v130DurTime');
             var sElInit = document.getElementById('v130SeekSlider');
+            var fmtInitV263 = window.formatVideoTimeV210 || window.fmtKhSecV90 || function(s) {
+                s = Math.max(0, Math.floor(s || 0));
+                return Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+            };
             if (cElInit) cElInit.innerText = '0:00';
-            if (dElInit) dElInit.innerText = 'Поток';
+            if (dElInit) dElInit.innerText = preKnownDurV263 > 0 ? fmtInitV263(preKnownDurV263) : 'Поток';
             if (sElInit) sElInit.value = '0';
 
             var r = _origOpenVidV212.call(this, streamUrl, titleStr, opts);
             var st = window._vidStateV130;
             var vid = document.getElementById('jennyVideoElV130');
+            if (st && preKnownDurV263 > 0) {
+                st.trueDuration = preKnownDurV263;
+                st.knownDurationSec = preKnownDurV263;
+                window._jennyFullMovieDurationSecV210 = preKnownDurV263;
+                if (typeof window.syncInternalVideoSliderUIV212 === 'function') {
+                    window.syncInternalVideoSliderUIV212(0, preKnownDurV263);
+                }
+                if (typeof window.updateProgressUIDeckB === 'function') {
+                    window.updateProgressUIDeckB(0, preKnownDurV263, false);
+                }
+            }
 
             if (check.isReadyLocal) {
                 if (st) {
@@ -683,8 +705,8 @@
                 var btnSave = document.getElementById('v130BtnSaveVideo');
                 if (btnHub) btnHub.style.display = 'none';
                 if (btnSave) btnSave.style.display = 'none';
-                if (typeof window.probeTorrentVideoDurationV214 === 'function') {
-                    setTimeout(function() { window.probeTorrentVideoDurationV214(check.url); }, 150);
+                if (typeof window.probeTorrentVideoDurationV214 === 'function' && preKnownDurV263 <= 0) {
+                    setTimeout(function() { window.probeTorrentVideoDurationV214(check.url); }, 10);
                 }
             } else {
                 if (st) {
@@ -693,10 +715,10 @@
                     st.rawTorStreamUrlV214 = rawInputUrl;
                     st.remuxBaseOffset = 0;
                     st._pendingSeekSecV167 = undefined;
-                    if (typeof window.probeTorrentVideoDurationV214 === 'function') {
-                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 800);
-                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 2200);
-                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 4800);
+                    if (typeof window.probeTorrentVideoDurationV214 === 'function' && preKnownDurV263 <= 0 && !isYtOpenV263) {
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 20);
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 1200);
+                        setTimeout(function() { window.probeTorrentVideoDurationV214(rawInputUrl); }, 3500);
                     }
                 }
                 if (vid) {
@@ -1346,10 +1368,18 @@
         if (!vid) vid = document.getElementById('jennyVideoElV130');
         var st = window._vidStateV130 || {};
         var vd = window.videoDeckV131 || {};
-        var probeDur = (window._vcoreLastProbeV166 && window._vcoreLastProbeV166.duration_sec) || window._jennyFullMovieDurationSecV210 || 0;
+        var curUrlStr = String(st.rawTorStreamUrlV214 || st.currentUrl || (vid && vid.src) || '');
+        var isLiveMuxPipe = Boolean(st.usingRemux || curUrlStr.indexOf('/api/youtube/live_mux_v253') !== -1 || curUrlStr.indexOf('/api/video/live_remux') !== -1);
+        var ytDur = Number(window._ytDeckBKnownDurationSecV253 || 0);
+        if ((window._isYoutubeDeckBActiveV262 || curUrlStr.indexOf('/api/youtube/') !== -1) && ytDur > 0) {
+            st.trueDuration = ytDur;
+            st.knownDurationSec = ytDur;
+            return ytDur;
+        }
+        var probeDur = (window._vcoreLastProbeV166 && window._vcoreLastProbeV166.duration_sec) || window._jennyFullMovieDurationSecV210 || ytDur || 0;
 
-        // Если нативное видео (до включения live_remux) уже сообщило реальную длительность серии (>35 сек) — запоминаем её в st.trueDuration!
-        if (vid && !st.usingRemux && isFinite(vid.duration) && vid.duration > 35) {
+        // Если нативное видео (до включения live_remux/live_mux) уже сообщило реальную длительность серии (>35 сек) — запоминаем её в st.trueDuration!
+        if (vid && !isLiveMuxPipe && isFinite(vid.duration) && vid.duration > 35) {
             st.trueDuration = Math.max(st.trueDuration || 0, vid.duration);
         }
 
@@ -1358,9 +1388,9 @@
         if (vd.studioBuffer && vd.studioBuffer._trueDurationV72 > 12.5) return vd.studioBuffer._trueDurationV72;
         if (probeDur > 12.5) return probeDur;
 
-        // ВНИМАНИЕ V216: если включён потоковый ремукс (st.usingRemux), vid.duration равен только длине подгруженного куска (0:03 -> 0:06 -> 0:22).
+        // ВНИМАНИЕ V216/V263: если включён потоковый ремукс (isLiveMuxPipe), vid.duration равен только длине подгруженного куска (0:03 -> 0:06 -> 0:22).
         // Никогда не возвращаем растущий кусок vid.duration как общую длительность фильма!
-        if (!st.usingRemux && vid && isFinite(vid.duration) && vid.duration > 0) {
+        if (!isLiveMuxPipe && vid && isFinite(vid.duration) && vid.duration > 0) {
             return vid.duration;
         }
         return st.trueDuration || st.knownDurationSec || probeDur || 0;
@@ -3278,8 +3308,12 @@
         if (!vid || !st) return;
 
         var isRevMode = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
-        var isActuallyPlaying = (!vid.paused && !vid.ended && vid.readyState >= 2) || isRevMode;
+        var isActuallyPlaying = (!st.userPaused && (window._vidPlayIntentV132 || (!vid.paused && !vid.ended))) || isRevMode;
         if (st.userPaused || !isActuallyPlaying) {
+            var curDeckBModeV263 = (window._isYoutubeDeckBActiveV262 || String(st.currentUrl || '').indexOf('/api/youtube/') !== -1 || String(st.currentTitle || '').indexOf('[YT') === 0) ? 'youtube' : 'music';
+            if (typeof window.pauseOtherIslandModesV263 === 'function') {
+                try { window.pauseOtherIslandModesV263(curDeckBModeV263, 'deckB'); } catch (e) {}
+            }
             var resumeSec = (st._pausedSeekSecV355 !== undefined && isFinite(st._pausedSeekSecV355))
                 ? Number(st._pausedSeekSecV355)
                 : (window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (st.remuxBaseOffset || 0));
@@ -6585,7 +6619,7 @@
             var revL = revAudioBuf ? revAudioBuf.getChannelData(0) : null;
             var revR = revAudioBuf ? revAudioBuf.getChannelData(1) : null;
 
-            var PIECE_SEC = 45;
+            var PIECE_SEC = 30;
             var numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
             var pieceMap = new Uint8Array(numPieces);
             var revPieceMap = new Uint8Array(numPieces);
@@ -6671,12 +6705,16 @@
                         // Fill Buffer #3 (Video Forward)
                         chL.set(leftArr.subarray(0, maxCopy), startFrame);
                         chR.set(rightArr.subarray(0, maxCopy), startFrame);
-                        // Fill Buffer #4 (Video Reverse)
+                        // Fill Buffer #4 (Video Reverse) with periodic yield so UI/video thread never stutters
                         if (revL && revR) {
                             var dstIdx = totalFrames - 1 - startFrame;
                             for (var i = 0; i < maxCopy; i++, dstIdx--) {
                                 revL[dstIdx] = leftArr[i];
                                 revR[dstIdx] = rightArr[i];
+                                if (i > 0 && (i % 240000) === 0) {
+                                    await new Promise(function(r) { setTimeout(r, 0); });
+                                    if (mySess !== vd.ramDecodeSession) return false;
+                                }
                             }
                         }
                     }
@@ -6704,8 +6742,16 @@
                         try { window.computeBufferAutoGainDeckB(audioBuf, vd.config.val_autoRms); } catch (e) {}
                     }
 
+                    var needRamSwitchNow = Boolean(
+                        window.isReversedDeckB ||
+                        vd.isReversed ||
+                        (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) ||
+                        Math.abs(Number(window._jennyVideoSpeedV170 || vd.speed || 1.0) - 1.0) >= 0.005
+                    );
                     if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
-                    if (typeof window.syncVideoRamEngineV211 === 'function') window.syncVideoRamEngineV211(false, Boolean(isUrgent && !vd.isStudioPlaying));
+                    if (needRamSwitchNow && typeof window.syncVideoRamEngineV211 === 'function') {
+                        window.syncVideoRamEngineV211(false, Boolean(isUrgent && !vd.isStudioPlaying));
+                    }
                     if (typeof window.updateVideoAvSyncRadarUIV367 === 'function') window.updateVideoAvSyncRadarUIV367();
                     return true;
                 } catch (e) {
@@ -6714,7 +6760,7 @@
                 }
             };
 
-            // Expose on-demand urgent piece loader so seeking or pressing Reverse at 12:44 prioritizes that piece in ~150ms!
+            // Expose on-demand urgent piece loader so seeking or pressing Reverse prioritizes ±1 min around targetSec!
             vd._ensureUrgentPieceAtSecV369 = function(targetSec) {
                 if (mySess !== vd.ramDecodeSession || !window._vidStateV130 || !window._vidStateV130.active) return;
                 var pIdx = Math.max(0, Math.min(numPieces - 1, Math.floor(Math.max(0, Number(targetSec) || 0) / PIECE_SEC)));
@@ -6728,54 +6774,63 @@
                 }
             };
 
+            // V263: Sliding-window chunk preloader: loads ONLY +60s (1 minute forward) and -60s (1 minute backward) around current position!
             var pickNextTask = function() {
                 var curSec = window.getEffectiveVideoCurrentTimeV167 ? window.getEffectiveVideoCurrentTimeV167(vid) : (vid ? vid.currentTime : 0);
                 var curPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(Math.max(0, curSec) / PIECE_SEC)));
                 var isRev = Boolean(window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed) || vd.isReversed);
                 var stepDir = isRev ? -1 : 1;
+                var piecesPerMin = Math.max(2, Math.ceil(60.0 / PIECE_SEC)); // 2 pieces * 30s = 60s (1 min)
 
-                // 1) Urgent: current piece and immediate next piece in playback direction (single 45s piece for ~150ms response!)
-                for (var look = 0; look < 2; look++) {
-                    var cand = curPiece + look * stepDir;
-                    if (cand >= 0 && cand < numPieces && pieceMap[cand] === 0 && failCounts[cand] < 4) {
-                        return { idx: cand, count: 1, urgent: true };
+                // 1) Current piece + 1 minute ahead in playback direction
+                for (var fwd = 0; fwd <= piecesPerMin; fwd++) {
+                    var candFwd = curPiece + fwd * stepDir;
+                    if (candFwd >= 0 && candFwd < numPieces && pieceMap[candFwd] === 0 && failCounts[candFwd] < 4) {
+                        return { idx: candFwd, count: 1, urgent: (fwd <= 1) };
                     }
                 }
-                // 2) Background batch: grab up to 4 contiguous unloaded pieces (180s) at once!
-                for (var offset = 0; offset < numPieces; offset++) {
-                    var candBg = (curPiece + offset) % numPieces;
-                    if (pieceMap[candBg] === 0 && failCounts[candBg] < 4) {
-                        var batchLen = 1;
-                        while (batchLen < 4 && (candBg + batchLen) < numPieces && pieceMap[candBg + batchLen] === 0 && failCounts[candBg + batchLen] < 4) {
-                            batchLen++;
-                        }
-                        return { idx: candBg, count: batchLen, urgent: false };
+                // 2) 1 minute behind current playback position
+                for (var bwd = 1; bwd <= piecesPerMin; bwd++) {
+                    var candBwd = curPiece - bwd * stepDir;
+                    if (candBwd >= 0 && candBwd < numPieces && pieceMap[candBwd] === 0 && failCounts[candBwd] < 4) {
+                        return { idx: candBwd, count: 1, urgent: false };
                     }
                 }
                 return null;
             };
 
-            // Step A: Immediately decode the urgent starter piece around current time before launching bulk workers
+            // Step A: Immediately decode the urgent starter piece at current time
             var firstTask = pickNextTask();
             if (firstTask) {
                 await fetchPieceBatch(firstTask.idx, 1, true);
             }
 
-            // Step B: Launch 4 parallel workers to unpack the remaining pieces in 180s batches!
+            // Step B: Single non-blocking sliding-window worker that keeps ±1 minute around current time preloaded
             var workerLoop = async function() {
                 while (mySess === vd.ramDecodeSession && window._vidStateV130 && window._vidStateV130.active) {
+                    if (audioBuf._loadedCountV72 >= numPieces) break;
                     var task = pickNextTask();
-                    if (!task) break;
+                    if (!task) {
+                        if (vd._isLoadingRamV359) {
+                            vd._isLoadingRamV359 = false;
+                            if (typeof window.refreshFourBuffersHudV359 === 'function') window.refreshFourBuffersHudV359();
+                        }
+                        await new Promise(function(r) { setTimeout(r, 350); });
+                        continue;
+                    }
+                    vd._isLoadingRamV359 = true;
                     var ok = await fetchPieceBatch(task.idx, task.count, task.urgent);
                     if (mySess !== vd.ramDecodeSession) return;
                     if (!ok) {
                         failCounts[task.idx]++;
-                        await new Promise(function(r) { setTimeout(r, 100); });
+                        await new Promise(function(r) { setTimeout(r, 250); });
+                    } else {
+                        await new Promise(function(r) { setTimeout(r, 25); });
                     }
                 }
             };
 
-            await Promise.all([workerLoop(), workerLoop(), workerLoop(), workerLoop()]);
+            await workerLoop();
 
             if (mySess === vd.ramDecodeSession) {
                 vd._isLoadingRamV359 = false;
@@ -7943,7 +7998,7 @@
             ? Math.max(0, curSec - effLeadSec * targetSpd)
             : Math.max(0, curSec + effLeadSec * targetSpd);
 
-        var pSec = (vd.studioBuffer && vd.studioBuffer._pieceSecV72) || 45;
+        var pSec = (vd.studioBuffer && vd.studioBuffer._pieceSecV72) || 30;
         var curP = (vd.studioBuffer && vd.studioBuffer._pieceMapV72 && vd.studioBuffer._pieceMapV72.length > 0)
             ? Math.max(0, Math.min(vd.studioBuffer._pieceMapV72.length - 1, Math.floor((isRev ? Math.max(0, audioTargetSec - 0.3) : audioTargetSec) / pSec)))
             : -1;
@@ -7957,7 +8012,9 @@
         }
 
         var studioOn = Boolean(!vd.config || vd.config.studioMode !== false);
-        var useRamEngine = studioOn && isPieceReady && (isRev || gKey !== 'neutral');
+        // V263: At normal 1.0x Forward playback, keep using <video>'s native hardware-synced audio through vd.htmlGain -> vd.inputMixer
+        // so background RAM chunk preloading never causes a 0.5s audio source switch stutter!
+        var useRamEngine = studioOn && isPieceReady && (isRev || (gKey !== 'neutral' && Math.abs(targetSpd - 1.0) >= 0.005));
 
         // Check if `<video>` is currently paused or buffering a seek
         var isVidReadyAndPlaying = Boolean(!vid.paused && !vid.ended && vid.readyState >= 2 && !vid.seeking && !window._vidIsBufferingV132);
@@ -8183,7 +8240,19 @@
 (function() {
     var _origGetEffVidDurV253 = window.getEffectiveVideoDurationV210;
     if (typeof _origGetEffVidDurV253 === 'function') {
-        window.getEffectiveVideoDurationV210 = function(vidEl) {
+        window.getEffectiveVideoDurationV167 = window.getEffectiveVideoDurationV210 = function(vidEl) {
+            var stNow = window._vidStateV130;
+            var isYtDeckB = Boolean(
+                window._isYoutubeDeckBActiveV262 ||
+                (stNow && (String(stNow.currentUrl || '').indexOf('/api/youtube/') !== -1 || String(stNow.currentTitle || '').indexOf('[YT') === 0))
+            );
+            if (isYtDeckB && Number(window._ytDeckBKnownDurationSecV253 || 0) > 0) {
+                var ytFullDur = Number(window._ytDeckBKnownDurationSecV253);
+                if (stNow && (!stNow.trueDuration || stNow.trueDuration < ytFullDur)) {
+                    stNow.trueDuration = ytFullDur;
+                }
+                return ytFullDur;
+            }
             var d = _origGetEffVidDurV253.apply(this, arguments);
             if (d && isFinite(d) && d > 1) return d;
             if (Number(window._ytDeckBKnownDurationSecV253 || 0) > 0) {
@@ -8199,17 +8268,19 @@
         var prefH = parseInt(preferredHeight, 10) || (window._ytStudioStateV252 && window._ytStudioStateV252.selectedHeight) || 2160;
         var limitMb = (typeof window.getYtPreloadLimitMbV253 === 'function') ? window.getYtPreloadLimitMbV253() : 300;
 
-        // Останавливаем только внешние превью (Радио/SoundCloud); если в Деке А играет YouTube-аудио — ставим его на паузу,
-        // но если в Деке А играет ЛОКАЛЬНОЕ аудио — НЕ трогаем его, чтобы можно было смотреть YouTube-видео в Деке Б и слушать локальное аудио отдельно!
-        if (typeof window.stopAllExternalStreamsV97 === 'function') {
-            try { window.stopAllExternalStreamsV97(); } catch (e) {}
-        }
-        var curTrkA = String(window.currentPlayingTrack || '');
-        var isDeckAYtNow = Boolean((window._isYoutubeDeckAActiveV253 || curTrkA.indexOf('[YT') === 0) && !/\.(xflac|flac)$/i.test(curTrkA));
-        if (isDeckAYtNow) {
-            window._isYoutubeDeckAActiveV253 = false;
-            if (typeof window.forceStopPauseDeckAAudioV232 === 'function') {
-                try { window.forceStopPauseDeckAAudioV232(true); } catch (e) {}
+        if (typeof window.pauseOtherIslandModesV263 === 'function') {
+            try { window.pauseOtherIslandModesV263('youtube', 'deckB'); } catch (e) {}
+        } else {
+            if (typeof window.stopAllExternalStreamsV97 === 'function') {
+                try { window.stopAllExternalStreamsV97(); } catch (e) {}
+            }
+            var curTrkA = String(window.currentPlayingTrack || '');
+            var isDeckAYtNow = Boolean((window._isYoutubeDeckAActiveV253 || curTrkA.indexOf('[YT') === 0) && !/\.(xflac|flac)$/i.test(curTrkA));
+            if (isDeckAYtNow) {
+                window._isYoutubeDeckAActiveV253 = false;
+                if (typeof window.forceStopPauseDeckAAudioV232 === 'function') {
+                    try { window.forceStopPauseDeckAAudioV232(true); } catch (e) {}
+                }
             }
         }
         var oldTxt = btnEl ? btnEl.innerText : '';
@@ -8257,7 +8328,7 @@
             var ytPrefix = (j.mode === 'chunked_stream') ? '[YT Поток] ' : '[YT] ';
             var dispName = ytPrefix + (j.title || title || ('YouTube_' + vid)) + ' [' + (j.height || 1080) + 'p].mp4';
             if (typeof window.openJennyVideoPlayerV130 === 'function') {
-                await window.openJennyVideoPlayerV130(j.stream_url, dispName, { isYoutube: true });
+                await window.openJennyVideoPlayerV130(j.stream_url, dispName, { isYoutube: true, duration: Number(j.duration || 0) });
             }
             window._isYoutubeDeckBActiveV262 = true;
             window._islandActiveModeV245 = 'youtube';

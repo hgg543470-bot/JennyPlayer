@@ -724,7 +724,8 @@ setTimeout(() => {
 // Если по любой причине studioBuffer ещё не декодирован, подгружает его на лету из кэша или сети!
 window._loadingStudioBufV61 = false;
 window.ensureStudioBufferLoadedV61 = async function() {
-    if (window.studioBuffer || window._loadingStudioBufV61 || !window.currentPlayingTrack) return;
+    if (window.studioBuffer || window._loadingStudioBufV61 || !window.currentPlayingTrack || window._userPausedV75_2) return;
+    if (String(window.currentPlayingTrack || '').indexOf('[YT Поток]') === 0) return;
     if (typeof window.initAudioBoost === 'function') window.initAudioBoost();
     if (!window.audioCtx) return;
 
@@ -752,7 +753,9 @@ window.ensureStudioBufferLoadedV61 = async function() {
                 window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decoded);
             }
             window._loadingStudioBufV61 = false;
-            window.syncMasterPlaybackEngineV59(false);
+            if (!window._userPausedV75_2) {
+                window.syncMasterPlaybackEngineV59(false);
+            }
             return;
         }
     } catch (e) {}

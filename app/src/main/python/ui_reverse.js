@@ -2154,7 +2154,7 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
         var chL = audioBuf.getChannelData(0);
         var chR = audioBuf.getChannelData(1);
 
-        var PIECE_SEC = (dur <= 600) ? 60 : 45;
+        var PIECE_SEC = 30;
         var numPieces = Math.max(1, Math.ceil(dur / PIECE_SEC));
         var pieceMap = new Uint8Array(numPieces); // 0 = пусто, 1 = качается, 2 = готов в RAM
 
@@ -2203,7 +2203,7 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             }
         };
 
-        // 1) Сначала мгновенно загружаем стартовый кусок под курсором (обычно Piece 0: 0..60 сек),
+        // 1) Сначала мгновенно загружаем стартовый кусок под курсором,
         //    чтобы музыка заиграла в первые же мгновения!
         var initCurSec = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0);
         var firstPiece = Math.max(0, Math.min(numPieces - 1, Math.floor(initCurSec / PIECE_SEC)));
@@ -2220,33 +2220,43 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             }
         }
 
-        // 2) Докачиваем все остальные куски параллельно в 3 воркера!
+        // 2) V263: Скользящее окно подгрузки: берёт текущую позицию и сразу загружает 1 минуту вперёд (+60с) и 1 минуту назад (-60с)!
+        var piecesPerMin = Math.max(2, Math.ceil(60.0 / PIECE_SEC));
         var workerLoop = async function() {
             while (audioBuf._loadedCountV72 < numPieces) {
                 if (window.currentPlayingTrack !== filename) return;
                 var curSecNow = (typeof window.getTruePlaybackTimeV74_2 === 'function') ? window.getTruePlaybackTimeV74_2() : ((player && player.currentTime) || 0);
-                var curP = Math.max(0, Math.min(numPieces - 1, Math.floor(curSecNow / PIECE_SEC)));
+                var curP = Math.max(0, Math.min(numPieces - 1, Math.floor(Math.max(0, curSecNow) / PIECE_SEC)));
+                var isRevNow = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
+                var stepDir = isRevNow ? -1 : 1;
                 var pick = -1;
-                for (var off = 0; off < numPieces; off++) {
-                    var cand = (curP + off) % numPieces;
-                    if (pieceMap[cand] === 0 && pieceFailCounts[cand] < 3) {
-                        pick = cand;
+
+                // +1 минута вперёд по направлению воспроизведения
+                for (var fwd = 0; fwd <= piecesPerMin; fwd++) {
+                    var candFwd = curP + fwd * stepDir;
+                    if (candFwd >= 0 && candFwd < numPieces && pieceMap[candFwd] === 0 && pieceFailCounts[candFwd] < 3) {
+                        pick = candFwd;
                         break;
                     }
                 }
+                // -1 минута назад от текущей позиции
                 if (pick === -1) {
-                    var anyInFlight = false;
-                    for (var k = 0; k < numPieces; k++) {
-                        if (pieceMap[k] === 1) { anyInFlight = true; break; }
+                    for (var bwd = 1; bwd <= piecesPerMin; bwd++) {
+                        var candBwd = curP - bwd * stepDir;
+                        if (candBwd >= 0 && candBwd < numPieces && pieceMap[candBwd] === 0 && pieceFailCounts[candBwd] < 3) {
+                            pick = candBwd;
+                            break;
+                        }
                     }
-                    if (!anyInFlight) break;
-                    await new Promise(function(r) { setTimeout(r, 80); });
+                }
+                if (pick === -1) {
+                    await new Promise(function(r) { setTimeout(r, 350); });
                     continue;
                 }
                 var ok = await fetchPiece(pick);
                 if (!ok) {
                     pieceFailCounts[pick] = (pieceFailCounts[pick] || 0) + 1;
-                    await new Promise(function(r) { setTimeout(r, 150); });
+                    await new Promise(function(r) { setTimeout(r, 200); });
                 } else if (window.currentPlayingTrack === filename) {
                     window.studioBuffer = audioBuf;
                     if (titleEl) {
@@ -2254,16 +2264,17 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                             ? ('RAM 🚀: ' + filename)
                             : ('RAM 🚀 (' + audioBuf._loadedCountV72 + '/' + numPieces + '): ' + filename);
                     }
-                    // Пересобираем буфер только если подгрузился кусок прямо под курсором или все куски завершены
+                    // Пересобираем буфер только если подгрузился кусок прямо под курсором и скорость != 1.0x
                     var spdNow = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
-                    if ((pick === curP || audioBuf._loadedCountV72 >= numPieces) && Math.abs(spdNow - 1.0) > 0.003 && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    if (pick === curP && Math.abs(spdNow - 1.0) > 0.003 && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                         window.syncMasterPlaybackEngineV59(false);
                     }
+                    await new Promise(function(r) { setTimeout(r, 25); });
                 }
             }
         };
 
-        await Promise.all([workerLoop(), workerLoop(), workerLoop()]);
+        await workerLoop();
         if (window.currentPlayingTrack !== filename) return null;
 
         audioBuf._allPiecesLoadedV72 = true;

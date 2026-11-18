@@ -15306,6 +15306,8 @@ _YT_V252_UPDATE_STATE = {
 
 
 def _detect_android_abi_v252() -> str:
+    if struct.calcsize("P") == 4:
+        return "armeabi-v7a"
     try:
         m = (platform.machine() or "").lower()
         if not m and hasattr(os, "uname"):
@@ -16932,32 +16934,97 @@ def _resolve_any_media_path_v252(path_or_id: str) -> str:
 _resolve_any_media_path_v218 = _resolve_any_media_path_v252
 
 
+_YT_RANGE_INFLIGHT_V263 = {}
+_YT_RANGE_PREFETCH_EXEC_V263 = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+
+
 def _fetch_yt_range_chunk_cached_v253(url: str, hdrs: dict, chunk_idx: int, total_size: int, chunk_sz: int = 1536 * 1024) -> bytes:
+    if chunk_idx < 0:
+        return b""
+    if total_size > 0 and chunk_idx * chunk_sz >= total_size:
+        return b""
     key = (url, chunk_idx)
+    wait_ev = None
     with _YT_RANGE_CHUNK_LOCK_V253:
         if key in _YT_RANGE_CHUNK_CACHE_V253:
             return _YT_RANGE_CHUNK_CACHE_V253[key]
-    s = chunk_idx * chunk_sz
-    e = min(s + chunk_sz - 1, total_size - 1) if total_size > 0 else (s + chunk_sz - 1)
-    sep = "&" if "?" in url else "?"
-    r_url = f"{url}{sep}range={s}-{e}"
-    data = b""
-    for attempt in range(3):
-        try:
-            req = urllib.request.Request(r_url, headers=hdrs)
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = resp.read()
-            break
-        except Exception:
-            if attempt == 2:
-                raise
-            time.sleep(0.2 * (attempt + 1))
+        if key in _YT_RANGE_INFLIGHT_V263:
+            wait_ev = _YT_RANGE_INFLIGHT_V263[key]
+        else:
+            wait_ev = threading.Event()
+            _YT_RANGE_INFLIGHT_V263[key] = wait_ev
+
+    if not wait_ev.is_set() and _YT_RANGE_INFLIGHT_V263.get(key) is wait_ev:
+        # Check if we are the owner that just created wait_ev vs a waiter
+        pass
+    # Determine ownership cleanly
+    is_owner = False
     with _YT_RANGE_CHUNK_LOCK_V253:
-        if len(_YT_RANGE_CHUNK_CACHE_V253) >= 10:
-            oldest_k = next(iter(_YT_RANGE_CHUNK_CACHE_V253))
-            _YT_RANGE_CHUNK_CACHE_V253.pop(oldest_k, None)
-        _YT_RANGE_CHUNK_CACHE_V253[key] = data
-    return data
+        if key in _YT_RANGE_CHUNK_CACHE_V253:
+            return _YT_RANGE_CHUNK_CACHE_V253[key]
+        if not getattr(wait_ev, "_claimed_v263", False):
+            wait_ev._claimed_v263 = True
+            is_owner = True
+
+    if not is_owner:
+        wait_ev.wait(timeout=16.0)
+        with _YT_RANGE_CHUNK_LOCK_V253:
+            return _YT_RANGE_CHUNK_CACHE_V253.get(key, b"")
+
+    try:
+        s = chunk_idx * chunk_sz
+        e = min(s + chunk_sz - 1, total_size - 1) if total_size > 0 else (s + chunk_sz - 1)
+        sep = "&" if "?" in url else "?"
+        r_url = f"{url}{sep}range={s}-{e}"
+        data = b""
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(r_url, headers=hdrs)
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = resp.read()
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
+        with _YT_RANGE_CHUNK_LOCK_V253:
+            while len(_YT_RANGE_CHUNK_CACHE_V253) >= 36:
+                oldest_k = next(iter(_YT_RANGE_CHUNK_CACHE_V253))
+                _YT_RANGE_CHUNK_CACHE_V253.pop(oldest_k, None)
+            _YT_RANGE_CHUNK_CACHE_V253[key] = data
+        return data
+    finally:
+        with _YT_RANGE_CHUNK_LOCK_V253:
+            _YT_RANGE_INFLIGHT_V263.pop(key, None)
+        wait_ev.set()
+
+
+def _prefetch_yt_window_around_chunk_v263(url: str, hdrs: dict, center_idx: int, total_size: int, chunk_sz: int, chunks_per_min: int):
+    """Prefetches 1 minute forward (+60s) and 1 minute backward (-60s) around center_idx in background."""
+    if not url or total_size <= 0:
+        return
+    max_idx = max(0, (total_size - 1) // chunk_sz)
+    targets = []
+    # 1) 1 minute forward (+1 .. +chunks_per_min)
+    for step in range(1, chunks_per_min + 1):
+        c_fwd = center_idx + step
+        if 0 <= c_fwd <= max_idx:
+            targets.append(c_fwd)
+    # 2) 1 minute backward (-1 .. -chunks_per_min)
+    for step in range(1, chunks_per_min + 1):
+        c_bwd = center_idx - step
+        if 0 <= c_bwd <= max_idx:
+            targets.append(c_bwd)
+
+    for t_idx in targets:
+        key = (url, t_idx)
+        with _YT_RANGE_CHUNK_LOCK_V253:
+            if key in _YT_RANGE_CHUNK_CACHE_V253 or key in _YT_RANGE_INFLIGHT_V263:
+                continue
+        try:
+            _YT_RANGE_PREFETCH_EXEC_V263.submit(_fetch_yt_range_chunk_cached_v253, url, hdrs, t_idx, total_size, chunk_sz)
+        except Exception:
+            break
 
 
 def api_youtube_range_proxy_v253():
@@ -16987,7 +17054,11 @@ def api_youtube_range_proxy_v253():
             response.status = 404
             return b""
 
-        total_size = _probe_yt_stream_size_v253(stream_info)
+        total_size = int(stream_info.get("_cached_total_size_v263") or 0)
+        if total_size <= 0:
+            total_size = _probe_yt_stream_size_v253(stream_info)
+            if total_size > 0:
+                stream_info["_cached_total_size_v263"] = total_size
         ext = str(stream_info.get("ext") or ("mp4" if kind != "audio" else "m4a"))
         mime = "video/mp4" if kind != "audio" else ("audio/mp4" if ext == "m4a" else "audio/webm")
 
@@ -17059,13 +17130,21 @@ def api_youtube_range_proxy_v253():
         url = str(stream_info.get("url") or "")
         hdrs = dict(stream_info.get("headers") or {"User-Agent": "Mozilla/5.0"})
         chunk_sz = 1536 * 1024
+        dur_sec = max(1, int(meta.get("duration") or 0))
+        bytes_per_min = int((total_size / float(dur_sec)) * 60.0) if (total_size > 0 and dur_sec > 0) else (4 * chunk_sz)
+        chunks_per_min = max(2, min(8, (bytes_per_min + chunk_sz - 1) // chunk_sz))
+        is_tail_header_probe = (total_size > chunk_sz * 2 and start_b >= total_size - 262144)
 
         def _stream_gen():
             try:
                 cur = start_b
+                last_prefetched_idx = -999999
                 while cur <= end_b:
                     c_idx = cur // chunk_sz
                     c_off = cur % chunk_sz
+                    if c_idx != last_prefetched_idx and not is_tail_header_probe:
+                        last_prefetched_idx = c_idx
+                        _prefetch_yt_window_around_chunk_v263(url, hdrs, c_idx, total_size, chunk_sz, chunks_per_min)
                     c_data = _fetch_yt_range_chunk_cached_v253(url, hdrs, c_idx, total_size, chunk_sz)
                     if not c_data or c_off >= len(c_data):
                         break

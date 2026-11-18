@@ -5199,19 +5199,21 @@ window.stopAllExternalStreamsV97 = function() {
             return;
         }
 
-        // Останавливаем только внешние превью (Радио/SoundCloud); если в Деке Б играло YouTube-видео — ставим его на паузу,
-        // но если в Деке Б играет ЛОКАЛЬНОЕ видео — НЕ трогаем его, чтобы можно было слушать YouTube-аудио в Деке А и смотреть локальное видео в Деке Б отдельно!
-        if (typeof window.stopAllExternalStreamsV97 === 'function') {
-            try { window.stopAllExternalStreamsV97(); } catch (e) {}
-        }
-        var stVidCheck = window._vidStateV130 || {};
-        var isDeckBYtNow = Boolean(
-            window._isYoutubeDeckBActiveV262 ||
-            (stVidCheck.active && (String(stVidCheck.currentTitle || '').indexOf('[YT') === 0 || String(stVidCheck.currentUrl || '').indexOf('/api/youtube/') !== -1))
-        );
-        if (isDeckBYtNow && typeof window.closeVideoPlayerV130 === 'function') {
-            window._isYoutubeDeckBActiveV262 = false;
-            try { window.closeVideoPlayerV130(); } catch (e) {}
+        if (typeof window.pauseOtherIslandModesV263 === 'function') {
+            try { window.pauseOtherIslandModesV263('youtube', 'deckA'); } catch (e) {}
+        } else {
+            if (typeof window.stopAllExternalStreamsV97 === 'function') {
+                try { window.stopAllExternalStreamsV97(); } catch (e) {}
+            }
+            var stVidCheck = window._vidStateV130 || {};
+            var isDeckBYtNow = Boolean(
+                window._isYoutubeDeckBActiveV262 ||
+                (stVidCheck.active && (String(stVidCheck.currentTitle || '').indexOf('[YT') === 0 || String(stVidCheck.currentUrl || '').indexOf('/api/youtube/') !== -1))
+            );
+            if (isDeckBYtNow && typeof window.closeVideoPlayerV130 === 'function') {
+                window._isYoutubeDeckBActiveV262 = false;
+                try { window.closeVideoPlayerV130(); } catch (e) {}
+            }
         }
 
         st.currentIdx = idx;
