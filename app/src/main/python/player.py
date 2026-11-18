@@ -7539,6 +7539,19 @@ def api_video_release_stream_v216():
     return json.dumps({"status": "holding", "hold_sec": hold_sec})
 
 
+_XFLAC_FILE_LOCKS_V261 = {}
+_XFLAC_FILE_LOCKS_GUARD_V261 = threading.Lock()
+
+
+def _get_xflac_file_lock_v261(full_xf: str) -> threading.Lock:
+    with _XFLAC_FILE_LOCKS_GUARD_V261:
+        lk = _XFLAC_FILE_LOCKS_V261.get(full_xf)
+        if lk is None:
+            lk = threading.Lock()
+            _XFLAC_FILE_LOCKS_V261[full_xf] = lk
+        return lk
+
+
 # 1. Быстрый RAM + внутренний TMP кэш для .xflac (без записи 50 МБ на медленный FUSE /storage/emulated/0/Download!)
 def _ensure_xflac_wav_cache_v87(full_xf: str) -> str:
     st = os.stat(full_xf)
@@ -7560,17 +7573,42 @@ def _ensure_xflac_wav_cache_v87(full_xf: str) -> str:
         except Exception:
             pass
 
-    with _XFLAC_CACHE_LOCK_V87:
+    file_lock = _get_xflac_file_lock_v261(full_xf)
+    with file_lock:
         if os.path.isfile(cache_path) and os.path.getsize(cache_path) > 44:
             return cache_path
         with open(full_xf, 'rb') as f_in:
-            raw_data = f_in.read()
-        wav_bytes = _decode_xflac_bytes_to_wav_v85(raw_data)
-        _XFLAC_RAM_CACHE_V216[cur_sig] = wav_bytes
-        _XFLAC_RAM_ORDER_V216.append(cur_sig)
-        while len(_XFLAC_RAM_ORDER_V216) > 2:
-            old_k = _XFLAC_RAM_ORDER_V216.pop(0)
-            _XFLAC_RAM_CACHE_V216.pop(old_k, None)
+            hdr4 = f_in.read(4)
+            f_in.seek(0)
+            if hdr4 == b"XFC3":
+                raw_data = f_in.read()
+            else:
+                raw_data = b""
+
+        if hdr4 == b"XFC3":
+            wav_bytes = _decode_xflac_bytes_to_wav_v85(raw_data)
+            del raw_data
+        else:
+            # Если файл с расширением .xflac на самом деле является обычным аудиоконтейнером (.flac/.m4a/.webm), декодируем через FFmpeg
+            ff_bin = find_ffmpeg_binary()
+            subprocess.run(
+                [ff_bin, '-y', '-hide_banner', '-loglevel', 'error', '-i', full_xf, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', cache_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=180,
+                check=False,
+            )
+            if os.path.isfile(cache_path) and os.path.getsize(cache_path) > 44:
+                return cache_path
+            raise RuntimeError("Не удалось распаковать контейнер .xflac")
+
+        # Храним в RAM-кэше только компактные треки (до 45 МБ), чтобы не забивать память гигабайтами
+        if len(wav_bytes) <= 45 * 1024 * 1024:
+            _XFLAC_RAM_CACHE_V216[cur_sig] = wav_bytes
+            _XFLAC_RAM_ORDER_V216.append(cur_sig)
+            while len(_XFLAC_RAM_ORDER_V216) > 2:
+                old_k = _XFLAC_RAM_ORDER_V216.pop(0)
+                _XFLAC_RAM_CACHE_V216.pop(old_k, None)
         try:
             # Очищаем старые временные файлы в tmp_dir, оставляя последние 3
             existing = sorted(
@@ -7582,10 +7620,12 @@ def _ensure_xflac_wav_cache_v87(full_xf: str) -> str:
                     os.remove(old_p)
                 except Exception:
                     pass
-            with open(cache_path, 'wb') as f_out:
+            tmp_write = cache_path + f".tmp_{os.getpid()}"
+            with open(tmp_write, 'wb') as f_out:
                 f_out.write(wav_bytes)
+            os.replace(tmp_write, cache_path)
         except Exception:
-            fallback_p = os.path.join(os.path.dirname(full_xf), "temp_final_xflac_stream_cache.wav")
+            fallback_p = os.path.join(os.path.dirname(full_xf), f"temp_xflac_{sig_hash}.wav")
             with open(fallback_p, 'wb') as f_out:
                 f_out.write(wav_bytes)
             return fallback_p

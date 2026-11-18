@@ -1500,9 +1500,9 @@ return _origHandleTrackPlayV130.apply(this, arguments);
 
         if (window.htmlGain && window.htmlGain.gain) window.htmlGain.gain.value = 1.0;
 
-        // For non-.xflac files (or cached blobUrl), start <audio> immediately;
-        // for .xflac files without cached blobUrl, we fetch /api/media/<filename> once below and feed both <audio> blobUrl and decodeAudioData so we don't double-lock _XFLAC_CACHE_LOCK_V87!
-        if (player && (!isXflac || (cachedEntry && cachedEntry.blobUrl))) {
+        // Запускаем <audio> сразу в рамках пользовательского жеста (и для обычных файлов, и для .xflac —
+        // на сервере работает пофайловый кэш _ensure_xflac_wav_cache_v87, поэтому второй запрос мгновенно берёт готовый WAV!)
+        if (player) {
             player.loop = false;
             player.src = mediaUrl;
             player.currentTime = 0;
@@ -1521,7 +1521,7 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         }
         if (typeof window.updateTrackListPlayIcons === 'function') window.updateTrackListPlayIcons();
 
-        if (!useStudioRam && !isXflac) {
+        if (!useStudioRam) {
             window._resumingFromUserPlayV232 = false;
             window._trackActivelyLoadingToRamV237 = false;
             return;
@@ -1536,7 +1536,9 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 decodedBuffer = cachedEntry.buf;
             } else {
                 var metaCheck = { duration: initDur, size: Number(knownMeta.size || 0) };
-                if (!metaCheck.size && !isXflac) {
+                // Всегда запрашиваем быстрый 25-байтный заголовок /api/pcm_meta_v71/ (включая .xflac!),
+                // чтобы знать точный WAV-размер (например, 315 МБ для 30-минутного .xflac) и не пытаться декодировать 315 МБ одним куском в WebAudio!
+                if (!metaCheck.size || isXflac) {
                     try {
                         var mr = await fetch('/api/pcm_meta_v71/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
                         if (mr.ok) metaCheck = await mr.json();
@@ -1546,7 +1548,7 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                 }
                 if (mySeq !== window._audioTrackLoadSeqV216 || window.currentPlayingTrack !== filename) return;
 
-                if (!metaCheck.size || metaCheck.size <= 95 * 1024 * 1024 || isXflac) {
+                if (!metaCheck.size || metaCheck.size <= 95 * 1024 * 1024) {
                     try {
                         var response = await fetch('/api/media/' + encodeURIComponent(filename), { signal: abortCtrl.signal });
                         if (response.ok) {
@@ -1558,7 +1560,7 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                                 blobUrl = URL.createObjectURL(new Blob([arrayBuffer], { type: mime }));
                             } catch (e) {}
 
-                            if (isXflac && player && blobUrl && !window._userPausedV75_2) {
+                            if (isXflac && player && player.paused && blobUrl && !window._userPausedV75_2) {
                                 player.loop = false;
                                 player.src = blobUrl;
                                 player.currentTime = 0;
@@ -1572,6 +1574,8 @@ return _origHandleTrackPlayV130.apply(this, arguments);
                                 window._ramTrackHistoryV71 = window._ramTrackHistoryV71.filter(function(x) { return x.name !== filename; }).slice(0, 1);
                                 window._ramTrackHistoryV71.unshift({ name: filename, buf: decodedBuffer, blobUrl: blobUrl });
                             }
+                        } else {
+                            throw new Error('HTTP ' + response.status);
                         }
                     } catch (decErr) {
                         if (abortCtrl.signal.aborted || mySeq !== window._audioTrackLoadSeqV216) return;

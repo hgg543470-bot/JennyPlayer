@@ -2212,6 +2212,9 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
 
         if (pieceMap[firstPiece] === 2) {
             window.studioBuffer = audioBuf;
+            if (titleEl && window.currentPlayingTrack === filename) {
+                titleEl.innerText = 'RAM 🚀 (' + audioBuf._loadedCountV72 + '/' + numPieces + '): ' + filename;
+            }
             if (!window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                 window.syncMasterPlaybackEngineV59(false);
             }
@@ -2246,9 +2249,14 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                     await new Promise(function(r) { setTimeout(r, 150); });
                 } else if (window.currentPlayingTrack === filename) {
                     window.studioBuffer = audioBuf;
-                    // Если узел играет со скоростью != 1.0 (или был собран из неполного буфера), бесшовно обновляем буфер!
+                    if (titleEl) {
+                        titleEl.innerText = (audioBuf._loadedCountV72 >= numPieces)
+                            ? ('RAM 🚀: ' + filename)
+                            : ('RAM 🚀 (' + audioBuf._loadedCountV72 + '/' + numPieces + '): ' + filename);
+                    }
+                    // Пересобираем буфер только если подгрузился кусок прямо под курсором или все куски завершены
                     var spdNow = (typeof window.getActiveTargetSpeedV59 === 'function') ? window.getActiveTargetSpeedV59() : 1.0;
-                    if (Math.abs(spdNow - 1.0) > 0.003 && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
+                    if ((pick === curP || audioBuf._loadedCountV72 >= numPieces) && Math.abs(spdNow - 1.0) > 0.003 && !window._userPausedV75_2 && typeof window.syncMasterPlaybackEngineV59 === 'function') {
                         window.syncMasterPlaybackEngineV59(false);
                     }
                 }
