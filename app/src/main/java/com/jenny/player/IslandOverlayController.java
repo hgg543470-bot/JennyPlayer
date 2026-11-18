@@ -1402,6 +1402,8 @@ public class IslandOverlayController {
                     MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('radio_rec','');");
                 } else if ("soundcloud".equals(currentIslandMode)) {
                     MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('sc_download','');");
+                } else if ("youtube".equals(currentIslandMode)) {
+                    MainActivity.evalJs("if(window.handleIslandCommandV245) window.handleIslandCommandV245('yt_download','');");
                 }
             }
         });
@@ -1730,6 +1732,7 @@ public class IslandOverlayController {
         boolean isLocalMusic = "music".equals(m);
         boolean isRadioMode = "radio".equals(m);
         boolean isScMode = "soundcloud".equals(m);
+        boolean isYtMode = "youtube".equals(m);
         boolean isRadioRec = isRadioMode && currentRawTrack != null && currentRawTrack.toUpperCase(Locale.ROOT).contains("|REC");
         if (exportTrackBtn != null) {
             if (isLocalMusic) {
@@ -1742,7 +1745,7 @@ public class IslandOverlayController {
                 exportTrackBtn.setIconType(ICON_REC);
                 exportTrackBtn.setFilledState(isRadioRec);
                 exportTrackBtn.setIconColor(bright);
-            } else if (isScMode) {
+            } else if (isScMode || isYtMode) {
                 exportTrackBtn.setVisibility(View.VISIBLE);
                 exportTrackBtn.setIconType(ICON_DOWNLOAD);
                 exportTrackBtn.setFilledState(false);
@@ -1859,12 +1862,6 @@ public class IslandOverlayController {
         if (!isIslandAttached || elapsedTimeView == null || totalTimeView == null || islandSeekBar == null) {
             return;
         }
-        if ("youtube".equals(currentIslandMode) && !isPlaying) {
-            elapsedTimeView.setText("0:00");
-            totalTimeView.setText("СКОРО");
-            islandSeekBar.setProgress(0);
-            return;
-        }
         if ("radio".equals(currentIslandMode)) {
             boolean isLossy = currentRawTrack != null && currentRawTrack.toUpperCase(Locale.ROOT).startsWith("LOSSY");
             elapsedTimeView.setText("LIVE");
@@ -1888,10 +1885,6 @@ public class IslandOverlayController {
 
         String displayTitle = currentTitle;
         String displaySub = currentSubtitle;
-        if ("youtube".equals(currentIslandMode) && !isPlaying) {
-            displayTitle = "YouTube Studio • Модуль в разработке";
-            displaySub = "Заглушка: скоро прямое воспроизведение YouTube потоков";
-        }
 
         if (islandTitleView != null) {
             if (!String.valueOf(islandTitleView.getText()).equals(displayTitle)) {

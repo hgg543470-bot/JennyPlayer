@@ -578,6 +578,14 @@
             }
             return '';
         }
+        if (m === 'youtube') {
+            var ytSt = window._ytPlayerStateV266;
+            var vidYt = (ytSt && ytSt.currentId) || '';
+            if (vidYt) {
+                return 'http://127.0.0.1:8080/api/island/yt_artwork?v=' + encodeURIComponent(vidYt);
+            }
+            return '';
+        }
         if (m === 'music') {
             var trkName = window.currentPlayingTrack || ((Array.isArray(window.allTracks) && window.allTracks.length > 0) ? window.allTracks[0] : '');
             if (trkName) {
@@ -858,7 +866,8 @@
 
         var now = Date.now();
         var snap = window.getActiveSourcesSnapshotV243();
-        var isActuallyPlaying = snap.anyPlaying;
+        var ytPlaying = Boolean(typeof window.isYtStreamPlayingV266 === 'function' && window.isYtStreamPlayingV266());
+        var isActuallyPlaying = Boolean(snap.anyPlaying || ytPlaying);
 
         var torSnap = window._torLiveDaemonSnapV128 || [];
         var activeTorCnt = 0, sumKbps = 0, sumDoneB = 0, sumLenB = 0;
@@ -875,7 +884,11 @@
         var activeMode = window._islandActiveModeV245 || 'music';
         var recentExplicitSwitch = (now - (window._islandExplicitModeTsV245 || 0) < 2500);
         if (!recentExplicitSwitch) {
-            if (snap.radioPlaying) {
+            if (ytPlaying) {
+                activeMode = 'youtube';
+                window._islandActiveModeV245 = 'youtube';
+                window._lastActiveMediaSourceV243 = 'youtube';
+            } else if (snap.radioPlaying) {
                 activeMode = 'radio';
                 window._islandActiveModeV245 = 'radio';
                 window._lastActiveMediaSourceV243 = 'radio';
@@ -890,6 +903,16 @@
             }
         }
 
+        if (activeMode === 'youtube') {
+            isActuallyPlaying = ytPlaying;
+        } else if (activeMode === 'radio') {
+            isActuallyPlaying = Boolean(snap.radioPlaying);
+        } else if (activeMode === 'soundcloud') {
+            isActuallyPlaying = Boolean(snap.extPlaying);
+        } else if (activeMode === 'music') {
+            isActuallyPlaying = Boolean(snap.deckAPlaying || snap.deckBPlaying);
+        }
+
         var titleParts = [];
         var subParts = [];
         if (window._islandExportStatusV247) {
@@ -901,7 +924,16 @@
         var posSec = 0, durSec = 0, spd = 1.0;
         var isRevA = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
 
-        if (snap.radioPlaying) {
+        if (activeMode === 'youtube' && ytPlaying) {
+            var ytSt = window._ytPlayerStateV266 || {};
+            titleParts.push(stripLeadingEmojisV247(ytSt.currentTitle || 'YouTube'));
+            if (!window._islandExportStatusV247) {
+                var modeLbl = (ytSt.activeType === 'video') ? ('Видео ' + (ytSt.selectedHeight || 720) + 'p') : 'Аудиопоток';
+                subParts.push(stripLeadingEmojisV247((ytSt.currentChannel || 'YouTube') + ' • ' + modeLbl));
+            }
+            durSec = (typeof window.getYtStreamTotalDurSecV266 === 'function') ? window.getYtStreamTotalDurSecV266() : 0;
+            posSec = (typeof window.getYtStreamCurrentSecV266 === 'function') ? window.getYtStreamCurrentSecV266() : 0;
+        } else if (snap.radioPlaying && activeMode === 'radio') {
             var rName = stripLeadingEmojisV247(window.resolveCurrentRadioTitleV243());
             titleParts.push(rName);
             subParts.push((window._radioStateV91 && window._radioStateV91.isRecording) ? 'Запись эфира • Прямой поток' : 'Прямой радиоэфир');
@@ -952,8 +984,14 @@
 
         if (!isActuallyPlaying) {
             if (activeMode === 'youtube') {
-                titleParts = ['YouTube Studio • Модуль в разработке'];
-                if (!window._islandExportStatusV247) subParts = ['Заглушка: скоро прямое воспроизведение YouTube'];
+                var ytStP = window._ytPlayerStateV266 || {};
+                var fbYt = (ytStP.results && ytStP.results[ytStP.currentIdx || 0]) || null;
+                var pTitle = stripLeadingEmojisV247(ytStP.currentTitle || (fbYt && fbYt.title) || 'YouTube Studio');
+                var pChan = stripLeadingEmojisV247(ytStP.currentChannel || (fbYt && fbYt.channel) || 'Выберите ролик или трек');
+                titleParts = [pTitle];
+                if (!window._islandExportStatusV247) subParts = [ytStP.currentId ? ('На паузе • ' + pChan) : pChan];
+                durSec = (typeof window.getYtStreamTotalDurSecV266 === 'function') ? window.getYtStreamTotalDurSecV266() : Number((fbYt && fbYt.duration) || 0);
+                posSec = (typeof window.getYtStreamCurrentSecV266 === 'function') ? window.getYtStreamCurrentSecV266() : 0;
             } else if (activeMode === 'radio') {
                 titleParts.push(stripLeadingEmojisV247(window.resolveCurrentRadioTitleV243()));
                 if (!window._islandExportStatusV247) subParts.push('Радиоэфир на паузе');
@@ -1092,6 +1130,27 @@
             return;
         }
 
+        // Скачивание текущего трека YouTube в плеер (.xFLAC) по нажатию кнопки Скачать на красной плашке
+        if (c === 'yt_download') {
+            if (curMode !== 'youtube') return;
+            if (typeof window.downloadCurrentYtToPlayerV266 === 'function') {
+                window._islandExportStatusV247 = 'Скачивание в .xFLAC...';
+                window.syncPermanentForegroundNotificationV212(true);
+                try {
+                    await window.downloadCurrentYtToPlayerV266();
+                    window._islandExportStatusV247 = 'Сохранено в плеер!';
+                } catch (e) {
+                    window._islandExportStatusV247 = 'Ошибка скачивания';
+                }
+                window.syncPermanentForegroundNotificationV212(true);
+                setTimeout(function() {
+                    window._islandExportStatusV247 = '';
+                    window.syncPermanentForegroundNotificationV212(true);
+                }, 2800);
+            }
+            return;
+        }
+
         // [FIX-ISLAND-SC-V250] Скачивание текущего трека SoundCloud в плеер по нажатию кнопки Скачать на оранжевой плашке
         if (c === 'sc_download') {
             if (curMode !== 'soundcloud') return;
@@ -1168,9 +1227,16 @@
             return;
         }
 
-        // Перемотка ползунком (с учётом обратного воспроизведения isReversed и потока SoundCloud!)
+        // Перемотка ползунком (с учётом обратного воспроизведения isReversed и потоков YouTube / SoundCloud!)
         if (c === 'seek') {
             var targetSec = Math.max(0, parseFloat(a) || 0);
+            if (curMode === 'youtube') {
+                if (typeof window.seekYtStreamToSecV266 === 'function') {
+                    window.seekYtStreamToSecV266(targetSec);
+                }
+                window.syncPermanentForegroundNotificationV212(true);
+                return;
+            }
             if ((curMode === 'soundcloud' || snap.extPlaying) && snap.extAud) {
                 if (typeof window.seekSoundCloudStreamToSecV250 === 'function') {
                     window.seekSoundCloudStreamToSecV250(snap.extAud, targetSec);
@@ -1210,6 +1276,7 @@
             syncInAppModalsForModeV245(mode);
 
             if (mode === 'music') {
+                if (typeof window.pauseYtStreamV266 === 'function') window.pauseYtStreamV266();
                 if (snap.radioPlaying && typeof window.stopFlacRadioStreamV91 === 'function') {
                     window.stopFlacRadioStreamV91();
                 }
@@ -1225,6 +1292,7 @@
                     window.togglePlay();
                 }
             } else if (mode === 'radio') {
+                if (typeof window.pauseYtStreamV266 === 'function') window.pauseYtStreamV266();
                 if (snap.deckAPlaying && typeof window.pauseMainPlayerForOstV90 === 'function') {
                     window.pauseMainPlayerForOstV90();
                 } else if (snap.deckAPlaying && typeof window.togglePlay === 'function') {
@@ -1236,6 +1304,7 @@
                 window._lastActiveMediaSourceV243 = 'radio';
                 startOrResumeOriginalRadioV245();
             } else if (mode === 'soundcloud') {
+                if (typeof window.pauseYtStreamV266 === 'function') window.pauseYtStreamV266();
                 if (snap.deckAPlaying && typeof window.pauseMainPlayerForOstV90 === 'function') {
                     window.pauseMainPlayerForOstV90();
                 } else if (snap.deckAPlaying && typeof window.togglePlay === 'function') {
@@ -1258,12 +1327,27 @@
                 if (snap.extPlaying && typeof window.toggleKhMiniPlayPauseV90 === 'function') {
                     window.toggleKhMiniPlayPauseV90();
                 }
+                window._lastActiveMediaSourceV243 = 'youtube';
             }
             setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 100);
             return;
         }
 
         if (curMode === 'youtube') {
+            window._lastActiveMediaSourceV243 = 'youtube';
+            if (c === 'next' || c === 'prev') {
+                if (typeof window.stepYtStreamTrackV266 === 'function') {
+                    window.stepYtStreamTrackV266(c === 'next' ? 1 : -1);
+                }
+                return;
+            }
+            if (c === 'play' || c === 'pause' || c === 'toggle') {
+                if (typeof window.toggleYtStreamPlayPauseV266 === 'function') {
+                    window.toggleYtStreamPlayPauseV266(c);
+                }
+                setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 100);
+                return;
+            }
             window.syncPermanentForegroundNotificationV212(true);
             return;
         }

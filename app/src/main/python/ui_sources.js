@@ -4671,3 +4671,851 @@ window.stopAllExternalStreamsV97 = function() {
     };
 })();
 /* ================= END [FIX-SC-SEEK-V250] SOUNDCLOUD MINI-PLAYER & ISLAND DURATION + SEEK ================= */
+
+
+/* ============================================================================
+ * [JENNY-V266] YOUTUBE & YOUTUBE MUSIC STREAMING STUDIO (OFFICIAL YOUTUBE UI)
+ * - 100% isolated from Deck A (#audioPlayer / studioBuffer) and SoundCloud (previewAudio)
+ * - Pure continuous HTTP 206 stream (0% chunk-slicer, 0% SSD wear, 0% HTTP 403)
+ * - '🎧 Слушать': pure audio stream + Red Dynamic Island (no video player popup!)
+ * - '🎬 Смотреть': inline 16:9 YouTube Theater player with 1-tap Audio/Video switch & quality selector
+ * ============================================================================ */
+;(function() {
+    if (window._jennyYtStudioV266Installed) return;
+    window._jennyYtStudioV266Installed = true;
+
+    var st = window._ytPlayerStateV266 = {
+        results: [],
+        currentIdx: -1,
+        currentId: '',
+        currentTitle: '',
+        currentChannel: '',
+        currentThumb: '',
+        knownDuration: 0,
+        activeType: 'audio', // 'audio' ('🎧 Слушать') or 'video' ('🎬 Смотреть')
+        splitAudio: false,
+        selectedHeight: 720,
+        availableHeights: [1080, 720, 480, 360],
+        audioEl: null,
+        videoEl: null,
+        userDraggingSeek: false,
+        reqSeq: 0
+    };
+
+    function fmtYtTimeV266(sec) {
+        var s = Math.max(0, Math.floor(Number(sec) || 0));
+        var h = Math.floor(s / 3600);
+        var m = Math.floor((s % 3600) / 60);
+        var r = s % 60;
+        if (h > 0) {
+            return h + ':' + (m < 10 ? '0' : '') + m + ':' + (r < 10 ? '0' : '') + r;
+        }
+        return m + ':' + (r < 10 ? '0' : '') + r;
+    }
+
+    function fmtYtViewsV266(v) {
+        var n = Number(v) || 0;
+        if (n <= 0) return '';
+        if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + ' млн просмотров';
+        if (n >= 1000) return Math.round(n / 1000) + ' тыс. просмотров';
+        return n + ' просм.';
+    }
+
+    function ensureYtMediaElementsV266() {
+        if (!st.audioEl) {
+            var a = document.getElementById('ytDedicatedAudioV266');
+            if (!a) {
+                a = document.createElement('audio');
+                a.id = 'ytDedicatedAudioV266';
+                a.preload = 'auto';
+                a.style.display = 'none';
+                document.body.appendChild(a);
+            }
+            st.audioEl = a;
+            a.addEventListener('timeupdate', syncYtPlayerUIV266);
+            a.addEventListener('play', function() {
+                syncYtPlayerUIV266();
+                if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                    window.syncPermanentForegroundNotificationV212(true);
+                }
+            });
+            a.addEventListener('pause', function() {
+                syncYtPlayerUIV266();
+                if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                    window.syncPermanentForegroundNotificationV212(true);
+                }
+            });
+            a.addEventListener('ended', function() {
+                if (st.activeType === 'audio' || st.splitAudio) {
+                    window.stepYtStreamTrackV266(1);
+                }
+            });
+        }
+        var v = document.getElementById('ytDedicatedVideoV266');
+        if (v && st.videoEl !== v) {
+            st.videoEl = v;
+            v.addEventListener('timeupdate', syncYtPlayerUIV266);
+            v.addEventListener('play', function() {
+                if (st.activeType === 'video' && st.splitAudio && st.audioEl && st.audioEl.paused) {
+                    try {
+                        st.audioEl.currentTime = v.currentTime;
+                        st.audioEl.play().catch(function() {});
+                    } catch (e) {}
+                }
+                syncYtPlayerUIV266();
+                if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                    window.syncPermanentForegroundNotificationV212(true);
+                }
+            });
+            v.addEventListener('pause', function() {
+                if (st.activeType === 'video' && st.splitAudio && st.audioEl && !st.audioEl.paused && !st._switchingToAudioOnly) {
+                    try { st.audioEl.pause(); } catch (e) {}
+                }
+                syncYtPlayerUIV266();
+                if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                    window.syncPermanentForegroundNotificationV212(true);
+                }
+            });
+            v.addEventListener('waiting', function() {
+                if (st.activeType === 'video' && st.splitAudio && st.audioEl && !st.audioEl.paused) {
+                    try { st.audioEl.pause(); } catch (e) {}
+                }
+            });
+            v.addEventListener('playing', function() {
+                if (st.activeType === 'video' && st.splitAudio && st.audioEl && st.audioEl.paused) {
+                    try {
+                        st.audioEl.currentTime = v.currentTime;
+                        st.audioEl.play().catch(function() {});
+                    } catch (e) {}
+                }
+            });
+            v.addEventListener('ended', function() {
+                if (st.activeType === 'video' && !st.splitAudio) {
+                    window.stepYtStreamTrackV266(1);
+                }
+            });
+        }
+    }
+
+    // Keep split 1080p+ video & audio tightly synchronized
+    setInterval(function() {
+        if (st.activeType === 'video' && st.splitAudio && st.videoEl && st.audioEl) {
+            if (!st.videoEl.paused && !st.audioEl.paused) {
+                var drift = Math.abs((st.videoEl.currentTime || 0) - (st.audioEl.currentTime || 0));
+                if (drift > 0.35) {
+                    try { st.videoEl.currentTime = st.audioEl.currentTime; } catch (e) {}
+                }
+            }
+        }
+    }, 400);
+
+    function pauseOtherSourcesForYtV266() {
+        // Pause Deck A
+        var mainP = document.getElementById('audioPlayer');
+        if (mainP && !mainP.paused) {
+            if (typeof window.pauseMainPlayerForOstV90 === 'function') {
+                try { window.pauseMainPlayerForOstV90(); } catch (e) {}
+            } else {
+                try { mainP.pause(); } catch (e) {}
+            }
+        }
+        if (window.isStudioPlaying && typeof window.forceStopPauseDeckAAudioV232 === 'function') {
+            try { window.forceStopPauseDeckAAudioV232(false); } catch (e) {}
+        }
+        // Pause Radio
+        if (window._radioStateV91 && window._radioStateV91.audio && !window._radioStateV91.audio.paused) {
+            if (typeof window.stopFlacRadioStreamV91 === 'function') {
+                try { window.stopFlacRadioStreamV91(); } catch (e) {}
+            } else {
+                try { window._radioStateV91.audio.pause(); } catch (e) {}
+            }
+        }
+        // Pause SoundCloud / OST preview
+        if (window._khStateV88 && window._khStateV88.previewAudio && !window._khStateV88.previewAudio.paused) {
+            try { window._khStateV88.previewAudio.pause(); } catch (e) {}
+        }
+    }
+
+    window.isYtStreamPlayingV266 = function() {
+        ensureYtMediaElementsV266();
+        if (!st.currentId) return false;
+        if (st.activeType === 'video' && st.videoEl) {
+            return Boolean(!st.videoEl.paused && !st.videoEl.ended);
+        }
+        return Boolean(st.audioEl && !st.audioEl.paused && !st.audioEl.ended);
+    };
+
+    window.getYtStreamCurrentSecV266 = function() {
+        ensureYtMediaElementsV266();
+        if (st.activeType === 'video' && !st.splitAudio && st.videoEl) {
+            return isFinite(st.videoEl.currentTime) ? st.videoEl.currentTime : 0;
+        }
+        if (st.audioEl && isFinite(st.audioEl.currentTime) && st.audioEl.currentTime > 0) {
+            return st.audioEl.currentTime;
+        }
+        if (st.videoEl && isFinite(st.videoEl.currentTime)) {
+            return st.videoEl.currentTime;
+        }
+        return 0;
+    };
+
+    window.getYtStreamTotalDurSecV266 = function() {
+        ensureYtMediaElementsV266();
+        if (st.knownDuration > 0) return st.knownDuration;
+        if (st.activeType === 'video' && st.videoEl && isFinite(st.videoEl.duration) && st.videoEl.duration > 0 && st.videoEl.duration < 3600000) {
+            return st.videoEl.duration;
+        }
+        if (st.audioEl && isFinite(st.audioEl.duration) && st.audioEl.duration > 0 && st.audioEl.duration < 3600000) {
+            return st.audioEl.duration;
+        }
+        return 0;
+    };
+
+    window.pauseYtStreamV266 = function() {
+        ensureYtMediaElementsV266();
+        st._switchingToAudioOnly = true;
+        if (st.audioEl && !st.audioEl.paused) {
+            try { st.audioEl.pause(); } catch (e) {}
+        }
+        if (st.videoEl && !st.videoEl.paused) {
+            try { st.videoEl.pause(); } catch (e) {}
+        }
+        st._switchingToAudioOnly = false;
+        syncYtPlayerUIV266();
+    };
+
+    window.stopAndUnloadYtStreamV266 = function() {
+        window.pauseYtStreamV266();
+        if (st.audioEl) {
+            try { st.audioEl.removeAttribute('src'); st.audioEl.load(); } catch (e) {}
+        }
+        if (st.videoEl) {
+            try { st.videoEl.removeAttribute('src'); st.videoEl.load(); } catch (e) {}
+        }
+        st.currentId = '';
+        var dock = document.getElementById('ytTheaterDockV266');
+        if (dock) dock.style.display = 'none';
+        syncYtPlayerUIV266();
+        if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+            window.syncPermanentForegroundNotificationV212(true);
+        }
+    };
+
+    // Hook into global stopAllExternalStreamsV97 so "ВЫРУБИТЬ ВСЕ МОДУЛИ" also stops YouTube
+    if (typeof window.stopAllExternalStreamsV97 === 'function' && !window.stopAllExternalStreamsV97._ytV266Hooked) {
+        var _origStopExtV266 = window.stopAllExternalStreamsV97;
+        window.stopAllExternalStreamsV97 = function() {
+            window.pauseYtStreamV266();
+            return _origStopExtV266.apply(this, arguments);
+        };
+        window.stopAllExternalStreamsV97._ytV266Hooked = true;
+    }
+
+    window.toggleYtStreamPlayPauseV266 = function(forceCmd) {
+        ensureYtMediaElementsV266();
+        var cmd = String(forceCmd || 'toggle').toLowerCase();
+        var playing = window.isYtStreamPlayingV266();
+
+        if (!st.currentId) {
+            if (cmd === 'pause') return;
+            if (st.results && st.results.length > 0) {
+                var idx = (st.currentIdx >= 0 && st.currentIdx < st.results.length) ? st.currentIdx : 0;
+                window.startYtItemV266(idx, st.activeType || 'audio');
+            } else {
+                window.openYoutubeStudioModalV230();
+            }
+            return;
+        }
+
+        if (cmd === 'pause' || (cmd === 'toggle' && playing)) {
+            window.pauseYtStreamV266();
+        } else if (cmd === 'play' || (cmd === 'toggle' && !playing)) {
+            pauseOtherSourcesForYtV266();
+            window._islandActiveModeV245 = 'youtube';
+            window._islandExplicitModeTsV245 = Date.now();
+            window._lastActiveMediaSourceV243 = 'youtube';
+            if (st.activeType === 'video' && st.videoEl) {
+                if (st.splitAudio && st.audioEl) {
+                    try { st.audioEl.currentTime = st.videoEl.currentTime; } catch (e) {}
+                    st.audioEl.play().catch(function() {});
+                }
+                st.videoEl.play().catch(function() {});
+            } else if (st.audioEl) {
+                st.audioEl.play().catch(function() {});
+            }
+        }
+        syncYtPlayerUIV266();
+        if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+            window.syncPermanentForegroundNotificationV212(true);
+        }
+    };
+
+    window.seekYtStreamToSecV266 = function(targetSec) {
+        ensureYtMediaElementsV266();
+        var dur = window.getYtStreamTotalDurSecV266();
+        var clean = Math.max(0, Number(targetSec) || 0);
+        if (dur > 0) clean = Math.min(dur - 0.2, clean);
+
+        if (st.activeType === 'video' && st.videoEl) {
+            try { st.videoEl.currentTime = clean; } catch (e) {}
+            if (st.splitAudio && st.audioEl) {
+                try { st.audioEl.currentTime = clean; } catch (e) {}
+            }
+        } else if (st.audioEl) {
+            try { st.audioEl.currentTime = clean; } catch (e) {}
+        }
+        syncYtPlayerUIV266();
+        if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+            window.syncPermanentForegroundNotificationV212(true);
+        }
+    };
+
+    window.stepYtStreamSeekByOffsetV266 = function(deltaSec) {
+        var cur = window.getYtStreamCurrentSecV266();
+        window.seekYtStreamToSecV266(cur + (Number(deltaSec) || 0));
+    };
+
+    window.stepYtStreamTrackV266 = function(stepDelta) {
+        if (!st.results || !st.results.length) return;
+        var nextIdx = ((st.currentIdx >= 0 ? st.currentIdx : 0) + stepDelta + st.results.length) % st.results.length;
+        window.startYtItemV266(nextIdx, st.activeType || 'audio');
+    };
+
+    function syncYtPlayerUIV266() {
+        var dock = document.getElementById('ytTheaterDockV266');
+        if (!dock) return;
+        if (!st.currentId) {
+            dock.style.display = 'none';
+            return;
+        }
+        dock.style.display = 'flex';
+
+        var vidBox = document.getElementById('ytVideoBoxV266');
+        var audBox = document.getElementById('ytAudioBoxV266');
+        if (vidBox) vidBox.style.display = (st.activeType === 'video') ? 'flex' : 'none';
+        if (audBox) audBox.style.display = (st.activeType === 'audio') ? 'flex' : 'none';
+
+        var tEl = document.getElementById('ytNowTitleV266');
+        var cEl = document.getElementById('ytNowChannelV266');
+        var imgEl = document.getElementById('ytNowThumbV266');
+        if (tEl) tEl.textContent = st.currentTitle || 'YouTube';
+        if (cEl) cEl.textContent = (st.currentChannel || 'YouTube') + (st.activeType === 'video' ? (' • Видео ' + st.selectedHeight + 'p') : ' • Только звук (Фоновый поток)');
+        if (imgEl && st.currentThumb && imgEl.src !== st.currentThumb) imgEl.src = st.currentThumb;
+
+        var playBtn = document.getElementById('ytTransportPlayBtnV266');
+        var playing = window.isYtStreamPlayingV266();
+        if (playBtn) playBtn.innerHTML = playing ? '⏸' : '▶';
+
+        var cur = window.getYtStreamCurrentSecV266();
+        var dur = window.getYtStreamTotalDurSecV266();
+        var curLbl = document.getElementById('ytCurTimeLblV266');
+        var durLbl = document.getElementById('ytDurTimeLblV266');
+        var seekEl = document.getElementById('ytSeekSliderV266');
+        if (curLbl) curLbl.textContent = fmtYtTimeV266(cur);
+        if (durLbl) durLbl.textContent = dur > 0 ? fmtYtTimeV266(dur) : '0:00';
+        if (seekEl && !st.userDraggingSeek) {
+            seekEl.value = (dur > 0) ? Math.min(1000, Math.round((cur / dur) * 1000)) : 0;
+        }
+
+        // Render quality pills when in video mode
+        var qRow = document.getElementById('ytQualityPillsRowV266');
+        if (qRow) {
+            var heights = (st.availableHeights && st.availableHeights.length) ? st.availableHeights : [1080, 720, 480, 360];
+            var qHtml = '';
+            heights.slice(0, 5).forEach(function(h) {
+                var active = (Number(h) === Number(st.selectedHeight));
+                qHtml += '<button type="button" onclick="window.changeYtVideoQualityV266(' + h + ')" style="padding:3px 8px;border-radius:6px;font-size:10.5px;font-weight:800;cursor:pointer;border:1px solid ' +
+                    (active ? '#ff0033' : '#30363d') + ';background:' + (active ? '#ff0033' : '#161b22') + ';color:#fff;">' + h + 'p</button>';
+            });
+            if (qRow._lastQHtml !== qHtml) {
+                qRow._lastQHtml = qHtml;
+                qRow.innerHTML = qHtml;
+            }
+        }
+    }
+
+    window.startYtItemV266 = async function(idx, playType, startAtSec) {
+        ensureYtMediaElementsV266();
+        var items = st.results || [];
+        if (idx < 0 || idx >= items.length) return;
+        var item = items[idx];
+        var mode = (playType === 'video') ? 'video' : 'audio';
+
+        // If user clicked the already-active item in the same mode, just toggle Play/Pause
+        if (st.currentId === item.id && st.activeType === mode && startAtSec === undefined) {
+            window.toggleYtStreamPlayPauseV266('toggle');
+            window.renderYtSearchResultsV266();
+            return;
+        }
+
+        pauseOtherSourcesForYtV266();
+        window.pauseYtStreamV266();
+
+        var mySeq = ++st.reqSeq;
+        st.currentIdx = idx;
+        st.currentId = item.id;
+        st.currentTitle = item.title || ('YouTube ' + item.id);
+        st.currentChannel = item.channel || 'YouTube';
+        st.currentThumb = item.thumbnail || ('https://i.ytimg.com/vi/' + item.id + '/hqdefault.jpg');
+        st.knownDuration = Number(item.duration || 0);
+        st.activeType = mode;
+
+        window._islandActiveModeV245 = 'youtube';
+        window._islandExplicitModeTsV245 = Date.now();
+        window._lastActiveMediaSourceV243 = 'youtube';
+
+        syncYtPlayerUIV266();
+        window.renderYtSearchResultsV266();
+        if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+            window.syncPermanentForegroundNotificationV212(true);
+        }
+
+        var statusEl = document.getElementById('ytNowChannelV266');
+        if (statusEl) {
+            statusEl.textContent = '⏳ Подключение к потоку YouTube (' + (mode === 'video' ? ('Видео ' + st.selectedHeight + 'p') : 'Только звук') + ')...';
+        }
+
+        try {
+            var res = await fetch('/api/youtube/resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: item.id, height: st.selectedHeight })
+            });
+            var data = await res.json();
+            if (mySeq !== st.reqSeq) return;
+            if (!data || data.status !== 'ok') {
+                throw new Error((data && data.error) || 'Не удалось получить поток');
+            }
+
+            if (data.duration > 0) {
+                st.knownDuration = Number(data.duration);
+                item.duration = st.knownDuration;
+                item.duration_str = data.duration_str || fmtYtTimeV266(st.knownDuration);
+            }
+            if (Array.isArray(data.available_heights) && data.available_heights.length > 0) {
+                st.availableHeights = data.available_heights;
+            }
+            if (data.selected_height) {
+                st.selectedHeight = Number(data.selected_height);
+            }
+            st.splitAudio = Boolean(data.split_audio);
+
+            var resumeSec = (typeof startAtSec === 'number' && startAtSec > 0) ? startAtSec : 0;
+
+            if (mode === 'audio') {
+                // PURE AUDIO STREAMING ('🎧 Слушать'): video element stays unloaded & hidden!
+                if (st.videoEl) {
+                    try { st.videoEl.pause(); st.videoEl.removeAttribute('src'); st.videoEl.load(); } catch (e) {}
+                }
+                st.audioEl.muted = false;
+                st.audioEl.volume = 1.0;
+                st.audioEl.src = data.audio_stream_url + '&_t=' + Date.now();
+                if (resumeSec > 0.5) {
+                    st.audioEl.addEventListener('loadedmetadata', function onMetaA() {
+                        st.audioEl.removeEventListener('loadedmetadata', onMetaA);
+                        try { st.audioEl.currentTime = resumeSec; } catch (e) {}
+                    });
+                }
+                await st.audioEl.play();
+            } else {
+                // INLINE 16:9 YOUTUBE VIDEO STREAMING ('🎬 Смотреть')
+                ensureYtMediaElementsV266();
+                if (!st.videoEl) throw new Error('Видеоплеер не инициализирован');
+                if (st.splitAudio) {
+                    st.videoEl.muted = true;
+                    st.audioEl.muted = false;
+                    st.audioEl.volume = 1.0;
+                    st.videoEl.src = data.video_stream_url + '&_t=' + Date.now();
+                    st.audioEl.src = data.audio_stream_url + '&_t=' + Date.now();
+                    if (resumeSec > 0.5) {
+                        st.videoEl.addEventListener('loadedmetadata', function onMetaV() {
+                            st.videoEl.removeEventListener('loadedmetadata', onMetaV);
+                            try { st.videoEl.currentTime = resumeSec; } catch (e) {}
+                        });
+                        st.audioEl.addEventListener('loadedmetadata', function onMetaA2() {
+                            st.audioEl.removeEventListener('loadedmetadata', onMetaA2);
+                            try { st.audioEl.currentTime = resumeSec; } catch (e) {}
+                        });
+                    }
+                    st.audioEl.play().catch(function() {});
+                    await st.videoEl.play();
+                } else {
+                    if (st.audioEl) {
+                        try { st.audioEl.pause(); st.audioEl.removeAttribute('src'); st.audioEl.load(); } catch (e) {}
+                    }
+                    st.videoEl.muted = false;
+                    st.videoEl.volume = 1.0;
+                    st.videoEl.src = data.video_stream_url + '&_t=' + Date.now();
+                    if (resumeSec > 0.5) {
+                        st.videoEl.addEventListener('loadedmetadata', function onMetaVc() {
+                            st.videoEl.removeEventListener('loadedmetadata', onMetaVc);
+                            try { st.videoEl.currentTime = resumeSec; } catch (e) {}
+                        });
+                    }
+                    await st.videoEl.play();
+                }
+            }
+
+            syncYtPlayerUIV266();
+            window.renderYtSearchResultsV266();
+            if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                window.syncPermanentForegroundNotificationV212(true);
+            }
+        } catch (err) {
+            if (mySeq === st.reqSeq) {
+                if (typeof window.showToast === 'function') {
+                    window.showToast('❌ YouTube: ' + (err.message || err));
+                }
+                syncYtPlayerUIV266();
+            }
+        }
+    };
+
+    // Seamless switch between '🎬 Видео' and '🎧 Только звук' at the exact current second!
+    window.switchActiveYtStreamModeV266 = function(targetMode) {
+        if (st.currentIdx < 0 || !st.currentId) return;
+        var curSec = window.getYtStreamCurrentSecV266();
+        if (targetMode === 'audio' && st.activeType === 'video' && st.splitAudio && st.audioEl && !st.audioEl.paused) {
+            // In splitAudio 1080p mode, audioEl is ALREADY playing the audio stream! Just stop videoEl!
+            st._switchingToAudioOnly = true;
+            if (st.videoEl) {
+                try { st.videoEl.pause(); st.videoEl.removeAttribute('src'); st.videoEl.load(); } catch (e) {}
+            }
+            st._switchingToAudioOnly = false;
+            st.activeType = 'audio';
+            st.splitAudio = false;
+            syncYtPlayerUIV266();
+            window.renderYtSearchResultsV266();
+            if (typeof window.syncPermanentForegroundNotificationV212 === 'function') {
+                window.syncPermanentForegroundNotificationV212(true);
+            }
+            return;
+        }
+        st.currentId = ''; // allow startYtItemV266 to reload in the new mode at curSec
+        window.startYtItemV266(st.currentIdx, targetMode, curSec);
+    };
+
+    window.changeYtVideoQualityV266 = function(newHeight) {
+        var h = Number(newHeight) || 720;
+        if (h === st.selectedHeight && st.activeType === 'video') return;
+        st.selectedHeight = h;
+        if (st.currentIdx >= 0 && st.currentId) {
+            var curSec = window.getYtStreamCurrentSecV266();
+            st.currentId = '';
+            window.startYtItemV266(st.currentIdx, 'video', curSec);
+        }
+    };
+
+    window.toggleYtVideoFullscreenV266 = function() {
+        var v = document.getElementById('ytDedicatedVideoV266');
+        if (!v) return;
+        try {
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else if (v.requestFullscreen) {
+                v.requestFullscreen();
+            } else if (v.webkitEnterFullscreen) {
+                v.webkitEnterFullscreen();
+            }
+        } catch (e) {}
+    };
+
+    window.saveYtItemToLocalPlayerV266 = async function(idx, fmtMode, btnEl) {
+        var items = st.results || [];
+        var targetIdx = (typeof idx === 'number' && idx >= 0 && idx < items.length) ? idx : st.currentIdx;
+        if (targetIdx < 0 || targetIdx >= items.length) {
+            if (typeof window.showToast === 'function') window.showToast('Сначала выберите ролик YouTube');
+            return;
+        }
+        var item = items[targetIdx];
+        var oldTxt = btnEl ? btnEl.innerHTML : '';
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.innerHTML = '⏳ Скачивание...';
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast('⏳ Скачивание в плеер: ' + (item.title || item.id));
+        }
+        try {
+            var res = await fetch('/api/youtube/save_track', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: item.id,
+                    format: fmtMode || 'xflac',
+                    height: st.selectedHeight || 720
+                })
+            });
+            var data = await res.json();
+            if (!data || data.status !== 'ok') {
+                throw new Error((data && data.error) || 'Ошибка сохранения');
+            }
+            if (btnEl) btnEl.innerHTML = '✅ В плеере!';
+            if (typeof window.showToast === 'function') {
+                window.showToast('✅ Сохранено в плеер: ' + data.filename);
+            }
+            if (typeof window.fetchData === 'function') {
+                window.fetchData();
+            }
+            if (typeof window.refreshJennyHubSummaryV242 === 'function') {
+                window.refreshJennyHubSummaryV242();
+            }
+        } catch (err) {
+            if (btnEl) btnEl.innerHTML = '❌ Ошибка';
+            if (typeof window.showToast === 'function') {
+                window.showToast('❌ Ошибка: ' + (err.message || err));
+            }
+        } finally {
+            setTimeout(function() {
+                if (btnEl) {
+                    btnEl.disabled = false;
+                    btnEl.innerHTML = oldTxt || '💾 В .xFLAC';
+                }
+            }, 2500);
+        }
+    };
+
+    window.downloadCurrentYtToPlayerV266 = async function() {
+        return await window.saveYtItemToLocalPlayerV266(st.currentIdx, 'xflac', null);
+    };
+
+    window.runYtStudioSearchV266 = async function(presetQuery) {
+        var inp = document.getElementById('ytSearchInputV266');
+        var listEl = document.getElementById('ytResultsListV266');
+        if (!listEl) return;
+        if (presetQuery && inp) inp.value = presetQuery;
+        var q = inp ? String(inp.value || '').trim() : (presetQuery || '');
+        if (!q) {
+            if (typeof window.showToast === 'function') window.showToast('Введите название ролика, трека или ссылку YouTube');
+            return;
+        }
+        listEl.innerHTML = '<div style="padding:36px 14px;text-align:center;color:#ff4d6d;font-weight:700;font-size:13px;">🔎 Поиск в YouTube...</div>';
+        try {
+            var r = await fetch('/api/youtube/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: q })
+            });
+            var j = await r.json();
+            if (!j || j.status !== 'ok') {
+                listEl.innerHTML = '<div style="padding:24px;color:#ff7b72;text-align:center;font-size:12.5px;">❌ ' + ((j && j.error) || 'Ошибка поиска') + '</div>';
+                return;
+            }
+            st.results = j.results || [];
+            window.renderYtSearchResultsV266();
+        } catch (e) {
+            listEl.innerHTML = '<div style="padding:24px;color:#ff7b72;text-align:center;font-size:12.5px;">❌ Ошибка сети: ' + (e.message || e) + '</div>';
+        }
+    };
+
+    window.renderYtSearchResultsV266 = function() {
+        var listEl = document.getElementById('ytResultsListV266');
+        if (!listEl) return;
+        var items = st.results || [];
+        if (!items.length) {
+            listEl.innerHTML = '<div style="padding:32px 16px;text-align:center;color:#8b949e;font-size:12.5px;line-height:1.5;">Введите любой запрос в поиск выше — от 3-минутных треков до 500-часовых обзоров.<br><span style="color:#ff6b81;">🎧 Слушать</span> — включает чистый аудиопоток в фоне (без видеоплеера и без загрузки в ОЗУ).<br><span style="color:#58a6ff;">🎬 Смотреть</span> — открывает встроенный экран 16:9 прямо сверху.</div>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            var safeTitle = String(it.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            var safeChan = String(it.channel || 'YouTube').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            var viewsTxt = fmtYtViewsV266(it.view_count);
+            var subMeta = safeChan + (viewsTxt ? (' • ' + viewsTxt) : '');
+            var isCur = (st.currentId === it.id);
+            var playing = isCur && window.isYtStreamPlayingV266();
+            var isCurAudio = isCur && st.activeType === 'audio';
+            var isCurVideo = isCur && st.activeType === 'video';
+
+            html +=
+                '<div style="background:' + (isCur ? 'rgba(255,0,51,0.12)' : '#16181d') + ';border:1px solid ' + (isCur ? '#ff0033' : '#262932') + ';border-radius:14px;overflow:hidden;margin-bottom:12px;box-shadow:0 4px 14px rgba(0,0,0,0.4);">' +
+                    // Widescreen 16:9 YouTube Card Thumbnail
+                    '<div onclick="window.startYtItemV266(' + i + ', \'video\')" style="position:relative;width:100%;aspect-ratio:16/9;background:#090b0e;cursor:pointer;overflow:hidden;">' +
+                        '<img src="' + (it.thumbnail || '') + '" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\'">' +
+                        '<div style="position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,0.86);color:#fff;padding:2px 7px;border-radius:5px;font-size:11px;font-weight:800;font-family:monospace;">' + (it.duration_str || '—') + '</div>' +
+                        (isCur ? ('<div style="position:absolute;left:8px;top:8px;background:#ff0033;color:#fff;padding:3px 9px;border-radius:6px;font-size:10.5px;font-weight:900;">' + (playing ? '▶ СЕЙЧАС ИГРАЕТ' : '⏸ НА ПАУЗЕ') + '</div>') : '') +
+                    '</div>' +
+                    // Card Metadata & Action Bar
+                    '<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;">' +
+                        '<div>' +
+                            '<div style="color:#f1f1f1;font-size:13.5px;font-weight:700;line-height:1.32;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + safeTitle + '</div>' +
+                            '<div style="color:#aaaaaa;font-size:11.5px;margin-top:4px;">' + subMeta + '</div>' +
+                        '</div>' +
+                        '<div style="display:flex;gap:7px;flex-wrap:wrap;">' +
+                            '<button type="button" onclick="window.startYtItemV266(' + i + ', \'audio\')" style="flex:1.15;min-width:102px;padding:8px 10px;border-radius:20px;border:1px solid ' + (isCurAudio ? '#fff' : '#ff0033') + ';background:' + (isCurAudio ? '#ff0033' : 'rgba(255,0,51,0.18)') + ';color:#fff;font-weight:800;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;">' +
+                                (isCurAudio && playing ? '⏸ Пауза (Звук)' : '🎧 Слушать') +
+                            '</button>' +
+                            '<button type="button" onclick="window.startYtItemV266(' + i + ', \'video\')" style="flex:1.15;min-width:102px;padding:8px 10px;border-radius:20px;border:1px solid ' + (isCurVideo ? '#58a6ff' : '#30363d') + ';background:' + (isCurVideo ? 'rgba(56,139,253,0.32)' : '#222630') + ';color:#f0f6fc;font-weight:800;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;">' +
+                                (isCurVideo && playing ? '⏸ Пауза (Видео)' : '🎬 Смотреть') +
+                            '</button>' +
+                            '<button type="button" onclick="window.saveYtItemToLocalPlayerV266(' + i + ', \'xflac\', this)" style="flex:0.8;min-width:86px;padding:8px 9px;border-radius:20px;border:1px solid rgba(163,113,247,0.5);background:rgba(163,113,247,0.16);color:#d2a8ff;font-weight:800;font-size:11.5px;cursor:pointer;">' +
+                                '💾 .xFLAC' +
+                            '</button>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+        }
+        listEl.innerHTML = html;
+    };
+
+    window.refreshYtEngineStatusBadgeV266 = async function() {
+        var el = document.getElementById('ytEngineBadgeV266');
+        try {
+            var r = await fetch('/api/youtube/engine_status');
+            var j = await r.json();
+            if (j && j.state && el) {
+                el.textContent = 'yt-dlp ' + (j.state.yt_dlp_version || '—') + ' • EJS ' + (j.state.ejs_version || '—');
+            }
+        } catch (e) {}
+    };
+
+    window.triggerYtEngineUpdateV266 = async function(btnEl) {
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.textContent = '⏳ Обновление...';
+        }
+        try {
+            var r = await fetch('/api/youtube/update_engine', { method: 'POST' });
+            var j = await r.json();
+            if (j && j.status === 'ok') {
+                if (typeof window.showToast === 'function') window.showToast('✅ Ядро YouTube обновлено!');
+                window.refreshYtEngineStatusBadgeV266();
+            } else {
+                throw new Error((j && j.error) || 'Ошибка обновления');
+            }
+        } catch (e) {
+            if (typeof window.showToast === 'function') window.showToast('❌ ' + (e.message || e));
+        } finally {
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.textContent = '🔄 Обновить ядро';
+            }
+        }
+    };
+
+    window.openYoutubeStudioModalV230 = function() {
+        var modal = document.getElementById('jennyYoutubeStudioModalV230');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'jennyYoutubeStudioModalV230';
+            modal.className = 'jenny-modal-backdrop-v71';
+            modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:2147483000;align-items:center;justify-content:center;padding:6px;';
+            document.body.appendChild(modal);
+        }
+
+        if (!modal._v266Built) {
+            modal._v266Built = true;
+            modal.innerHTML =
+                '<div class="jenny-modal-card-v71" style="width:100%;max-width:560px;height:94vh;max-height:94vh;background:#0f0f0f;border:1.5px solid #272727;border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,0.95);">' +
+                    // 1. Official YouTube Dark Header
+                    '<div style="padding:10px 12px;background:#0f0f0f;border-bottom:1px solid #222;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;">' +
+                        '<div style="display:flex;align-items:center;gap:7px;min-width:0;">' +
+                            '<div style="width:26px;height:18px;background:#ff0033;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+                                '<span style="color:#fff;font-size:10px;font-weight:900;margin-left:1px;">▶</span>' +
+                            '</div>' +
+                            '<span style="color:#fff;font-weight:900;font-size:15px;letter-spacing:-0.3px;">YouTube</span>' +
+                            '<span id="ytEngineBadgeV266" style="color:#717171;font-size:10px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">yt-dlp</span>' +
+                        '</div>' +
+                        '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">' +
+                            '<button type="button" onclick="window.triggerYtEngineUpdateV266(this)" style="padding:4px 8px;border-radius:14px;background:#222;border:1px solid #333;color:#ccc;font-size:10.5px;font-weight:700;cursor:pointer;">🔄 Ядро</button>' +
+                            '<button type="button" onclick="if(window.openStudioHistoryDrawerV242) window.openStudioHistoryDrawerV242(\'youtube\', \'jennyYoutubeStudioModalV230\')" style="padding:4px 8px;border-radius:14px;background:#222;border:1px solid #333;color:#ff6b81;font-size:10.5px;font-weight:700;cursor:pointer;">📥 Закачки</button>' +
+                            '<button type="button" onclick="document.getElementById(\'jennyYoutubeStudioModalV230\').style.setProperty(\'display\',\'none\',\'important\')" style="padding:4px 10px;border-radius:14px;background:rgba(255,0,51,0.16);border:1px solid #ff0033;color:#ff8099;font-size:11px;font-weight:800;cursor:pointer;">➖ В фон</button>' +
+                        '</div>' +
+                    '</div>' +
+
+                    // 2. Search Bar & Quick Chips
+                    '<div style="padding:8px 12px;background:#0f0f0f;border-bottom:1px solid #1f1f1f;display:flex;flex-direction:column;gap:7px;flex-shrink:0;">' +
+                        '<div style="display:flex;gap:6px;">' +
+                            '<input type="text" id="ytSearchInputV266" placeholder="Поиск в YouTube или ссылка..." onkeydown="if(event.key===\'Enter\') window.runYtStudioSearchV266()" style="flex:1;padding:8px 13px;border-radius:20px;background:#121212 !important;border:1px solid #303030 !important;color:#f1f1f1 !important;font-size:13px;outline:none;text-align:left !important;">' +
+                            '<button type="button" onclick="window.runYtStudioSearchV266()" style="padding:8px 15px;border-radius:20px;background:#222222;border:1px solid #303030;color:#fff;font-weight:800;font-size:12.5px;cursor:pointer;flex-shrink:0;">🔎 Найти</button>' +
+                        '</div>' +
+                        '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;">' +
+                            '<button type="button" onclick="window.runYtStudioSearchV266(\'500 часов в Starfield\')" style="padding:4px 10px;border-radius:8px;background:#272727;border:none;color:#f1f1f1;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;">🚀 Старфилд</button>' +
+                            '<button type="button" onclick="window.runYtStudioSearchV266(\'Synthwave Radio Mix\')" style="padding:4px 10px;border-radius:8px;background:#272727;border:none;color:#f1f1f1;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;">🌆 Synthwave</button>' +
+                            '<button type="button" onclick="window.runYtStudioSearchV266(\'Rihanna Desperado\')" style="padding:4px 10px;border-radius:8px;background:#272727;border:none;color:#f1f1f1;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;">🎵 Музыка</button>' +
+                            '<button type="button" onclick="window.runYtStudioSearchV266(\'4K HDR Demo 60fps\')" style="padding:4px 10px;border-radius:8px;background:#272727;border:none;color:#f1f1f1;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;">🎬 4K Видео</button>' +
+                        '</div>' +
+                    '</div>' +
+
+                    // 3. Sticky YouTube Theater / Music Dock (Hidden until an item is played)
+                    '<div id="ytTheaterDockV266" style="display:none;flex-direction:column;background:#141418;border-bottom:1.5px solid #ff0033;flex-shrink:0;">' +
+                        // 3a. 16:9 Video Viewport (Only visible in '🎬 Смотреть' mode)
+                        '<div id="ytVideoBoxV266" style="display:none;flex-direction:column;background:#000;">' +
+                            '<div style="position:relative;width:100%;aspect-ratio:16/9;max-height:36vh;background:#000;display:flex;align-items:center;justify-content:center;">' +
+                                '<video id="ytDedicatedVideoV266" playsinline preload="auto" style="width:100%;height:100%;object-fit:contain;background:#000;"></video>' +
+                            '</div>' +
+                            '<div style="padding:6px 10px;background:#111318;display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;">' +
+                                '<div id="ytQualityPillsRowV266" style="display:flex;gap:4px;align-items:center;"></div>' +
+                                '<div style="display:flex;gap:5px;align-items:center;">' +
+                                    '<button type="button" onclick="window.switchActiveYtStreamModeV266(\'audio\')" style="padding:4px 9px;border-radius:14px;background:rgba(255,0,51,0.2);border:1px solid #ff0033;color:#fff;font-size:10.5px;font-weight:800;cursor:pointer;">🎧 Только звук</button>' +
+                                    '<button type="button" onclick="window.toggleYtVideoFullscreenV266()" style="padding:4px 8px;border-radius:8px;background:#222;border:1px solid #383838;color:#fff;font-size:11px;font-weight:800;cursor:pointer;">⛶ Экран</button>' +
+                                '</div>' +
+                            '</div>' +
+                        '</div>' +
+
+                        // 3b. Compact YouTube Music Card (Only visible in '🎧 Слушать' mode — NO video popup!)
+                        '<div id="ytAudioBoxV266" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;background:#18181f;">' +
+                            '<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">' +
+                                '<img id="ytNowThumbV266" src="" style="width:48px;height:36px;object-fit:cover;border-radius:6px;border:1px solid #ff0033;flex-shrink:0;background:#000;">' +
+                                '<div style="font-size:11px;color:#ff8099;font-weight:800;">🎧 Режим: Только аудиопоток</div>' +
+                            '</div>' +
+                            '<button type="button" onclick="window.switchActiveYtStreamModeV266(\'video\')" style="padding:5px 10px;border-radius:14px;background:#252834;border:1px solid #58a6ff;color:#9ecbff;font-size:11px;font-weight:800;cursor:pointer;flex-shrink:0;">🎬 Показать видео</button>' +
+                        '</div>' +
+
+                        // 3c. Shared Title, Seekbar & Transport Bar
+                        '<div style="padding:8px 12px 10px 12px;display:flex;flex-direction:column;gap:6px;">' +
+                            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+                                '<div style="min-width:0;flex:1;">' +
+                                    '<div id="ytNowTitleV266" style="color:#fff;font-size:12.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">YouTube</div>' +
+                                    '<div id="ytNowChannelV266" style="color:#aaa;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Канал</div>' +
+                                '</div>' +
+                                '<button type="button" onclick="window.stopAndUnloadYtStreamV266()" title="Остановить поток" style="padding:3px 8px;border-radius:8px;background:rgba(248,81,73,0.16);border:1px solid #f85149;color:#ff7b72;font-size:10.5px;font-weight:800;cursor:pointer;flex-shrink:0;">✖ Стоп</button>' +
+                            '</div>' +
+                            '<div style="display:flex;align-items:center;gap:8px;">' +
+                                '<span id="ytCurTimeLblV266" style="color:#ccc;font-family:monospace;font-size:10.5px;min-width:38px;">0:00</span>' +
+                                '<input type="range" id="ytSeekSliderV266" min="0" max="1000" value="0" style="flex:1;height:5px;accent-color:#ff0033;cursor:pointer;">' +
+                                '<span id="ytDurTimeLblV266" style="color:#ccc;font-family:monospace;font-size:10.5px;min-width:38px;text-align:right;">0:00</span>' +
+                            '</div>' +
+                            '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:2px;">' +
+                                '<button type="button" onclick="window.stepYtStreamTrackV266(-1)" style="padding:5px 10px;border-radius:10px;background:#222;border:1px solid #333;color:#fff;font-size:12px;font-weight:800;cursor:pointer;">⏮</button>' +
+                                '<button type="button" onclick="window.stepYtStreamSeekByOffsetV266(-10)" style="padding:5px 9px;border-radius:10px;background:#222;border:1px solid #333;color:#ccc;font-size:11px;font-weight:800;cursor:pointer;">-10с</button>' +
+                                '<button type="button" id="ytTransportPlayBtnV266" onclick="window.toggleYtStreamPlayPauseV266(\'toggle\')" style="padding:6px 20px;border-radius:18px;background:#ff0033;border:none;color:#fff;font-size:14px;font-weight:900;cursor:pointer;box-shadow:0 2px 10px rgba(255,0,51,0.45);">▶</button>' +
+                                '<button type="button" onclick="window.stepYtStreamSeekByOffsetV266(10)" style="padding:5px 9px;border-radius:10px;background:#222;border:1px solid #333;color:#ccc;font-size:11px;font-weight:800;cursor:pointer;">+10с</button>' +
+                                '<button type="button" onclick="window.stepYtStreamTrackV266(1)" style="padding:5px 10px;border-radius:10px;background:#222;border:1px solid #333;color:#fff;font-size:12px;font-weight:800;cursor:pointer;">⏭</button>' +
+                                '<button type="button" onclick="window.saveYtItemToLocalPlayerV266(window._ytPlayerStateV266.currentIdx, \'xflac\', this)" style="padding:5px 10px;border-radius:10px;background:rgba(163,113,247,0.2);border:1px solid #a371f7;color:#e2c5ff;font-size:11px;font-weight:800;cursor:pointer;">💾 .xFLAC</button>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+
+                    // 4. Scrollable YouTube Feed
+                    '<div id="ytResultsListV266" style="flex:1;overflow-y:auto;padding:10px 12px;"></div>' +
+                '</div>';
+
+            ensureYtMediaElementsV266();
+            var seekEl = document.getElementById('ytSeekSliderV266');
+            if (seekEl) {
+                seekEl.addEventListener('touchstart', function() { st.userDraggingSeek = true; }, { passive: true });
+                seekEl.addEventListener('mousedown', function() { st.userDraggingSeek = true; });
+                var finishSeek = function() {
+                    if (!st.userDraggingSeek) return;
+                    st.userDraggingSeek = false;
+                    var dur = window.getYtStreamTotalDurSecV266();
+                    if (dur > 0) {
+                        var target = (Math.max(0, Math.min(1000, Number(seekEl.value) || 0)) / 1000.0) * dur;
+                        window.seekYtStreamToSecV266(target);
+                    }
+                };
+                seekEl.addEventListener('touchend', finishSeek, { passive: true });
+                seekEl.addEventListener('mouseup', finishSeek);
+                seekEl.addEventListener('change', finishSeek);
+            }
+            window.renderYtSearchResultsV266();
+        }
+
+        modal.style.setProperty('display', 'flex', 'important');
+        ensureYtMediaElementsV266();
+        syncYtPlayerUIV266();
+        window.refreshYtEngineStatusBadgeV266();
+    };
+})();
