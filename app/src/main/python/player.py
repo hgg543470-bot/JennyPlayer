@@ -16857,7 +16857,8 @@ def _ensure_yt_deckb_mp4_cached_v252(vid: str, preferred_height: int = 2160) -> 
 
 # Hook resolve_track_full_path_v71, _resolve_video_src_input_v131, and _resolve_any_media_path_v218
 # so Deck A and Deck B resolve /api/media/<yt_file> and /api/youtube/range_proxy seamlessly!
-_ORIG_RESOLVE_TRACK_V253 = resolve_track_full_path_v71
+if "_ORIG_RESOLVE_TRACK_V253" not in globals():
+    _ORIG_RESOLVE_TRACK_V253 = resolve_track_full_path_v71
 
 
 def _resolve_track_full_path_v253(filename: str) -> str:
@@ -16889,7 +16890,8 @@ def _resolve_track_full_path_v253(filename: str) -> str:
 resolve_track_full_path_v71 = _resolve_track_full_path_v253
 
 if "_resolve_video_src_input_v131" in globals():
-    _ORIG_RESOLVE_VID_SRC_V253 = _resolve_video_src_input_v131
+    if "_ORIG_RESOLVE_VID_SRC_V253" not in globals():
+        _ORIG_RESOLVE_VID_SRC_V253 = _resolve_video_src_input_v131
 
     def _resolve_video_src_input_v253(src: str) -> str:
         s = str(src or "").strip()
@@ -16903,7 +16905,8 @@ if "_resolve_video_src_input_v131" in globals():
 
     _resolve_video_src_input_v131 = _resolve_video_src_input_v253
 
-_ORIG_RESOLVE_ANY_MEDIA_V252 = _resolve_any_media_path_v218
+if "_ORIG_RESOLVE_ANY_MEDIA_V252" not in globals():
+    _ORIG_RESOLVE_ANY_MEDIA_V252 = _resolve_any_media_path_v218
 
 
 def _resolve_any_media_path_v252(path_or_id: str) -> str:
