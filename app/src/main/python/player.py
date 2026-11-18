@@ -421,19 +421,47 @@ def _encode_wav_to_xflac_bytes_v85(wav_bytes: bytes, mode: int) -> bytes:
     lib = _get_xflac_lib_v84()
     if not lib:
         raise RuntimeError("libxflac.so не загружена (проверьте сборку NDK arm64-v8a)")
+    t_cpp0 = time.time()
     out_ptr = ctypes.POINTER(ctypes.c_uint8)()
     out_sz = ctypes.c_size_t(0)
     rc = lib.xflac_encode_wav_mem(wav_bytes, len(wav_bytes), ctypes.byref(out_ptr), ctypes.byref(out_sz), int(mode), None)
     if rc != 0 or not out_ptr or out_sz.value < 25:
         raise RuntimeError(f"xflac encode error {rc}")
+    t_cpp_sec = max(0.01, time.time() - t_cpp0)
     try:
-        raw_xfc = ctypes.string_at(out_ptr, out_sz.value)
+        base_addr = ctypes.addressof(out_ptr.contents)
+        hdr25 = ctypes.string_at(base_addr, 25)
+        flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", hdr25[4:25])
+        raw_meta = ctypes.string_at(base_addr + 25, rm_sz)
+        tail_off = 25 + cm_sz
+        rem_tail = ctypes.string_at(base_addr + tail_off, max(0, out_sz.value - tail_off))
     finally:
         lib.xflac_free(ctypes.cast(out_ptr, ctypes.c_void_p))
-    flags, nf, rm_sz, cm_sz, rl_sz, rr_sz = struct.unpack("<BIIIII", raw_xfc[4:25])
-    raw_meta = raw_xfc[25:25 + rm_sz]
-    rem_tail = raw_xfc[25 + cm_sz:]
-    comp_meta = lzma.compress(raw_meta, format=lzma.FORMAT_XZ, preset=6)
+
+    t_xz0 = time.time()
+    if "_update_yt_progress_v256" in globals() and globals().get("_YT_DOWNLOAD_PROGRESS_V256", {}).get("active"):
+        try:
+            _update_yt_progress_v256(
+                True,
+                phase="transcode",
+                pct=97,
+                dl_pct=100,
+                enc_pct=97,
+                stage=f"⚙️ Сжатие XFC3 в 8 потоков (OLS за {t_cpp_sec:.1f}с)...",
+                encoder_info=f"🔧 C++ 8-поточный OLS готов за {t_cpp_sec:.1f}с ({round(len(wav_bytes)/(1024*1024*t_cpp_sec), 1)} МБ/с) ➔ 8-поточное XZ сжатие ({round(rm_sz/(1024*1024), 1)} МБ) | RAM: {_get_process_ram_str_v259()}",
+                force_disk=True,
+            )
+        except Exception:
+            pass
+
+    chunk_sz = 4 * 1024 * 1024
+    if len(raw_meta) <= chunk_sz:
+        comp_meta = lzma.compress(raw_meta, format=lzma.FORMAT_XZ, preset=1)
+    else:
+        chunks = [raw_meta[i:i + chunk_sz] for i in range(0, len(raw_meta), chunk_sz)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            comp_meta = b"".join(ex.map(lambda c: lzma.compress(c, format=lzma.FORMAT_XZ, preset=1), chunks))
+    del raw_meta
     return b"XFC3" + struct.pack("<BIIIII", flags | 2, nf, rm_sz, len(comp_meta), rl_sz, rr_sz) + comp_meta + rem_tail
 
 
@@ -16618,11 +16646,16 @@ def _resolve_any_media_path_v252(path_or_id: str) -> str:
     s = (path_or_id or "").strip()
     if os.path.isabs(s) and os.path.isfile(s):
         return s
+    if s.startswith("/api/youtube/range_proxy") or s.startswith("/api/youtube/live_mux_v253"):
+        port = globals().get("_INTERNAL_STREAM_PORT_V238", 8080)
+        return f"http://127.0.0.1:{port}{s}"
+    if s.startswith(("http://127.0.0.1", "http://localhost")) and ("/api/youtube/" in s):
+        return s
     if s.startswith("yt://"):
         vid = _normalize_yt_video_id_v252(s[5:].split("?")[0].split("&")[0])
         if vid:
             cache_dir = _get_yt_stream_cache_dir_v252()
-            for h in (720, 480, 360, 1080, 240):
+            for h in (2160, 1440, 1080, 720, 480, 360, 240):
                 cand = os.path.join(cache_dir, f"yt_deckb_{vid}_{h}p.mp4")
                 if os.path.isfile(cand) and os.path.getsize(cand) > 65536:
                     return cand
@@ -17231,8 +17264,11 @@ def api_youtube_resolve_deck_b_v252():
             }, ensure_ascii=False)
         else:
             # Chunked streaming mode for large videos (> limit_mb, e.g. 2-hour movies!)
-            # Start background cache preparation if disk space allows, while immediately returning seekable range_proxy stream!
-            stream_url = f"/api/youtube/range_proxy?v={vid}&kind=combined&h={h_tag}"
+            # If video + audio are separate adaptive DASH streams, use live FFmpeg HTTP muxer so both video & audio stream immediately!
+            if chosen and chosen.get("combined") and chosen.get("video"):
+                stream_url = f"/api/youtube/range_proxy?v={vid}&kind=combined&h={h_tag}"
+            else:
+                stream_url = f"/api/youtube/live_mux_v253?v={vid}&h={h_tag}"
             return json.dumps({
                 "status": "ok",
                 "mode": "chunked_stream",
@@ -17251,6 +17287,74 @@ def api_youtube_resolve_deck_b_v252():
             }, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+def api_youtube_live_mux_v253():
+    """Streams YouTube adaptive Video + Audio on the fly as a fragmented MP4 stream via local FFmpeg."""
+    vid = _normalize_yt_video_id_v252(request.query.get("v") or request.query.get("id") or "")
+    pref_h = int(request.query.get("h") or 1080)
+    try:
+        start_sec = max(0.0, float(request.query.get("start") or 0.0))
+    except Exception:
+        start_sec = 0.0
+    if not vid:
+        response.status = 400
+        return b""
+    ff = find_ffmpeg_binary()
+    if not ff:
+        response.status = 500
+        return b""
+    meta = _extract_yt_full_v252(vid)
+    chosen, _ = _select_yt_quality_entry_v253(meta, pref_h)
+    v_info = (chosen or {}).get("video") or meta.get("best_combined")
+    a_info = (chosen or {}).get("audio") or meta.get("best_m4a_audio") or meta.get("best_audio")
+    if not v_info:
+        response.status = 404
+        return b""
+
+    port = globals().get("_INTERNAL_STREAM_PORT_V238", 8080)
+    v_proxy = f"http://127.0.0.1:{port}/api/youtube/range_proxy?v={vid}&kind=video&h={pref_h}"
+    a_proxy = f"http://127.0.0.1:{port}/api/youtube/range_proxy?v={vid}&kind=audio"
+
+    vcodec_s = str(v_info.get("vcodec") or "").lower()
+    v_ext_s = str(v_info.get("ext") or "mp4").lower()
+    can_copy_v = ("avc" in vcodec_s or "h264" in vcodec_s) and v_ext_s == "mp4"
+    v_args = ["-c:v", "copy"] if can_copy_v else ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "22", "-pix_fmt", "yuv420p"]
+
+    ss_args = ["-ss", f"{start_sec:.2f}"] if start_sec > 0.5 else []
+    cmd = [
+        ff, "-hide_banner", "-loglevel", "error",
+        "-reconnect", "1", "-reconnect_streamed", "1",
+        *ss_args, "-i", v_proxy,
+        "-reconnect", "1", "-reconnect_streamed", "1",
+        *ss_args, "-i", a_proxy,
+        "-map", "0:v:0", "-map", "1:a:0?",
+        *v_args,
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+        "-f", "mp4",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "pipe:1",
+    ]
+    response.set_header("Content-Type", "video/mp4")
+    response.set_header("Cache-Control", "no-store")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=262144)
+    _YT_ACTIVE_SUBPROCS_V256.add(proc)
+
+    def _gen_mux():
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            _YT_ACTIVE_SUBPROCS_V256.discard(proc)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    return _gen_mux()
 
 
 def api_youtube_download_mp4_v252():
@@ -17340,6 +17444,7 @@ _override_bottle_route_v212('/api/youtube/search', 'GET', api_youtube_search_v25
 _override_bottle_route_v212('/api/youtube/info', 'POST', api_youtube_info_v252)
 _override_bottle_route_v212('/api/youtube/info', 'GET', api_youtube_info_v252)
 _override_bottle_route_v212('/api/youtube/live_stream', 'GET', api_youtube_live_stream_v252)
+_override_bottle_route_v212('/api/youtube/live_mux_v253', 'GET', api_youtube_live_mux_v253)
 _override_bottle_route_v212('/api/youtube/range_proxy', 'GET', api_youtube_range_proxy_v253)
 _override_bottle_route_v212('/api/youtube/range_proxy', 'HEAD', api_youtube_range_proxy_v253)
 _override_bottle_route_v212('/api/youtube/prepare_deck_a', 'POST', api_youtube_prepare_deck_a_v253)

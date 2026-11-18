@@ -5333,17 +5333,15 @@ window.stopAllExternalStreamsV97 = function() {
             outerWrap.appendChild(btn);
         }
 
-        // Разворачиваемый список скачиваний YouTube прямо под строкой поиска
+        // Разворачиваемый список скачиваний YouTube поверх списка песен с максимальным z-index!
         var drop = document.getElementById('jennyYtDownloadsDropdownV259');
         if (!drop) {
             drop = document.createElement('div');
             drop.id = 'jennyYtDownloadsDropdownV259';
-            drop.style.cssText = 'display:none;margin-top:6px;margin-bottom:4px;padding:8px 10px;border-radius:10px;background:linear-gradient(180deg,#160d14 0%,#0b0f17 100%);border:1.5px solid #ff5555;box-shadow:0 10px 28px rgba(0,0,0,0.92);color:#f0f6fc;z-index:2147482900;position:relative;';
-            if (outerWrap.parentElement) {
-                outerWrap.insertAdjacentElement('afterend', drop);
-            } else {
-                document.body.appendChild(drop);
-            }
+            drop.style.cssText = 'display:none;position:fixed;left:8px;right:8px;top:94px;padding:9px 11px;border-radius:11px;background:linear-gradient(180deg,#180c14 0%,#0b0f17 100%);border:1.8px solid #ff5555;box-shadow:0 14px 38px rgba(0,0,0,0.96);color:#f0f6fc;z-index:2147483640 !important;';
+            document.body.appendChild(drop);
+        } else if (drop.parentElement !== document.body) {
+            document.body.appendChild(drop);
         }
         return btn;
     };
@@ -5353,9 +5351,19 @@ window.stopAllExternalStreamsV97 = function() {
         var drop = document.getElementById('jennyYtDownloadsDropdownV259');
         if (!drop) return;
         window._ytDropdownExpandedV259 = (typeof forceState === 'boolean') ? forceState : !window._ytDropdownExpandedV259;
-        drop.style.display = window._ytDropdownExpandedV259 ? 'block' : 'none';
         if (window._ytDropdownExpandedV259) {
+            var sInp = document.getElementById('trackSearchInput');
+            if (sInp) {
+                var r = sInp.getBoundingClientRect();
+                if (r && r.bottom > 20) {
+                    drop.style.top = Math.round(r.bottom + 6) + 'px';
+                }
+            }
+            drop.style.setProperty('z-index', '2147483640', 'important');
+            drop.style.display = 'block';
             window.fetchAndRenderYtProgressStateV259();
+        } else {
+            drop.style.display = 'none';
         }
     };
 
