@@ -1096,6 +1096,11 @@ public class MainActivity extends AppCompatActivity {
                 super.onWindowVisibilityChanged(View.VISIBLE);
             }
         };
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+            } catch (Throwable ignored) {}
+        }
         webView.setScaleX(1.0f);
                         webView.setScaleY(1.0f);
                         setContentView(webView);
@@ -1707,6 +1712,7 @@ public class MainActivity extends AppCompatActivity {
         restoreWebViewToActivityV135(false);
         PlaybackService.setAppInForegroundStatic(true);
         if (webView != null) {
+            evalJs("window._jennyAppInBackgroundV264=false;");
             webView.postDelayed(() -> {
                 if (wasPermSettings) {
                     evalJs("if(window.onReturnedFromPermissionScreenV146) window.onReturnedFromPermissionScreenV146(" + granted + ");");
@@ -1725,12 +1731,14 @@ public class MainActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         PlaybackService.setAppInForegroundStatic(false);
+        evalJs("window._jennyAppInBackgroundV264=true;");
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         PlaybackService.setAppInForegroundStatic(false);
+        evalJs("window._jennyAppInBackgroundV264=true;");
     }
 
     private void startPythonServer() {

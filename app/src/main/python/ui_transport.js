@@ -357,6 +357,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window.reconstructedMasterBufferV67 = null;
         window.reconstructedReversedBufferV67 = null;
         window.currentTrackRevMapV67 = null;
+        window._ramTrackHistoryV71 = [];
+        window._hugeRamCacheV71 = null;
+        if (window._hoseSplicerCacheV46) {
+            window._hoseSplicerCacheV46.srcBuffer = null;
+            window._hoseSplicerCacheV46.splicedBuffer = null;
+        }
         window._userPausedV75_2 = false;
 
         if (keepLocked && window.scrubState) {
@@ -467,8 +473,10 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
                 window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
             }
-            if (typeof window.buildAudioGraph === 'function') {
-                window.buildAudioGraph(true);
+            if (typeof window.updateAutoRmsGainsSmoothV264 === 'function') {
+                window.updateAutoRmsGainsSmoothV264(decodedBuffer);
+            } else if (typeof window.buildAudioGraph === 'function') {
+                window.buildAudioGraph(false);
             }
             if (typeof window.loadTrackReversibleDataV67 === 'function') {
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);
@@ -1469,6 +1477,12 @@ return _origHandleTrackPlayV130.apply(this, arguments);
         window.reconstructedMasterBufferV67 = null;
         window.reconstructedReversedBufferV67 = null;
         window.currentTrackRevMapV67 = null;
+        window._ramTrackHistoryV71 = [];
+        window._hugeRamCacheV71 = null;
+        if (window._hoseSplicerCacheV46) {
+            window._hoseSplicerCacheV46.srcBuffer = null;
+            window._hoseSplicerCacheV46.splicedBuffer = null;
+        }
         window._userPausedV75_2 = false;
         window._resumingFromUserPlayV232 = true;
 
@@ -1720,8 +1734,10 @@ return _origHandleTrackPlayV130.apply(this, arguments);
             if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
                 window.computeBufferAutoGain(decodedBuffer, window.appConfig.val_autoRms);
             }
-            if (typeof window.buildAudioGraph === 'function') {
-                window.buildAudioGraph(true);
+            if (typeof window.updateAutoRmsGainsSmoothV264 === 'function') {
+                window.updateAutoRmsGainsSmoothV264(decodedBuffer);
+            } else if (typeof window.buildAudioGraph === 'function') {
+                window.buildAudioGraph(false);
             }
             if (typeof window.loadTrackReversibleDataV67 === 'function') {
                 window.loadTrackReversibleDataV67(filename, decodedBuffer);

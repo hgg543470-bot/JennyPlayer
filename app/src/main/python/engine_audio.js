@@ -72,22 +72,23 @@ window.cleanupDynamicNodes = function() {
     }
 };
 
-// Гибридный WaveShaper: Убивает писк дросселей в тишине (Ultra-Low Noise Gate) + Мягкий Tanh Soft-Clipper на пиках!
+// Гибридный C2-непрерывный WaveShaper: 100% линейный до 0.60 + мягкий Tanh-потолок с 2x оверсэмплингом (0% хрипа и алиасинга!)
 window.createSoftClipWaveShaper = function(ctx, bucket) {
     let shaper = window.trackNode(ctx.createWaveShaper(), bucket);
     let half = 32768;
     let samples = half * 2 + 1; // 65537 — строго НЕЧЁТНОЕ число с точным 0.0 в центре
     let curve = new Float32Array(samples);
-    let k = 1.25;
-    let norm = Math.tanh(k);
     for (let i = 0; i < samples; i++) {
         let x = (i - half) / half;
-        // Идеально гладкая линейная зона в районе нуля без ступеньки gateThresh (0% искажений на тихой речи и шёпоте!)
-        curve[i] = Math.tanh(x * k) / norm * 0.98;
+        let ax = Math.abs(x);
+        let y = (ax <= 0.60)
+            ? ax
+            : (0.60 + 0.36 * Math.tanh((ax - 0.60) / 0.36));
+        curve[i] = (x < 0) ? -y : y;
     }
     curve[half] = 0.0;
     shaper.curve = curve;
-    shaper.oversample = 'none';
+    try { shaper.oversample = '2x'; } catch (e) { shaper.oversample = 'none'; }
     return shaper;
 };
 
@@ -98,14 +99,26 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.firEnabled && cfg.firSettings) {
         let fg = parseFloat(cfg.firSettings.gain) || 2.0;
         let firHot = 0.0;
-        if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.45;
+        if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.72;
         if (cfg.opt_cleanFir) {
             let cfDb = parseFloat(cfg.val_cleanFir) || 0;
-            if (cfDb > 0) firHot += cfDb * 0.4;
+            if (cfDb > 0) firHot += cfDb * 0.45;
         }
         if (firHot > 0.05) {
             hotDb += firHot;
             parts.push(`✨FIR -${firHot.toFixed(1)}`);
+        }
+    }
+    if (cfg.eqEnabled && cfg.eq) {
+        let maxEqPos = 0.0;
+        [60, 230, 910, 3600, 14000].forEach(f => {
+            let v = parseFloat(cfg.eq['b' + f]) || 0;
+            if (v > maxEqPos) maxEqPos = v;
+        });
+        if (maxEqPos > 0.5) {
+            let eqPad = maxEqPos * 0.55;
+            hotDb += eqPad;
+            parts.push(`🎚️EQ -${eqPad.toFixed(1)}`);
         }
     }
     if (cfg.opt_midPhase) {
@@ -127,7 +140,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.opt_punch) {
         let pDb = Math.min(24, parseFloat(cfg.val_punch) || 0);
         if (pDb > 0) {
-            let v = pDb * 0.18;
+            let v = pDb * 0.25;
             hotDb += v;
             parts.push(`🥁Панч -${v.toFixed(1)}`);
         }
@@ -136,7 +149,7 @@ window.calculateAutoMasterPadDb = function(cfg) {
         let wPct = parseFloat(cfg.val_msWidth);
         if (isNaN(wPct)) wPct = 160;
         if (wPct > 100) {
-            let v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.68);
+            let v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.75);
             if (v > 0.05) {
                 hotDb += v;
                 parts.push(`🎭Стерео -${v.toFixed(1)}`);
@@ -156,20 +169,20 @@ window.calculateAutoMasterPadDb = function(cfg) {
     if (cfg.opt_autoRms) {
         let tRms = parseFloat(cfg.val_autoRms);
         if (isNaN(tRms)) tRms = -10;
-        let hasBuf = Boolean(window.studioBuffer);
-        if (tRms > -12) {
-            let mult = hasBuf ? 0.75 : 0.25;
-            let v = (tRms + 12) * mult;
-            if (v > 0.05) {
-                hotDb += v;
-                parts.push(`⚡RMS -${v.toFixed(1)}`);
-            }
+        let fullGain = window.studioBuffer
+            ? window.computeBufferAutoGain(window.studioBuffer, tRms)
+            : window.dbToLinear(tRms + 10);
+        let actualRmsBoostDb = 20 * Math.log10(Math.max(1.0, fullGain));
+        let v = Math.max(0, actualRmsBoostDb * 0.82);
+        if (v > 0.05) {
+            hotDb += v;
+            parts.push(`⚡RMS -${v.toFixed(1)}`);
         }
     }
 
-    let padDb = -Math.max(0.5, hotDb);
+    let padDb = -Math.max(0.8, hotDb);
     window.lastComputedCeilingDb = Math.round(padDb * 10) / 10;
-    window.lastCeilingBreakdown = parts.length > 0 ? parts.join(' │ ') : 'Базовый запас -0.5 dB';
+    window.lastCeilingBreakdown = parts.length > 0 ? parts.join(' │ ') : 'Базовый запас -0.8 dB';
 
     const badge = document.getElementById('autoCeilStatusBadge');
     if (badge) {
@@ -182,6 +195,41 @@ window.calculateAutoMasterPadDb = function(cfg) {
         window.updateTopSearchOrMonitorBar();
     }
     return padDb;
+};
+
+// Плавное обновление коэффициентов Auto-RMS и Master Pad на лету (БЕЗ разрыва графа и сброса FIR ConvolverNode!)
+window.isJennyAppBackgroundedV264 = function() {
+    if (window._jennyAppInBackgroundV264 === true) return true;
+    if (document.hidden) return true;
+    if (typeof document.hasFocus === 'function' && !document.hasFocus()) {
+        var stV = window._vidStateV130;
+        if (!stV || !stV.active || !stV.desktopOverlay) return true;
+    }
+    return false;
+};
+window.addEventListener('blur', function() { window._jennyWinBlurredV264 = true; });
+window.addEventListener('focus', function() { window._jennyWinBlurredV264 = false; window._jennyAppInBackgroundV264 = false; });
+
+window.updateAutoRmsGainsSmoothV264 = function(buf) {
+    const cfg = window.appConfig || {};
+    if (!window.audioCtx) return;
+    const targetBuf = buf || window.studioBuffer;
+    if (cfg.opt_autoRms && targetBuf && typeof window.computeBufferAutoGain === 'function') {
+        const fullGain = window.computeBufferAutoGain(targetBuf, cfg.val_autoRms);
+        const now = window.audioCtx.currentTime;
+        if (window._preRmsGainNodeV264 && window._preRmsGainNodeV264.gain) {
+            try { window._preRmsGainNodeV264.gain.setTargetAtTime(Math.pow(fullGain, 0.65), now, 0.035); } catch (e) { window._preRmsGainNodeV264.gain.value = Math.pow(fullGain, 0.65); }
+        }
+        if (window._postRmsGainNodeV264 && window._postRmsGainNodeV264.gain) {
+            try { window._postRmsGainNodeV264.gain.setTargetAtTime(Math.pow(fullGain, 0.35), now, 0.035); } catch (e) { window._postRmsGainNodeV264.gain.value = Math.pow(fullGain, 0.35); }
+        }
+    }
+    if (cfg.opt_masterCeil && window._autoPadGainNodeV264 && window._autoPadGainNodeV264.gain) {
+        const padDb = window.calculateAutoMasterPadDb(cfg);
+        const padLin = window.dbToLinear(padDb);
+        const now = window.audioCtx.currentTime;
+        try { window._autoPadGainNodeV264.gain.setTargetAtTime(padLin, now, 0.035); } catch (e) { window._autoPadGainNodeV264.gain.value = padLin; }
+    }
 };
 
 window.computeBufferAutoGain = function(audioBuffer, targetDb) {
@@ -266,8 +314,11 @@ window.insertProStudioPreChain = function(ctx, inputNode, cfg, bucket, sourceBuf
         let fullGain = buf ? window.computeBufferAutoGain(buf, cfg.val_autoRms) : window.dbToLinear((parseFloat(cfg.val_autoRms) || -10) + 10);
         let preGain = reg(ctx.createGain());
         preGain.gain.value = Math.pow(fullGain, 0.65);
+        if (ctx === window.audioCtx) window._preRmsGainNodeV264 = preGain;
         cur.connect(preGain);
         cur = preGain;
+    } else if (ctx === window.audioCtx) {
+        window._preRmsGainNodeV264 = null;
     }
 
     if (cfg.opt_monoBass) {
@@ -327,8 +378,11 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
         let fullGain = buf ? window.computeBufferAutoGain(buf, cfg.val_autoRms) : window.dbToLinear((parseFloat(cfg.val_autoRms) || -10) + 10);
         let postRms = reg(ctx.createGain());
         postRms.gain.value = Math.pow(fullGain, 0.35);
+        if (ctx === window.audioCtx) window._postRmsGainNodeV264 = postRms;
         cur.connect(postRms);
         cur = postRms;
+    } else if (ctx === window.audioCtx) {
+        window._postRmsGainNodeV264 = null;
     }
 
     if (cfg.opt_punch) {
@@ -492,10 +546,20 @@ window.insertProStudioPostChain = function(ctx, inputNode, cfg, bucket, sourceBu
     if (cfg.opt_masterCeil) {
         let autoPad = reg(ctx.createGain());
         autoPad.gain.value = window.dbToLinear(padDb);
+        if (ctx === window.audioCtx) window._autoPadGainNodeV264 = autoPad;
+        let safeLim = reg(ctx.createDynamicsCompressor());
+        safeLim.threshold.value = -2.2;
+        safeLim.knee.value = 6.0;
+        safeLim.ratio.value = 14.0;
+        safeLim.attack.value = 0.0015;
+        safeLim.release.value = 0.055;
         let softClipper = window.createSoftClipWaveShaper(ctx, bucket);
         cur.connect(autoPad);
-        autoPad.connect(softClipper);
+        autoPad.connect(safeLim);
+        safeLim.connect(softClipper);
         cur = softClipper;
+    } else if (ctx === window.audioCtx) {
+        window._autoPadGainNodeV264 = null;
     }
 
     return cur;

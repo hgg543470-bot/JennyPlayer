@@ -517,7 +517,21 @@
             var origCloseVidIsland = window.closeVideoPlayerV130;
             window.closeVideoPlayerV130 = function() {
                 window._isYoutubeDeckBActiveV262 = false;
+                window._lastExplicitVideoUserPauseTsV369 = performance.now();
                 var r = origCloseVidIsland.apply(this, arguments);
+                var vd = window.videoDeckV131;
+                if (vd) {
+                    vd.studioBuffer = null;
+                    vd.reversedStudioBuffer = null;
+                    if (vd.hoseCache) {
+                        vd.hoseCache.srcBuffer = null;
+                        vd.hoseCache.splicedBuffer = null;
+                    }
+                }
+                var vidEl = document.getElementById('jennyVideoElV130');
+                if (vidEl) {
+                    try { vidEl.pause(); vidEl.removeAttribute('src'); vidEl.load(); } catch (e) {}
+                }
                 setTimeout(function() { window.syncPermanentForegroundNotificationV212(true); }, 80);
                 return r;
             };
@@ -641,7 +655,13 @@
         var st = window._vidStateV130;
         var vid = document.getElementById('jennyVideoElV130');
         var vd = window.videoDeckV131 || {};
-        if (!st || !st.active) return;
+        window._lastExplicitVideoUserPauseTsV369 = performance.now();
+        if (!st || !st.active) {
+            if (vid && !vid.paused) {
+                try { vid.pause(); } catch (e) {}
+            }
+            return;
+        }
         var isRevB = Boolean(vd.isReversed || window.isReversedDeckB || (window.scrubStateDeckB && window.scrubStateDeckB.isPhysicallyReversed));
         var isPlayingB = (!st.userPaused && (window._vidPlayIntentV132 || (vid && !vid.paused && !vid.ended))) || isRevB;
         if (isPlayingB && typeof window.toggleVideoPlayPauseV130 === 'function') {

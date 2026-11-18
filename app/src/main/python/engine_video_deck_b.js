@@ -31,15 +31,17 @@
         var half = 32768;
         var samples = half * 2 + 1;
         var curve = new Float32Array(samples);
-        var k = 1.25;
-        var norm = Math.tanh(k);
         for (var i = 0; i < samples; i++) {
             var x = (i - half) / half;
-            curve[i] = Math.tanh(x * k) / norm * 0.98;
+            var ax = Math.abs(x);
+            var y = (ax <= 0.60)
+                ? ax
+                : (0.60 + 0.36 * Math.tanh((ax - 0.60) / 0.36));
+            curve[i] = (x < 0) ? -y : y;
         }
         curve[half] = 0.0;
         shaper.curve = curve;
-        shaper.oversample = 'none';
+        try { shaper.oversample = '2x'; } catch (e) { shaper.oversample = 'none'; }
         return shaper;
     };
 
@@ -50,12 +52,20 @@
         if (cfg.firEnabled && cfg.firSettings) {
             var fg = parseFloat(cfg.firSettings.gain) || 2.0;
             var firHot = 0.0;
-            if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.45;
+            if (fg > 1.0) firHot += 20 * Math.log10(fg) * 0.72;
             if (cfg.opt_cleanFir) {
                 var cfDb = parseFloat(cfg.val_cleanFir) || 0;
-                if (cfDb > 0) firHot += cfDb * 0.4;
+                if (cfDb > 0) firHot += cfDb * 0.45;
             }
             if (firHot > 0.05) hotDb += firHot;
+        }
+        if (cfg.eqEnabled && cfg.eq) {
+            var maxEqPos = 0.0;
+            [60, 230, 910, 3600, 14000].forEach(function(f) {
+                var v = parseFloat(cfg.eq['b' + f]) || 0;
+                if (v > maxEqPos) maxEqPos = v;
+            });
+            if (maxEqPos > 0.5) hotDb += maxEqPos * 0.55;
         }
         if (cfg.opt_midPhase) {
             var mpDb = Math.min(15, parseFloat(cfg.val_midPhase) || 0);
@@ -67,13 +77,13 @@
         }
         if (cfg.opt_punch) {
             var pDb = Math.min(24, parseFloat(cfg.val_punch) || 0);
-            if (pDb > 0) hotDb += pDb * 0.18;
+            if (pDb > 0) hotDb += pDb * 0.25;
         }
         if (cfg.opt_msWidth) {
             var wPct = parseFloat(cfg.val_msWidth);
             if (isNaN(wPct)) wPct = 160;
             if (wPct > 100) {
-                var v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.68);
+                var v = Math.min(18, 20 * Math.log10(1 + (wPct - 100) / 140) * 0.75);
                 if (v > 0.05) hotDb += v;
             }
         }
@@ -88,15 +98,15 @@
             var tRms = parseFloat(cfg.val_autoRms);
             if (isNaN(tRms)) tRms = -10;
             var vd = window.videoDeckV131;
-            var hasBuf = Boolean(vd && vd.studioBuffer);
-            if (tRms > -12) {
-                var mult = hasBuf ? 0.75 : 0.25;
-                var vr = (tRms + 12) * mult;
-                if (vr > 0.05) hotDb += vr;
-            }
+            var fullGain = (vd && vd.studioBuffer)
+                ? window.computeBufferAutoGainDeckB(vd.studioBuffer, tRms)
+                : window.dbToLinearDeckB(tRms + 10);
+            var actualRmsBoostDb = 20 * Math.log10(Math.max(1.0, fullGain));
+            var vr = Math.max(0, actualRmsBoostDb * 0.82);
+            if (vr > 0.05) hotDb += vr;
         }
 
-        var padDb = -Math.max(0.5, hotDb);
+        var padDb = -Math.max(0.8, hotDb);
         if (window.videoDeckV131) {
             window.videoDeckV131.lastComputedCeilingDb = Math.round(padDb * 10) / 10;
         }
@@ -405,9 +415,16 @@
         if (cfg.opt_masterCeil) {
             var autoPad = reg(ctx.createGain());
             autoPad.gain.value = window.dbToLinearDeckB(padDb);
+            var safeLim = reg(ctx.createDynamicsCompressor());
+            safeLim.threshold.value = -2.2;
+            safeLim.knee.value = 6.0;
+            safeLim.ratio.value = 14.0;
+            safeLim.attack.value = 0.0015;
+            safeLim.release.value = 0.055;
             var softClipper = window.createSoftClipWaveShaperDeckB(ctx, bucket);
             cur.connect(autoPad);
-            autoPad.connect(softClipper);
+            autoPad.connect(safeLim);
+            safeLim.connect(softClipper);
             cur = softClipper;
         }
 

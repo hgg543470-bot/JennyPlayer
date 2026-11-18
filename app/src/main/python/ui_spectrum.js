@@ -184,7 +184,13 @@ window.startSpectrumLoopV62 = function() {
     const draw = () => {
         const sm = document.getElementById('specModal');
         const cv = document.getElementById('jennyFftCanvasV62');
-        if (sm && sm.classList.contains('open') && cv && !st.frozen) {
+        const isBg = (typeof window.isJennyAppBackgroundedV264 === 'function') ? window.isJennyAppBackgroundedV264() : document.hidden;
+        const isSpecOpen = Boolean(!isBg && sm && sm.classList.contains('open') && cv && cv.offsetParent !== null);
+        if (!isSpecOpen || st.frozen) {
+            st.rafId = setTimeout(draw, 450);
+            return;
+        }
+        if (isSpecOpen) {
             const ctx = cv.getContext('2d');
             const W = cv.width;
             const H = cv.height;

@@ -1913,6 +1913,18 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
             : baseBuf;
         if (!activeBuf) return false;
 
+        if (
+            window.isStudioPlaying &&
+            window.studioSourceNode &&
+            window.studioSourceNode.buffer === activeBuf &&
+            !window._forceRestartStudioNodeV264 &&
+            window._studioClockV74_1 &&
+            window._studioClockV74_1.active &&
+            Math.abs((window._studioClockV74_1.speed || 1.0) - targetSpd) < 0.003
+        ) {
+            return true;
+        }
+
         if (window.htmlGain && window.htmlGain.gain) {
             window.htmlGain.gain.value = 0;
         }
@@ -1959,14 +1971,14 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                     ? window.getTruePlaybackTimeV74_2()
                     : ((player && player.currentTime) || 0);
 
-                if (player && shouldPlay && !isDraggingArc) {
+                if (player && shouldPlay && !isDraggingArc && !window.isStudioPlaying) {
                     window._internalSeekSyncGuardV370 = true;
                     try {
                         if (isFinite(trueSec) && trueSec >= 0 && Math.abs((player.currentTime || 0) - trueSec) > 0.35) {
                             player.currentTime = trueSec;
                         }
                     } catch (e) {}
-                    setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 60);
+                    setTimeout(function() { window._internalSeekSyncGuardV370 = false; }, 180);
                 }
 
                 // Перед перестроением графа/передачи всегда останавливаем прежний studioSourceNode,
@@ -2194,7 +2206,11 @@ window.toggleDnaDirect1xModeV76 = function(ev) {
                 invalidateDeckAHoseCacheV370();
                 if (audioBuf._loadedCountV72 === 1 && window.appConfig && window.appConfig.opt_autoRms) {
                     window.computeBufferAutoGain(audioBuf, window.appConfig.val_autoRms);
-                    if (typeof window.buildAudioGraph === 'function') window.buildAudioGraph(true);
+                    if (typeof window.updateAutoRmsGainsSmoothV264 === 'function') {
+                        window.updateAutoRmsGainsSmoothV264(audioBuf);
+                    } else if (typeof window.buildAudioGraph === 'function') {
+                        window.buildAudioGraph(false);
+                    }
                 }
                 return true;
             } catch (err) {

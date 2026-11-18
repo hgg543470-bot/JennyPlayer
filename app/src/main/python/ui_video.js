@@ -2074,7 +2074,7 @@ window.restoreLiveWorkspaceSnapshotIfNeededV146 = function() {
         if (!snap || !snap.ts) return;
 
         const ageMs = Date.now() - snap.ts;
-        const shouldRestore = (snap.permRedirect && ageMs < 300000) || (!snap.permRedirect && ageMs < 20000 && (snap.video?.active || !snap.music?.paused));
+        const shouldRestore = Boolean(snap.permRedirect && ageMs < 180000);
         if (!shouldRestore) return;
 
         snap.permRedirect = false;

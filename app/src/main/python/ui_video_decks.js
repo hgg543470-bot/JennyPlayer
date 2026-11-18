@@ -91,15 +91,29 @@
     // 1) Контур Аудиодеки А — никогда не вызывает функции Деки Б и защищён собственным автоматом runIsolatedDeckA
     window._deckAIsolatedTimer = setInterval(function() {
         var tickA = function() {
+            var aEl = document.getElementById('audioPlayer');
+            if (!aEl || !window.currentPlayingTrack) return;
+            var effDurA = (window.studioBuffer && window.studioBuffer.duration > 0)
+                ? window.studioBuffer.duration
+                : ((isFinite(aEl.duration) && aEl.duration > 0 && aEl.duration < 864000)
+                    ? aEl.duration
+                    : (window._isYoutubeDeckAActiveV253 ? Number(window._ytKnownDeckADurationV253 || 0) : 0));
+            var curTimeA = (typeof window.getTruePlaybackTimeV74_2 === 'function')
+                ? window.getTruePlaybackTimeV74_2()
+                : (aEl.currentTime || 0);
+            if (window.isStudioPlaying && !window._userPausedV75_2 && effDurA > 2.0 && curTimeA >= effDurA - 0.08 && aEl.paused) {
+                var nowAdv = performance.now();
+                if (nowAdv - (window._lastAutoAdvanceWallV360 || 0) > 1500) {
+                    window._lastAutoAdvanceWallV360 = nowAdv;
+                    if (typeof window.playNextTrack === 'function') window.playNextTrack();
+                }
+            }
+            if ((typeof window.isJennyAppBackgroundedV264 === 'function') ? window.isJennyAppBackgroundedV264() : document.hidden) return;
             if (!document.getElementById('deckAProgressRow')) {
                 ensureDualProgressBarsDOMV211();
                 window.syncDualDeckVisibilityAndAudioV211();
             }
-            var aEl = document.getElementById('audioPlayer');
-            if (!aEl || !window.currentPlayingTrack) return;
             var npA = document.getElementById('nowPlaying');
-            var hasFwdA = Boolean(window.studioBuffer);
-            var hasRevA = Boolean(window.reversedStudioBuffer);
             var prefixA = (window.appConfig && window.appConfig.studioMode)
                 ? 'RAM 🚀: '
                 : '🎵 ';
@@ -111,26 +125,11 @@
             if (pFillA && pFillA.style.transform && pFillA.style.transform !== 'none') {
                 pFillA.style.transform = 'none';
             }
-            var effDurA = (window.studioBuffer && window.studioBuffer.duration > 0)
-                ? window.studioBuffer.duration
-                : ((isFinite(aEl.duration) && aEl.duration > 0 && aEl.duration < 864000)
-                    ? aEl.duration
-                    : (window._isYoutubeDeckAActiveV253 ? Number(window._ytKnownDeckADurationV253 || 0) : 0));
             if (effDurA > 0 && typeof window.updateProgressUI === 'function') {
                 var isRevA = Boolean(window.isReversed || (window.scrubState && window.scrubState.isPhysicallyReversed));
-                var curTimeA = (typeof window.getTruePlaybackTimeV74_2 === 'function')
-                    ? window.getTruePlaybackTimeV74_2()
-                    : (aEl.currentTime || 0);
                 window.updateProgressUI(curTimeA, effDurA, isRevA);
                 if (typeof window.updateCenterCurrentTime === 'function') {
                     window.updateCenterCurrentTime(curTimeA, effDurA, isRevA);
-                }
-                if (window.isStudioPlaying && !window._userPausedV75_2 && effDurA > 2.0 && curTimeA >= effDurA - 0.08 && aEl.paused) {
-                    var nowAdv = performance.now();
-                    if (nowAdv - (window._lastAutoAdvanceWallV360 || 0) > 1500) {
-                        window._lastAutoAdvanceWallV360 = nowAdv;
-                        if (typeof window.playNextTrack === 'function') window.playNextTrack();
-                    }
                 }
             }
         };

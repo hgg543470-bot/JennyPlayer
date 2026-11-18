@@ -271,7 +271,14 @@ window.startHoseWaveScopeV49 = function() {
     if (st.rafId) cancelAnimationFrame(st.rafId);
 
     const renderFrame = () => {
+        const sm = document.getElementById('specModal');
         const cv = document.getElementById('hoseWaveScopeCanvasV49');
+        const isBg = (typeof window.isJennyAppBackgroundedV264 === 'function') ? window.isJennyAppBackgroundedV264() : document.hidden;
+        const isScopeVisible = Boolean(!isBg && sm && sm.classList.contains('open') && cv && cv.offsetParent !== null);
+        if (!isScopeVisible || st.frozen || !window.studioBuffer) {
+            st.rafId = setTimeout(renderFrame, 450);
+            return;
+        }
         const player = document.getElementById('audioPlayer');
         if (cv && player && window.studioBuffer && !st.frozen) {
             const ctx = cv.getContext('2d');
@@ -528,6 +535,18 @@ window.applyElasticHoseBufferLiveV46 = function(isDraggingArc) {
         const curTrueSec = (typeof window.getTruePlaybackTimeV74_2 === 'function')
             ? window.getTruePlaybackTimeV74_2()
             : (player.currentTime || 0);
+        // Не перезапускаем уже играющий studioSourceNode, если буфер и скорость не менялись!
+        if (
+            window.isStudioPlaying &&
+            window.studioSourceNode &&
+            window.studioSourceNode.buffer === activeBuf &&
+            !window._forceRestartStudioNodeV264 &&
+            window._studioClockV74_1 &&
+            window._studioClockV74_1.active &&
+            Math.abs((window._studioClockV74_1.speed || 1.0) - targetSpd) < 0.003
+        ) {
+            return;
+        }
         if (window.studioSourceNode) {
             window.studioSourceNode.onended = null;
             try { window.studioSourceNode.stop(); } catch (e) {}
@@ -570,6 +589,9 @@ window.installHosePlayerHooksV46 = function() {
         const orig = player[prop];
         player[prop] = function(ev) {
             const r = (typeof orig === 'function') ? orig.call(this, ev) : undefined;
+            if (window._internalSeekSyncGuardV370 || (window.isStudioPlaying && window.studioSourceNode)) {
+                return r;
+            }
             const gKey = (window.appConfig && window.appConfig.gearKeyV66) || 'jbuf-lock';
             if (window.appConfig && (gKey === 'jbuf-lock' || window.appConfig.elasticHoseMode) && window.studioBuffer && this.playbackRate !== 10.0) {
                 window.applyElasticHoseBufferLiveV46(false);
@@ -746,8 +768,10 @@ window.ensureStudioBufferLoadedV61 = async function() {
             if (window.appConfig && window.appConfig.opt_autoRms && typeof window.computeBufferAutoGain === 'function') {
                 window.computeBufferAutoGain(decoded, window.appConfig.val_autoRms);
             }
-            if (typeof window.buildAudioGraph === 'function') {
-                window.buildAudioGraph(true);
+            if (typeof window.updateAutoRmsGainsSmoothV264 === 'function') {
+                window.updateAutoRmsGainsSmoothV264(decoded);
+            } else if (typeof window.buildAudioGraph === 'function') {
+                window.buildAudioGraph(false);
             }
             if (!window.reversedStudioBuffer && typeof window.cloneAndReverseBuffer === 'function') {
                 window.reversedStudioBuffer = await window.cloneAndReverseBuffer(decoded);

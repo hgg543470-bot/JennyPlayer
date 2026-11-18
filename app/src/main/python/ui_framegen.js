@@ -863,15 +863,16 @@ let vsyncTicks = 0;
     function attachHardwareFrameCallback(vid) {}
 
     function master120HzLoop(now) {
-        if (!window._jennyExp120HzEnabledV205) {
+        const st = window._vidStateV130;
+        const isBg = (typeof window.isJennyAppBackgroundedV264 === 'function') ? window.isJennyAppBackgroundedV264() : document.hidden;
+        if (isBg || !window._jennyExp120HzEnabledV205 || !st || !st.active) {
             if (glCanvas) glCanvas.style.display = 'none';
             if (splitLineEl) splitLineEl.style.display = 'none';
             hasValidFramePair = false;
-            requestAnimationFrame(master120HzLoop);
+            setTimeout(function() { requestAnimationFrame(master120HzLoop); }, 450);
             return;
         }
         vsyncTicks++;
-        const st = window._vidStateV130;
         const vid = document.getElementById('jennyVideoElV130');
         const m = window._jv166Metrics;
 
@@ -2147,6 +2148,12 @@ let vsyncTicks = 0;
     }, { capture: true, passive: false });
 
     function loopFence() {
+        var stVidNow = window._vidStateV130;
+        var isBg = (typeof window.isJennyAppBackgroundedV264 === 'function') ? window.isJennyAppBackgroundedV264() : document.hidden;
+        if (isBg || !stVidNow || !stVidNow.active) {
+            setTimeout(loopFence, 450);
+            return;
+        }
         var fl = window._jennyLabFlagsV208 || {};
         var vEl = document.getElementById('jennyVideoElV130') || document.querySelector('video');
         if (vEl && vEl.parentElement) {
